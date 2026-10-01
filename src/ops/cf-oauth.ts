@@ -1,67 +1,31 @@
 /**
- * Cloudflare OAuth 2.0, so an operator can grant drupflare access without pasting a long-lived token.
+ * Cloudflare OAuth 2.0: an operator grants drupflare access without pasting a long-lived token.
  *
- * Self-managed OAuth clients shipped 2026-06-03. Before that the only option was an API token, which
- * is why {@link https://developers.cloudflare.com/fundamentals/oauth/ | the paste path} exists and
- * stays: this is an ADDITIONAL way in, never a replacement.
- *
- * ## The flow, and why it is the only one available
- *
- * Cloudflare supports **Authorization Code only** for third-party clients -- no Client Credentials,
- * Implicit, Device Authorization or ROPC. Of the two variants, drupflare must use **PKCE with S256**
- * rather than a client secret: the bundle is open source and self-hosted, so a secret compiled into
- * it is a secret published to everyone who deploys it. PKCE needs no secret, which is exactly the
- * property a distributed application needs.
- *
- * ## Why the operator registers their own client
- *
- * A redirect URI is registered against the client, and every drupflare deployment answers on a
- * different origin -- `<name>.<subdomain>.workers.dev`, or a custom domain. One shared client cannot
- * enumerate them in advance. Cloudflare's docs do not state whether redirect matching permits a
- * wildcard, and the OAuth 2.0 Security BCP says it must not, so this is built to not depend on the
- * answer: the operator creates a PRIVATE client on their own account, registers their own
- * deployment's callback, and pastes the `client_id`. Private visibility is enough because they are a
- * member of the account they are authorising -- the DNS-verified `public` visibility that a shared
- * client would need is permanent and irreversible, and buys nothing here.
- *
- * ## Why the client id is NOT on the KV allow-list
- *
- * It looks like it belongs there -- it is not a credential, and an operator should be able to set it
- * without a redeploy. It fails the allow-list's actual test, which is that every entry's worst case
- * is a slow site. KV is operator-writable, and a writer who could set the client id could point the
- * consent screen at an application they control: the operator would then read that app's name and
- * logo on Cloudflare's own consent page and approve it. That is a phishing surface, not a slow site.
- *
- * So it is stored in the object's own `cfw_meta` and set through the owner-authenticated setup
- * route, which gives the same no-redeploy property behind a credential the operator holds.
- * `tests/unit/ops/cf-oauth.spec.ts` asserts it stays off `KV_OVERRIDABLE`.
+ * Authorization Code with PKCE (S256) and no client secret, since a secret in an open-source
+ * bundle is published to every deployer. The operator registers a private client for their own
+ * callback. The client id lives in `cfw_meta`, never on `KV_OVERRIDABLE` (a KV writer could point
+ * the consent screen at their own app); `tests/unit/ops/cf-oauth.spec.ts` asserts that.
+ * @module
  */
 
-/** the authorization endpoint; read out of wrangler's own source rather than a blog post */
+/** the authorization endpoint (read out of wrangler's own source) */
 export const CF_AUTH_URL = 'https://dash.cloudflare.com/oauth2/auth';
 /** the token endpoint */
 export const CF_TOKEN_URL = 'https://dash.cloudflare.com/oauth2/token';
-/** the revocation endpoint, so a disconnect is a real revocation and not a local forget */
+/** the revocation endpoint (a disconnect must revoke, not only forget locally) */
 export const CF_REVOKE_URL = 'https://dash.cloudflare.com/oauth2/revoke';
 
 /** the settings key holding the operator's registered client id */
 export const CF_OAUTH_CLIENT_ID = 'CF_OAUTH_CLIENT_ID';
 
 /**
- * The scopes drupflare asks for, and nothing beyond them.
- *
- * Scope names are the API-token permission names in `<name>:<read|write>` form. This list is the
- * least that makes the mail path work: `user:read` identifies the account so the operator does not
- * have to paste an account id alongside, and the two email scopes are what
- * `POST /accounts/:id/email/sending/send` requires.
- *
- * `workers-platform:write` is ABSENT. drupflare is already deployed by the time a
- * human sees the setup page, so a token that could rewrite the Worker buys nothing and would make a
- * stolen token a remote-code-execution rather than a mail problem.
+ * The least scopes that make the mail path work: `user:read` and `account:read` identify the
+ * account, the email scopes cover `POST /accounts/:id/email/sending/send`.
+ * `workers-platform:write` is left out so a stolen token cannot rewrite the Worker.
  */
 export const CF_SCOPES = ['user:read', 'account:read', 'email:read', 'email:write'] as const;
 
-/** base64url without padding, which is what PKCE and OAuth state both want */
+/** base64url without padding, as PKCE and OAuth state require */
 export function base64Url(bytes: Uint8Array): string {
 	let binary = '';
 	for (const b of bytes) binary += String.fromCharCode(b);
@@ -75,20 +39,16 @@ export function randomToken(bytes = 32): string {
 	return base64Url(buf);
 }
 
+/** a PKCE verifier with its challenge and method */
 export type Pkce = { verifier: string; challenge: string; method: 'S256' };
 
-/**
- * A PKCE verifier and its S256 challenge.
- *
- * `plain` is not offered. Cloudflare requires S256 for public clients, and a `plain` challenge is
- * equivalent to sending the verifier in the clear -- an interceptor of the redirect could complete
- * the exchange.
- */
+/** a PKCE verifier and its S256 challenge (`plain` would send the verifier in the clear) */
 export async function createPkce(verifier: string = randomToken(32)): Promise<Pkce> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
 	return { verifier, challenge: base64Url(new Uint8Array(digest)), method: 'S256' };
 }
 
+/** what `authorizeUrl()` needs to build the consent redirect */
 export type AuthorizeParams = {
 	clientId: string;
 	redirectUri: string;
@@ -117,10 +77,7 @@ export function callbackUrl(origin: string): string {
 
 /**
  * The pending authorisation, held between the redirect out and the callback back.
- *
- * The verifier NEVER goes in a cookie or a query parameter: it is the proof that the party
- * redeeming the code is the party that started the flow, so putting it anywhere the user agent can
- * read makes PKCE decorative.
+ * The verifier never goes in a cookie or query parameter (that would make PKCE decorative).
  */
 export type PendingAuth = {
 	state: string;
@@ -129,17 +86,12 @@ export type PendingAuth = {
 	createdAt: number;
 };
 
-/** how long a started flow stays redeemable; a consent screen the operator abandons must expire */
+/** how long a started flow stays redeemable (an abandoned consent screen must expire) */
 export const PENDING_TTL_MS = 10 * 60_000;
 
-/**
- * Whether a callback matches the flow that was started.
- *
- * Constant-time on the state comparison. A timing oracle on `state` would let an attacker recover a
- * valid value character by character and mount the CSRF this parameter exists to stop.
- */
+/** whether a callback matches the flow that was started (constant-time on `state`) */
 export function pendingMatches(
-	pending: PendingAuth | null,
+	pending: PendingAuth | undefined,
 	state: string,
 	nowMs: number
 ): { ok: true } | { ok: false; reason: string } {
@@ -164,6 +116,7 @@ export function timingSafeEqual(a: string, b: string): boolean {
 	return diff === 0;
 }
 
+/** the tokens a successful exchange returns; `expiresAt` is absolute ms */
 export type TokenSet = {
 	accessToken: string;
 	refreshToken?: string;
@@ -171,20 +124,15 @@ export type TokenSet = {
 	scopes: string[];
 };
 
+/** a failed exchange, as `code` or `code: description` */
 export type TokenError = { error: string };
 
-/** whether the exchange failed, so callers narrow rather than inspecting shapes */
+/** whether the exchange failed, as a type guard */
 export function isTokenError(v: TokenSet | TokenError): v is TokenError {
 	return 'error' in v;
 }
 
-/**
- * Exchanges an authorization code for tokens.
- *
- * `client_secret` is absent and must stay absent: this is a public client, and the token endpoint
- * authenticates it with the PKCE verifier instead. Sending a secret here would mean there was a
- * secret in the bundle.
- */
+/** exchanges an authorization code for tokens; `client_secret` stays absent (public client) */
 export async function exchangeCode(
 	args: {
 		clientId: string;
@@ -205,7 +153,7 @@ export async function exchangeCode(
 	return await postToken(body, fetcher, nowMs);
 }
 
-/** trades a refresh token for a fresh access token, so a long-lived grant needs no re-consent */
+/** trades a refresh token for a fresh access token, with no re-consent */
 export async function refresh(
 	args: { clientId: string; refreshToken: string },
 	fetcher: typeof fetch = fetch,
@@ -244,8 +192,7 @@ async function postToken(
 		return { error: `token endpoint returned ${res.status} with an unreadable body` };
 	}
 	if (!res.ok || typeof parsed.access_token !== 'string') {
-		// the OAuth error shape is `error` + `error_description`; report both when present so an
-		// operator sees "invalid_grant: PKCE verification failed" rather than a status code
+		// report `error` and `error_description` so the operator sees why, not a status code
 		const code = typeof parsed.error === 'string' ? parsed.error : `http_${res.status}`;
 		const detail =
 			typeof parsed.error_description === 'string' ? `: ${parsed.error_description}` : '';
@@ -260,7 +207,7 @@ async function postToken(
 	};
 }
 
-/** a minute of slack, so a token is not presented in the instant it expires */
+/** a minute of slack, so a token is not presented as it expires */
 export const REFRESH_SKEW_MS = 60_000;
 
 /** whether a token set should be refreshed before use */
@@ -269,13 +216,7 @@ export function needsRefresh(set: TokenSet, nowMs: number): boolean {
 	return nowMs >= set.expiresAt - REFRESH_SKEW_MS;
 }
 
-/**
- * Revokes a token at Cloudflare.
- *
- * Disconnecting has to revoke rather than forget. A token dropped from storage still works until it
- * expires, so a "disconnect" that only deletes locally leaves a live grant an operator believes they
- * cancelled.
- */
+/** revokes a token at Cloudflare (a token merely dropped from storage still works until expiry) */
 export async function revoke(
 	args: { clientId: string; token: string },
 	fetcher: typeof fetch = fetch
@@ -296,15 +237,15 @@ export async function revoke(
 export async function resolveAccountId(
 	accessToken: string,
 	fetcher: typeof fetch = fetch
-): Promise<string | null> {
+): Promise<string | undefined> {
 	try {
 		const res = await fetcher('https://api.cloudflare.com/client/v4/accounts?per_page=2', {
 			headers: { authorization: `Bearer ${accessToken}` }
 		});
 		const body = (await res.json()) as { result?: { id?: string }[] };
 		const first = body?.result?.[0]?.id;
-		return typeof first === 'string' ? first : null;
+		return typeof first === 'string' ? first : undefined;
 	} catch {
-		return null;
+		return undefined;
 	}
 }

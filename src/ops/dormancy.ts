@@ -1,40 +1,24 @@
 /**
- * The dormancy audit: every capability the artifact carries is ACTIVE or DORMANT-BY-DESIGN.
+ * The dormancy audit: every capability the artifact carries is active or dormant by design.
  *
- * **THE FAILURE CLASS THIS EXISTS TO MAKE UNSHIPPABLE.** Three defects found in this project were
- * identical in shape, and each one wasted a session:
- *
- *   - `node` installed with zero `node.type.*`, so every save was refused
- *   - the cron driver built and wired with nothing turning it on, so six modules did nothing
- *   - `pathauto` enabled and discoverable with zero `pathauto.pattern.*`, so no alias was ever made
- *
- * Each is a capability PRESENT in the artifact with the configuration that ACTIVATES it ABSENT, and
- * each fails by doing nothing: no exception, no log line, no failing test. The operator concludes
- * the feature does not work rather than that it was never switched on.
- *
- * **THERE ARE EXACTLY TWO LEGAL STATES, AND THE CHOICE IS FORCED.** "Pathauto ships
- * without patterns" is a perfectly good product decision -- a pattern is a site owner's editorial
- * choice and guessing one is worse than none. What is not defensible is that nobody had decided.
- * A capability that is neither active nor recorded dormant is the bug, and the audit names it.
+ * A capability present without the configuration that activates it fails silently (`node` with
+ * no `node.type.*`, `pathauto` with no pattern). Shipping one dormant is a fine decision; leaving
+ * it undecided is the bug the audit names.
+ * @module
  */
 
 /** what the audit concluded about one capability */
 export type DormancyState = 'active' | 'dormant-by-design' | 'undecided';
 
+/** one capability and the decision recorded about it */
 export interface Capability {
 	/** the module or runtime feature */
 	id: string;
 	/** what a reader calls it */
 	label: string;
-	/**
-	 * The config that turns it on, as a `LIKE` prefix over `config.name`.
-	 *
-	 * Null means the capability needs no configuration to function -- a field type, a cache layer, a
-	 * UI module. Those are still enumerated, because "needs nothing" is itself a decision that
-	 * should be written down rather than inferred from an absent entry.
-	 */
+	/** the config that turns it on, as a `LIKE` prefix over `config.name`; null needs none */
 	activatedBy: string | null;
-	/** what the project INTENDS; the audit compares this against what is actually there */
+	/** what the project intends; the audit compares it against what is there */
 	posture: 'must-be-active' | 'dormant-by-design' | 'no-activation-needed';
 	/** required whenever the posture is `dormant-by-design`; this is the decision being recorded */
 	reason?: string;
@@ -45,9 +29,8 @@ export interface Capability {
 /**
  * Every installed module, plus the runtime capabilities.
  *
- * Derived from `core.extension` in the shipped `assets/drupal/site.sqlite` (42 modules) rather than
- * from memory. `dormancy.spec.ts` reads that list back out of the artifact and fails when a module
- * appears there without an entry here, so a module added to the pack cannot skip the decision.
+ * Derived from `core.extension` in the shipped database; `dormancy.spec.ts` fails when a module
+ * appears there without an entry here.
  */
 export const CAPABILITIES: readonly Capability[] = [
 	// #region content, and the ones that have bitten
@@ -108,8 +91,7 @@ export const CAPABILITIES: readonly Capability[] = [
 	{
 		id: 'layout_builder',
 		label: 'Layout Builder',
-		// activation is a third-party setting inside a view display rather than its own config
-		// object, so the probe is a substring search rather than a name prefix
+		// activation is a third-party setting inside a view display, not its own config object
 		activatedBy: null,
 		posture: 'dormant-by-design',
 		reason: 'installed and enabled on ZERO entity view displays -- measured: no `core.entity_view_display.*` mentions it. Layout Builder does nothing until an owner turns it on per bundle, and turning it on for them would override the display configuration the pack ships',
@@ -160,10 +142,8 @@ export const CAPABILITIES: readonly Capability[] = [
 ];
 
 /**
- * Modules that function with no activation configuration at all.
- *
- * Enumerated rather than defaulted, because "this one needs nothing" is a decision too. A module
- * absent from BOTH this list and `CAPABILITIES` is what the audit refuses.
+ * Modules that function with no activation configuration. A module absent from both this list and
+ * `CAPABILITIES` is what the audit refuses.
  */
 export const NO_ACTIVATION_NEEDED: readonly string[] = [
 	'big_pipe',
@@ -174,9 +154,7 @@ export const NO_ACTIVATION_NEEDED: readonly string[] = [
 	'contextual',
 	'datetime',
 	'dblog',
-	// the compatibility layer itself, and it needs no configuration because it activates by being
-	// installed: DrupflareServiceProvider runs on every container build, and the mail plugin, the
-	// logger channel, the image toolkit and the stream wrapper are all wired by service definition
+	// activates by being installed (`DrupflareServiceProvider` wires it by service definition)
 	'drupflare',
 	'dynamic_page_cache',
 	'field_ui',
@@ -199,6 +177,7 @@ export const NO_ACTIVATION_NEEDED: readonly string[] = [
 	'views_ui'
 ];
 
+/** one capability's audit result */
 export interface AuditRow {
 	id: string;
 	label: string;

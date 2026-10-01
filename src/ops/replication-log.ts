@@ -1,27 +1,15 @@
 /**
- * How authoritative state reaches a replica, and why an interrupted delivery cannot be mistaken for
- * a complete one.
+ * How authoritative state reaches a replica. Invariant: a replica is fully valid at G or known to
+ * be below G, never in between.
  *
- * THE INVARIANT IS THAT A REPLICA IS FULLY VALID AT G OR KNOWN TO BE BELOW G, NEVER IN BETWEEN. A
- * replica that has applied half of a generation is not "slightly stale"; it holds a state the primary
- * was never in, and no fence expressed in generation numbers can describe it. So every path out of an
- * interrupted apply lands on a number that is true, or on a refusal.
+ * A record in one transaction commits with its position, so an interruption rolls back cleanly. A
+ * chunked record writes an intent marker first and clears it with the last chunk; a surviving
+ * marker means the replica must restore (it cannot resume).
  *
- * Two mechanisms carry that, and they cover different failures:
- *
- * - A record that fits one transaction needs no marker. The apply and the position advance commit
- *   together, so an interruption rolls both back and the replica is cleanly at the parent. This is
- *   the common case and it costs nothing.
- * - A record applied in CHUNKS cannot use that, because the chunks commit separately. An intent
- *   marker is committed before the first chunk and cleared with the last, so a marker found on
- *   restart means chunks landed and the position did not. That replica is untrusted until it
- *   restores; it cannot resume, because nothing records which chunks committed.
- *
- * The marker is written only when it is load-bearing. Writing it for a single-transaction apply
- * would charge a row to record something the transaction already guarantees.
+ * @module
  */
 
-/** one delivered generation; `fingerprint` is what the replica must hash to AFTER applying */
+/** one delivered generation; `fingerprint` is what the replica must hash to after applying */
 export type LogRecord = {
 	/** the generation this record produces */
 	generation: number;
@@ -32,23 +20,17 @@ export type LogRecord = {
 	/** the primary's authoritative-state fingerprint at {@link generation} */
 	fingerprint: string;
 	/**
-	 * Set when the change was too large to log statement by statement.
-	 *
-	 * An overflowed record carries NO statements and cannot be applied; a replica meeting one has to
-	 * restore. That is the safe direction: a truncated statement list would
-	 * apply cleanly and leave the replica silently wrong, which is the one outcome the whole log
-	 * exists to prevent.
+	 * Set when the change was too large to log; the record carries no statements and a replica
+	 * meeting it must restore (a truncated list would apply cleanly and be wrong).
 	 */
 	overflowed?: boolean;
+	/** the primary's writes, in order */
 	statements: readonly { sql: string; params?: readonly unknown[] }[];
 };
 
 /**
- * Where a replica is in the log, as durable state.
- *
- * No schema version here. The object's pack generation is already recorded by the migrate
- * cursor, and a copy kept alongside the log position would be a second source of truth that can
- * disagree with the first. The applier is handed the live one.
+ * Where a replica is in the log, as durable state; no schema version, since the applier is handed
+ * the live pack generation.
  */
 export type LogPosition = {
 	/** the last generation applied in full */
@@ -57,10 +39,13 @@ export type LogPosition = {
 	inflight: { from: number; to: number } | null;
 };
 
+/** whether a replica's position may be acted on, and the generation it is valid at */
 export type Trust =
 	{ trusted: true; validAt: number } | { trusted: false; validAt: number; reason: string };
 
+/** what {@link planApply} decided for a record */
 export type PlanAction = 'apply' | 'duplicate' | 'refuse';
+/** a {@link PlanAction} with its reason */
 export type Plan = { action: PlanAction; reason: string };
 
 /** the durable surface an applier needs; a Map satisfies it, so the decisions are drivable */
@@ -73,19 +58,8 @@ export type LogStore = {
 };
 
 /**
- * A statement's bindings as `ctx.storage.sql` can take them: positional, and nothing else.
- *
- * DRUPAL BINDS BY NAME AND THE LOG CARRIED IT THROUGH. `Connection::merge()` compiles to a SELECT
- * then an INSERT or an UPDATE, and only the INSERT binds positionally -- the UPDATE branch binds
- * `{':db_condition_placeholder_0': 'node_list'}`, which is an OBJECT. `SqlStorage.exec()` takes
- * `...bindings`, so applying one threw `Spread syntax requires ...iterable[Symbol.iterator] to be a
- * function` and killed the catch-up. Every cache-tag invalidation takes that branch once the row
- * exists, so any pool broke on the first repeat invalidation of any tag -- a node save.
- *
- * Rewritten rather than refused, because the statement is legitimate and the primary has already
- * committed it. Tokens are read from the SQL IN ORDER, so the result does not depend on key order
- * in the map, and a token with no value throws rather than binding a silent `undefined`: a wrong
- * value replicated into a replica is worse than a refused record, which the fence can describe.
+ * A statement's bindings as `ctx.storage.sql` takes them: positional. Drupal binds by name (the
+ * update branch of `merge()`), so names are rewritten in SQL order; a missing value throws.
  */
 export function positionalBindings(
 	sql: string,
@@ -123,6 +97,7 @@ export function positionalBindings(
 const APPLIED_KEY = 'repl_applied';
 const INFLIGHT_KEY = 'repl_inflight';
 
+/** the stored position; an unreadable value reads as -1, never as absent */
 export function readPosition(store: LogStore): LogPosition {
 	const applied = Number(store.read(APPLIED_KEY) ?? '0');
 	const raw = store.read(INFLIGHT_KEY) ?? '';
@@ -136,12 +111,8 @@ export function readPosition(store: LogStore): LogPosition {
 }
 
 /**
- * Whether the replica's own position is a number anyone may act on.
- *
- * A surviving marker is the untrusted case and it is NOT resumable: the marker records which
- * generation was being built, not which of its chunks committed, so there is no safe point to
- * continue from. Recording per-chunk progress would make resume possible and is not built, because
- * the recovery it replaces is a restore the replica can already perform.
+ * Whether the replica's own position may be acted on; a surviving marker is untrusted and not
+ * resumable, since it does not record which chunks committed.
  */
 export function positionTrust(pos: LogPosition): Trust {
 	if (pos.applied < 0) {
@@ -160,12 +131,8 @@ export function positionTrust(pos: LogPosition): Trust {
 }
 
 /**
- * Marks the position untrusted while a multi-transaction load is in flight.
- *
- * The same marker a chunked apply uses, and for the same reason: a bulk restore commits table by
- * table, so an interruption leaves rows that landed and a position that did not. Sharing it rather
- * than adding a second flag means {@link positionTrust} already refuses both, and there is one
- * answer to "is this replica's number real" instead of two that can disagree.
+ * Marks the position untrusted while a multi-transaction load (a bulk restore) is in flight, with
+ * the chunked-apply marker so {@link positionTrust} refuses both.
  */
 export function markInflight(store: LogStore, from: number, to: number): void {
 	store.txn(() => store.write(INFLIGHT_KEY, `${from}:${to}`));
@@ -179,27 +146,14 @@ export function landPosition(store: LogStore, generation: number): void {
 	});
 }
 
-function malformed(record: LogRecord): string | null {
+function malformed(record: LogRecord): string | undefined {
 	if (!Number.isFinite(record.generation) || !Number.isFinite(record.parent)) {
 		return 'the record carries a generation that is not a number';
 	}
 	if (record.parent < 0 || record.generation < 0)
 		return 'the record carries a negative generation';
-	// A RECORD SPANS AN INVOCATION, NOT A GENERATION, so `parent + 1` was never the invariant and
-	// requiring it evicted the entire pool. `sealGeneration()` opens a buffer at `parent`, lets the
-	// invocation advance `commitSeq()` as far as it needs, and seals ONE record at the sequence it
-	// reached -- its own docblock says why: twelve rows written by one request are one atomic change
-	// from a replica's point of view. So a gap is the normal shape of the log, and the shipped one
-	// held 360 records across generations 30..901.
-	//
-	// Measured on a deployed 32-lane pool: the first skipped generation refused a record as
-	// malformed, `catchUpOnce()` answered that refusal by setting the lane WITHDRAWN, readmission
-	// put it back to CREATED needing a full restore, and under authenticated load every lane cycled
-	// out. The pool served 0% while reporting itself healthy.
-	//
-	// The real chain check is exact and already runs below: `planApply()` refuses a record whose
-	// parent is not precisely the replica's applied position, in BOTH directions. Contiguity of the
-	// numbers was a second, wrong, statement of it.
+	// a record spans an invocation, so gaps are normal and `parent + 1` is not required; the
+	// chain check is `planApply()`'s exact parent match
 	if (record.generation <= record.parent) {
 		return `the record claims ${record.parent} -> ${record.generation}, which does not advance`;
 	}
@@ -210,37 +164,28 @@ function malformed(record: LogRecord): string | null {
 	if (typeof record.fingerprint !== 'string' || record.fingerprint === '') {
 		return 'the record carries no fingerprint, so applying it could not be verified';
 	}
-	return null;
+	return undefined;
 }
 
 /**
- * What to do with a delivered record.
+ * What to do with a delivered record. Malformed or wrong-schema records are refused before the
+ * numbers are trusted; `duplicate` skips, since statements need not be idempotent.
  *
- * Order matters. A malformed or wrong-schema record is refused before anything looks at generation
- * numbers, because its numbers are not evidence of anything. Only then does a re-delivery of an
- * already-applied generation collapse to a no-op.
- *
- * `duplicate` is a SKIP rather than a re-apply. The statements in a record are not required to be
- * idempotent -- an `UPDATE ... SET n = n + 1` is a legitimate authoritative write -- so replaying one
- * at a generation the replica already passed would corrupt exactly the state this exists to carry.
- *
- * **A GENERATION NUMBER IDENTIFIES A POSITION IN ONE PRIMARY'S HISTORY AND NOTHING MORE.** Nothing
- * here can tell a record from primary A apart from a record from primary B carrying the same number,
- * so a replica pointed at a second primary would skip its records as duplicates and diverge in
- * silence. What catches that is the fingerprint comparison at admission, which checks the RESULT
- * rather than the sequence -- and it runs at admission only, so divergence that begins after a
- * replica is already serving is not detected until it is re-admitted. Chaining each record to its
- * parent's fingerprint would close it inside the log; it is not built, and this is the surviving
- * objective rather than a settled one.
+ * A generation number only orders one primary's history: records from a second primary would
+ * skip as duplicates, caught only by the fingerprint check at admission.
  */
-export function planApply(pos: LogPosition, record: LogRecord, localSchema: string | null): Plan {
+export function planApply(
+	pos: LogPosition,
+	record: LogRecord,
+	localSchema: string | undefined
+): Plan {
 	const trust = positionTrust(pos);
 	if (!trust.trusted) return { action: 'refuse', reason: trust.reason };
 
 	const bad = malformed(record);
-	if (bad !== null) return { action: 'refuse', reason: bad };
+	if (bad !== undefined) return { action: 'refuse', reason: bad };
 
-	if (localSchema === null || record.schemaVersion !== localSchema) {
+	if (localSchema === undefined || record.schemaVersion !== localSchema) {
 		return {
 			action: 'refuse',
 			reason: `schema mismatch: record ${record.schemaVersion}, replica ${localSchema ?? 'unknown'}`
@@ -270,6 +215,7 @@ export function planApply(pos: LogPosition, record: LogRecord, localSchema: stri
 	return { action: 'apply', reason: '' };
 }
 
+/** what {@link applyRecord} did */
 export type ApplyOutcome = {
 	action: PlanAction;
 	reason: string;
@@ -280,19 +226,14 @@ export type ApplyOutcome = {
 };
 
 /**
- * Applies one record, or refuses it.
- *
- * The statements are the primary's authoritative writes and are NOT passed through the
- * replica's read-only guard. That guard exists to stop a replica ORIGINATING an authoritative write;
- * this is the one path by which such a write legitimately arrives, and gating it there would leave a
- * replica able to receive only the writes it could have made itself.
+ * Applies one record, or refuses it. The statements bypass the replica's read-only guard: this is
+ * how authoritative writes legitimately arrive.
  *
  * @param localSchema
- *   The pack generation this object actually holds, read live rather than kept beside the position.
+ *   The pack generation this object holds, read live.
  * @param chunkSize
- *   Statements per transaction. The default applies the whole record in one, which is what makes an
- *   interruption roll back cleanly. Pass a smaller number only when a record is too large to apply in
- *   one invocation, and accept that an interruption then costs a restore.
+ *   Statements per transaction; the default is one transaction. A smaller value means an
+ *   interruption costs a restore.
  */
 export function applyRecord(
 	store: LogStore,
@@ -300,7 +241,7 @@ export function applyRecord(
 	{
 		localSchema,
 		chunkSize = Number.POSITIVE_INFINITY
-	}: { localSchema: string | null; chunkSize?: number }
+	}: { localSchema: string | undefined; chunkSize?: number }
 ): ApplyOutcome {
 	const pos = readPosition(store);
 	const plan = planApply(pos, record, localSchema);
@@ -313,8 +254,7 @@ export function applyRecord(
 	const chunked = statements.length > size;
 
 	if (chunked) {
-		// committed on its own and BEFORE any chunk, which is the only ordering that makes a survivor
-		// mean "chunks may have landed"; written after the first chunk it would mean nothing
+		// committed before any chunk, so a survivor means chunks may have landed
 		store.txn(() => store.write(INFLIGHT_KEY, `${record.parent}:${record.generation}`));
 	}
 
@@ -335,8 +275,7 @@ export function applyRecord(
 		chunks++;
 	}
 
-	// a record with no statements still advances the generation; the primary may commit a generation
-	// whose whole effect was to state a new fingerprint
+	// a record with no statements still advances (its effect may be only a new fingerprint)
 	if (statements.length === 0) {
 		store.txn(() => store.write(APPLIED_KEY, String(record.generation)));
 		chunks = 1;

@@ -1,8 +1,7 @@
 /**
- * DEFLATE and zlib readers that report how many INPUT bytes they consumed.
- *
- * `fflate` cannot answer that, and a packfile needs it: objects are concatenated zlib streams with no
- * length prefix, so the only way to find object N+1 is to know where object N ended.
+ * DEFLATE and zlib readers that report how many input bytes they consumed (`fflate` cannot, and
+ * a packfile's objects are concatenated zlib streams with no length prefix).
+ * @module
  */
 
 /** how a stream decoded, and where the next one starts */
@@ -15,13 +14,14 @@ export interface InflateResult {
 /**
  * An LSB-first bit reader over a byte accumulator.
  *
- * Reading one bit at a time is the obvious form and costs about 4x; a packfile inflate is the only
- * CPU-heavy step on the git path, so the accumulator is worth its fifteen lines.
+ * An accumulator beats one-bit reads (about 4x) on the only CPU-heavy step of the git path.
  */
 class Bits {
-	/** the next byte to pull into the accumulator, which may be ahead of what has been consumed */
+	/** the next byte to pull into the accumulator (may be ahead of what was consumed) */
 	pos: number;
+	/** buffered bits, LSB first */
 	private acc = 0;
+	/** how many bits `acc` holds */
 	private nbits = 0;
 
 	constructor(
@@ -31,6 +31,7 @@ class Bits {
 		this.pos = start;
 	}
 
+	/** reads `n` bits as an unsigned number; throws when the input ends */
 	read(n: number): number {
 		while (this.nbits < n) {
 			if (this.pos >= this.src.length) throw new Error('deflate: input ended mid-stream');
@@ -124,11 +125,11 @@ const DIST_EXTRA = [
 ] as const;
 const CLEN_ORDER = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15] as const;
 
-let fixedLit: Huffman | null = null;
-let fixedDist: Huffman | null = null;
+let fixedLit: Huffman | undefined;
+let fixedDist: Huffman | undefined;
 
 function fixedTables(): { lit: Huffman; dist: Huffman } {
-	if (fixedLit === null || fixedDist === null) {
+	if (fixedLit === undefined || fixedDist === undefined) {
 		const lengths: number[] = [];
 		for (let i = 0; i < 144; i++) lengths.push(8);
 		for (let i = 144; i < 256; i++) lengths.push(9);
@@ -142,11 +143,14 @@ function fixedTables(): { lit: Huffman; dist: Huffman } {
 
 /** grows geometrically; `hint` skips the regrows when the caller knows the answer */
 class Out {
+	/** the backing buffer, longer than `len` */
 	buf: Uint8Array;
+	/** bytes written so far */
 	len = 0;
 	constructor(hint: number) {
 		this.buf = new Uint8Array(Math.max(hint, 64));
 	}
+	/** makes room for `extra` more bytes */
 	need(extra: number): void {
 		if (this.len + extra <= this.buf.length) return;
 		let size = this.buf.length * 2;
@@ -155,6 +159,7 @@ class Out {
 		next.set(this.buf.subarray(0, this.len));
 		this.buf = next;
 	}
+	/** appends one byte */
 	push(byte: number): void {
 		this.need(1);
 		this.buf[this.len++] = byte;
@@ -260,7 +265,7 @@ export function inflateZlib(src: Uint8Array, start = 0, hint = 1024): InflateRes
 	const flg = src[start + 1] as number;
 	if ((cmf & 0x0f) !== 8) throw new Error('zlib: not a deflate stream');
 	if (((cmf << 8) | flg) % 31 !== 0) throw new Error('zlib: header check failed');
-	// FDICT: a preset dictionary the caller has no way to supply, so refuse rather than mis-decode
+	// a preset dictionary (the `FDICT` flag) cannot be supplied, so refuse rather than mis-decode
 	if ((flg & 0x20) !== 0) throw new Error('zlib: a preset dictionary is not supported');
 	const raw = inflateRaw(src, start + 2, hint);
 	return { data: raw.data, consumed: 2 + raw.consumed + 4 };

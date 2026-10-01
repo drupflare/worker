@@ -1,45 +1,22 @@
 /**
  * The quota ladder: what a site stops doing as it approaches its daily ceilings.
  *
- * Today a site that burns its quota hard-fails for the rest of the UTC day, and it fails at the
- * worst possible moment -- the meters are already there, `thresholds.ts` reads them and the admin
- * Limits page renders them, but nothing between the meter and the serving path consults either. An
- * unread meter is the same defect as an unwired health layer.
+ * Under 80% nothing stops; 80% to 95% stops cron, the queue, watchdog writes and image
+ * regeneration (work nobody waits for); 95% and over stops every write (GETs answer from cache,
+ * non-GET gets 503, since a cache HIT costs 0 ms of cpuTime).
  *
- * ## The ladder
- *
- * | band | what stops |
- * | --- | --- |
- * | under 80% | nothing |
- * | 80% to 95% | cron, the queue, watchdog writes and image regeneration |
- * | 95% and over | every write; GETs answer from cache, non-GET gets 503 |
- *
- * Each rung drops the most expensive discretionary work first. Cron, queues and image styles are
- * regeneration -- they spend rows and DO invocations on work nobody is waiting for -- so they go
- * before anything a visitor can see. Serving a cached page is the last thing to stop because it is
- * the cheapest thing the object does: measured, a cache HIT costs 0 ms of cpuTime.
- *
- * ## Which meters
- *
- * The two DAILY ceilings, and only those. Rows written and DO requests both reset at midnight UTC,
- * so a degraded site recovers on its own. The monthly image-transform cap is NOT on
- * this ladder: it does not reset at midnight, so degrading against it would leave a site throttled
- * for weeks with no path back. It is projected and warned about separately.
+ * Only the two daily meters (rows written, DO requests) are on it, since they reset at midnight
+ * UTC. The monthly image-transform cap is not (a site would stay throttled for weeks).
+ * @module
  */
+import type { PlanEnv } from './plan';
+import { limitFor, THRESHOLDS } from './thresholds';
 
-import type { PlanEnv } from './plan.js';
-import { limitFor, THRESHOLDS } from './thresholds.js';
-
-/**
- * The daily allowance for one meter, read from `THRESHOLDS` rather than restated.
- *
- * Restating 100,000 here would be a second copy of a number the limits page already renders, and
- * the two would drift the first time a plan changed.
- */
-export function dailyLimit(id: 'rows-written' | 'do-requests', env?: PlanEnv | null): number {
+/** the daily allowance for one meter, read from `THRESHOLDS` (not a second copy of the number) */
+export function dailyLimit(id: 'rows-written' | 'do-requests', env?: PlanEnv): number {
 	const threshold = THRESHOLDS.find((t) => t.id === id);
 	if (!threshold) return 0;
-	// null means unmetered on this plan, which is not the same as zero and must not degrade anything
+	// null means unmetered on this plan (not zero; must not degrade anything)
 	return limitFor(threshold, env) ?? 0;
 }
 
@@ -49,8 +26,10 @@ export const REDUCE_AT = 0.8;
 /** the fraction at which writes stop */
 export const READ_ONLY_AT = 0.95;
 
+/** where the site is on the ladder */
 export type DegradeLevel = 'normal' | 'reduced' | 'read-only';
 
+/** the two daily meters as fractions of their allowance */
 export type Meters = {
 	/** rows written today against the daily allowance, 0..1+ */
 	rowsFraction: number;
@@ -58,6 +37,7 @@ export type Meters = {
 	doFraction: number;
 };
 
+/** what the current level allows */
 export type Degradation = {
 	level: DegradeLevel;
 	/** the meter that put it here, so an operator knows which number to act on */
@@ -75,14 +55,11 @@ export type Degradation = {
 };
 
 /**
- * Reads the ladder.
+ * Reads the ladder from the worse of the two meters, never an average (a saturated meter beside an
+ * idle one must not read healthy).
  *
- * WORST OF THE TWO, never an average. The meters bound different things and either one running out
- * stops the site, so averaging a saturated meter against an idle one reports healthy right up to
- * the failure.
- *
- * A non-finite or negative fraction is treated as 0 rather than throwing: this is consulted on the
- * serving path, and a site must not go read-only because a counter was missing.
+ * A non-finite or negative fraction counts as 0: this runs on the serving path, and a missing
+ * counter must not make a site read-only.
  */
 export function degradation(meters: Meters): Degradation {
 	const rows = clean(meters.rowsFraction);
@@ -135,9 +112,8 @@ const clean = (v: number) => (Number.isFinite(v) && v > 0 ? v : 0);
 /**
  * What to tell a visitor whose request was refused, and what to tell a monitor.
  *
- * `Retry-After` is seconds to the UTC reset rather than a fixed number, because that is when the
- * condition actually clears. A fixed 60 would have a client retry 1,400 times against a site that
- * cannot answer until midnight.
+ * `Retry-After` is seconds to the UTC reset, when the condition clears (a fixed 60 would have a
+ * client retry 1,400 times).
  */
 export function readOnlyResponse(secondsToReset: number, d: Degradation): Response {
 	return new Response(

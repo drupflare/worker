@@ -1,3 +1,13 @@
+/**
+ * The deferred TCP tier: PHP declares a whole exchange, JS runs it between invocations, and the
+ * answer is read on a later one. A refused park (`park.ts`) degrades to this.
+ *
+ * The endpoint and credentials come only from `REDIS_URL` / `SYSLOG_URL`, never from PHP, which
+ * would otherwise get arbitrary TCP. Import `edgeport/core`, not the root, which esbuild cannot
+ * bundle.
+ *
+ * @module
+ */
 import {
 	AuthError,
 	connect as coreConnect,
@@ -8,44 +18,12 @@ import {
 import { _connectOverSocket, type RedisArg } from 'edgeport/redis';
 import { _sessionFromSocket as syslogSessionFromSocket } from 'edgeport/syslog';
 
-/**
- * The TCP tier of the CFW network capability: deferred, scripted, operator-scoped.
- *
- * **Imported from `edgeport/core`, not the package root**, which re-exports 20 namespaces it never
- * imports: esbuild refuses that and vite tolerates it, so the gate stayed green while wrangler could
- * not bundle.
- *
- * **THIS DOCBLOCK ASSERTED THAT A SESSION API CANNOT EXIST, AND THE SHIPPING BINARY HAS ONE.** The
- * claim was that `Host::call()` is `$reply = $invoke($json)`, so a host function that awaits hands
- * PHP a Promise it can only stringify, and a `read()` blocking for bytes that have not arrived is
- * therefore impossible. That was true of a HOST FUNCTION and it was never a property of the
- * interpreter: `ext/cfwpark` freezes the Zend continuation, `longjmp`s out of `pib_run`, and lets
- * `src/ops/park-drive.ts` perform exactly `open` / `write` / `read` / `line` in JavaScript before
- * resuming the same PHP chain. `drupal/redis` runs on it and is `verified`. The refusal closed a
- * mechanism and took the objective with it, which is the failure this repository names most often.
- *
- * So this file is the DEFERRED tier, not the only tier. PHP declares a whole exchange, the exchange
- * runs in JS between invocations, and the answer is readable on a later one -- the same
- * cached -> deferred -> sync layering `cfwFetch` lives under, and the sync tier is `src/ops/park.ts`.
- * The deferred tier survives on its own terms rather than as a consolation: a park is refused
- * wherever the safety predicate cannot walk the frames, and **a refused park must degrade rather
- * than fail**, so this is what it degrades to.
- *
- * **The ENDPOINT is the operator's, never the caller's.** A queued row names a host, so letting PHP
- * choose one would put arbitrary `host:port` TCP behind any module that can call a host function --
- * a port scanner and a protocol-smuggling surface, which is a strictly larger hole than the HTTP
- * tier's SSRF because it is not confined to HTTP semantics. `REDIS_URL` and `SYSLOG_URL` supply the
- * endpoint and the credentials; PHP supplies the operation and nothing else.
- *
- * Two protocols ship because two shapes exist, not to be a catalogue: `redis` has a reply and is
- * therefore cached-or-deferred, `syslog` has none and is fire-and-forget. A third protocol is a
- * registry entry.
- */
-
 // #region endpoints
 
+/** `redis` has a reply and is cached or deferred; `syslog` is fire-and-forget */
 export type TcpProtocol = 'redis' | 'syslog';
 
+/** every {@link TcpProtocol} */
 export const TCP_PROTOCOLS: readonly TcpProtocol[] = ['redis', 'syslog'];
 
 /** the pseudo-scheme a queued TCP exchange is stored under, so the drain can dispatch on it */
@@ -58,6 +36,7 @@ export type TcpEnv = {
 	SYSLOG_APP_NAME?: string;
 };
 
+/** a resolved operator endpoint */
 export interface TcpEndpoint {
 	protocol: TcpProtocol;
 	hostname: string;
@@ -69,15 +48,10 @@ export interface TcpEndpoint {
 	db?: number;
 }
 
-/** blocked outbound on Workers, so an endpoint on it is refused at resolve time rather than dialled */
+/** blocked outbound on Workers, so refused at resolve time rather than dialled */
 export const BLOCKED_TCP_PORT = 25;
 
-/**
- * Every scheme, with its default port and whether it is TLS from the first byte.
- *
- * The TLS flag is a FIELD rather than a suffix test, because `'redis:'.endsWith('s:')` is true --
- * which silently made every plaintext Redis endpoint dial implicit TLS until a spec caught it.
- */
+// default port and implicit TLS per scheme; a field, since `'redis:'.endsWith('s:')` is true
 const SCHEMES: Record<string, { protocol: TcpProtocol; port: number; tls: boolean }> = {
 	'redis:': { protocol: 'redis', port: 6379, tls: false },
 	'rediss:': { protocol: 'redis', port: 6380, tls: true },
@@ -86,10 +60,8 @@ const SCHEMES: Record<string, { protocol: TcpProtocol; port: number; tls: boolea
 };
 
 /**
- * Resolves one protocol's endpoint from the operator's configuration.
- *
- * Returns a refusal rather than throwing, because every caller reports it to PHP as text: a site
- * that never configured Redis must be told that, not handed a connection error from a default host.
+ * Resolves one protocol's endpoint from the operator's configuration, or a refusal PHP can show
+ * (an unconfigured site is told so rather than dialling a default host).
  */
 export function resolveTcpEndpoint(
 	env: TcpEnv,
@@ -129,8 +101,7 @@ export function resolveTcpEndpoint(
 		protocol,
 		hostname: url.hostname,
 		port,
-		// redis has no in-band upgrade, so a redis endpoint is implicit or plaintext and never
-		// starttls; syslog over TLS is RFC 5425, which is also implicit
+		// never starttls: redis has no in-band upgrade and syslog TLS (RFC 5425) is implicit
 		tls: scheme.tls ? 'implicit' : 'off'
 	};
 	if (url.username !== '') endpoint.username = decodeURIComponent(url.username);
@@ -147,8 +118,8 @@ export function resolveTcpEndpoint(
 // #region the redis command surface PHP may reach
 
 /**
- * Commands whose answer can be cached and whose retry is a slower success rather than a second
- * outcome, so they take the GET budget and TTL from `deferred-post.ts`.
+ * Commands whose answer can be cached and whose retry is harmless, so they take the GET budget and
+ * TTL from `deferred-post.ts`.
  */
 export const REDIS_READ_COMMANDS: ReadonlySet<string> = new Set([
 	'GET',
@@ -182,12 +153,8 @@ export const REDIS_READ_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Commands a module may not run against the operator's server.
- *
- * The endpoint is chosen by the operator and shared with whatever else uses it, so a contrib module
- * that can reach it must not be able to erase it, reconfigure it, or run Lua on it. This is a trust
- * boundary and not a taste judgement: everything here either destroys data outside this site's
- * keyspace, changes the server's configuration, or executes code.
+ * Commands a module may not run against the operator's shared server: each destroys data outside
+ * this site's keyspace, reconfigures the server, executes code, or blocks.
  */
 export const REDIS_REFUSED_COMMANDS: ReadonlySet<string> = new Set([
 	'FLUSHALL',
@@ -220,11 +187,8 @@ export const REDIS_REFUSED_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The HTTP method a TCP operation borrows, so the deferred tier's budget and TTL apply unchanged.
- *
- * They are reused rather than duplicated: `attemptBudget()` already says a
- * non-idempotent operation gets one attempt, and a Redis `INCR` replayed after a timeout is the same
- * defect as a captcha token replayed -- the first attempt may have landed and only failed to return.
+ * The HTTP method a TCP operation borrows, so the deferred tier's budget applies; a write gets one
+ * attempt, since a replayed `INCR` may have landed the first time.
  */
 export function tcpMethod(protocol: TcpProtocol, command: string): 'GET' | 'POST' {
 	if (protocol !== 'redis') return 'POST';
@@ -236,11 +200,8 @@ export function tcpMethod(protocol: TcpProtocol, command: string): 'GET' | 'POST
 // #region the queue url
 
 /**
- * The url a TCP exchange is queued and keyed under.
- *
- * It names the endpoint so `/health` and a drain report are legible, and it carries NO credentials
- * -- those live in the env and are read at drain time. The operation is in the body, which is what
- * `deferredKey()` already keys on, so two different Redis commands to one server are two rows.
+ * The url a TCP exchange is queued under: the endpoint without credentials (read from env at
+ * drain time). The operation rides in the body, which `deferredKey()` also keys on.
  */
 export function tcpQueueUrl(endpoint: TcpEndpoint): string {
 	return `${TCP_SCHEME_PREFIX}${endpoint.protocol}://${endpoint.hostname}:${endpoint.port}/`;
@@ -251,11 +212,13 @@ export function isTcpUrl(url: string): boolean {
 	return url.startsWith(TCP_SCHEME_PREFIX);
 }
 
-/** the protocol a queued row runs, or null when the url is not this tier's */
-export function tcpProtocolOf(url: string): TcpProtocol | null {
-	if (!isTcpUrl(url)) return null;
+/** the protocol a queued row runs, or undefined when the url is not this tier's */
+export function tcpProtocolOf(url: string): TcpProtocol | undefined {
+	if (!isTcpUrl(url)) return undefined;
 	const name = url.slice(TCP_SCHEME_PREFIX.length).split(':')[0];
-	return (TCP_PROTOCOLS as readonly string[]).includes(name ?? '') ? (name as TcpProtocol) : null;
+	return (TCP_PROTOCOLS as readonly string[]).includes(name ?? '')
+		? (name as TcpProtocol)
+		: undefined;
 }
 
 // #endregion
@@ -263,16 +226,14 @@ export function tcpProtocolOf(url: string): TcpProtocol | null {
 // #region running one exchange
 
 /**
- * The transport, injected so a spec drives the real client over a scripted socket.
- *
- * `mail.ts` does the same for SMTP and for the same reason: stubbing `runTcpExchange` itself would
- * assert against a stub, while stubbing the SOCKET runs edgeport's real RESP codec.
+ * The transport, injected so a spec runs edgeport's real RESP codec over a scripted socket.
  */
 export type TcpDeps = { connect: (opts: ConnectOptions) => Promise<CoreSocket> };
 
+/** the real socket connect */
 export const DEFAULT_TCP_DEPS: TcpDeps = { connect: coreConnect };
 
-/** what one exchange produces, shaped like an HTTP result so the existing cache table is unchanged */
+/** what one exchange produces, shaped like an HTTP result for the existing cache table */
 export interface TcpResult {
 	status: number;
 	headers: Record<string, string>;
@@ -288,10 +249,8 @@ export interface TcpCachedReply {
 }
 
 /**
- * Turns a cached exchange row into the reply PHP reads.
- *
- * A non-200 body is the server's own sentence and has to arrive as `error`, which is where
- * `CfwTcp::redis()` looks; putting it only in `body` made every failure read the same.
+ * Turns a cached exchange row into the reply PHP reads; a non-200 body also goes in `error`,
+ * where `CfwTcp::redis()` looks.
  */
 export function tcpCachedReply(status: number, body: string): TcpCachedReply {
 	const ok = status === 200;
@@ -321,12 +280,9 @@ async function runRedis(
 		port: endpoint.port,
 		tls: endpoint.tls === 'implicit' ? 'on' : 'off'
 	});
-	// THE HANDSHAKE IS INSIDE THE TRY, and it used to sit above it. `AuthError` is raised by
-	// `_connectOverSocket()`, so naming it in the catch below could never match: a wrong password
-	// escaped as though it were a transport fault and the drain retried it, forever, against a
-	// server that had already decided. That is the exact outcome the catch exists to prevent, one
-	// call earlier than where it was looking.
-	let session: Awaited<ReturnType<typeof _connectOverSocket>> | null = null;
+	// the handshake stays inside the try: it raises `AuthError`, which must not reach the drain's
+	// retry
+	let session: Awaited<ReturnType<typeof _connectOverSocket>> | undefined;
 	try {
 		session = await _connectOverSocket(socket, {
 			hostname: endpoint.hostname,
@@ -343,17 +299,13 @@ async function runRedis(
 			body: JSON.stringify(nativeToJson(reply.value))
 		};
 	} catch (e) {
-		// A RESP error is the SERVER ANSWERING, and edgeport raises it as a ProtocolError rather
-		// than putting it on the reply. Letting it propagate would make the drain treat a decision
-		// as a transport fault and retry it against a server that has already decided -- so it is a
-		// 502 carrying the server's own sentence, while a ConnectionError still escapes to the
-		// drain's retry budget where it belongs.
+		// a RESP or auth error is the server's answer: a 502, not a retryable transport fault
 		if (e instanceof ProtocolError || e instanceof AuthError) {
 			return { status: 502, headers: {}, body: String(e.message) };
 		}
 		throw e;
 	} finally {
-		// null when the handshake itself threw, in which case there is no session to close
+		// undefined when the handshake threw
 		if (session) await session.close();
 	}
 }
@@ -382,7 +334,7 @@ async function runSyslog(
 			...(record.facility !== undefined ? { facility: record.facility as never } : {}),
 			...(record.msgId !== undefined ? { msgId: String(record.msgId) } : {})
 		});
-		// syslog over TCP never replies, so there is nothing to cache and nothing to read back
+		// syslog over TCP never replies
 		return { status: 204, headers: {}, body: '' };
 	} finally {
 		await session.close();
@@ -390,10 +342,8 @@ async function runSyslog(
 }
 
 /**
- * Runs one queued exchange, in JS, between PHP invocations.
- *
- * `body` is what PHP declared: a JSON array of Redis arguments, or a syslog record. It is parsed
- * here rather than at queue time so a row queued by an older build still runs.
+ * Runs one queued exchange between PHP invocations. `body` is a JSON array of Redis arguments or a
+ * syslog record, parsed here so a row queued by an older build still runs.
  */
 export async function runTcpExchange(
 	url: string,
@@ -402,7 +352,7 @@ export async function runTcpExchange(
 	deps: TcpDeps = DEFAULT_TCP_DEPS
 ): Promise<TcpResult> {
 	const protocol = tcpProtocolOf(url);
-	if (protocol === null) return { status: 400, headers: {}, body: `not a TCP url: ${url}` };
+	if (protocol === undefined) return { status: 400, headers: {}, body: `not a TCP url: ${url}` };
 
 	const resolved = resolveTcpEndpoint(env, protocol);
 	if ('refusal' in resolved) return { status: 503, headers: {}, body: resolved.refusal };

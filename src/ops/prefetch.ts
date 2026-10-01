@@ -1,21 +1,15 @@
 /**
- * Outbound answers the host warms BEFORE Drupal asks for them.
+ * Outbound answers the host warms before Drupal asks for them.
  *
- * The deferred tier is cached-or-deferred by construction: a Worker cannot fetch synchronously, so
- * the first request for a URL is refused and answered on a later one. That is correct and it is not
- * the whole ladder. Every URL that is decidable from the SCHEDULE rather than from the request can
- * be fetched before the render that wants it, and then the render meets a cache hit and never
- * defers at all.
- *
- * WHAT QUALIFIES. A URL belongs here when the host can name it without running Drupal, and when
- * fetching it has no side effect at the far end. Everything below is a GET against a published
- * endpoint on a schedule this project already drives.
- *
- * WHAT DOES NOT. A login callback (the host owns that route already), a search query inside a
- * render (a GET with no side effects, therefore re-renderable), and a cache backend (the object's
- * own SQLite is the replacement rather than a workaround).
+ * A Worker cannot fetch synchronously, so the deferred tier refuses the first request for a URL.
+ * A URL the host can name from the schedule, without running Drupal and with no side effect at
+ * the far end (a GET against a published endpoint), is fetched ahead so the render hits the cache.
+ * Not eligible: a login callback (the host owns that route), a search query inside a render, and
+ * a cache backend (the object's SQLite replaces it).
+ * @module
  */
 
+/** one URL the host warms ahead of the render that wants it */
 export type DeclaredFetch = {
 	url: string;
 	/** how long an answer stays worth having, in ms */
@@ -25,7 +19,7 @@ export type DeclaredFetch = {
 };
 
 /** the release history for one project, which is what `UpdateFetcher` builds */
-export function releaseHistoryUrl(project: string, base?: string | null): string {
+export function releaseHistoryUrl(project: string, base?: string): string {
 	const root = String(base ?? '').trim() || 'https://updates.drupal.org/release-history';
 	return `${root}/${project}/current`;
 }
@@ -33,13 +27,9 @@ export function releaseHistoryUrl(project: string, base?: string | null): string
 /**
  * Everything the host can warm without asking Drupal.
  *
- * `projects` comes from the site's own module list when the caller has one; with none it still
- * warms core, which is the project every site has.
+ * `projects` comes from the site's module list when the caller has one; core is always warmed.
  */
-export function declaredFetches(
-	projects: readonly string[] = [],
-	base?: string | null
-): DeclaredFetch[] {
+export function declaredFetches(projects: readonly string[] = [], base?: string): DeclaredFetch[] {
 	const day = 86_400_000;
 	const out: DeclaredFetch[] = [
 		{
@@ -61,9 +51,8 @@ export function declaredFetches(
 /**
  * Which declared URLs are worth queueing right now.
  *
- * `fresh` answers whether the fetch cache already holds a usable entry. Anything it says yes to is
- * skipped, so a warm round costs nothing at all -- which is what makes running this on every cron
- * round affordable rather than a second fetch storm.
+ * `fresh` says whether the fetch cache already holds a usable entry; those are skipped, so a warm
+ * round costs nothing and can run on every cron round.
  */
 export function pendingDeclared(
 	declared: readonly DeclaredFetch[],

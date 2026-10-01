@@ -8,14 +8,16 @@ export const RUNGS = [
 	'rollback'
 ] as const;
 
+/** one rung of the repair ladder */
 export type Rung = (typeof RUNGS)[number];
 
 /** consecutive same-code failures before quarantine; below this the lower rungs own the problem */
 export const QUARANTINE_STRIKES = 3;
 
-/** dwell in TIME; strikes freeze at quarantine, so any strike threshold above it is unreachable */
+/** dwell in time; strikes freeze at quarantine, so any strike threshold above it is unreachable */
 export const ROLLBACK_DWELL_MS = 30 * 60_000;
 
+/** where a site sits on the ladder and the strikes that put it there */
 export type RepairState = {
 	rung: Rung;
 	/** the failure code the strikes belong to; a different code resets the count */
@@ -25,6 +27,7 @@ export type RepairState = {
 	lastRollbackAt: number | null;
 };
 
+/** the state of a site with no recorded failures */
 export const CLEAN_STATE: RepairState = {
 	rung: 'observe',
 	code: null,
@@ -36,12 +39,12 @@ export const CLEAN_STATE: RepairState = {
 /**
  * Folds one outcome into the state.
  *
- * A DIFFERENT failure code resets the strike count: two unrelated faults are not evidence of one
- * durable condition, and summing them quarantines a site for having two bad days.
+ * A different failure code resets the strike count: two unrelated faults are not one durable
+ * condition, and summing them would quarantine a site for two bad days.
  */
 export function recordOutcome(
 	state: RepairState,
-	outcome: { ok: boolean; code?: string | null },
+	outcome: { ok: boolean; code?: string },
 	nowMs: number
 ): RepairState {
 	if (outcome.ok) {
@@ -64,27 +67,28 @@ export function isQuarantined(state: RepairState): boolean {
 	return state.rung === 'quarantine' || state.rung === 'rollback';
 }
 
+/** whether to roll back, and the reason either way */
 export type RollbackDecision = {
 	rollback: boolean;
 	reason: string;
 };
 
 /**
- * Whether to roll back; it says no for a named reason far more often than it says yes.
+ * Whether to roll back; it usually says no, with a named reason.
  *
- * Requires quarantine, {@link ROLLBACK_DWELL_MS} of dwell, and a restore point that exists --
- * reverting to nothing is strictly worse than the fault being repaired.
+ * Requires quarantine, {@link ROLLBACK_DWELL_MS} of dwell and an existing restore point (reverting
+ * to nothing is worse than the fault).
  */
 export function shouldRollback(
 	state: RepairState,
-	restorePoint: { id: number; statements: number } | null,
+	restorePoint: { id: number; statements: number } | undefined,
 	nowMs: number
 ): RollbackDecision {
 	if (!isQuarantined(state)) {
 		return { rollback: false, reason: 'not quarantined; the lower rungs own this' };
 	}
-	// a quarantined state with no timestamp predates this field; treat it as just-quarantined rather
-	// than as infinitely old, so an upgrade cannot roll a site back on its first alarm
+	// a quarantined state with no timestamp predates this field; treat it as just-quarantined so
+	// an upgrade cannot roll a site back on its first alarm
 	const since = state.quarantinedAt;
 	if (since === null) {
 		return { rollback: false, reason: 'quarantined with no timestamp; waiting for the dwell' };
@@ -97,7 +101,7 @@ export function shouldRollback(
 		};
 	}
 	if (!restorePoint) {
-		// the important refusal: a quarantined site still serves, and a rollback to nothing does not
+		// a quarantined site still serves; a rollback to nothing would not
 		return {
 			rollback: false,
 			reason: 'no restore point exists; staying quarantined is strictly better than reverting to nothing'

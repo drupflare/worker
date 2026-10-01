@@ -1,27 +1,13 @@
-import { isPaid, type PlanEnv } from './plan.js';
-
 /**
- * The page cache tier that survives a colo, and the previous generation a cold object answers from.
+ * The KV page tier: a cache that survives a colo, plus the previous generation.
  *
- * It cannot live in the Durable Object. `serveFromStorage()` is synchronous by construction -- an
- * `await` there introduces exactly the suspension the reentrancy contract forbids -- and every KV read
- * is asynchronous. So a KV backend cannot serve the DO's storage lane at any price. It belongs in the
- * Worker, which is already async and already does a `caches.default` lookup before reaching the object.
- *
- * On by default on both plans once `PAGE_KV` is bound. It used to be paid-only because free KV allows
- * 1,000 writes a day for the whole account, which one busy site could spend by itself. The object now
- * grants each page write against `KV_WRITES_PER_DAY` (see `kvWriteBudget()` in `site-do.ts`), so a
- * free site stops storing at its budget and keeps serving what it already stored. Reads are bounded
- * by Worker requests: at most one per miss, plus up to {@link STALE_GENERATION_DEPTH} on a miss at the
- * current generation.
- *
- * Compiled plans share the namespace and are NOT budgeted, so {@link planKvWritesEnabled} keeps them
- * paid-only unless `PAGE_KV_ENABLED` says so.
- *
- * Degrades to nothing. No binding, or a free site, and every function here is a no-op that reports
- * why -- so the tier can ship before any namespace exists and a misconfiguration cannot take the site
- * down.
+ * It lives in the Worker because `serveFromStorage()` is synchronous and KV reads are async.
+ * With no binding every function is a no-op. Compiled plans share the namespace with no write
+ * budget, so {@link planKvWritesEnabled} keeps them paid-only.
+ * @module
  */
+import { leverInt } from '../util/lever';
+import { isPaid, type PlanEnv } from './plan';
 
 /** the KV surface this tier uses; narrowed so a test can supply a plain object */
 export type PageKv = {
@@ -30,30 +16,24 @@ export type PageKv = {
 	delete(key: string): Promise<void>;
 };
 
+/** the bindings and levers the KV page tier reads */
 export type PageStoreEnv = PlanEnv & {
 	/** optional: the tier is absent rather than broken when this is not bound */
-	PAGE_KV?: PageKv | null;
+	PAGE_KV?: PageKv;
 	/** force the tier on ('1') or off ('0'), overriding the per-plan default */
-	PAGE_KV_ENABLED?: string | null;
-	/** seconds; a stored page is also generation-keyed, so this is a floor on garbage not a freshness knob */
-	PAGE_KV_TTL?: string | number | null;
-	/** extra path prefixes that may never be answered from a previous generation, comma separated */
-	NEVER_STALE?: string | null;
+	PAGE_KV_ENABLED?: string;
+	/** seconds; pages are generation-keyed, so this is a floor on garbage, not a freshness knob */
+	PAGE_KV_TTL?: string | number;
+	/** extra comma-separated path prefixes never answered from a previous generation */
+	NEVER_STALE?: string;
 };
 
-/** what a stored page carries; the status and content type travel with the body or a 200 is assumed */
+/** what a stored page carries (a missing status or content type reads as 200 and html) */
 export type StoredPage = {
 	status: number;
 	contentType: string;
 	html: string;
-	/**
-	 * when this was written, in ms.
-	 *
-	 * Only the stale reader uses it: the generation bound says how many content changes back a page
-	 * is, and this is what says how long ago. Optional because a record written before it existed is
-	 * still a valid page; {@link readStalePage} treats an absent value as unbounded age rather than
-	 * as zero, which would make every old record look fresh.
-	 */
+	/** when written, in ms; absent reads as unbounded age to {@link readStalePage}, not zero */
 	storedAt?: number;
 };
 
@@ -63,18 +43,11 @@ export const DEFAULT_PAGE_KV_TTL_SECONDS = 86_400;
 /** KV's own minimum; a smaller value is rejected by the API rather than clamped */
 export const KV_MIN_TTL_SECONDS = 60;
 
-/**
- * Whether the KV page tier should be used at all.
- *
- * Three-way, most specific first, matching every other per-plan decision here: an explicit
- * `PAGE_KV_ENABLED`, then the plan. A missing binding always wins over both -- asking for a tier that
- * is not bound is a configuration error, and answering it with a crash on the serving path would be
- * the wrong trade.
- */
-export function pageKvEnabled(env?: PageStoreEnv | null): boolean {
+/** whether the KV page tier is used; `PAGE_KV_ENABLED` decides, and no binding always means off */
+export function pageKvEnabled(env?: PageStoreEnv): boolean {
 	if (!env?.PAGE_KV) return false;
 	const explicit = env?.PAGE_KV_ENABLED;
-	if (explicit !== undefined && explicit !== null && String(explicit) !== '') {
+	if (explicit !== undefined && String(explicit) !== '') {
 		return String(explicit) !== '0';
 	}
 	return true;
@@ -85,62 +58,44 @@ export const KV_GRANT_HEADER = 'x-cfw-kv-grant';
 
 /**
  * Page writes to `PAGE_KV` one site may make in a UTC day.
- *
- * Free KV allows 1,000 writes a day across the whole account, and `CONFIG_KV` draws on the same
- * allowance, so free stops at 800. Paid has no daily cap and is unbounded unless set.
+ * Free KV allows 1,000 a day per account and `CONFIG_KV` shares it, so free stops at 800.
  */
-export function kvWriteBudget(env?: (PlanEnv & { KV_WRITES_PER_DAY?: unknown }) | null): number {
+export function kvWriteBudget(env?: PlanEnv & { KV_WRITES_PER_DAY?: unknown }): number {
 	const raw = env?.KV_WRITES_PER_DAY;
-	const n = Number(raw);
-	if (raw !== undefined && raw !== null && String(raw) !== '' && Number.isFinite(n) && n >= 0) {
-		return Math.floor(n);
-	}
-	return isPaid(env) ? Number.POSITIVE_INFINITY : 800;
+	return leverInt(raw) ?? (isPaid(env) ? Number.POSITIVE_INFINITY : 800);
 }
 
-/** whether compiled plans may be written to KV; they carry no write budget, so free needs an explicit `1` */
-export function planKvWritesEnabled(env?: PageStoreEnv | null): boolean {
+/** whether compiled plans may be written to KV (no write budget, so free needs an explicit `1`) */
+export function planKvWritesEnabled(env?: PageStoreEnv): boolean {
 	if (!pageKvEnabled(env)) return false;
 	return isPaid(env) || String(env?.PAGE_KV_ENABLED ?? '') === '1';
 }
 
-/** seconds a stored page lives; floored at KV's own minimum so a bad value cannot make writes fail */
-export function pageKvTtlSeconds(env?: PageStoreEnv | null): number {
+/** seconds a stored page lives, floored at KV's minimum so a bad value cannot fail writes */
+export function pageKvTtlSeconds(env?: PageStoreEnv): number {
 	const raw = Number(env?.PAGE_KV_TTL ?? 0);
 	if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_PAGE_KV_TTL_SECONDS;
 	return Math.max(KV_MIN_TTL_SECONDS, Math.floor(raw));
 }
 
-/**
- * The key a page is stored under.
- *
- * The GENERATION is in the key, which is what makes invalidation free: a bump changes every key at
- * once, so nothing has to be enumerated or deleted. That is the same design the `caches.default` tier
- * uses, and it matters more here -- KV has no bulk delete, so a scheme needing one would be
- * uninvalidatable in practice.
- */
+/** the key a page is stored under; the generation is in it, so a bump needs no bulk delete */
 export function pageKvKey(site: string, generation: string | number, path: string): string {
 	return `page:${site}:${generation}:${path}`;
 }
 
-/**
- * Reads a stored page, or `null` for a miss.
- *
- * Never throws. A KV read that fails is a cache miss, because the alternative is a 500 on a path that
- * has a working fallback one tier down.
- */
+/** reads a stored page, or `undefined` for a miss; never throws (a failed read is a miss) */
 export async function readPage(
-	env: PageStoreEnv | null | undefined,
+	env: PageStoreEnv | undefined,
 	site: string,
 	generation: string | number,
 	path: string
-): Promise<StoredPage | null> {
-	if (!pageKvEnabled(env) || !env?.PAGE_KV) return null;
+): Promise<StoredPage | undefined> {
+	if (!pageKvEnabled(env) || !env?.PAGE_KV) return undefined;
 	try {
 		const raw = await env.PAGE_KV.get(pageKvKey(site, generation, path), 'text');
-		if (raw === null) return null;
+		if (raw === null) return undefined;
 		const parsed = JSON.parse(raw) as Partial<StoredPage>;
-		if (typeof parsed.html !== 'string') return null;
+		if (typeof parsed.html !== 'string') return undefined;
 		return {
 			status: typeof parsed.status === 'number' ? parsed.status : 200,
 			contentType:
@@ -151,26 +106,15 @@ export async function readPage(
 			...(typeof parsed.storedAt === 'number' ? { storedAt: parsed.storedAt } : {})
 		};
 	} catch {
-		// unparseable or unavailable is a MISS, not an error: one tier down still answers
-		return null;
+		// unparseable or unavailable is a miss (one tier down still answers)
+		return undefined;
 	}
 }
 
-/**
- * How many generations back a miss may look before it gives up.
- *
- * A generation counter is monotonic, so `N-1` is exactly one content change behind. Two is the
- * whole budget: each step is another KV read in front of the object, and at three the read cost
- * exceeds the hop it is trying to avoid.
- */
+/** how many generations back a miss may look (at three, the reads cost more than the object hop) */
 export const STALE_GENERATION_DEPTH = 2;
 
-/**
- * The oldest a stale answer may be, in ms.
- *
- * The generation bound says how many changes behind; this says how long. Without it an abandoned
- * site serves last month's page forever, because nothing ever bumps it past the depth above.
- */
+/** the oldest a stale answer may be, in ms (an abandoned site is never bumped past the depth) */
 export const STALE_MAX_AGE_MS = 86_400_000;
 
 /** paths that must never be answered from a previous generation, matched as prefixes */
@@ -188,13 +132,9 @@ const NEVER_STALE = [
 
 /**
  * Whether a path may be answered from a previous generation.
- *
- * A DENY-LIST rather than an allow-list, and the direction is the decision: serving a stale page is
- * only ever a latency win, and the pages where it is wrong are the ones a visitor acts on. An
- * operator-supplied list is added rather than replacing this one, so a site cannot make its own
- * login page staleable by configuring badly.
+ * A deny-list; an operator list adds to it, so a bad config cannot make login staleable.
  */
-export function staleAllowed(path: string, extra: string | null | undefined = null): boolean {
+export function staleAllowed(path: string, extra?: string): boolean {
 	const denied = [
 		...NEVER_STALE,
 		...String(extra ?? '')
@@ -206,66 +146,49 @@ export function staleAllowed(path: string, extra: string | null | undefined = nu
 }
 
 /**
- * A page from a PREVIOUS generation, when the current one has none.
- *
- * The bytes are already there. `PAGE_KV_TTL`'s own comment calls itself "a floor on garbage, not a
- * freshness knob" precisely because a stored page is generation-keyed, so bumping the generation
- * does not delete the previous generation's entries -- they expire on their own TTL. The previous
- * answer is sitting in KV on every deployed site, unread. This is a READ change and not a storage
- * design.
- *
- * Returns the page and how many generations back it came from, so the caller can say so in a header
- * and schedule the regeneration rather than rendering inline. The answer carries
- * `x-cfw-edge: STALE`; `x-cfw-cache: KV` alone does not identify it, because the object's own
- * time-stale `AGED` answer reports the same value.
+ * A page from a previous generation plus how far back it was; the answer carries
+ * `x-cfw-edge: STALE` (`x-cfw-cache: KV` alone also matches the object's `AGED` answer).
  */
 export async function readStalePage(
-	env: PageStoreEnv | null | undefined,
+	env: PageStoreEnv | undefined,
 	site: string,
 	generation: number,
 	path: string,
-	opts: { depth?: number; nowMs?: number; neverStale?: string | null } = {}
-): Promise<{ page: StoredPage; behind: number } | null> {
-	if (!pageKvEnabled(env) || !env?.PAGE_KV) return null;
-	if (!staleAllowed(path, opts.neverStale)) return null;
+	opts: { depth?: number; nowMs?: number; neverStale?: string } = {}
+): Promise<{ page: StoredPage; behind: number } | undefined> {
+	if (!pageKvEnabled(env) || !env?.PAGE_KV) return undefined;
+	if (!staleAllowed(path, opts.neverStale)) return undefined;
 	const depth = Math.max(1, Math.min(opts.depth ?? STALE_GENERATION_DEPTH, 8));
 	const now = opts.nowMs ?? Date.now();
 	for (let behind = 1; behind <= depth; behind++) {
 		const previous = generation - behind;
-		if (previous < 0) return null;
+		if (previous < 0) return undefined;
 		const page = await readPage(env, site, previous, path);
-		if (page === null) continue;
-		// a wall-clock bound on top of the generation bound; see STALE_MAX_AGE_MS
+		if (page === undefined) continue;
+		// wall-clock bound on top of the generation bound
 		if (typeof page.storedAt === 'number' && now - page.storedAt > STALE_MAX_AGE_MS) {
-			return null;
+			return undefined;
 		}
 		return { page, behind };
 	}
-	return null;
+	return undefined;
 }
 
-/**
- * Stores a page. Returns whether it was written, so a caller can report the tier accurately.
- *
- * Never throws, for the same reason as the read: a write failure must not fail a request that already
- * has its answer in hand.
- */
+/** stores a page and returns whether it was written; never throws (the answer is in hand) */
 export async function writePage(
-	env: PageStoreEnv | null | undefined,
+	env: PageStoreEnv | undefined,
 	site: string,
 	generation: string | number,
 	path: string,
 	page: StoredPage
 ): Promise<boolean> {
 	if (!pageKvEnabled(env) || !env?.PAGE_KV) return false;
-	// a placeholder is not a page. The cold path answers 503 + Retry-After while the kernel comes up,
-	// and storing that would pin "warming" into a global cache for a day
+	// the cold path's 503 placeholder must not be stored (it would pin "warming" for a day)
 	if (page.status !== 200 || page.html.length === 0) return false;
 	try {
 		await env.PAGE_KV.put(
 			pageKvKey(site, generation, path),
-			// stamped on the way in rather than taken from the caller: the age bound on a stale read
-			// has to be the write's own clock, not one a caller could set
+			// stamped here, not by the caller (the stale age bound needs the write's own clock)
 			JSON.stringify({ ...page, storedAt: Date.now() }),
 			{ expirationTtl: pageKvTtlSeconds(env) }
 		);

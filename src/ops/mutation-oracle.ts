@@ -1,28 +1,18 @@
 /**
  * Every authoritative effect one request produced, recorded rather than refused.
  *
- * The read-only guard in `replica.ts` is the PRODUCTION posture: unknown fails closed to the
- * primary. This is the DISCOVERY posture, and the two differ because a replica must not learn what
- * a request does while serving it to a user. Here a request runs to completion on a
- * primary and its effects are counted, which is what turns "these four paths happened not to write"
- * into a measured eligibility rate.
- *
- * A ZERO FROM AN UNARMED ORACLE IS INDISTINGUISHABLE FROM A CLEAN REQUEST, which is the failure this
- * project has hit repeatedly -- a probe nobody wired reporting 0 route matches, a decorator the
- * container held and never called. So {@link EffectProfile} carries what it WRAPPED, and
- * {@link profileIsTrustworthy} refuses a profile whose instrumentation was not installed.
+ * The read-only guard in `replica.ts` is the production posture (unknown fails to the primary);
+ * this is the discovery posture, running a request to completion on a primary and
+ * counting its effects. A zero from an unarmed oracle reads as a clean request, so
+ * {@link EffectProfile} carries what it wrapped and {@link profileIsTrustworthy} refuses an
+ * uninstrumented profile.
+ * @module
  */
+import type { WriteTally } from '../db/write-tally';
+import { authoritativeWrites, classifyCapability } from './replica';
+import { classifyState } from './state-inventory';
 
-import type { WriteTally } from '../db/write-tally.js';
-import { authoritativeWrites, classifyCapability } from './replica.js';
-import { classifyState } from './state-inventory.js';
-
-/**
- * What kind of thing a request did.
- *
- * Separated because they carry different consequences: a stale cache row is a nuisance, a sequence
- * allocated on two objects is silent data corruption, and a mail send cannot be taken back at all.
- */
+/** what kind of thing a request did (a stale cache row is minor, a mail send irreversible) */
 export type EffectClass =
 	| 'authoritative-sql'
 	| 'sequence'
@@ -35,8 +25,10 @@ export type EffectClass =
 	| 'alarm'
 	| 'unclassified-capability';
 
+/** one observed effect: its class, what it touched, and how often */
 export type Effect = { effect: EffectClass; detail: string; count: number };
 
+/** what one request did, with enough provenance to tell a zero from an absence */
 export type EffectProfile = {
 	/** every authoritative effect observed, most frequent first */
 	effects: Effect[];
@@ -73,18 +65,14 @@ const CAPABILITY_EFFECT: Record<string, EffectClass> = {
 	cfwFileDelete: 'file',
 	cfwFileRename: 'file',
 	cfwOidcClaims: 'security-state',
-	// a lever write lands in account KV rather than in this object, so a replica applying the same
-	// statements must not repeat it
+	// a lever write lands in account KV, so a replica must not repeat it
 	cfwSettings: 'security-state'
 };
 
 /**
  * The effect class a write to `table` belongs to.
- *
- * `key_value` cannot be judged from the table alone -- it holds a disposable fetch queue and the
- * private key -- so a write to it is reported as `security-state` conservatively. That over-reports
- * an update-check row as security-relevant, which costs a request its eligibility and never the
- * reverse.
+ * `key_value` holds both a disposable fetch queue and the private key, so it reports
+ * `security-state` (over-reporting costs a request its eligibility, never the reverse).
  */
 export function tableEffect(table: string): EffectClass {
 	if (TABLE_EFFECT[table] !== undefined) return TABLE_EFFECT[table] as EffectClass;
@@ -99,13 +87,10 @@ export function emptyProfile(): EffectProfile {
 }
 
 /**
- * Wraps the installed capability surface to COUNT mutating calls instead of refusing them.
+ * Wraps the installed capability surface to count mutating calls instead of refusing them.
+ * Walks the module rather than a list, since capabilities have drifted out of `CROSSING_NAMES`.
  *
- * Walks what is on the module rather than a list, for the same reason the guard does: two
- * capabilities have already drifted out of `CROSSING_NAMES`, and a census that inherits that gap
- * under-reports exactly the calls it exists to find.
- *
- * @returns the names wrapped, in the order encountered.
+ * @returns the names wrapped, in the order encountered
  */
 export function recordCapabilities(
 	binary: Record<string, unknown>,
@@ -117,8 +102,7 @@ export function recordCapabilities(
 		const fn = binary[name];
 		if (typeof fn !== 'function') continue;
 		if (classifyCapability(name) === 'safe') continue;
-		// the SQL capabilities are counted through the write tally instead; counting them here
-		// would report every read as an effect
+		// SQL is counted through the write tally (here every read would count as an effect)
 		if (name === 'cfwSqlExec' || name === 'cfwSqlTxn') continue;
 		const inner = fn as (...args: unknown[]) => unknown;
 		binary[name] = (...args: unknown[]) => {
@@ -139,12 +123,9 @@ const STORAGE_EFFECT: Record<string, EffectClass> = {
 /**
  * Folds a request's write tally and capability calls into one profile.
  *
- * @param tally
- *   The per-table write tally taken around the request.
- * @param capabilityCalls
- *   What {@link recordCapabilities} collected.
- * @param wrapped
- *   The names it wrapped; an empty list means the oracle was not installed.
+ * @param tally the per-table write tally taken around the request
+ * @param capabilityCalls what {@link recordCapabilities} collected
+ * @param wrapped the names it wrapped; empty means the oracle was not installed
  */
 export function buildProfile(
 	tally: WriteTally,
@@ -155,8 +136,7 @@ export function buildProfile(
 	const reasons: string[] = [];
 
 	for (const write of authoritativeWrites(tally)) {
-		// a statement that wrote no rows attempted nothing durable here, but it would on an object
-		// whose state differs, so it is reported and does not by itself disqualify
+		// a statement that wrote no rows does not disqualify by itself
 		if (write.rows === 0) continue;
 		const effect = tableEffect(write.table);
 		effects.push({ effect, detail: write.table, count: write.rows });
@@ -187,12 +167,7 @@ export function buildProfile(
 	};
 }
 
-/**
- * Whether a profile is worth believing.
- *
- * An unarmed oracle observes nothing and reports nothing, which reads exactly like a clean request.
- * A census must refuse those rather than count them as eligible.
- */
+/** whether a profile is worth believing (an unarmed oracle must not count as eligible) */
 export function profileIsTrustworthy(profile: EffectProfile): boolean {
 	return profile.armed;
 }
@@ -215,39 +190,23 @@ export function eligibilityRate(profiles: readonly EffectProfile[]): {
 }
 
 /**
- * Why an ineligible path wrote, which decides whether it is routable at all.
- *
- * `bootstrap` writes only because a precondition has not been established yet, so establishing it
- * and re-measuring can move the path into the eligible set. `intrinsic` writes authoritative state
- * as its purpose and belongs on the primary permanently.
- *
- * **`unknown` is the default and is treated as `intrinsic` by every caller**, because the failure
- * directions are not symmetric: calling an intrinsic write "bootstrap" routes an authoritative
- * mutation to a replica, and calling a bootstrap write "intrinsic" only pins a path that could have
- * been shared. This function decides nothing on its own; it labels a measurement so the label can be
- * argued with.
+ * Why an ineligible path wrote: `bootstrap` (a missing precondition; fixable and re-measurable),
+ * `intrinsic` (authoritative by purpose; primary only) or `unknown`.
+ * Every caller treats `unknown` as `intrinsic`: calling an intrinsic write bootstrap routes a
+ * mutation to a replica, the reverse only pins a shareable path.
  */
 export type IneligibleKind = 'bootstrap' | 'intrinsic' | 'unknown';
 
 /**
- * Effects a COLD object writes that a warm one does not, keyed by the state that is missing.
- *
- * Only `outbound-http` and what it drags with it. A deferred fetch on a cold cache makes Drupal log
- * the failure, queue the request and arm a drain, so one missing precondition produces three effect
- * classes and none of them is the request's purpose. Seeding the fetch cache at admission is the
- * experiment that would settle it; until that runs, this is a HYPOTHESIS with a name, not a verdict.
+ * Effects a cold object writes that a warm one does not: a deferred fetch on a cold cache makes
+ * Drupal log, queue and arm a drain. A hypothesis until seeding the fetch cache is tried.
  */
 const BOOTSTRAP_EFFECTS: ReadonlySet<EffectClass> = new Set(['outbound-http', 'queue', 'alarm']);
 
 /** `watchdog` is the log of the deferral, so it is bootstrap only alongside a deferred fetch */
 const BOOTSTRAP_TABLES: ReadonlySet<string> = new Set(['watchdog']);
 
-/**
- * Classifies why a profile is ineligible.
- *
- * Returns `unknown` for an eligible or untrustworthy profile: there is nothing to explain, and an
- * unarmed oracle observed nothing at all.
- */
+/** classifies why a profile is ineligible; `unknown` for an eligible or untrustworthy one */
 export function ineligibleKind(profile: EffectProfile): IneligibleKind {
 	if (!profileIsTrustworthy(profile) || profile.replicaEligible) return 'unknown';
 	// one dangerous effect is enough; the kinds do not average

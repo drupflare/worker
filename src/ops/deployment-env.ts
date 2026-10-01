@@ -1,18 +1,15 @@
 /**
- * The deployment's own environment, as PHP sees it.
+ * The deployment's own environment, as PHP sees it: `DRUPAL_ENV_<NAME>` becomes `getenv('<NAME>')`,
+ * `$_ENV` and `$_SERVER`; `DRUPAL_CONFIG` is a JSON object merged over `$config`.
  *
- * A migrated Drupal project reads `getenv()` and `$config` overrides that its old host supplied.
- * Two prefixed names carry them across without exposing anything else on the Worker's `env`:
- *
- * - `DRUPAL_ENV_<NAME>` becomes `getenv('<NAME>')`, `$_ENV['<NAME>']` and `$_SERVER['<NAME>']`.
- * - `DRUPAL_CONFIG` is a JSON object merged over `$config` with `array_replace_recursive`.
- *
- * An unprefixed name is never read. The owner token, `PW_DIAGNOSTICS`, mail credentials and API
- * tokens sit on the same `env`, and PHP code (a module, a settings file a customer edits) must not
- * be able to read them.
+ * An unprefixed name is never read: the owner token, `PW_DIAGNOSTICS`, mail credentials and API
+ * tokens share the same `env`, and customer PHP must not reach them.
+ * @module
  */
 
+/** the Worker `env` prefix whose remainder becomes a PHP environment variable */
 export const ENV_PREFIX = 'DRUPAL_ENV_';
+/** the Worker `env` name holding the JSON `$config` overrides */
 export const CONFIG_NAME = 'DRUPAL_CONFIG';
 
 const MAX_VARS = 100;
@@ -20,6 +17,7 @@ const MAX_VALUE_BYTES = 64 * 1024;
 const MAX_CONFIG_BYTES = 512 * 1024;
 const NAME_SHAPE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** the parsed deployment environment: PHP variables, `$config` overrides and what was ignored */
 export type DeploymentEnv = {
 	vars: Record<string, string>;
 	config: Record<string, unknown> | null;
@@ -31,7 +29,7 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
 	typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** reads the two prefixed names off a Worker `env`; anything malformed is ignored and reported */
-export function deploymentEnv(env: object | null | undefined): DeploymentEnv {
+export function deploymentEnv(env: object | undefined): DeploymentEnv {
 	const out: DeploymentEnv = { vars: {}, config: null, problems: [] };
 	if (!env) return out;
 	const bag = env as Record<string, unknown>;
@@ -76,7 +74,7 @@ export function deploymentEnv(env: object | null | undefined): DeploymentEnv {
 }
 
 /** whether the deployment carries anything for PHP; a heap image would freeze the old answer */
-export const hasDeploymentEnv = (env: object | null | undefined): boolean => {
+export const hasDeploymentEnv = (env: object | undefined): boolean => {
 	const d = deploymentEnv(env);
 	return Object.keys(d.vars).length > 0 || d.config !== null;
 };

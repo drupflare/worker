@@ -1,10 +1,13 @@
 /**
  * The capability contract: what this runtime can do, as vectors a module is scored against.
  *
- * Every probe runs against the shipping interpreter and must equal `expected`, in BOTH directions.
- * An `expected: false` is not a TODO; `blocker` says which kind it is.
+ * Every probe runs against the shipping interpreter and must equal `expected` in both directions;
+ * an `expected: false` names its kind in `blocker`.
+ *
+ * @module
  */
-/** the seven areas a contrib module draws on, which is the grouping the item asked for */
+
+/** the seven areas a contrib module draws on */
 export const CAPABILITY_GROUPS = [
 	'HTTP',
 	'FILES',
@@ -15,34 +18,36 @@ export const CAPABILITY_GROUPS = [
 	'CACHE'
 ] as const;
 
+/** one of {@link CAPABILITY_GROUPS} */
 export type CapabilityGroup = (typeof CAPABILITY_GROUPS)[number];
 
 /**
- * Why a vector is unsatisfied, when it is.
- *
- * `permanent` and `platform` differ: no Worker has a process table, but Durable Object SQLite
- * could register `REGEXP` tomorrow
+ * Why a vector is unsatisfied, when it is. `permanent` cannot change (no process table);
+ * `platform` could (Durable Object SQLite might register `REGEXP`).
  */
 export type Blocker = 'permanent' | 'platform' | 'scheduled' | 'by-design' | null;
 
 /**
- * Whether the probe DOES the thing or only asks whether the symbol is there.
- *
- * `declared` is legal where the claim IS about a declaration; such a row must say so in `evidence`
+ * Whether the probe does the thing or only checks the symbol exists; a `declared` row says why in
+ * `evidence`.
  */
 export type VectorKind = 'executed' | 'declared';
 
+/** one capability a module may declare, with the probe that proves it */
 export type Vector = {
 	/** stable dotted id; a module declares these, so renaming one is a breaking change */
 	id: string;
+	/** the area it belongs to */
 	group: CapabilityGroup;
+	/** whether the probe executes the capability */
 	kind: VectorKind;
-	/** what a module GETS when this holds, phrased from the module's side */
+	/** what a module gets when this holds, phrased from the module's side */
 	claim: string;
 	/** a PHP expression evaluating to a boolean, run on the shipping interpreter */
 	probe: string;
 	/** what the shipping runtime answers today */
 	expected: boolean;
+	/** why it is unsatisfied, or null */
 	blocker: Blocker;
 	/** where the answer is proven, or what would have to change */
 	evidence: string;
@@ -73,25 +78,8 @@ export const VECTORS: readonly Vector[] = [
 			'THE PROBE IS STALE AS A CAPABILITY TEST and is kept because the flag it names is real: `cfwSuspend` asks for Asyncify or JSPI, which this build has neither of, and `FetchHandler` is the transport that needs them. What a module needs -- an HTTP call answered inside the render -- is served another way as of 2026-09-08: `ParkFetchHandler` yields through the Zend park and the Worker performs the fetch. `park-oidc.spec.ts` drives `drupal/openid_connect` through a real authorization-code exchange on it. So `RuntimeCapabilities.blockingOutbound` is TRUE while this vector is false, and the two are not in conflict: this asks whether the wasm stack can be suspended and that asks whether an answer can arrive before the render ends. It is a literal for the same reason `blockingSocket` is -- a single-expression probe runs inside ONE `_run`, and a host that could answer there would not need a park at all'
 	},
 	{
-		/**
-		 * EXECUTED, and it has to be: `function_exists('cfw_park_run')` was the obvious probe and it
-		 * is the decorative kind. The first built revision of the extension exported every symbol
-		 * and did not re-arm inside `cfw_park_resume`, so a chain parked ONCE and then ran its next
-		 * trapped call for real -- silently, because a fall-through is the refusal path. Every
-		 * multi-trip exchange, which is every real one, would have been broken on a build that
-		 * probe called capable.
-		 *
-		 * **AND THE FIRST VERSION OF THIS PROBE ANSWERED TRUE ON A MECHANISM THAT CANNOT WORK.** It
-		 * put both trapped calls directly in the eval body, which is the one frame `cfw_park_resume`
-		 * DOES re-enter -- so it measured the narrow case and reported the capability. Real code
-		 * parks inside a nested call: Predis reaches `fwrite` from `StreamConnection::write`, several
-		 * frames down. The calls live in a function here for that reason, and the probe additionally
-		 * requires the DELIVERED value rather than the state strings, because a chain can answer
-		 * `DONE` having lost everything above the frame it resumed.
-		 *
-		 * It cleans up after itself either way: a build with no re-arm has already finished the chain
-		 * by the time it answers, and one with the re-arm is resumed a second time here.
-		 */
+		// executed, two parks: a build that does not re-arm still has the symbols. The calls sit
+		// in a nested function and the delivered value is checked, as real code parks frames down
 		id: 'socket.park.inline',
 		group: 'HTTP',
 		kind: 'executed',
@@ -148,9 +136,7 @@ export const VECTORS: readonly Vector[] = [
 		group: 'FILES',
 		kind: 'declared',
 		claim: 'writing a managed file under the public scheme',
-		// the CLASS, not `stream_get_wrappers()`. Drupal registers its wrappers in
-		// `DrupalKernel::preHandle()`, which a kernel boot alone does not run, so the wrapper list is
-		// empty here and would have reported a capability the site plainly has
+		// the class: Drupal registers wrappers in `preHandle()`, which a bare kernel boot skips
 		probe: "class_exists('Drupal\\\\drupflare\\\\StreamWrapper\\\\CfwFileStreamWrapper')",
 		expected: true,
 		blocker: null,
@@ -162,9 +148,7 @@ export const VECTORS: readonly Vector[] = [
 		group: 'FILES',
 		kind: 'declared',
 		claim: 'a library that takes a filesystem PATH rather than a stream',
-		// probed on the METHOD. The first version of this row asked for a marker function
-		// `cfw_realpath_materialises()` that nothing declares -- a probe for a capability's
-		// advertisement rather than for the capability, which is the trap this whole file exists for
+		// probed on the method itself, not on a marker function advertising it
 		probe: "method_exists('Drupal\\\\drupflare\\\\StreamWrapper\\\\CfwFileStreamWrapper', 'realpath')",
 		expected: true,
 		blocker: null,
@@ -267,9 +251,7 @@ export const VECTORS: readonly Vector[] = [
 		group: 'RUNTIME',
 		kind: 'executed',
 		claim: 'the mbstring calls Drupal core actually makes behave natively',
-		// literal characters, not '\\xC3\\x89': PHP single quotes do not interpret \\x, so the first
-		// version compared two 8-character ASCII strings and reported a parity failure that was
-		// entirely its own escaping
+		// literal characters: PHP single quotes do not interpret a \x escape
 		probe: "function_exists('mb_strtolower') && mb_strtolower('\u00c9') === '\u00e9'",
 		expected: true,
 		blocker: null,
@@ -302,8 +284,7 @@ export const VECTORS: readonly Vector[] = [
 		group: 'RUNTIME',
 		kind: 'executed',
 		claim: 'delta coding, which needs deflate against a preset dictionary',
-		// `gzdeflate()` takes no dictionary and `gzcompress()` takes none either, which is what made
-		// this look impossible without a host bridge. The INCREMENTAL api has taken one since PHP 7.0
+		// `gzdeflate()` takes no dictionary, but the incremental api has since PHP 7.0
 		probe: "(function () { $dict = 'drupal-node-field-data'; $data = str_repeat('drupal-node-field-data', 8); $d = deflate_init(ZLIB_ENCODING_DEFLATE, ['dictionary' => $dict]); $z = deflate_add($d, $data, ZLIB_FINISH); $i = inflate_init(ZLIB_ENCODING_DEFLATE, ['dictionary' => $dict]); return inflate_add($i, $z, ZLIB_FINISH) === $data; })()",
 		expected: true,
 		blocker: null,
@@ -315,9 +296,7 @@ export const VECTORS: readonly Vector[] = [
 		group: 'RUNTIME',
 		kind: 'executed',
 		claim: 'streaming XML output, which several sitemap and feed modules require to install',
-		// the CLASS, not the extension: `extension_loaded()` reports what was compiled in and is a
-		// built-in, so no shim can move it. What decides whether a module can WRITE XML is whether
-		// the class resolves, and that is what this now asks
+		// the class, not `extension_loaded()`: no shim can move a built-in's answer
 		probe: "(function () { $w = new \\XMLWriter(); $w->openMemory(); $w->startDocument('1.0', 'UTF-8'); $w->startElement('urlset'); $w->writeElement('loc', 'https://example.test/'); $w->endElement(); $w->endDocument(); return strpos($w->outputMemory(), '<loc>https://example.test/</loc>') !== false; })()",
 		expected: true,
 		blocker: null,
@@ -390,9 +369,7 @@ export const VECTORS: readonly Vector[] = [
 		probe: "(function () { $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='); $f = '/tmp/cfw_probe.png'; file_put_contents($f, $png); $i = @getimagesize($f); @unlink($f); return is_array($i) && $i[0] === 1 && $i[1] === 1; })()",
 		expected: true,
 		blocker: null,
-		// `ShimRegistry` classified it REFUSE on "gd/libjpeg are not linked", and it is
-		// `ext/standard` -- it parses headers itself and never went through either. It is
-		// `CfwImageToolkit`'s only dimension source, so the wrong claim was load-bearing
+		// `ext/standard` parses the header itself, without gd; `CfwImageToolkit` depends on it
 		evidence: 'ext/standard, not gd; the toolkit reads dimensions through it'
 	},
 	// #endregion
@@ -477,6 +454,7 @@ export function vectorFor(id: string): Vector | undefined {
 	return VECTORS.find((v) => v.id === id);
 }
 
+/** how one module's declared needs scored against the contract */
 export type ModuleVerdict = {
 	satisfied: string[];
 	unsatisfied: Vector[];
@@ -485,10 +463,8 @@ export type ModuleVerdict = {
 };
 
 /**
- * Scores one module's declared needs against the contract.
- *
- * AN UNKNOWN ID IS NOT SATISFIED. A module declaring `htp.outbound.deferred` would otherwise score
- * as needing nothing, which is the failure mode of every allow-list keyed on a free-form string.
+ * Scores one module's declared needs against the contract; an unknown id (a typo) counts against
+ * it rather than as satisfied.
  */
 export function scoreModule(needs: readonly string[]): ModuleVerdict {
 	const satisfied: string[] = [];

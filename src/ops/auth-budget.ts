@@ -1,54 +1,23 @@
-import { isPaid, type PlanEnv } from './plan.js';
-
 /**
- * A bounded daily allowance for AUTHENTICATED traffic, and a degrade ladder for past it.
+ * A bounded daily allowance for authenticated traffic on free, and a degrade ladder past it.
  *
- * MEASURED WITH `bun scripts/measure/free-envelope.ts --visits=3000000 --dynamic=0.01`, and every
- * number below is from that run rather than from arithmetic done here:
+ * Measured with `free-envelope.ts` on `MEMORY_CACHE_BINS=none`: the default 25% buys 3,125
+ * authenticated views a day and leaves 8,149 regenerations, 8.15x what a 3M-visit month needs at
+ * 1% dynamic. Paid has no reservation.
  *
- * | ceiling                      | value                              |
- * | ---------------------------- | ---------------------------------- |
- * | serving                      | 100,000/day, worker-bound, **1.00x** |
- * | regeneration, windowed       | **10,866/day, rows-bound**         |
- * | regeneration, alarm chain    | **10,866/day, rows-bound**         |
- *
- * At the default 25% reservation that splits as:
- *
- * | slice                        | rows/day | what it buys                              |
- * | ---------------------------- | -------- | ----------------------------------------- |
- * | authenticated                | 25,000   | **3,125 authenticated views/day**         |
- * | anonymous regeneration       | 75,000   | **8,149 regenerations/day** (8.15x need)  |
- *
- * The anonymous side still clears the 1,000 regenerations/day a 3M-visit month needs at 1% dynamic,
- * with 8.15x headroom, which is the property that makes the reservation safe to take.
- *
- * All of these describe `MEMORY_CACHE_BINS=none`, the conservative arm. The two regeneration rows
- * are equal because the alarm chain was priced at 180 invocations per fill until 2026-09-23, a
- * boot-slicing mechanism nothing performs; a deployed free worker drains a batch in one invocation.
- *
- * Paid has no reservation. The meters it is protecting do not bind there, and a limit that exists
- * only to be never reached is a limit a reader has to explain later.
+ * @module
  */
+import { isPaid, type PlanEnv } from './plan';
 
 /**
- * The two figures from `scripts/measure/free-envelope.ts` this module needs.
- *
- * Copied rather than imported, because of the bundle: `free-envelope.ts` carries an
- * `import.meta.main` CLI block that reads `process.argv`, so importing it here would drag a script
- * into the Worker. Copying a measured number is the drift hazard this project has been bitten by
- * twice, so it is pinned instead: `tests/unit/auth-budget.spec.ts` asserts both against the script's
- * own exports, and the spec fails the moment either moves.
+ * `FREE_QUOTAS` daily rows, copied from `free-envelope.ts` (importing it drags a CLI into the
+ * Worker); `auth-budget.spec.ts` pins it and {@link ROWS_PER_AUTH_RENDER} to the script.
  */
 export const DAILY_ROWS_QUOTA = 100_000;
 
 /**
- * `ROWS_PER_FILL.realRender`; both cache bins empty, which is what an authenticated view costs.
- *
- * It describes `MEMORY_CACHE_BINS=none`; with the shipping default an authenticated view is 2, and
- * this tracks `ROWS_PER_FILL.realRender` rather than leading it.
- *
- * 9 -> 8 on 2026-09-23, and the row that went was never PHP's: the audit harness deleted the page
- * row inside its own tracked window before re-filling, and a DELETE is charged where a fill upserts.
+ * `ROWS_PER_FILL.realRender` on `MEMORY_CACHE_BINS=none`, what an authenticated view costs (2 at
+ * the shipping default).
  */
 export const ROWS_PER_AUTH_RENDER = 8;
 
@@ -56,37 +25,12 @@ export const ROWS_PER_AUTH_RENDER = 8;
 export const DAILY_DO_QUOTA = 100_000;
 
 /**
- * Cookies that mean "this request belongs to a session".
- *
- * `SESS` over HTTP and `SSESS` over HTTPS, then **exactly 32 lowercase hex characters**.
- *
- * Read off the source; the first version of this was written from memory and was wrong in a way
- * that mattered. `SessionConfiguration::getName()` is
- * `($request->isSecure() ? 'SSESS' : 'SESS') . $this->getUnprefixedName($request)`
- * (`drupal-src/core/lib/Drupal/Core/Session/SessionConfiguration.php:79`), and
- * `getUnprefixedName()` ends `return substr(hash('sha256', $session_name), 0, 32);` at line 109 --
- * **outside** its if/elseif/else, so all three branches hash. The test-user-agent branch and the
- * `cookie_domain` branch produce 32 hex characters too. There is no unhashed form to be lenient
- * about.
- *
- * The loose pattern that assumed otherwise matched `SESSION=`, which is a common cookie name in
- * other frameworks. Every request carrying one would have been charged as authenticated and
- * rendered, which destroys the allowance this module exists to enforce rather than protecting it.
- *
- * The safety argument that motivated the looseness is real but belongs elsewhere: an authenticated
- * response must never reach the shared anonymous cache -- this project shipped that once, a render
- * that kept uid 1 landing in the anonymous page cache at 90,038 bytes against 12,296. That is
- * enforced STRUCTURALLY in `src/site.ts`, which refuses to cache when the request was authenticated
- * or the response carries `Set-Cookie`, so it does not depend on this pattern being perfect.
+ * Cookie names that mean a session: `SESS` or `SSESS`, then exactly 32 lowercase hex characters
+ * (`SessionConfiguration::getUnprefixedName()` always hashes), so `SESSION=` does not match.
  */
 export const SESSION_COOKIE_RE = /^S?SESS[0-9a-f]{32}$/;
 
-/**
- * Cookie names that look session-shaped but are NOT a login.
- *
- * `NO_CACHE` is set by Drupal to bypass the page cache without there being a user, and treating it
- * as authenticated would charge the allowance for anonymous traffic.
- */
+// cookies Drupal sets with no user (`NO_CACHE` bypasses the page cache), never a login
 const NOT_A_SESSION = new Set(['NO_CACHE', 'Drupal.visitor.name', 'Drupal.toolbar.collapsed']);
 
 /**
@@ -96,33 +40,27 @@ const NOT_A_SESSION = new Set(['NO_CACHE', 'Drupal.visitor.name', 'Drupal.toolba
  * @returns true when at least one cookie name is session-shaped
  */
 export function hasSessionCookie(cookieHeader: string | null | undefined): boolean {
-	return sessionCookieValue(cookieHeader) !== null;
+	return sessionCookieValue(cookieHeader) !== undefined;
 }
 
 /**
- * The value of the first session-shaped cookie, or null.
- *
- * Read as a replica ROUTING key, where the only property needed is that one visitor produces one
- * stable string. It is hashed and never compared, so the credential does not become something a
- * caller can read back off a routing decision.
+ * The value of the first session-shaped cookie, or undefined; a replica routing key, hashed and
+ * never compared.
  */
-export function sessionCookieValue(cookieHeader: string | null | undefined): string | null {
-	if (!cookieHeader) return null;
+export function sessionCookieValue(cookieHeader: string | null | undefined): string | undefined {
+	if (!cookieHeader) return undefined;
 	for (const pair of cookieHeader.split(';')) {
 		const eq = pair.indexOf('=');
 		const name = (eq < 0 ? pair : pair.slice(0, eq)).trim();
 		if (!name || NOT_A_SESSION.has(name)) continue;
 		if (SESSION_COOKIE_RE.test(name)) return eq < 0 ? '' : pair.slice(eq + 1).trim();
 	}
-	return null;
+	return undefined;
 }
 
 /**
- * Whether a request is authenticated, decided from the request alone.
- *
- * Must be decided before any DO hop. The reservation exists to stop authenticated traffic reaching
- * the object once the allowance is gone; a check made inside the object has already spent the DO
- * request it was meant to protect.
+ * Whether a request is authenticated, decided from the request alone so it runs before the DO hop
+ * it is meant to save.
  *
  * @param request the inbound request
  */
@@ -138,22 +76,24 @@ const SAFE_METHODS = new Set(['GET', 'HEAD']);
 /** what fraction of the daily row budget authenticated traffic may spend, by default */
 export const DEFAULT_AUTH_ROWS_FRACTION = 0.25;
 
-/** floor and ceiling on the fraction; 0 would delete the capability, 1 would delete the protection */
+/** floor on the fraction; 0 would remove authenticated traffic entirely */
 export const MIN_AUTH_ROWS_FRACTION = 0.05;
+/** ceiling on the fraction; 1 would remove the protection */
 export const MAX_AUTH_ROWS_FRACTION = 0.75;
 
 /** the environment an allowance reads */
 export type AuthBudgetEnv = PlanEnv & {
 	/** fraction of the daily rows budget reserved for authenticated traffic */
-	AUTH_ROWS_FRACTION?: string | number | null;
+	AUTH_ROWS_FRACTION?: string | number;
 	/** overrides the measured rows-per-authenticated-render, for a site with a different profile */
-	AUTH_ROWS_PER_RENDER?: string | number | null;
+	AUTH_ROWS_PER_RENDER?: string | number;
 };
 
 /** the split of a daily meter between authenticated and anonymous use */
 export type AuthAllowance = {
 	/** the fraction actually applied, after clamping */
 	fraction: number;
+	/** rows one authenticated render costs */
 	rowsPerRender: number;
 	/** rows/day authenticated traffic may spend */
 	rowsReserved: number;
@@ -163,12 +103,7 @@ export type AuthAllowance = {
 	rendersPerDay: number;
 	/** DO requests/day the reservation buys, at one hop per render */
 	doRequestsReserved: number;
-	/**
-	 * Which meter runs out first inside the reservation.
-	 *
-	 * `'do'` is reachable but no shipped configuration reaches it: the quotas are equal and a
-	 * render is one hop, so rows always win. It turns over if a render stops being one hop.
-	 */
+	/** which meter runs out first; rows, while the quotas are equal and a render is one hop */
 	boundBy: 'rows' | 'do';
 	/** false on paid, where none of these meters bind */
 	enforced: boolean;
@@ -189,18 +124,15 @@ function clampFraction(raw: unknown): number {
  * @param env carries `PLAN` and the two optional overrides
  * @returns the split; `enforced` is false on paid
  */
-export function authAllowance(env?: AuthBudgetEnv | null): AuthAllowance {
+export function authAllowance(env?: AuthBudgetEnv): AuthAllowance {
 	const paid = isPaid(env);
 	const fraction =
-		env?.AUTH_ROWS_FRACTION === undefined ||
-		env?.AUTH_ROWS_FRACTION === null ||
-		String(env?.AUTH_ROWS_FRACTION) === ''
+		env?.AUTH_ROWS_FRACTION === undefined || String(env?.AUTH_ROWS_FRACTION) === ''
 			? DEFAULT_AUTH_ROWS_FRACTION
 			: clampFraction(env?.AUTH_ROWS_FRACTION);
 
 	const perRenderRaw = Number(env?.AUTH_ROWS_PER_RENDER);
-	// realRender, not warmReassemble: an authenticated view empties both the page and the
-	// dynamic_page_cache bins for that user, which is what a real render costs
+	// realRender: an authenticated view misses both the page and dynamic_page_cache bins
 	const rowsPerRender =
 		Number.isFinite(perRenderRaw) && perRenderRaw > 0 ? perRenderRaw : ROWS_PER_AUTH_RENDER;
 
@@ -243,6 +175,7 @@ export type AuthDecision = {
 	mode: AuthMode;
 	allowance: AuthAllowance;
 	spend: AuthSpend;
+	/** renders left today; Infinity on paid */
 	remaining: number;
 	/** a short reason, safe to put in a header */
 	reason: string;
@@ -254,12 +187,10 @@ export function utcDayKey(now: number = Date.now()): string {
 }
 
 /**
- * A spend record for today, discarding a record from any other day.
- *
- * The quotas reset at midnight UTC, so a counter carried across that boundary would refuse traffic
- * against a budget that has already been refilled.
+ * A spend record for today, discarding a record from any other day (the quotas refill at midnight
+ * UTC).
  */
-export function spendForToday(spend: AuthSpend | null | undefined, now = Date.now()): AuthSpend {
+export function spendForToday(spend: AuthSpend | undefined, now = Date.now()): AuthSpend {
 	const day = utcDayKey(now);
 	if (!spend || spend.day !== day || !Number.isFinite(spend.renders)) {
 		return { day, renders: 0 };
@@ -271,14 +202,14 @@ export function spendForToday(spend: AuthSpend | null | undefined, now = Date.no
  * Decides how to answer one authenticated request.
  *
  * @param request needs only the method
- * @param spend the durable counter, or null when it has not been read yet
+ * @param spend the durable counter, or undefined when it has not been read yet
  * @param env carries `PLAN` and the overrides
  * @param now injectable so the UTC-day rollover is testable
  */
 export function decideAuthMode(
 	request: { method: string },
-	spend: AuthSpend | null | undefined,
-	env?: AuthBudgetEnv | null,
+	spend: AuthSpend | undefined,
+	env?: AuthBudgetEnv,
 	now = Date.now()
 ): AuthDecision {
 	const allowance = authAllowance(env);
@@ -327,40 +258,31 @@ export function secondsUntilUtcReset(now = Date.now()): number {
 }
 
 // #region the contract with the Durable Object
-//
-// The counter needs durable state, which only the object has. Rather than the Worker asking for it
-// -- a DO request spent to decide whether to spend a DO request -- the object reports it on the
-// response to the hop the request was making anyway, exactly as the generation pointer already does.
-// The Worker memoises that per UTC day, so once the allowance is gone it degrades at the edge with
-// ZERO DO cost, which is the only version of this that actually protects the meter.
+// the object reports the counter on the hop the request already makes, and the Worker memoises it
+// per UTC day, so a spent allowance degrades at the edge with no DO request
 
 /** set by the Worker on a `/__serve` hop it wants charged as authenticated */
 export const AUTH_REQUEST_HEADER = 'x-cfw-auth';
 
-/** set by the object on every response to such a hop */
+/** set by the object on every response to such a hop: renders charged today */
 export const AUTH_SPENT_HEADER = 'x-cfw-auth-spent';
+/** set by the object: renders allowed per day */
 export const AUTH_ALLOWANCE_HEADER = 'x-cfw-auth-allowance';
+/** set by the object: the UTC day the counter belongs to */
 export const AUTH_DAY_HEADER = 'x-cfw-auth-day';
 
 /** set by the Worker on the response it returns, so a measurement can see what happened */
 export const AUTH_MODE_HEADER = 'x-cfw-auth-mode';
 
 /**
- * The role set a render was for, sorted and comma-joined.
- *
- * Object to front worker only. The front worker never reads it off an inbound request, which is
- * what makes it trustworthy without a signature: a client can present a cookie and be told what
- * that cookie is, it cannot present a role set.
+ * The role set a render was for, sorted and comma-joined. Object to front worker only; never read
+ * off an inbound request, so a client cannot present one.
  */
 export const ROLES_HEADER = 'x-cfw-roles';
+/** set by the Worker: the {@link AuthDecision} reason */
 export const AUTH_REASON_HEADER = 'x-cfw-auth-reason';
 
-/**
- * Headers the object should add to a charged response.
- *
- * Exported so the object's hunk calls this rather than formatting the same three headers itself; one
- * codec, two callers, no drift.
- */
+/** the headers the object adds to a charged response; the one encoder for {@link parseAuthSpend} */
 export function authSpendHeaders(
 	spend: AuthSpend,
 	allowance: AuthAllowance
@@ -373,17 +295,17 @@ export function authSpendHeaders(
 }
 
 /**
- * Reads a spend record back off a response, or null when the object did not report one.
- *
- * Null rather than a zeroed record: "the object did not say" and "the object said zero"
- * lead to different decisions, and collapsing them is how a missing header reads as a fresh budget.
+ * Reads a spend record back off a response, or undefined when the object did not report one (not
+ * zero, which would read as a fresh budget).
  */
-export function parseAuthSpend(headers: { get(name: string): string | null }): AuthSpend | null {
+export function parseAuthSpend(headers: {
+	get(name: string): string | null;
+}): AuthSpend | undefined {
 	const day = headers.get(AUTH_DAY_HEADER);
 	const spent = headers.get(AUTH_SPENT_HEADER);
-	if (!day || spent === null || spent === '') return null;
+	if (!day || spent === null || spent === '') return undefined;
 	const renders = Number(spent);
-	if (!Number.isFinite(renders) || renders < 0) return null;
+	if (!Number.isFinite(renders) || renders < 0) return undefined;
 	return { day, renders: Math.floor(renders) };
 }
 // #endregion

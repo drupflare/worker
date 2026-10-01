@@ -1,36 +1,21 @@
+/**
+ * Resolving a package name to an archive and turning it into files the mount can serve.
+ *
+ * One pipeline for `composer require`, git-delivered modules and `npm install`; only the source
+ * differs. The Worker fetches the archive, PHP only parses intent. `drupal/*` names resolve on
+ * `packages.drupal.org`, since packagist answers 404 for Drupal projects.
+ *
+ * @module
+ */
 import { parseTar, tarEntryTree } from '@drupflare/untarl';
 import { gunzipSync, unzipSync } from 'fflate';
-import { satisfies } from './composer-constraint.js';
-import { SHIPPED_CORE_VERSION } from './shipped-lock.js';
-
-/**
- * Resolving a package name to source, and turning that source into files the mount can serve.
- *
- * ## One pipeline, three callers
- *
- * `composer require`, a git-delivered custom module and `npm install` all want the same
- * four steps: resolve a name to an archive URL, fetch it, filter what comes out, and write the files
- * where the boot mount reads them. Building three of those would produce three sets of bugs, so this
- * is the one, and the SOURCE is the only thing that differs.
- *
- * ## Why the host does this and not PHP
- *
- * PHP here cannot block on a socket, so a composer-shaped resolve-then-download is impossible inside
- * one render. It is also unnecessary: the archive is an ordinary HTTPS GET, which the Worker does
- * natively. The terminal parses intent in PHP and hands it over.
- *
- * ## The two repositories, which are not interchangeable
- *
- * Drupal modules are NOT on packagist. `repo.packagist.org/p2/drupal/token.json` answers
- * "404 not found, no packages here"; the metadata lives on `packages.drupal.org`, which is the
- * composer repository every Drupal site already has in its `composer.json`. Everything else resolves
- * against packagist. Sending a `drupal/*` name to packagist is a silent "package does not exist",
- * which reads as a typo.
- */
+import { satisfies } from './composer-constraint';
+import { SHIPPED_CORE_VERSION } from './shipped-lock';
 
 /** where a package's metadata lives */
 export type Registry = 'composer' | 'npm';
 
+/** a package version resolved to its archive and its mount */
 export type ResolvedPackage = {
 	name: string;
 	version: string;
@@ -46,21 +31,15 @@ export type ResolvedPackage = {
 /** the metadata URL for one package */
 export function metadataUrl(registry: Registry, name: string): string {
 	if (registry === 'npm') return `https://registry.npmjs.org/${name}`;
-	// packages.drupal.org for drupal/*, packagist for the rest. This is not a preference: packagist
-	// does not carry Drupal projects at all
+	// packagist does not carry Drupal projects
 	return name.startsWith('drupal/')
 		? `https://packages.drupal.org/files/packages/8/p2/${name}.json`
 		: `https://repo.packagist.org/p2/${name}.json`;
 }
 
 /**
- * Points a delivered PHP file's Fibers at the runtime's synchronous shim.
- *
- * This interpreter has no Fiber backend, so the first `Fiber::start()` aborts the whole runtime
- * (`missing function: getcontext`). `scripts/patch-drupal.mjs` rewrites core's five sites at pack
- * time; a package installed later was never rewritten, and Varbase's `revolt/event-loop` aborted
- * every page. Qualified references become `\PhpWasmSyncFiber`, and `use Fiber;` becomes an alias
- * so unqualified ones follow. Code that needs a real suspension now fails as an ordinary error.
+ * Points a delivered PHP file's Fibers at `\PhpWasmSyncFiber`: the interpreter has no Fiber
+ * backend, so `Fiber::start()` aborts the runtime. `use Fiber;` becomes an alias.
  */
 export function portFibers(path: string, source: string): string {
 	if (!/\.(php|module|inc|install|theme|profile)$/.test(path) || !source.includes('Fiber')) {
@@ -75,9 +54,8 @@ export function portFibers(path: string, source: string): string {
 }
 
 /**
- * Canvas puts the page title, messages and main content into its component tree by suspending a
- * fiber and resuming it with the answer. The stand-in cannot suspend, so the loop becomes a handler
- * that answers each suspension inline; without it every Canvas page (Varbase) rendered an empty main.
+ * Canvas fills its component tree by suspending a fiber; the stand-in cannot suspend, so the loop
+ * becomes a handler that answers each suspension inline (else Canvas renders an empty main).
  */
 function portCanvasVariant(source: string): string {
 	return source.replace(
@@ -104,41 +82,31 @@ function portCanvasVariant(source: string): string {
 }
 
 /**
- * Where a registry lists a package's branches.
- *
- * Composer 2 metadata splits tagged releases from branches: `name.json` carries the tags and
- * `name~dev.json` the `dev-*` branches, on Packagist and on drupal.org alike. So a constraint naming
- * a branch (strawberryfield requires `frictionlessdata/datapackage: dev-main`) is unanswerable from
- * the first file alone.
+ * Where a registry lists a package's branches: composer 2 keeps tags in `name.json` and `dev-*`
+ * branches in `name~dev.json`, on both registries.
  */
 export function devMetadataUrl(url: string): string {
 	return url.replace(/\.json$/, '~dev.json');
 }
 
 /** whether a constraint names a branch rather than a release */
-export function asksForBranch(constraint?: string | null): boolean {
+export function asksForBranch(constraint?: string): boolean {
 	return /^dev-|-dev$|@dev$/i.test(String(constraint ?? '').trim());
 }
 
 /**
- * The second place to look when drupal.org has no such package.
- *
- * A few `drupal/*` names are JavaScript libraries published on Packagist rather than projects on
- * drupal.org: `drupal/rat` (required by inline_entity_form 3), `drupal/nouislider_js`
- * (better_exposed_filters 7) and `drupal/klaro_js` (klaro 3) answer 404 there and 200 here.
+ * The second place to look when drupal.org has no such package: a few `drupal/*` JS libraries
+ * (`drupal/rat`, `drupal/klaro_js`) live on Packagist.
  */
-export function fallbackMetadataUrl(registry: Registry, name: string): string | null {
+export function fallbackMetadataUrl(registry: Registry, name: string): string | undefined {
 	return registry !== 'npm' && name.startsWith('drupal/')
 		? `https://repo.packagist.org/p2/${name}.json`
-		: null;
+		: undefined;
 }
 
 /**
- * Where a package's files belong in the mounted tree.
- *
- * Driven by composer's own `type`, which is what a real install uses. A `drupal-module` goes to
- * `modules/contrib`, a library to `libraries`, and a plain PHP package to the vendor path the
- * autoloader already has a PSR-4 root for.
+ * Where a package's files belong in the mounted tree, by composer `type`; a plain PHP package
+ * goes under `vendor/`.
  */
 export function mountFor(name: string, composerType?: string): string {
 	const short = name.split('/')[1] ?? name;
@@ -160,11 +128,8 @@ export function mountFor(name: string, composerType?: string): string {
 }
 
 /**
- * A composer `p2` version list with its minification undone.
- *
- * Both repositories serve `minified: composer/2.0`: each entry after the first lists only the keys
- * that changed, and `__unset` removes one. Reading an entry on its own loses `require` and
- * `autoload` whenever they did not change, which is most releases.
+ * A composer `p2` version list with `minified: composer/2.0` undone: each entry lists only changed
+ * keys, and `__unset` removes one.
  */
 export function expandMinified(list: readonly unknown[]): Record<string, unknown>[] {
 	const out: Record<string, unknown>[] = [];
@@ -182,10 +147,8 @@ export function expandMinified(list: readonly unknown[]): Record<string, unknown
 }
 
 /**
- * The package requirements a composer entry declares, without the platform ones.
- *
- * `php`, `ext-*`, `lib-*` and the composer plugin API are properties of the interpreter, which
- * `/installable` judges separately.
+ * The package requirements a composer entry declares, without the platform ones (`php`, `ext-*`
+ * and the like, which `/installable` judges).
  */
 export function packageRequirements(entry: Record<string, unknown>): Record<string, string> {
 	const require = (entry['require'] ?? {}) as Record<string, unknown>;
@@ -200,7 +163,7 @@ export function packageRequirements(entry: Record<string, unknown>): Record<stri
 
 /** one installed package's autoload declaration, as stored beside its files */
 export type PackageAutoload = {
-	/** the composer name and version, which `Composer\InstalledVersions` answers for once registered */
+	/** composer name and version, registered with `Composer\InstalledVersions` */
 	name?: string;
 	version?: string;
 	mount: string;
@@ -218,11 +181,8 @@ export type PackageAutoload = {
 const phpString = (value: string) => `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 
 /**
- * The autoloader registrations composer would have written for delivered packages, as PHP.
- *
- * Runs inside `settings.php`, where `$class_loader` and `$app_root` are in scope; composer never
- * runs on the edge, so this is the only place a library delivered after the pack becomes loadable.
- * `files` entries are required last, because they may call classes from the other three.
+ * The autoloader registrations composer would have written, as PHP for `settings.php` (where
+ * `$class_loader` and `$app_root` exist). `files` go last since they may use the other classes.
  */
 export function autoloadPhp(packages: readonly PackageAutoload[]): string {
 	const lines: string[] = [];
@@ -282,28 +242,29 @@ export function composerVersion(version: string): string {
 /** a build-delivered vendor package: what to register, and where its files were mounted */
 export type AutoloadDeclaration = PackageAutoload & { name: string; version: string };
 
-const strings = (v: unknown): string[] | null =>
-	Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : null;
+const strings = (v: unknown): string[] | undefined =>
+	Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : undefined;
 
-const prefixMap = (v: unknown): Record<string, string | string[]> | null => {
+const prefixMap = (v: unknown): Record<string, string | string[]> | undefined => {
 	if (v === undefined) return {};
-	if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
+	if (v === null || typeof v !== 'object' || Array.isArray(v)) return undefined;
 	const out: Record<string, string | string[]> = {};
 	for (const [prefix, dirs] of Object.entries(v)) {
 		if (typeof dirs === 'string') out[prefix] = dirs;
-		else if (strings(dirs) !== null) out[prefix] = dirs as string[];
-		else return null;
+		else if (strings(dirs) !== undefined) out[prefix] = dirs as string[];
+		else return undefined;
 	}
 	return out;
 };
 
 /**
- * Reads the `autoload` a `/modify` commit may carry, from a client that is authenticated but not
- * trusted: the mount decides which directory `settings.php` puts on the class path, so it has to
- * sit under `vendor/` or `libraries/` and cannot climb out. `null` is "none sent".
+ * Reads the `autoload` a `/modify` commit may carry; the mount must sit under `vendor/` or
+ * `libraries/` and not climb out. `undefined` is "none sent".
  */
-export function parseAutoloadDeclaration(value: unknown): AutoloadDeclaration | 'invalid' | null {
-	if (value === undefined || value === null) return null;
+export function parseAutoloadDeclaration(
+	value: unknown
+): AutoloadDeclaration | 'invalid' | undefined {
+	if (value === undefined || value === null) return undefined;
 	if (typeof value !== 'object' || Array.isArray(value)) return 'invalid';
 	const v = value as Record<string, unknown>;
 	const raw = (v['autoload'] ?? {}) as Record<string, unknown>;
@@ -318,10 +279,10 @@ export function parseAutoloadDeclaration(value: unknown): AutoloadDeclaration | 
 		typeof v['mount'] !== 'string' ||
 		!/^(vendor|libraries)\/[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)*$/.test(v['mount']) ||
 		v['mount'].split('/').includes('..') ||
-		psr4 === null ||
-		psr0 === null ||
-		classmap === null ||
-		files === null ||
+		psr4 === undefined ||
+		psr0 === undefined ||
+		classmap === undefined ||
+		files === undefined ||
 		[...(classmap ?? []), ...(files ?? [])].some((p) => p.split('/').includes('..'))
 	) {
 		return 'invalid';
@@ -354,10 +315,8 @@ export function classmapOf(
 }
 
 /**
- * The classes a PHP source declares, for composer's `classmap` autoload type.
- *
- * A regex over the namespace and the class-like declarations rather than a parser: a classmap only
- * needs names, and a file declaring a class inside a string is not one a library ships.
+ * The classes a PHP source declares, for composer's `classmap` type; a regex is enough since a
+ * classmap only needs names.
  */
 export function declaredClasses(source: string): string[] {
 	const ns = /^\s*namespace\s+([A-Za-z0-9_\\]+)\s*;/m.exec(source)?.[1] ?? '';
@@ -371,32 +330,22 @@ export function declaredClasses(source: string): string[] {
 }
 
 /**
- * Picks a version from a composer `p2` document.
- *
- * NEWEST STABLE unless a constraint names otherwise, and stable means no `-dev`, `-alpha`, `-beta`
- * or `-RC` suffix. Both repositories list newest first, so this takes the first match rather than
- * sorting -- a real version sort is `composer/semver`'s job and importing that reasoning here would
- * be a second, worse copy of it.
- *
- * The constraint match is EXACT-OR-PREFIX rather than a range solver. A caret range
- * needs a real semver implementation, and answering one wrongly would install a version the site
- * cannot run. An unmatched constraint returns null, which the caller reports.
+ * Picks a version from a composer `p2` document: newest stable unless the constraint says
+ * otherwise. Both registries list newest first, so the first match wins without sorting.
  */
 export function pickVersion(
 	doc: unknown,
 	name: string,
-	constraint?: string | null,
+	constraint?: string,
 	core: string = SHIPPED_CORE_VERSION,
 	stability: string = 'stable'
-): Record<string, unknown> | null {
+): Record<string, unknown> | undefined {
 	const packages = (doc as { packages?: Record<string, unknown[]> })?.packages;
 	const raw = packages?.[name];
-	if (!Array.isArray(raw)) return null;
+	if (!Array.isArray(raw)) return undefined;
 	const list = expandMinified(raw);
 
-	// `^3.0@alpha` lowers the minimum stability to alpha for this one package, as composer reads it;
-	// each `||` branch carries its own flag, and an inline alias (`3.0.0-rc21 as 2.0.0-rc10`) is
-	// installed as the version on its left
+	// `@alpha` lowers stability per `||` branch; an inline alias (`a as b`) installs `a`
 	const RANK = ['dev', 'alpha', 'beta', 'rc', 'stable'];
 	const branches = (constraint ?? '')
 		.split(/\s*\|\|?\s*/)
@@ -415,7 +364,8 @@ export function pickVersion(
 					(b) =>
 						stableAt(version, b.flag ?? 'stable') &&
 						(b.wanted === '' ||
-							// composer reads `^3.0` as starting at 3.0.0-dev, so a pre-release the flag admits counts as its release
+							// `^3.0` starts at 3.0.0-dev, so an admitted pre-release
+							// counts as its release
 							satisfies(
 								b.flag
 									? version.replace(/-(dev|alpha|beta|rc)[\d.]*$/i, '')
@@ -436,12 +386,12 @@ export function pickVersion(
 		);
 		if (exact) return exact;
 	}
-	// a release that requires a Drupal core the site does not run is not installable, however new it is
+	// a release requiring a Drupal core the site does not run is not installable
 	const admitsCore = (entry: Record<string, unknown>) => {
 		const need = (entry['require'] as Record<string, unknown> | undefined)?.['drupal/core'];
 		return typeof need !== 'string' || satisfies(core, need) !== 'no';
 	};
-	// newest first, so the first version the range admits is the one composer would pick
+	// newest first, so the earliest admitted entry is composer's pick
 	for (const entry of list) {
 		const version = String(entry['version'] ?? '');
 		if (version !== '' && admitsCore(entry) && admits(version)) return entry;
@@ -482,40 +432,37 @@ export function pickVersion(
 			if (/-(alpha|beta|rc)/i.test(version) && admitsCore(entry)) return entry;
 		}
 	}
-	// nothing stable at all: a package that only ever published a dev branch is a real case, and
-	// refusing it outright would be wrong. Only reached when no constraint was given
-	if (wanted === '') return list[0] ?? null;
-	return null;
+	// no constraint and nothing stable: a dev-only package still installs
+	if (wanted === '') return list[0];
+	return undefined;
 }
 
 /**
- * A drupal.org submodule, which the registry publishes as a `metapackage` that requires its parent.
- *
- * It has no archive because the parent's archive already carries it, so there is nothing to fetch;
- * its requirements are still walked.
+ * A drupal.org submodule, published as an archive-less `metapackage` requiring its parent; nothing
+ * to fetch, but its requirements are still walked.
  */
 export function isMetapackage(entry: Record<string, unknown>): boolean {
 	return entry['type'] === 'metapackage' && !(entry['dist'] as { url?: string } | undefined)?.url;
 }
 
-/** reads the archive location out of a resolved composer or npm entry */
 /**
  * An archive URL for a branch published with a git source and no dist, which is how drupal.org
  * lists `dev-2.x`. Both hosts serve a zip of any ref; anything else stays undownloadable.
  */
-export function branchArchive(entry: Record<string, unknown>): string | null {
+export function branchArchive(entry: Record<string, unknown>): string | undefined {
 	const source = entry['source'] as { url?: string; reference?: string } | undefined;
 	const ref = source?.reference;
-	if (!source?.url || !ref) return null;
+	if (!source?.url || !ref) return undefined;
 	const drupal = /^https:\/\/git\.drupalcode\.org\/project\/([a-z0-9_]+)\.git$/.exec(source.url);
 	if (drupal)
 		return `https://git.drupalcode.org/project/${drupal[1]}/-/archive/${ref}/${drupal[1]}-${ref}.zip`;
 	const github = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/.exec(source.url);
 	if (github) return `https://codeload.github.com/${github[1]}/zip/${ref}`;
-	return null;
+	return undefined;
 }
 
-export function distOf(entry: Record<string, unknown>, name: string): ResolvedPackage | null {
+/** reads the archive location out of a resolved composer or npm entry */
+export function distOf(entry: Record<string, unknown>, name: string): ResolvedPackage | undefined {
 	const version = String(entry['version'] ?? '');
 
 	// npm shape
@@ -534,7 +481,7 @@ export function distOf(entry: Record<string, unknown>, name: string): ResolvedPa
 	// composer shape
 	const dist = entry['dist'] as { url?: string; type?: string; shasum?: string } | undefined;
 	const url = dist?.url || branchArchive(entry);
-	if (!url) return null;
+	if (!url) return undefined;
 	return {
 		name,
 		version,
@@ -546,11 +493,8 @@ export function distOf(entry: Record<string, unknown>, name: string): ResolvedPa
 }
 
 /**
- * What a package archive may contribute.
- *
- * An allow-list, for the reason `gen-driver-assets.ts` gives about repository checkouts: an archive
- * is not a module, and unpacking one wholesale pulls `tests/`, `node_modules/` and every dotfile
- * into rows that cost storage and can never be executed.
+ * What a package archive may contribute: an allow-list, so tests and assets never become rows
+ * that cost storage and never run.
  */
 export const KEEP = [
 	/\.php$/,
@@ -578,11 +522,13 @@ export const DROP = [
 	/(^|\/)coverage\//i
 ] as const;
 
-/** the record cap; a file above it cannot be one row and is refused rather than silently truncated */
+/** the record cap in bytes; a larger file is refused rather than truncated */
 export const RECORD_CAP = 2_199_995;
 
+/** one kept file, at its mounted path */
 export type UnpackedFile = { path: string; bytes: Uint8Array };
 
+/** what an unpack kept and what it skipped */
 export type UnpackResult = {
 	files: UnpackedFile[];
 	/** paths dropped, with why, so a thin install is explainable rather than mysterious */
@@ -591,11 +537,8 @@ export type UnpackResult = {
 };
 
 /**
- * Unpacks a zip and keeps only what a mounted tree can use.
- *
- * THE LEADING DIRECTORY IS STRIPPED. Every archive from both repositories wraps its contents in one
- * top-level folder named for the project and version (`token-8.x-1.17/`), and keeping it would mount
- * every file one level too deep, where the extension discovery never looks.
+ * Unpacks a zip and keeps only what a mounted tree can use. The wrapping folder (`token-8.x-1.17/`)
+ * is stripped, or discovery would never find the files.
  */
 export function unpackZip(archive: Uint8Array, mount: string): UnpackResult {
 	const entries = unzipSync(archive);
@@ -611,11 +554,8 @@ export function unpackZip(archive: Uint8Array, mount: string): UnpackResult {
 }
 
 /**
- * Unpacks a gzipped tarball, which is what npm serves.
- *
- * `@drupflare/untarl` is a sibling package and already a dependency, so there is no reason for the
- * tar path to be a refusal. `tarEntryTree(entries, 1)` strips the single leading directory for the
- * same reason {@link commonPrefix} does on the zip side, and npm's is always `package/`.
+ * Unpacks a gzipped tarball, which is what npm serves; `tarEntryTree(entries, 1)` strips npm's
+ * leading `package/` as {@link commonPrefix} does for a zip.
  */
 export function unpackTar(archive: Uint8Array, mount: string): UnpackResult {
 	// npm serves `.tgz`; a bare `.tar` would already start with the ustar header rather than 0x1f8b
@@ -649,7 +589,7 @@ function collect(entries: readonly (readonly [string, Uint8Array])[], mount: str
 	return { files, skipped, totalBytes };
 }
 
-/** the single leading directory every dist archive wraps its contents in, or '' when there is none */
+/** the single leading directory a dist archive wraps its contents in, or '' */
 export function commonPrefix(paths: readonly string[]): string {
 	const first = paths.find((p) => p.includes('/'));
 	if (!first) return '';

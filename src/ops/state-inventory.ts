@@ -1,28 +1,19 @@
 /**
- * Which persistent state a replica may hold, at the granularity the state actually has.
+ * Which persistent state a replica may hold, keyed on `(table, collection, name)`: `key_value`
+ * holds a disposable queue beside `state:system.private_key`, so no per-table verdict is right.
+ * Assume the lists are incomplete; anything unlisted is `UNKNOWN` and routes to the primary.
  *
- * A TABLE IS NOT AN EFFECT, and this module exists because that was measured twice. `key_value`
- * holds the disposable `update_fetch_task:*` queue in the same table as `state:system.private_key`,
- * which Drupal mints lazily and keys CSRF tokens on -- two replicas each minting their own would
- * issue tokens the others reject. A per-table verdict is wrong in whichever direction it is set, so
- * classification here keys on `(table, collection, name)`.
- *
- * The second secret was found by enumerating rather than by reasoning: `state:system.cron_key` is
- * the token in the cron URL, and nothing had named it. Assume the list is still incomplete -- that
- * is what {@link UNKNOWN} and `tests/integration/state-inventory.spec.ts` are for.
+ * @module
  */
 
 /**
  * What a replica may do with a piece of state.
  *
- * - `AUTHORITATIVE` -- one execution authority owns it. A replica receives it by replication and may
- *   never originate it. Installation identity and secrets live here.
- * - `REPLICABLE_DERIVED` -- computed from authoritative state. A replica may hold a copy and may
- *   recompute it locally without diverging.
- * - `LOCAL_EPHEMERAL` -- per-object by construction; a replica keeps its own and nothing is lost.
- * - `PRIMARY_ONLY_SIDE_EFFECT` -- an outbound or externally visible effect. Never performed on a
- *   replica, and dropping it is not automatically safe either.
- * - `UNKNOWN` -- unclassified, and therefore routed to the primary. This is the default.
+ * - `AUTHORITATIVE`: replicated in, never originated on a replica (identity, secrets, content).
+ * - `REPLICABLE_DERIVED`: computed from authoritative state; a replica may recompute it.
+ * - `LOCAL_EPHEMERAL`: per-object; a replica keeps its own.
+ * - `PRIMARY_ONLY_SIDE_EFFECT`: an outbound effect, never performed on a replica.
+ * - `UNKNOWN`: the default, routed to the primary.
  */
 export type StateStatus =
 	| 'AUTHORITATIVE'
@@ -31,13 +22,8 @@ export type StateStatus =
 	| 'PRIMARY_ONLY_SIDE_EFFECT'
 	| 'UNKNOWN';
 
-/**
- * The `state:` keys that carry installation identity, enumerated from a provisioned site.
- *
- * `system.private_key` keys CSRF tokens and other HMACs; `system.cron_key` is the token in the cron
- * URL. Both are minted lazily on first use, which is exactly what makes them dangerous: a replica
- * that reaches the code path before replication has delivered the value will happily create one.
- */
+// `state:` keys carrying installation identity; the two keys are minted lazily, so a replica
+// reaching the code path before replication would mint its own
 const AUTHORITATIVE_STATE_KEYS: ReadonlySet<string> = new Set([
 	'system.private_key',
 	'system.cron_key',
@@ -45,7 +31,7 @@ const AUTHORITATIVE_STATE_KEYS: ReadonlySet<string> = new Set([
 	'install_task'
 ]);
 
-/** `key_value` collections whose every key is authoritative */
+// `key_value` collections whose every key is authoritative
 const AUTHORITATIVE_COLLECTIONS: ReadonlySet<string> = new Set([
 	// module schema versions; the input to `update.php` and to every hook_update_N decision
 	'system.schema',
@@ -53,7 +39,7 @@ const AUTHORITATIVE_COLLECTIONS: ReadonlySet<string> = new Set([
 	'post_update'
 ]);
 
-/** `key_value` collections that are derived from authoritative state and safe to recompute */
+// `key_value` collections derived from authoritative state and safe to recompute
 const DERIVED_COLLECTION_PREFIXES = [
 	'config.entity.key_store.',
 	'entity.definitions.',
@@ -61,18 +47,12 @@ const DERIVED_COLLECTION_PREFIXES = [
 	'hook_data',
 	'update_fetch_task',
 	'update',
-	// keyed by an HMAC of its own value under the site hash salt, so every writer writes the same row
+	// keyed by an HMAC of its value under the site salt, so every writer writes the same row
 	'entity_autocomplete'
 ] as const;
 
-/**
- * Tables a replica owns outright; see `isReplicaLocalTable()` for the write-path counterpart.
- *
- * ENUMERATED, never matched by pattern. A pattern that wrongly calls something local lets a replica
- * originate authoritative state, which is the failure mode this module exists to prevent; a pattern
- * that wrongly calls something authoritative only costs a failover, so the two directions get
- * different treatment; see {@link AUTHORITATIVE_TABLE_PATTERNS}.
- */
+// tables a replica owns outright (`isReplicaLocalTable()` is the write-path counterpart);
+// enumerated, never a pattern, since a wrong match would let a replica originate state
 const LOCAL_TABLES: ReadonlySet<string> = new Set([
 	'cfw_page',
 	'cfw_shell',
@@ -81,9 +61,7 @@ const LOCAL_TABLES: ReadonlySet<string> = new Set([
 	'cfw_plan',
 	'cfw_meta',
 	'cfw_health',
-	// the primary's own replication log. Derived entirely from authoritative writes it already
-	// committed, so losing it costs a replica a restore rather than any state; and a REPLICA never
-	// writes one, because logging its own cache fills would replicate them back
+	// the primary's replication log; losing it costs a restore, and a replica never writes one
 	'cfw_repl_log',
 	'cfw_fill_queue',
 	'cfw_serve',
@@ -94,12 +72,11 @@ const LOCAL_TABLES: ReadonlySet<string> = new Set([
 	// workerd's own storage for `ctx.storage.put` and its metadata
 	'_cf_KV',
 	'_cf_METADATA',
-	// invalidation checksums for the cache bins above, and a replica owns those bins. It must own
-	// these with them: a checksum disagreeing with the bin it guards makes every row read as stale
+	// checksums for the replica's own bins; one disagreeing with its bin makes rows read stale
 	'cachetags'
 ]);
 
-/** derived from authoritative state, so a replica may hold a copy and may rebuild it */
+// derived from authoritative state, so a replica may hold a copy and may rebuild it
 const DERIVED_TABLES: ReadonlySet<string> = new Set([
 	// compiled from the route definitions, which are themselves config
 	'router',
@@ -107,13 +84,11 @@ const DERIVED_TABLES: ReadonlySet<string> = new Set([
 	'menu_tree',
 	// the packed module files; they arrive with the pack rather than from the primary
 	'cfw_module_file',
-	// one content address per fragment, computed from the plan, its dependency values and the
-	// generation. Every input is authoritative somewhere else, so a lost row costs a re-harvest
-	// rather than a fact -- unlike `cfw_module_blob`, whose bytes exist nowhere else
+	// fragment content addresses, all inputs authoritative elsewhere; a lost row costs a re-harvest
 	'cfw_fragment'
 ]);
 
-/** tables holding an outbound or externally visible effect */
+// tables holding an outbound or externally visible effect
 const SIDE_EFFECT_TABLES: ReadonlySet<string> = new Set([
 	'cfw_http_queue',
 	'cfw_mail_queue',
@@ -121,13 +96,7 @@ const SIDE_EFFECT_TABLES: ReadonlySet<string> = new Set([
 	'cfw_file_mirror_queue'
 ]);
 
-/**
- * Tables whose rows are authoritative wholesale.
- *
- * Drupal's own content and configuration, plus the host's durable file store. Listed rather than
- * inferred: an entity table added by a contrib module is UNKNOWN and routes to the primary, which
- * is the direction that fails safely.
- */
+// tables authoritative wholesale: Drupal content and config plus the host's durable stores
 const AUTHORITATIVE_TABLES: ReadonlySet<string> = new Set([
 	'config',
 	'sessions',
@@ -159,44 +128,22 @@ const AUTHORITATIVE_TABLES: ReadonlySet<string> = new Set([
 	'cfw_migrate',
 	'cfw_updb_run',
 	'cfw_updb_unit',
-	/**
-	 * The uploaded module store, and it is AUTHORITATIVE where `cfw_module_file` is derived.
-	 *
-	 * The distinction is the whole reason the two are separate. `cfw_module_file` is the
-	 * materialised tree and a revision can rebuild it; the blob and the manifest are the only copy
-	 * of bytes that arrived from a developer's machine and exist nowhere else -- not in the pack, not
-	 * on a registry, not on a git host. Calling either derived would let a replica originate one and
-	 * would let a restore drop the module a site is running.
-	 */
+	// the uploaded module store is the only copy of those bytes (`cfw_module_file` is derived)
 	'cfw_module_blob',
 	'cfw_module_rev',
-	// the composer autoload map of each delivered library; settings.php registers it at boot, so a
-	// replica that lacked it would fatal on the first class a delivered library provides
+	// delivered libraries' autoload maps; settings.php needs them at boot or a class fatals
 	'cfw_package_autoload',
 	'file_usage',
 	'inline_block_usage',
 	'taxonomy_index',
 	// the batch API's working state; a batch is a write operation and never runs on a replica
 	'batch',
-	/**
-	 * THE ID GENERATOR, and the third lazily-dangerous value this inventory turned up.
-	 *
-	 * Two replicas each allocating from their own `sequences` would mint colliding entity ids, and
-	 * nothing would error until the rows met. In the same family as the two secrets: the danger is
-	 * that a replica can ORIGINATE the value rather than that it merely holds it.
-	 */
+	// the id generator: two replicas allocating from their own would mint colliding ids
 	'sequences'
 ]);
 
-/**
- * Patterns that make a table authoritative, applied only after every explicit list above.
- *
- * PATTERNS ARE ALLOWED HERE AND NOWHERE ELSE, because this is the direction that fails safely: a
- * table wrongly matched costs a failover to the primary, while a table wrongly matched as local or
- * derived lets a replica originate state. Entity storage is where the table count actually grows --
- * a contrib module adds `node__field_x`, `node_revision__field_x` and so on -- and enumerating it
- * would be a list nobody prunes.
- */
+// patterns only here, after the lists: a wrong authoritative match only costs a failover, and
+// contrib field tables grow without bound
 const AUTHORITATIVE_TABLE_PATTERNS: readonly RegExp[] = [
 	// a field data table: `node__body`, `media__field_media_image`, `user__user_picture`
 	/^[a-z0-9_]+__[a-z0-9_]+$/,
@@ -206,7 +153,7 @@ const AUTHORITATIVE_TABLE_PATTERNS: readonly RegExp[] = [
 	/_field_revision$/
 ];
 
-/** a dblog row; the entry is mirrored to `console.log`, which outlives the isolate the row lives in */
+// dblog rows; each entry is mirrored to `console.log`, which outlives the isolate
 const LOG_TABLES: ReadonlySet<string> = new Set(['watchdog']);
 
 /**
@@ -221,7 +168,7 @@ const LOG_TABLES: ReadonlySet<string> = new Set(['watchdog']);
  */
 export function classifyState(table: string, collection?: string, name?: string): StateStatus {
 	if (table === '') return 'UNKNOWN';
-	// derived and rebuildable by definition, and the one prefix rule that is safe here
+	// rebuildable by definition, the one safe prefix rule
 	if (table.startsWith('cache_')) return 'LOCAL_EPHEMERAL';
 	if (LOCAL_TABLES.has(table)) return 'LOCAL_EPHEMERAL';
 	if (SIDE_EFFECT_TABLES.has(table)) return 'PRIMARY_ONLY_SIDE_EFFECT';
@@ -247,19 +194,3 @@ export function classifyState(table: string, collection?: string, name?: string)
 	if (AUTHORITATIVE_TABLE_PATTERNS.some((p) => p.test(table))) return 'AUTHORITATIVE';
 	return 'UNKNOWN';
 }
-
-// `replicaMayOriginate()` and `replicaMayServe()` were here, exported, unit-tested and called by
-// nothing, and both are DELETED rather than wired -- they read as the missing callers for two real
-// decisions and are the wrong shape for either.
-//
-// `replicaMayOriginate()` looked like the predicate `originable()` in write-forwarding.ts should
-// have used. It is not: it answers false for AUTHORITATIVE, which is every content table, and the
-// lane id partition exists precisely so a lane CAN mint into those safely under a disjoint stride.
-// Wiring it would have refused the feature it appeared to protect.
-//
-// `replicaMayServe()` is a DENY-list over statuses, and `src/ops/replica.ts` is deliberately two
-// allow-lists and no deny-list, because an unknown effect has to fail closed by being absent from
-// an allow-list rather than by being absent from a deny-list.
-//
-// What survives is `classifyState()`, which both were thin wrappers over and which
-// `hazardClass()` in write-forwarding.ts does call.

@@ -1,29 +1,19 @@
 /**
- * Which site a deployment serves when a request names none.
+ * Which site a deployment serves when a request names none: one deployment is one site, so an
+ * unmapped host resolves to the primary recorded in the deployment document (objects record
+ * themselves; a pre-existing site records as claimed, never primary).
  *
- * One deployment is one site. A host with no `site:host:` mapping and no `SITE_ID` used to address
- * the object its own name derives, so pointing a second domain at a worker opened a claim page for a
- * brand-new site. The deployment document records the sites that have been claimed here and which
- * one is primary, and an unmapped host resolves to the primary instead.
- *
- * The document is written by the objects themselves: a site records itself as primary when it is
- * the first claim on the deployment, and a site claimed before this document existed records itself
- * as claimed (never as primary) the first time it runs. The primary is then, in order:
- *
- * 1. the one an owner chose with `PUT /deployment`, which nothing automatic overrides;
- * 2. the only claimed site, which is every ordinary deployment;
- * 3. with several claimed sites, the one holding the most content (nodes plus accounts beyond uid 1),
- *    ties to the oldest claim. The accidental second claim a new domain used to open is an empty
- *    site, so content keeps the real one whichever was claimed first.
- *
- * A choice is recorded as the primary the moment it is made, so content added to the other site
- * later cannot move a hostname. No site's database is merged or deleted: a site that is not primary
- * stays reachable through a `site:host:<host>` mapping or `/export`.
+ * The primary is, in order: the one an owner chose with `PUT /deployment`; the only claimed site;
+ * with several, the one holding the most content (nodes plus accounts beyond uid 1), ties to the
+ * oldest claim. A choice is recorded at once, so later content cannot move a hostname. Nothing is
+ * merged or deleted: a non-primary site stays reachable through `site:host:<host>` or `/export`.
+ * @module
  */
 
 /** the CONFIG_KV key holding the deployment document */
 export const DEPLOYMENT_KEY = 'site:deployment';
 
+/** the deployment document: the primary site and every claimed one */
 export type DeploymentSites = {
 	/** the site every unmapped host resolves to, or null when none has been chosen */
 	primary: string | null;
@@ -44,6 +34,12 @@ export type SiteCensus = {
 	lastWrite: number | null;
 };
 
+/** what a site counts as when its object cannot answer */
+export function emptyCensus(site: string): SiteCensus {
+	return { site, nodes: 0, accounts: 0, claimedAt: null, lastWrite: null };
+}
+
+/** the KV surface this reads; `put` is absent on a read-only binding */
 export type DeploymentKv = {
 	get(key: string): Promise<string | null>;
 	put?(key: string, value: string): Promise<void>;
@@ -54,11 +50,11 @@ const EMPTY: DeploymentSites = { primary: null, claimed: [] };
 /** how long an isolate reuses the document; the same trade-off as the host memo */
 export const DEPLOYMENT_MEMO_MS = 60_000;
 
-let memo: { at: number; value: DeploymentSites } | null = null;
+let memo: { at: number; value: DeploymentSites } | undefined;
 
 /** drops the isolate's copy, for tests and after this isolate writes one */
 export function resetDeploymentMemo(): void {
-	memo = null;
+	memo = undefined;
 }
 
 /** a stored document, with anything malformed read as empty rather than trusted */
@@ -91,7 +87,7 @@ export function parseDeployment(raw: string | null): DeploymentSites {
  * existed: a KV blip degrades to host derivation rather than taking the site down.
  */
 export async function readDeployment(
-	kv: DeploymentKv | null | undefined,
+	kv: DeploymentKv | undefined,
 	nowMs: number = Date.now()
 ): Promise<DeploymentSites> {
 	if (!kv) return { ...EMPTY, claimed: [] };
@@ -111,25 +107,25 @@ export async function readDeployment(
  * What the deployment document says an unmapped host resolves to.
  *
  * `choose` means several sites are claimed and none is primary yet; the caller runs
- * {@link settlePrimary} over them. `null` means nothing is claimed, so the host's derived id stands,
- * which is how the first site of a deployment is made.
+ * {@link settlePrimary} over them. `undefined` means nothing is claimed, so the host's derived id
+ * stands, which is how the first site of a deployment is made.
  */
 export function unmappedSite(
 	doc: DeploymentSites
-): { site: string; from: 'primary' } | { from: 'choose'; candidates: string[] } | null {
+): { site: string; from: 'primary' } | { from: 'choose'; candidates: string[] } | undefined {
 	if (doc.primary !== null) return { site: doc.primary, from: 'primary' };
 	if (doc.claimed.length === 1) return { site: doc.claimed[0] as string, from: 'primary' };
 	if (doc.claimed.length > 1) return { from: 'choose', candidates: [...doc.claimed] };
-	return null;
+	return undefined;
 }
 
 /**
  * The site with the most content, ties to the oldest claim, then to the first listed.
  */
-export function chooseByContent(census: readonly SiteCensus[]): string | null {
-	let best: SiteCensus | null = null;
+export function chooseByContent(census: readonly SiteCensus[]): string | undefined {
+	let best: SiteCensus | undefined;
 	for (const one of census) {
-		if (best === null) {
+		if (best === undefined) {
 			best = one;
 			continue;
 		}
@@ -138,7 +134,7 @@ export function chooseByContent(census: readonly SiteCensus[]): string | null {
 		const older = (one.claimedAt ?? Infinity) < (best.claimedAt ?? Infinity);
 		if (a > b || (a === b && older)) best = one;
 	}
-	return best?.site ?? null;
+	return best?.site;
 }
 
 /**
@@ -151,20 +147,12 @@ export async function settlePrimary(
 	kv: DeploymentKv,
 	candidates: readonly string[],
 	count: (site: string) => Promise<SiteCensus>
-): Promise<string | null> {
+): Promise<string | undefined> {
 	const census = await Promise.all(
-		candidates.map((site) =>
-			count(site).catch((): SiteCensus => ({
-				site,
-				nodes: 0,
-				accounts: 0,
-				claimedAt: null,
-				lastWrite: null
-			}))
-		)
+		candidates.map((site) => count(site).catch(() => emptyCensus(site)))
 	);
 	const pick = chooseByContent(census);
-	if (pick === null) return null;
+	if (pick === undefined) return undefined;
 	const doc = parseDeployment(await kv.get(DEPLOYMENT_KEY));
 	// sticky: an explicit choice, or one another isolate made first, stands
 	if (doc.primary !== null) return doc.primary;
@@ -179,19 +167,18 @@ export async function settlePrimary(
 /**
  * Records a claimed site, and makes it primary when asked and no site is primary or claimed yet.
  *
- * `asPrimary` is set by a first claim and never by a site adopting itself afterwards, so a
- * deployment that already held two claimed sites does not get a primary chosen by whichever one
- * happened to run first. Read-modify-write on one key: two objects recording at once can lose one
- * entry, and the loser records itself again the next time it runs.
+ * `asPrimary` is set by a first claim only, so an existing two-site deployment does not get a
+ * primary chosen by whichever ran first. Read-modify-write on one key: a concurrent loser records
+ * itself again on its next run.
  *
- * @returns the document as written, or null when the binding cannot be written
+ * @returns the document as written, or undefined when the binding cannot be written
  */
 export async function recordClaimed(
-	kv: DeploymentKv | null | undefined,
+	kv: DeploymentKv | undefined,
 	site: string,
 	asPrimary: boolean
-): Promise<DeploymentSites | null> {
-	if (!kv || typeof kv.put !== 'function' || site === '') return null;
+): Promise<DeploymentSites | undefined> {
+	if (!kv || typeof kv.put !== 'function' || site === '') return undefined;
 	const doc = parseDeployment(await kv.get(DEPLOYMENT_KEY));
 	const firstOfAll = doc.primary === null && doc.claimed.length === 0;
 	const known = doc.claimed.includes(site);

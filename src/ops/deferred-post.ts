@@ -1,8 +1,6 @@
 /**
- * The deferred tier for POSTs.
- *
- * A POST differs from a GET in three ways that all have to be answered, and a fourth that is really
- * the product question. Each is handled below and none is left implicit.
+ * The deferred tier for POSTs: queue a request, answer it on the alarm, replay it at most once.
+ * @module
  */
 
 /** methods that may be replayed without changing what the far end has done */
@@ -11,10 +9,8 @@ const IDEMPOTENT = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE']);
 /**
  * The largest body that may be deferred.
  *
- * The key embeds the body verbatim (see `deferredKey`), and the key is a SQLite PRIMARY KEY, so an
- * unbounded body would put an unbounded value in an index. 8 KiB is far above any verification
- * payload -- a reCAPTCHA `siteverify` POST is about 200 bytes -- and far below the 2,199,995-byte
- * Durable Object record ceiling.
+ * The key embeds the body verbatim and is a SQLite primary key, so the body is capped at 8 KiB
+ * (a `siteverify` POST is about 200 bytes; the Durable Object record ceiling is 2,199,995).
  */
 export const MAX_DEFERRED_BODY = 8192;
 
@@ -25,16 +21,10 @@ export const DEFAULT_POST_TTL_MS = 120_000;
 export const DEFAULT_GET_TTL_MS = 3_600_000;
 
 /**
- * GETs whose consumer runs on the cron chain, and how long their answer stays fresh.
+ * Freshness for GETs whose consumer runs on the cron chain.
  *
- * One hour was doing two jobs at once -- a garbage-collection bound AND a freshness contract -- and
- * only the first is what it was chosen for. The consumers here are all `hook_cron`, and the observed
- * cron period is hours rather than the configured 15 minutes, so at one hour the entry is expired at
- * the exact moment anything asks: fetch, defer, throw, drain, expire, repeat. Measured gaps between
- * `announcements_feed` rounds were 8,142 to 26,033 s, every one past the TTL.
- *
- * A day is chosen from the consumer rather than from the endpoint: `update` stores its own release
- * data for 24 hours, so a fetch entry that outlives that is never the binding constraint.
+ * The observed cron period is hours (`announcements_feed` gaps were 8,142 to 26,033 s), so a
+ * one hour TTL expired every entry before anything asked; a day outlives `update`'s own 24 hours.
  */
 const CRON_FETCH_TTL_MS = 86_400_000;
 
@@ -47,13 +37,11 @@ const CRON_FETCH_URLS = [
 /**
  * How long past `expiresAt` an entry may still be handed to a caller that would otherwise throw.
  *
- * Serving a stale answer while the drain refreshes it is strictly better than the exception the
- * caller gets today, and it is the same reasoning as serving a previous generation of a page. It
- * applies to idempotent methods ONLY: a stale POST result is a replay window, which is the whole
- * reason `DEFAULT_POST_TTL_MS` is two minutes.
+ * Idempotent methods only: a stale POST result is a replay window.
  */
 export const STALE_SERVE_WINDOW_MS = 604_800_000;
 
+/** thrown by `deferredKey` when the body exceeds `MAX_DEFERRED_BODY`; carries the byte count */
 export class DeferredBodyTooLarge extends Error {
 	constructor(readonly bytes: number) {
 		super(
@@ -65,33 +53,11 @@ export class DeferredBodyTooLarge extends Error {
 }
 
 /**
- * The cache key for a deferred request.
+ * The cache key for a deferred request: the exact tuple, length-prefixed, not a hash.
  *
- * **IT IS NOT A HASH.** The obvious design is
- * `hash(method + url + body)`, and both available hashes are wrong here:
- *
- *   - A NON-CRYPTOGRAPHIC hash (FNV-1a, djb2) is forgeable. This key decides which cached response
- *     a verification reads, so an attacker who can craft a body that collides with a known-good
- *     verification gets that success served to their own submission. A captcha bypass through a
- *     hash collision is a worse bug than the one the tier exists to fix.
- *   - A CRYPTOGRAPHIC hash cannot be computed here. `crypto.subtle.digest` is async, and this key
- *     has to be derived inside the synchronous `cfwQueueFetch` and `cfwHttpCacheGet` calls that PHP
- *     makes. Shipping a synchronous SHA-256 to avoid that is a lot of code to reintroduce a
- *     collision domain that does not have to exist.
- *
- * So the key is the exact tuple, LENGTH-PREFIXED. Collisions are impossible by construction rather
- * than improbable, the derivation is trivially synchronous, and the cost is index size -- bounded by
- * `MAX_DEFERRED_BODY`.
- *
- * **The length prefix is the security property, and a separator is not good enough.** The first
- * version joined the fields with a NUL, reasoning that a NUL cannot appear in a method or a URL. It
- * can appear in a BODY, and a body is attacker-controlled: two different (url, body) pairs can be
- * made to serialise identically by moving the separator between them. That is the
- * forgeable-collision hole this function exists to close, reintroduced by its own encoding, and the
- * spec case named for it is what caught it.
- *
- * Length prefixes make the encoding injective for ANY field contents, because nothing has to guess
- * where a field ends.
+ * A non-cryptographic hash is forgeable and `crypto.subtle.digest` is async, while the key is
+ * derived inside synchronous host calls. The length prefix makes the encoding injective for any
+ * field contents; a separator is not enough because a body (attacker-controlled) can contain it.
  */
 export function deferredKey(
 	method: string,
@@ -103,15 +69,13 @@ export function deferredKey(
 	const bytes = encoder.encode(body).length;
 	if (bytes > MAX_DEFERRED_BODY) throw new DeferredBodyTooLarge(bytes);
 	const upper = method.toUpperCase();
-	// BYTE lengths, not code-unit lengths, so the prefix describes what was actually encoded
+	// byte lengths, not code-unit lengths, so the prefix describes what was encoded
 	const base =
 		`${encoder.encode(upper).length}:${upper}` +
 		`${encoder.encode(url).length}:${url}` +
 		`${bytes}:${body}`;
 
-	// nothing appended when there are no headers, so every key minted before this parameter existed
-	// still names the same entry. The segment stays injective either way: the body's length prefix
-	// says exactly where it ends, so "absent" and "present" cannot be confused for one another
+	// nothing appended without headers, so older keys keep naming the same entry (still injective)
 	const canonical = canonicalHeaders(headers);
 	if (canonical.length === 0) return base;
 	let segment = `${canonical.length}:`;
@@ -122,10 +86,7 @@ export function deferredKey(
 	return base + segment;
 }
 
-/**
- * Headers `fetch()` computes for itself. Never keyed and never sent, because sending one is either
- * ignored or an error and keying on one fragments the cache on a value that never went out.
- */
+/** headers `fetch()` computes itself; never keyed or sent (sending one is ignored or an error) */
 const TRANSPORT_OWNED = new Set([
 	'host',
 	'content-length',
@@ -136,32 +97,18 @@ const TRANSPORT_OWNED = new Set([
 ]);
 
 /**
- * SENT, but not part of the key.
+ * Sent, but not part of the key.
  *
- * `user-agent` identifies the CLIENT, never the caller and never the representation, so keying on it
- * splits one response into a row per client library. That is not theoretical: Guzzle's
- * `StreamHandler` builds a stream context carrying its own `User-Agent` while a bare
- * `file_get_contents()` sends none, so the two would stop sharing a row for the same URL -- which is
- * a property `CachedFetchHandler` documents and `guzzle-handler.spec.ts` measures.
- *
- * **This is the ONLY category excluded for a reason other than the transport owning it, and it is
- * kept small.** Under-keying is a DISCLOSURE -- serve one caller's authenticated response to
- * another -- while over-keying only costs a fetch, so anything credential-bearing or
- * representation-selecting stays in: `authorization`, `cookie`, `accept`, `accept-language` and
- * every header this runtime has never heard of.
- *
- * A server that varies its body on `User-Agent` would be served the wrong variant here.
- * The correct fix for that is `Vary` from the response, which needs a variant table rather than a
- * longer deny-list; nothing has measured it as a real cost, so it is not built.
+ * `user-agent` names the client library (Guzzle sends one, a bare `file_get_contents()` none), so
+ * keying on it would split one URL into a row per client. Keep this list small: under-keying serves
+ * one caller's authenticated response to another, over-keying only costs a fetch.
  */
 const NOT_KEYED = new Set(['user-agent']);
 
 /**
- * Lowercases, sorts and drops, so two equivalent header sets produce one key regardless of the order
- * PHP happened to build them in.
+ * Lowercases, sorts and drops, so equivalent header sets give one key in any order.
  *
- * A duplicate name after lowercasing keeps the LAST value, matching what `Headers` does with a
- * repeated `set()`; the alternative is two entries whose order decides the key.
+ * A duplicate name after lowercasing keeps the last value, as `Headers.set()` does.
  */
 function canonicalise(
 	headers: Record<string, string>,
@@ -176,17 +123,12 @@ function canonicalise(
 	return [...seen.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
-/** the set the KEY is derived from: everything the caller chose that changes who or what is asked */
+/** the set the key is derived from: what the caller chose that changes who or what is asked */
 export function canonicalHeaders(headers: Record<string, string>): Array<[string, string]> {
 	return canonicalise(headers, (n) => TRANSPORT_OWNED.has(n) || NOT_KEYED.has(n));
 }
 
-/**
- * The set that goes on the WIRE, which is strictly larger than the keyed set.
- *
- * `user-agent` is here and absent from the key; dropping it from the wire too would be
- * the dropped-`Authorization` defect again, one header narrower.
- */
+/** the set that goes on the wire; larger than the keyed set (`user-agent` is sent, not keyed) */
 export function headersToSend(headers: Record<string, string>): Record<string, string> {
 	return Object.fromEntries(canonicalise(headers, (n) => TRANSPORT_OWNED.has(n)));
 }
@@ -194,9 +136,8 @@ export function headersToSend(headers: Record<string, string>): Record<string, s
 /**
  * Narrows a host-call payload's `headers` member to a string map.
  *
- * PHP builds it, so anything can arrive: absent, a list, a nested array from a header sent twice.
- * A non-string value is stringified rather than dropped, because dropping one silently sends a
- * request without a header the caller set -- which is the defect this whole seam exists to close.
+ * PHP builds it, so anything can arrive; non-strings are stringified, never dropped, because a
+ * dropped header silently changes the request.
  */
 export function requestHeaders(payload: { headers?: unknown }): Record<string, string> {
 	const raw = payload?.headers;
@@ -216,16 +157,10 @@ export function isIdempotent(method: string): boolean {
 }
 
 /**
- * How many times a queued request may be attempted, in total.
+ * How many times a queued request may be attempted: 3 for idempotent methods, 1 for a POST.
  *
- * **A POST GETS EXACTLY ONE ATTEMPT.** The existing GET drain retries three times, which is correct
- * for a GET and is a live defect for a POST: a reCAPTCHA token is single-use, so a retried
- * verification is rejected by Google as already-redeemed and the visitor is told they failed a
- * captcha they passed. Worse, the retry is invisible -- the first attempt may well have SUCCEEDED at
- * the far end and only failed to return, so retrying converts a network blip into a definite
- * rejection.
- *
- * One attempt means a failure is reported as a failure rather than laundered into a wrong answer.
+ * A retried POST can be rejected as already redeemed (a reCAPTCHA token is single-use) after the
+ * first attempt succeeded at the far end and only failed to return.
  */
 export function attemptBudget(method: string): number {
 	return isIdempotent(method) ? 3 : 1;
@@ -234,10 +169,8 @@ export function attemptBudget(method: string): number {
 /**
  * How long a result stays usable.
  *
- * **A cached POST response that outlives its meaning is a security bug, not a stale page.** A
- * verification says "this token was valid a moment ago"; served an hour later it says nothing, and
- * serving it anyway is a replay window. Two minutes matches the lifetime of the tokens this is
- * built for and is short enough that a leaked cache entry is not worth harvesting.
+ * A POST result is short-lived on purpose: past the token's lifetime it is a replay window, not a
+ * stale page. Two minutes matches the tokens this serves.
  */
 export function ttlFor(method: string, url = ''): number {
 	if (!isIdempotent(method)) return DEFAULT_POST_TTL_MS;
@@ -245,7 +178,7 @@ export function ttlFor(method: string, url = ''): number {
 }
 
 /**
- * The oldest an entry may be and still be served to a caller whose only alternative is an exception.
+ * The oldest an entry may be and still be served to a caller that would otherwise throw.
  *
  * Zero for anything non-idempotent, so a POST result can never be replayed past its own TTL.
  */
@@ -253,23 +186,19 @@ export function staleWindowFor(method: string): number {
 	return isIdempotent(method) ? STALE_SERVE_WINDOW_MS : 0;
 }
 
-/**
- * Whether an entry is stale but still worth serving.
- *
- * Never true for a fresh entry -- {@link isFresh} owns that case and a caller checks it first -- so
- * the two together classify an entry as fresh, stale-servable or gone.
- */
+/** whether an entry is stale but servable; false for a fresh one ({@link isFresh} owns that) */
 export function isServableStale(
-	entry: Pick<CacheEntry, 'expiresAt'> | null,
+	entry: Pick<CacheEntry, 'expiresAt'> | undefined,
 	nowMs: number,
 	method = 'GET'
 ): boolean {
-	if (entry === null) return false;
+	if (entry === undefined) return false;
 	if (!Number.isFinite(entry.expiresAt)) return false;
 	if (entry.expiresAt > nowMs) return false;
 	return entry.expiresAt + staleWindowFor(method) > nowMs;
 }
 
+/** a stored response; times are epoch ms */
 export interface CacheEntry {
 	status: number;
 	headers: Record<string, string>;
@@ -278,72 +207,58 @@ export interface CacheEntry {
 	expiresAt: number;
 }
 
-/** whether an entry may still be served; an absent expiry is treated as expired, never as forever */
-export function isFresh(entry: Pick<CacheEntry, 'expiresAt'> | null, nowMs: number): boolean {
-	if (entry === null) return false;
+/** whether an entry may still be served; an absent expiry counts as expired, not forever */
+export function isFresh(entry: Pick<CacheEntry, 'expiresAt'> | undefined, nowMs: number): boolean {
+	if (entry === undefined) return false;
 	if (!Number.isFinite(entry.expiresAt)) return false;
 	return entry.expiresAt > nowMs;
 }
 
 /**
- * What a caller should do with a deferred request right now.
+ * What a caller should do with a deferred request right now (the first request never has the
+ * answer; the queue drains on an alarm).
  *
- * This is the fourth problem and the one that decides whether the feature is usable: **the first
- * request cannot have the answer.** The queue drains on an alarm, so the synchronous read on the
- * first attempt necessarily misses.
- *
- * The states are few, because the Drupal-side shim has to act on them inside a form
- * validator with no ability to wait:
- *
- *   - `miss`      nothing queued; queue it and tell the caller to come back
+ *   - `miss`      nothing queued; queue it and come back
  *   - `pending`   queued, not yet drained; come back
  *   - `ready`     a fresh result is available; consume it
- *   - `expired`   a result existed and is too old to mean anything; re-queue rather than serve it
- *   - `failed`    the attempt budget is spent; this is a definite no, not a "try again"
- *
- * `failed` being distinct from `pending` is what stops a form retrying forever against an endpoint
- * that is down.
+ *   - `expired`   a result existed but is too old; re-queue rather than serve it
+ *   - `failed`    the attempt budget is spent; a definite no (stops a form retrying forever)
  */
 export type DeferredState = 'miss' | 'pending' | 'ready' | 'expired' | 'failed';
 
+/** the verdict `deferredStatus` returns for one request */
 export interface DeferredStatus {
 	state: DeferredState;
 	/** ms the caller should wait before asking again; 0 when there is nothing to wait for */
 	retryAfterMs: number;
-	entry: CacheEntry | null;
+	entry?: CacheEntry;
 	reason: string;
 }
 
+/** the queue-table fields `deferredStatus` reads */
 export interface QueueRow {
 	attempts: number;
 	method: string;
-	lastError?: string | null;
+	lastError?: string;
 }
 
-/**
- * Decides the state from what the tables hold.
- *
- * Pure, so the whole state machine is testable without a Durable Object, an alarm or a socket --
- * which matters because the interesting cases are the ones that are awkward to reach live: an entry
- * that expired between the queue and the read, and a queue row whose budget is spent.
- */
+/** decides the state from what the tables hold; pure, so testable without an object or alarm */
 export function deferredStatus(
-	entry: CacheEntry | null,
-	queued: QueueRow | null,
+	entry: CacheEntry | undefined,
+	queued: QueueRow | undefined,
 	nowMs: number,
-	/** how soon the alarm will run again; the drain re-arms at +1 ms while the queue is non-empty */
+	/** how soon the alarm runs again; the drain re-arms at +1 ms while the queue is non-empty */
 	alarmDelayMs = 1
 ): DeferredStatus {
-	if (entry !== null && isFresh(entry, nowMs)) {
+	if (entry !== undefined && isFresh(entry, nowMs)) {
 		return { state: 'ready', retryAfterMs: 0, entry, reason: 'a fresh result is cached' };
 	}
-	if (queued !== null) {
+	if (queued !== undefined) {
 		const budget = attemptBudget(queued.method);
 		if (queued.attempts >= budget) {
 			return {
 				state: 'failed',
 				retryAfterMs: 0,
-				entry: null,
 				reason:
 					`the attempt budget of ${budget} for ${queued.method.toUpperCase()} is spent` +
 					(queued.lastError ? `: ${queued.lastError}` : '')
@@ -352,42 +267,26 @@ export function deferredStatus(
 		return {
 			state: 'pending',
 			retryAfterMs: alarmDelayMs,
-			entry: null,
 			reason: `queued, attempt ${queued.attempts + 1} of ${budget}, draining on the next alarm`
 		};
 	}
-	if (entry !== null) {
+	if (entry !== undefined) {
 		return {
 			state: 'expired',
 			retryAfterMs: alarmDelayMs,
-			entry: null,
-			// never served: a verification past its TTL is a replay window, not a stale page
+			// never served: past its TTL a verification is a replay window
 			reason: 'a result exists but is past its TTL; serving it would be a replay window, so it is re-queued rather than served'
 		};
 	}
-	return { state: 'miss', retryAfterMs: alarmDelayMs, entry: null, reason: 'nothing queued yet' };
+	return { state: 'miss', retryAfterMs: alarmDelayMs, reason: 'nothing queued yet' };
 }
 
 /**
- * The visitor experience, named rather than left to whoever writes the shim.
+ * The visitor experience for a form whose validator needs a deferred verification: queue it,
+ * re-post the same form after `afterMs`, and the second submission finds the result cached.
  *
- * A form POST whose validator needs a deferred verification has exactly three honest options, and
- * only one of them is not broken:
- *
- *   1. **Reject the submission.** The visitor passed the captcha and is told they failed. Never.
- *   2. **Block the render until the alarm drains.** Impossible: the run is synchronous.
- *   3. **Re-submit once, automatically.** The validator queues the verification, marks the form
- *      "awaiting verification", and the response re-posts the same form after `retryAfterMs`. The
- *      second submission finds the result cached and completes.
- *
- * Three is what this returns. The visitor sees one extra round trip on submit and no error. The
- * added latency is one alarm cycle plus one HTTP round trip -- a WALL-CLOCK quantity, and per RULE 0
- * no CPU figure can be derived from it.
- *
- * The token survives the round trip because the SAME token is re-posted: the key is the exact
- * tuple, so the second submission hits the entry the first one queued. A shim that minted a new
- * token on re-submit would miss the cache every time and loop forever, which is the one way to get
- * this wrong.
+ * The same token must be re-posted; a new one misses the cache every time and loops forever.
+ * The added latency is wall clock (one alarm cycle plus one round trip), not a CPU figure.
  */
 export interface ResubmitPlan {
 	/** whether the form should re-post itself rather than erroring */
@@ -403,6 +302,7 @@ export interface ResubmitPlan {
 /** at most this many automatic re-submissions before the visitor is told something is wrong */
 export const MAX_RESUBMITS = 2;
 
+/** maps a status to a re-submit decision, giving up after `MAX_RESUBMITS` automatic posts */
 export function resubmitPlan(status: DeferredStatus, alreadyResubmitted = 0): ResubmitPlan {
 	if (status.state === 'ready') {
 		return { resubmit: false, afterMs: 0, message: '', attempt: alreadyResubmitted };

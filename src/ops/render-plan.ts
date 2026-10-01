@@ -1,14 +1,11 @@
 /**
- * A compiled render plan and the VM that executes it outside PHP.
+ * A compiled render plan (constant bytes plus per-request slots) and the VM that runs it.
  *
- * A plan is a flat op list: constant bytes, and slots whose value is produced per request.
- * Executing one needs no Drupal, no interpreter and no render array.
+ * Slots are found by diffing two renders of one page; a marker list would pass on a value it has
+ * never seen. A slot with no generator refuses to serve: `fillSlots()` returns undefined and the
+ * caller answers 409 instead of filling it with a random string of the right size.
  *
- * Slots are found by diffing two renders of the same page. A list of known-volatile markers
- * would pass on a value it has never seen; a diff fails on it.
- *
- * A slot with no generator refuses to serve. `fillSlots()` returns null and the caller answers
- * 409 rather than filling an unrecognised value with a correctly-sized random string.
+ * @module
  */
 
 /** constant bytes, or a named hole */
@@ -17,9 +14,8 @@ export type PlanOp = ['t', string] | ['s', string];
 /**
  * What a slot holds.
  *
- * `build_id` is Drupal's `form_build_id`, `'form-' . Crypt::randomBytesBase64()`: 32 CSPRNG
- * bytes in base64url. It appears twice on a form page, raw in the input's value and through
- * `Html::getId()` in its DOM id, so both occurrences share one value.
+ * `build_id` is Drupal's `form_build_id` (32 random bytes, base64url); it prints twice on a form
+ * page, raw and through `Html::getId()`, and both share one value.
  */
 export type PlanSlot =
 	| { kind: 'build_id'; role: 'raw' }
@@ -29,27 +25,25 @@ export type PlanSlot =
 	/**
 	 * A view's per-request DOM id: `hash('sha256', $id . $time . mt_rand())`, 64 lowercase hex.
 	 *
-	 * `head` is how many characters the surrounding constants already carry, since two hex values
-	 * share a leading character one time in sixteen. Unvalidated on the way back in, and
-	 * `hook_views_pre_view()` may set it to anything, so any 64 hex characters are a legal value.
+	 * `head` is how many characters the surrounding constants already carry (two hex values share a
+	 * leading character one time in sixteen). Any 64 hex characters are legal, since
+	 * `hook_views_pre_view()` may set it to anything.
 	 */
 	| { kind: 'view_dom_id'; head: number }
 	/**
-	 * Drupal's session CSRF token, `Crypt::hmacBase64('user.logout', session_seed . private_key)`:
-	 * 43 base64url characters, constant for a session and different for every other one.
+	 * Drupal's session CSRF token: 43 base64url characters, constant per session.
 	 *
-	 * MEASURED, and it is the whole reason a shared role-set plan could not compile an authenticated
-	 * page. Two sessions of one role set rendering `/` differ in exactly this value and nothing else --
-	 * 103,697 bytes each, one varying token in two places, every `data-contextual-token` identical.
-	 * Unlike the other kinds it cannot be generated, only substituted: the value belongs to the visitor
-	 * being served, so {@link fillSlots} takes it from the caller and refuses without one.
+	 * Two sessions of one role set differ only in this value, which is why a shared plan could not
+	 * compile an authenticated page. It cannot be generated, only substituted:
+	 * {@link fillSlots} takes it from the caller and refuses without one.
 	 */
 	| { kind: 'csrf'; head: number }
 	| { kind: 'unknown'; bytes: number };
 
 /** what a slot cannot be generated from and must be supplied per request */
-export type SlotValues = { csrf?: string | null };
+export type SlotValues = { csrf?: string };
 
+/** the compiled plan for one path, with both samples it was compiled from */
 export type RenderPlan = {
 	path: string;
 	ops: PlanOp[];
@@ -60,7 +54,7 @@ export type RenderPlan = {
 	sampleB: Record<string, string>;
 };
 
-/** one 43-character base64url token from 32 CSPRNG bytes, the same shape PHP's Crypt produces */
+/** one 43-character base64url token from 32 random bytes, the shape PHP's Crypt produces */
 export function randomBuildToken(): string {
 	const raw = crypto.getRandomValues(new Uint8Array(32));
 	let bin = '';
@@ -69,10 +63,8 @@ export function randomBuildToken(): string {
 }
 
 /**
- * `Html::getId()`, which turns a build id into the element's DOM id.
- *
- * Underscores become hyphens and consecutive hyphens collapse, so the id is a different length
- * from the token about half the time.
+ * `Html::getId()`: a build id to a DOM id. Hyphen collapsing makes it differ in length from the
+ * token about half the time.
  */
 export function htmlId(id: string): string {
 	return id
@@ -98,7 +90,7 @@ function randomDomId(): string {
 /** the two places Drupal core prints a view's dom id, minus the value itself */
 const DOM_ID_MARKERS = ['js-view-dom-id-', 'view_dom_id":"'];
 
-/** where Drupal core prints the session CSRF token; the logout link is on every authenticated page */
+/** where core prints the session CSRF token (the logout link, on every authenticated page) */
 const CSRF_MARKERS = ['user/logout?token='];
 
 /** the fixed-width per-request values, each recognised the same way and only by its own marker */
@@ -108,23 +100,19 @@ const TOKEN_KINDS = [
 ];
 
 /**
- * A varying region that is one of the fixed-width tokens above, or null.
+ * A varying region that is one of the fixed-width tokens above, or undefined.
  *
- * The region is not a whole value: the bracket around it ate whatever characters the two samples
- * happened to share, and two random strings share a leading one AND a trailing one often enough to
- * matter. Both borrowed pieces come back off the constants either side, so every split of the
- * missing count is tried rather than assuming it is all at the front.
- *
- * The marker check is what separates this from any other pair of differing runs in the same charset.
- * A region that fails it stays opaque rather than being filled with a plausible value.
+ * The diff bracket ate characters the samples shared at either end of the value, so every split
+ * of the missing count is borrowed back from the constants either side. A region that fails the
+ * marker check stays opaque.
  */
 function recogniseToken(
 	spanA: string,
 	spanB: string,
 	before: string,
 	after: string
-): { slot: PlanSlot; sample: string; sampleB: string; consumed: number } | null {
-	if (spanA.length !== spanB.length || spanA === '' || spanA === spanB) return null;
+): { slot: PlanSlot; sample: string; sampleB: string; consumed: number } | undefined {
+	if (spanA.length !== spanB.length || spanA === '' || spanA === spanB) return undefined;
 	for (const { kind, width, charset, markers } of TOKEN_KINDS) {
 		if (!charset.test(spanA) || !charset.test(spanB)) continue;
 		const missing = width - spanA.length;
@@ -145,65 +133,66 @@ function recogniseToken(
 			};
 		}
 	}
-	return null;
+	return undefined;
 }
 
 /** one 43-character base64url run, the shape `Crypt::hmacBase64()` returns */
 const CSRF_VALUE = /user\/logout\?token=([A-Za-z0-9_-]{43})/;
 
 /**
- * The session CSRF token in one render, or null.
+ * The session CSRF token in one render, or undefined.
  *
- * Read out of the RENDER rather than off the request, which is the same trust argument
- * `rememberRoles()` makes: a client cannot present a token, it is told what its own is.
+ * Read from the render, not the request: a client cannot present a token, it is told its own.
  */
-export function sessionCsrf(html: string): string | null {
-	return CSRF_VALUE.exec(html)?.[1] ?? null;
+export function sessionCsrf(html: string): string | undefined {
+	return CSRF_VALUE.exec(html)?.[1];
 }
 
 /**
- * Splits one varying span into constants and named slots, or null when nothing recognises it.
+ * Splits one varying span into constants and named slots, or undefined when nothing recognises it.
  *
- * The span ends with the raw token, since `value="form-<token>"` is the last thing that varies
- * on a form page. Before it sits the tail of `Html::getId()` plus constant markup; how much of
- * the id the outer diff already consumed is derived from the common prefix of the two ids,
- * because hyphen collapsing makes them differ in length from each other and from the token.
- *
- * Whatever this returns is checked by `planExplainsBoth()` and `generatorAgrees()`.
+ * The span ends with the raw token (`value="form-<token>"`), preceded by the tail of
+ * `Html::getId()`; how much of the id the outer diff consumed comes from the common prefix of the
+ * two ids, since hyphen collapsing makes their lengths differ. The result is checked by
+ * `planExplainsBoth()` and `generatorAgrees()`.
  */
 function recogniseSpan(
 	spanA: string,
 	spanB: string,
 	tail: string
-): {
-	pieces: Array<{ text: string } | { slot: PlanSlot; sample: string; sampleB: string }>;
-	/** bytes of the common suffix the token reclaimed, which the caller must not emit again */
-	consumed: number;
-} | null {
+):
+	| {
+			pieces: Array<{ text: string } | { slot: PlanSlot; sample: string; sampleB: string }>;
+			/** suffix bytes the token reclaimed; the caller must not emit them again */
+			consumed: number;
+	  }
+	| undefined {
 	// two base64url tokens share a last character about one time in 64, so the common suffix can
 	// end mid-token; borrow the missing characters back from it
 	const headA = BUILD_ID_TAIL.exec(spanA)?.[1];
 	const headB = BUILD_ID_TAIL.exec(spanB)?.[1];
-	if (headA === undefined || headB === undefined || headA.length !== headB.length) return null;
+	if (headA === undefined || headB === undefined || headA.length !== headB.length) {
+		return undefined;
+	}
 	const consumed = 43 - headA.length;
-	if (consumed < 0 || consumed > tail.length) return null;
-	if (!/^[A-Za-z0-9_-]*$/.test(tail.slice(0, consumed))) return null;
+	if (consumed < 0 || consumed > tail.length) return undefined;
+	if (!/^[A-Za-z0-9_-]*$/.test(tail.slice(0, consumed))) return undefined;
 	const ta = headA + tail.slice(0, consumed);
 	const tb = headB + tail.slice(0, consumed);
 	spanA += tail.slice(0, consumed);
 	spanB += tail.slice(0, consumed);
 	// the same token in both renders is not a varying value at all
-	if (ta === tb) return null;
+	if (ta === tb) return undefined;
 
 	const idA = htmlId('form-' + ta);
 	const idB = htmlId('form-' + tb);
 	let head = 0;
 	while (head < idA.length && head < idB.length && idA[head] === idB[head]) head++;
-	if (!spanA.startsWith(idA.slice(head)) || !spanB.startsWith(idB.slice(head))) return null;
+	if (!spanA.startsWith(idA.slice(head)) || !spanB.startsWith(idB.slice(head))) return undefined;
 
 	const midA = spanA.slice(idA.length - head, spanA.length - ta.length);
 	const midB = spanB.slice(idB.length - head, spanB.length - tb.length);
-	if (midA !== midB) return null;
+	if (midA !== midB) return undefined;
 
 	return {
 		pieces: [
@@ -223,13 +212,12 @@ function recogniseSpan(
 type Region = { text: string } | { a: string; b: string };
 
 /**
- * The longest line present exactly once in each render, or null.
+ * The longest line present exactly once in each render, or undefined.
  *
- * Uniqueness in BOTH is what makes it an alignment point. Every repeated `</div>` is a candidate
- * otherwise, and anchoring on one aligns two unrelated positions -- the census that first counted
- * varying bytes this way reported ~40 KB varying on pages that vary by 43.
+ * Uniqueness in both is what makes it an alignment point; a repeated `</div>` would align two
+ * unrelated positions.
  */
-function anchorLine(a: string, b: string, minBytes: number): string | null {
+function anchorLine(a: string, b: string, minBytes: number): string | undefined {
 	const once = (s: string) => {
 		const m = new Map<string, number>();
 		for (const line of s.split('\n')) m.set(line, (m.get(line) ?? 0) + 1);
@@ -237,11 +225,11 @@ function anchorLine(a: string, b: string, minBytes: number): string | null {
 	};
 	const ca = once(a);
 	const cb = once(b);
-	let best: string | null = null;
+	let best: string | undefined;
 	for (const [line, n] of ca) {
 		if (n !== 1 || line.length < minBytes) continue;
 		if (cb.get(line) !== 1) continue;
-		if (best === null || line.length > best.length) best = line;
+		if (best === undefined || line.length > best.length) best = line;
 	}
 	return best;
 }
@@ -249,13 +237,9 @@ function anchorLine(a: string, b: string, minBytes: number): string | null {
 /**
  * Splits one varying span into alternating constant and varying regions.
  *
- * Bracketing between the first and last difference produces ONE region, so a page with two dynamic
- * values hands the recognisers 4.6 KB of markup with a dom id at one end and a build id at the
- * other -- opaque, and every form page carrying a view has that shape.
- *
- * A failed split costs recognition, never correctness: the regions are cut at bytes both renders
- * share, so any partition still reproduces both. What a bad anchor loses is the chance for a
- * recogniser to name the piece, and the piece then stays a slot with no generator.
+ * Bracketing first to last difference yields one opaque region when a page has two dynamic
+ * values (a view's dom id and a form's build id). A failed split costs recognition, never
+ * correctness: regions are cut at bytes both renders share, so any partition reproduces both.
  */
 function splitSpan(a: string, b: string, minAnchor: number, depth: number): Region[] {
 	if (a === '' && b === '') return [];
@@ -275,7 +259,7 @@ function splitSpan(a: string, b: string, minAnchor: number, depth: number): Regi
 			? [{ a: midA, b: midB }]
 			: (() => {
 					const anchor = anchorLine(midA, midB, minAnchor);
-					if (anchor === null) return [{ a: midA, b: midB }];
+					if (anchor === undefined) return [{ a: midA, b: midB }];
 					const ia = midA.indexOf(anchor);
 					const ib = midB.indexOf(anchor);
 					return [
@@ -313,13 +297,9 @@ function mergeText(regions: Region[]): Region[] {
 /**
  * Compiles two renders of one page into a plan.
  *
- * A common prefix and suffix bracket everything that varies, and the span between them is split at
- * lines both renders share until each varying region holds one value. Each region goes to the
- * recognisers, which either name it or leave it opaque; an opaque region is a slot with no
- * generator and the plan refuses to serve.
- *
- * `chunkBytes` splits the constant runs so the op count can be swept without changing the
- * output, which is how the VM's cost is measured against a realistic op count.
+ * The span between the common prefix and suffix is split at shared lines until each region holds
+ * one value; the recognisers name each region or leave it opaque (a slot with no generator).
+ * `chunkBytes` splits constant runs so the op count can be swept without changing the output.
  */
 export function compilePlan(a: string, b: string, path = '/', chunkBytes = 0): RenderPlan {
 	const ops: PlanOp[] = [];
@@ -340,11 +320,8 @@ export function compilePlan(a: string, b: string, path = '/', chunkBytes = 0): R
 	/**
 	 * Takes `n` bytes back off the end of the constants already emitted.
 	 *
-	 * The recognisers find a value by DIFFING, so the characters the two samples happened to share
-	 * sit in the constant in front of the slot rather than in the slot. A freshly generated value is
-	 * under no obligation to start with them, and the page then carries an id whose first characters
-	 * came from one render and whose tail came from the generator. Reclaiming them makes the slot own
-	 * the whole value.
+	 * Diffing leaves the characters the two samples shared in the constant before the slot, but a
+	 * generated value need not start with them; reclaiming makes the slot own the whole value.
 	 */
 	const reclaim = (n: number): string => {
 		let want = n;
@@ -383,7 +360,7 @@ export function compilePlan(a: string, b: string, path = '/', chunkBytes = 0): R
 				: '';
 
 		const dom = recogniseToken(region.a, region.b, before, after);
-		const found = dom ? null : recogniseSpan(region.a, region.b, after);
+		const found = dom ? undefined : recogniseSpan(region.a, region.b, after);
 		if (dom && dom.consumed > 0) {
 			regions[i + 1] = { text: after.slice(dom.consumed) };
 		}
@@ -431,37 +408,33 @@ export function compilePlan(a: string, b: string, path = '/', chunkBytes = 0): R
 }
 
 /**
- * Produces this request's slot values, or null when the plan holds a slot with no generator.
+ * Produces this request's slot values, or undefined when a slot has no generator.
  *
- * Every `build_id` slot in one plan shares one token, because Drupal emits one `#build_id` per
- * form and renders it in both places.
+ * Every `build_id` slot in a plan shares one token (Drupal emits one `#build_id` per form).
  */
 export function fillSlots(
 	plan: RenderPlan,
 	supplied: SlotValues = {}
-): Record<string, string> | null {
+): Record<string, string> | undefined {
 	const values: Record<string, string> = {};
-	let token: string | null = null;
-	let domId: string | null = null;
+	let token: string | undefined;
+	let domId: string | undefined;
 	for (const [name, slot] of Object.entries(plan.slots)) {
 		if (slot.kind === 'csrf') {
 			// belongs to the visitor being served and cannot be minted here, so no value means no
 			// page: the caller falls through to the object rather than shipping a token that fails
 			const csrf = supplied.csrf;
-			if (typeof csrf !== 'string' || csrf.length !== 43) return null;
+			if (typeof csrf !== 'string' || csrf.length !== 43) return undefined;
 			values[name] = csrf.slice(slot.head);
 			continue;
 		}
 		if (slot.kind === 'view_dom_id') {
-			// ONE id for every occurrence, because Drupal computes it once per view and prints it in
-			// the wrapper class and again in drupalSettings. A page carrying TWO views wants two, and
-			// this would give both the same -- `generatorAgrees()` refuses that plan, because the
-			// re-compile then finds one varying region where the samples held two
+			// one id per plan (a view prints it twice); generatorAgrees() refuses two-view pages
 			domId ??= randomDomId();
 			values[name] = domId.slice(slot.head);
 			continue;
 		}
-		if (slot.kind !== 'build_id') return null;
+		if (slot.kind !== 'build_id') return undefined;
 		token ??= randomBuildToken();
 		values[name] = slot.role === 'raw' ? token : htmlId('form-' + token).slice(slot.head);
 	}
@@ -476,11 +449,8 @@ export function unservableSlots(plan: RenderPlan): string[] {
 }
 
 /**
- * The markup either side of each unnamed slot.
- *
- * A census over many routes gets one sample string per refusal and cannot say what the value IS.
- * `<span>4</span>` against `<span>7</span>` is a comment count or a cart total depending on what
- * precedes it, and grouping refusals by mechanism needs the mechanism, not the bytes.
+ * The markup either side of each unnamed slot, so a census can group refusals by what the value
+ * is (a comment count, a cart total).
  */
 export function unknownContext(
 	plan: RenderPlan,
@@ -513,26 +483,21 @@ export function planRoundTrips(plan: RenderPlan, original: string): boolean {
 }
 
 /**
- * The plan reproduces both renders it was compiled from.
- *
- * A round trip against the first alone passes for a compiler that emitted one constant and no
- * slot; requiring the second render back from the second render's values does not.
+ * The plan reproduces both renders it was compiled from (the first alone would pass a compiler
+ * that emitted one constant and no slot).
  */
 export function planExplainsBoth(plan: RenderPlan, a: string, b: string): boolean {
 	return runPlan(plan, plan.sample) === a && runPlan(plan, plan.sampleB) === b;
 }
 
 /**
- * Checks `fillSlots()`, which the two proofs above do not touch: both replay recorded samples,
- * so both pass while the generator produces bytes no render ever contained.
+ * Checks `fillSlots()`, which the two proofs above never run (they replay recorded samples).
  *
- * Re-diffs rather than re-derives. The page built from generated values is compiled against the
- * page built from recorded ones and has to come out the same shape, so a generator emitting the
- * wrong bytes moves a constant and the re-compile refuses it.
+ * The page built from generated values is re-compiled against the recorded one and must come
+ * out the same shape; a generator emitting wrong bytes moves a constant and is refused.
  */
 export function generatorAgrees(plan: RenderPlan): boolean {
-	// a csrf slot is substituted rather than generated, so the proof supplies a token of the right
-	// shape and checks the SUBSTITUTION -- that the value lands where the compiler said it does
+	// csrf is substituted, so supply a token and check it lands where the compiler said
 	const values = fillSlots(plan, { csrf: randomBuildToken() });
 	if (!values) return false;
 	// a plan with no slots has no generator to disagree with; it serves fixed bytes

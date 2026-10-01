@@ -12,12 +12,9 @@ export function lockVersions(lock: unknown): Record<string, string> {
 }
 
 /**
- * Virtual package name -> the versions a locked package provides it at, from `provide` and
- * `replace`.
- *
- * `psr/log-implementation` is not a package on any registry: `symfony/console` provides it, so a
- * requirement on it is met by the lock and there is nothing to fetch. `ext-*` and `lib-*` are the
- * platform's business and stay out. `self.version` resolves to the replacing package's own version.
+ * Virtual package name -> the version a locked package provides it at, from `provide` and
+ * `replace` (`psr/log-implementation` is met by `symfony/console`, so nothing is fetched). `ext-*`
+ * and `lib-*` stay out; `self.version` resolves to the replacing package's own version.
  */
 export function lockProvides(lock: unknown): Record<string, string> {
 	const out: Record<string, string> = {};

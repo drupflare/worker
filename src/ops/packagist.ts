@@ -1,51 +1,28 @@
-import { satisfies, type Satisfaction } from './composer-constraint.js';
-import { asksForBranch, devMetadataUrl, pickVersion } from './package-install.js';
-import { SHIPPED_PROVIDES } from './shipped-lock.js';
-
 /**
- * Decides whether a module can be installed, in ONE cacheable subrequest, and refuses with the
- * NAMED conflict when it cannot.
+ * Decides whether a module can be installed from one cacheable metadata fetch, and refuses with
+ * the named conflict when it cannot.
  *
- * This is the check, not the install. The Workflow path does the installing; they are separate so
- * that a refusal is cheap. `composer require` on the edge is not available at any price -- it
- * needs a solver, a network of subrequests and minutes of CPU -- but the *common* answer is decidable
- * from one metadata fetch against a lock file that already ships. A module that requires
- * `drupal/core: ^10` can be refused in one subrequest, before any Workflow, any download and any
- * write.
+ * This is the check, not the install: a refusal is cheap, and `composer require` on the edge needs
+ * a solver and minutes of CPU. Only direct requirements are checked, against the shipped lock;
+ * transitive resolution is unbounded subrequests and still would not match Composer. Anything not
+ * satisfied is `blocked` or `unverifiable`, and `unverifiable` is not a yes.
  *
- * The refusal has to name the conflict. "Cannot install" is unactionable and gets retried. "webform
- * 6.2.0 requires drupal/core ^10 and this site ships 11.4.5" tells the operator the module is simply
- * not compatible, which is a different decision from a transient failure.
- *
- * What it does not do: resolve transitive dependencies. A real solver would
- * have to fetch every requirement's metadata recursively, which is unbounded subrequests, and it would
- * still not match Composer's answer. So a module whose direct requirements are all satisfied by the
- * shipped lock is reported `installable`; anything else is `blocked` or `unverifiable`, and
- * `unverifiable` is not a yes.
+ * @module
  */
+import { errorMessage } from '../util/errors';
+import { satisfies, type Satisfaction } from './composer-constraint';
+import { asksForBranch, devMetadataUrl, pickVersion } from './package-install';
+import { SHIPPED_PROVIDES } from './shipped-lock';
 
 /**
  * The v2 metadata endpoint for a package; one GET, and the response is immutable per version.
  *
- * Routed by vendor, and getting this wrong made the whole check answer `not-found` for the entire
- * Drupal ecosystem. Drupal contrib is NOT on Packagist -- it is published to drupal.org's own
- * Composer repository, which core's own `composer.json` adds as a second repository. Measured:
- *
- *   repo.packagist.org/p2/drupal/pathauto.json ................ 404
- *   packages.drupal.org/8/p2/drupal/pathauto.json ............. 302 -> www.drupal.org, then 404
- *   packages.drupal.org/files/packages/8/p2/drupal/pathauto.json  200 (the metadata)
- *   repo.packagist.org/p2/symfony/yaml.json ................... 200
- *
- * So every `/installable?module=drupal/*` returned `not-found` with the plumbing working perfectly.
- * Three roadmap items are priced against this check, which means they were priced against a
- * function that could only ever say no for the packages the product exists to install.
- *
- * `drupal/core*` is the exception inside the exception: core and its subtree packages ARE mirrored
- * to Packagist, but drupal.org serves them too, so routing the whole `drupal/` vendor there is both
- * correct and simpler than special-casing.
+ * Routed by vendor: Drupal contrib is not on Packagist, only on drupal.org's own Composer
+ * repository, so the whole `drupal/` vendor (core included) goes there.
  */
 export const DRUPAL_METADATA_URL = 'https://packages.drupal.org/files/packages/8/p2/%package%.json';
 
+/** the metadata URL for a package, routed by vendor */
 export function packagistUrl(name: string): string {
 	const vendor = String(name ?? '').split('/')[0];
 	return vendor === 'drupal'
@@ -56,8 +33,7 @@ export function packagistUrl(name: string): string {
 /**
  * A package name Packagist would accept, so a hostile value cannot be smuggled into the URL.
  *
- * Refusing rather than encoding: a name that needs escaping is not a package name, and building a URL
- * from unvalidated input is how a path traversal reaches a metadata host.
+ * Refuses rather than encodes: a name that needs escaping is not a package name.
  */
 export function isValidPackageName(name: string): boolean {
 	return /^[a-z0-9]([_.-]?[a-z0-9]+)*\/[a-z0-9](([_.]|-{1,2})?[a-z0-9]+)*$/.test(
@@ -65,7 +41,7 @@ export function isValidPackageName(name: string): boolean {
 	);
 }
 
-export { lockProvides, lockVersions } from './lock-map.js';
+export { lockProvides, lockVersions } from './lock-map';
 
 /** whether any version a virtual package is provided at meets a constraint */
 export function providedSatisfies(provided: string, constraint: string): Satisfaction {
@@ -79,43 +55,27 @@ export function providedSatisfies(provided: string, constraint: string): Satisfa
 }
 
 /**
- * Requirements that are always satisfied by the platform rather than by a package.
+ * Requirements satisfied by the platform rather than by a package.
  *
- * `php` is the interpreter's own version and the others are extensions the build either has or cannot
- * ever have. They are listed rather than pattern-matched on `ext-` so that a MISSING extension is a
- * real conflict: this build has no `pdo_sqlite`, and a module requiring it must be refused, not waved
- * through by a blanket rule.
+ * Listed rather than pattern-matched on `ext-`, so a missing extension is a real conflict (this
+ * build has no `pdo_sqlite`).
  */
 export type PlatformVersions = Record<string, string>;
 
 /**
- * The interpreter version this map reports.
+ * The interpreter version this map reports (what `/php` reports on a deployed site).
  *
- * STALE AT 8.3.0 UNTIL NOW, and the failure was silent in the same direction as the metadata URL
- * above: the shipping binary is 8.5 -- `wrangler.jsonc` aliases `php-binary-raw.ts` and a deployed
- * site reports `8.5.2` from `/php` -- so anything requiring `>=8.4` was refused as unsatisfiable by
- * a platform that satisfies it. A refusal reads as a considered answer, which is why nothing looked
- * broken.
- *
- * The extension entries carry the same version because a bundled extension is part of the
- * interpreter; a constraint on `ext-dom` is really a constraint on the build that provides it.
+ * Extension entries carry the same version: a bundled extension is part of the interpreter.
  */
 export const PLATFORM_PHP_VERSION = '8.5.2';
 
 /**
- * Extensions the interpreter really loads, measured rather than inferred.
+ * Extensions the interpreter loads, measured rather than inferred.
  *
- * `tests/integration/loaded-extensions.spec.ts` drives `get_loaded_extensions()` through the
- * shipping binary and asserts this map both ways -- every name here is loaded, and no name in
- * {@link POLYFILLED_PLATFORM} is. Until that spec existed the list was a belief, and it was wrong:
- * `ext-mbstring` sat here while `mb-fix.ts` existed precisely because the build had no mbstring. It
- * is back as of 2026-09-08 and this time the spec is what says so -- the build asks for
- * `--enable-mbstring` and `get_loaded_extensions()` reports it.
- *
- * Function-name evidence cannot replace it. `curl_init`, `mysqli_stmt_init` and
- * `imagecreatetruecolor` all appear as strings in a binary that has none of those extensions,
- * because opcache's optimizer carries a `func_info` table naming functions across every bundled
- * extension.
+ * `tests/integration/loaded-extensions.spec.ts` asserts this map both ways against
+ * `get_loaded_extensions()` on the shipping binary; no name in {@link POLYFILLED_PLATFORM} is
+ * loaded. Function names in the binary are not evidence (opcache's `func_info` table names
+ * functions of extensions the build lacks).
  */
 export const NATIVE_PLATFORM: PlatformVersions = {
 	php: PLATFORM_PHP_VERSION,
@@ -127,10 +87,7 @@ export const NATIVE_PLATFORM: PlatformVersions = {
 	'ext-dom': PLATFORM_PHP_VERSION,
 	'ext-simplexml': PLATFORM_PHP_VERSION,
 	'ext-zlib': PLATFORM_PHP_VERSION,
-	// MOVED FROM POLYFILLED 2026-09-08: the long64 build carries the real extension
-	// (`--enable-mbstring --disable-mbregex`), so a module requiring `ext-mbstring` is
-	// `installable` rather than `unverifiable`. `mb_ereg*` is still absent -- that half needs
-	// oniguruma and Drupal core calls none of it
+	// real extension (`--disable-mbregex`; `mb_ereg*` is absent and core calls none of it)
 	'ext-mbstring': PLATFORM_PHP_VERSION,
 	'ext-core': PLATFORM_PHP_VERSION,
 	'ext-standard': PLATFORM_PHP_VERSION,
@@ -152,12 +109,9 @@ export const NATIVE_PLATFORM: PlatformVersions = {
 /**
  * Extensions supplied by PHP code rather than by the build.
  *
- * A polyfill is not the extension, so a module requiring one of these gets `unverifiable` here and
- * never `installable` -- see {@link checkRequirements}. `ext-iconv` rides `iconv-fix.ts`.
- *
- * `ext-mbstring` WAS HERE and moved to {@link NATIVE_PLATFORM} on 2026-09-08, because the build now
- * carries the real extension. That is the only way an entry leaves this list: a measurement that the
- * build supplies it, not a parity run that finds fewer divergences.
+ * A polyfill is not the extension, so a module requiring one gets `unverifiable`, never
+ * `installable` (see {@link checkRequirements}). An entry leaves only when a measurement shows the
+ * build supplies the extension, not when a parity run finds fewer divergences.
  */
 export const POLYFILLED_PLATFORM: PlatformVersions = {
 	'ext-iconv': PLATFORM_PHP_VERSION
@@ -166,11 +120,9 @@ export const POLYFILLED_PLATFORM: PlatformVersions = {
 /**
  * Extensions a module can require and get, served by a stand-in the driver installs at boot.
  *
- * Unlike a polyfill these are satisfied rather than unverifiable, because each is parity-tested
- * against the real extension over the surface it claims: curl over the park (`curl-fix.spec.ts` and
- * drupflare's health suite), openssl through WebCrypto (`host-bridges.spec.ts`), `ZipArchive`,
- * `exif_read_data` and `finfo` in drupflare's health suite. What a stand-in does not implement is
- * refused at the call and recorded as a degradation, never answered wrongly.
+ * Unlike a polyfill these count as satisfied: each is parity-tested against the real extension
+ * (`curl-fix.spec.ts`, `host-bridges.spec.ts`, drupflare's health suite). What a stand-in does not
+ * implement is refused at the call and recorded as a degradation, never answered wrongly.
  */
 export const STANDIN_PLATFORM: PlatformVersions = {
 	'ext-curl': PLATFORM_PHP_VERSION,
@@ -188,6 +140,7 @@ export const DEFAULT_PLATFORM: PlatformVersions = {
 	...STANDIN_PLATFORM
 };
 
+/** one requirement the site cannot meet, or cannot be judged against */
 export type Conflict = {
 	requires: string;
 	constraint: string;
@@ -197,6 +150,7 @@ export type Conflict = {
 	detail: string;
 };
 
+/** the answer to "can this module be installed here", with the evidence behind it */
 export type InstallVerdict = {
 	name: string;
 	version: string | null;
@@ -212,7 +166,7 @@ export type InstallVerdict = {
 export function newestVersion(
 	meta: unknown,
 	name: string,
-	constraint?: string | null,
+	constraint?: string,
 	stability?: string
 ): { version: string; require: Record<string, string> } | null {
 	if (constraint) {
@@ -248,13 +202,9 @@ export function newestVersion(
 /**
  * Checks a requirement map against what this site provides.
  *
- * An `unknown` from the constraint checker becomes an `unverifiable` conflict rather than being
- * dropped, so the overall verdict degrades to `unverifiable` instead of quietly reading as installable.
- *
- * A requirement met only by {@link POLYFILLED_PLATFORM} degrades the same way, and that is the
- * point of the split: answering `installable` to `ext-mbstring` on the strength of a polyfill the
- * parity instrument still finds divergences in reads as a considered yes. `installed` still wins
- * over both maps, so a site that really has the extension is unaffected.
+ * An `unknown` from the constraint checker becomes an `unverifiable` conflict, so the verdict
+ * degrades instead of reading as installable. A requirement met only by
+ * {@link POLYFILLED_PLATFORM} degrades the same way; `installed` wins over both maps.
  */
 export function checkRequirements(
 	require: Record<string, string>,
@@ -339,9 +289,8 @@ export function checkRequirements(
 /**
  * Turns a set of conflicts into the single verdict word.
  *
- * `polyfilled` and `unverifiable` both land on `unverifiable` rather than getting a word of their
- * own: the vocabulary an operator reads has three states and a fourth would need its own meaning
- * everywhere it is rendered. The `detail` on each conflict is where the difference lives.
+ * `polyfilled` and `unverifiable` both land on `unverifiable` (the operator vocabulary has three
+ * states); the `detail` on each conflict carries the difference.
  */
 export function verdictFor(conflicts: Conflict[]): 'installable' | 'blocked' | 'unverifiable' {
 	if (conflicts.some((c) => c.reason === 'missing' || c.reason === 'version')) return 'blocked';
@@ -352,16 +301,15 @@ export function verdictFor(conflicts: Conflict[]): 'installable' | 'blocked' | '
 /**
  * The whole check: one fetch, then arithmetic.
  *
- * @param fetcher injected so a test drives it without network, and so a caller can supply a
- *   cache-wrapped fetch. Packagist's p2 payloads are immutable per version, which is what makes one
- *   cached fetch the right shape.
+ * @param fetcher injected so a test runs without network and a caller can pass a cache-wrapped
+ *   fetch (p2 payloads are immutable per version)
  */
 export async function checkInstallable(
 	fetcher: (url: string) => Promise<Response>,
 	name: string,
 	installed: Record<string, string>,
 	platform: PlatformVersions = DEFAULT_PLATFORM,
-	constraint?: string | null,
+	constraint?: string,
 	stability?: string
 ): Promise<InstallVerdict> {
 	if (!isValidPackageName(name)) {
@@ -379,7 +327,7 @@ export async function checkInstallable(
 	let metaUrl = packagistUrl(name);
 	try {
 		let res = await fetcher(metaUrl);
-		// a drupal/* JavaScript library is published on Packagist, not drupal.org; see fallbackMetadataUrl
+		// a drupal/* JavaScript library is published on Packagist, not drupal.org
 		if (res.status === 404 && name.startsWith('drupal/'))
 			res = await fetcher((metaUrl = `https://repo.packagist.org/p2/${name}.json`));
 		if (!res.ok) {
@@ -394,14 +342,14 @@ export async function checkInstallable(
 		}
 		meta = await res.json();
 	} catch (e) {
-		// a network failure is UNVERIFIABLE, never installable: the site must not install on a guess
+		// a network failure is unverifiable, never installable (no installing on a guess)
 		return {
 			name,
 			version: null,
 			verdict: 'unverifiable',
 			conflicts: [],
 			satisfied: [],
-			note: `packagist unreachable: ${String((e as Error)?.message ?? e).slice(0, 120)}`
+			note: `packagist unreachable: ${errorMessage(e).slice(0, 120)}`
 		};
 	}
 

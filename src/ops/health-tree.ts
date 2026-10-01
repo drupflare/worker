@@ -1,22 +1,25 @@
-import type { reconcileReport } from './reconcile.js';
-import { isQuarantined, type RepairState } from './repair.js';
-import type { Finding, Severity } from './supervisor.js';
-
 /**
  * The repair and health state of one site, as one typed tree.
  *
- * Three producers report on a site: the supervisor's findings, the reconcile chain's per-step
- * verdicts and the repair ladder's rung. Each keeps its own vocabulary in `state`, and `level`
- * puts them on one scale, so a renderer reads this rather than re-deriving each producer's meaning.
+ * The supervisor's findings, the reconcile chain's step verdicts and the repair ladder's rung each
+ * keep their own vocabulary in `state`; `level` puts them on one scale for a renderer.
+ * @module
  */
+
+import type { reconcileReport } from './reconcile';
+import { isQuarantined, type RepairState } from './repair';
+import type { Finding, Severity } from './supervisor';
 
 /** one scale for every producer, worst last */
 export const HEALTH_LEVELS = ['ok', 'info', 'warn', 'error', 'critical'] as const;
 
+/** one rung of the shared severity scale */
 export type HealthLevel = (typeof HEALTH_LEVELS)[number];
 
+/** which producer a node came from */
 export type HealthSource = 'reconcile' | 'supervisor' | 'repair';
 
+/** one finding, step or rung, with its children */
 export interface HealthNode {
 	/** stable, prefixed by source: `reconcile.owner-tiers`, `supervisor.memory.trend_rising` */
 	id: string;
@@ -30,6 +33,7 @@ export interface HealthNode {
 	children: HealthNode[];
 }
 
+/** the nodes plus the worst level among them */
 export interface HealthTree {
 	/** the worst level anywhere below */
 	level: HealthLevel;
@@ -115,6 +119,7 @@ export function repairNode(state: RepairState): HealthNode {
 	};
 }
 
+/** wraps top-level nodes with the worst level anywhere below */
 export function healthTree(nodes: HealthNode[]): HealthTree {
 	return { level: nodes.reduce<HealthLevel>((l, n) => worse(l, n.level), 'ok'), nodes };
 }

@@ -1,31 +1,25 @@
 /**
  * The bulk copy that gets a replica from empty to `VERIFIED`, and what it must refuse.
  *
- * The log carries changes and cannot carry a beginning: `planApply()` needs each record to build on
- * the one before it, so an empty object can never reach a primary at generation 900.
- *
- * The primary keeps serving while its rows are read, so a copy spanning several invocations can hold
- * table A at generation 12 and table B at 13 -- a state the primary was never in, which no
- * generation number describes. Every chunk states the generation it was read at, a chunk that
- * disagrees is refused, and the position stays in-flight until a whole consistent copy lands.
+ * The log carries changes, not a beginning (`planApply()` needs each record to build on the last).
+ * The primary keeps serving during a multi-invocation copy, so tables could land at different
+ * generations; every chunk states its read generation and a disagreeing chunk is refused.
+ * @module
  */
+import { classifyState, type StateStatus } from './state-inventory';
 
-import { classifyState, type StateStatus } from './state-inventory.js';
-
-/** sqlite's own bookkeeping; absent from a replica by construction rather than by omission */
+/** sqlite's own bookkeeping; absent from a replica by construction */
 const SQLITE_INTERNAL = /^sqlite_/;
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
- * The bound-parameter ceiling on Durable Object SQLite.
- *
- * A row is inserted on its own rather than batched, so this binds the COLUMN count. No Drupal table
- * comes close; the guard exists because exceeding it fails at the driver with a message that says
- * nothing about which table was being copied.
+ * The bound-parameter ceiling on Durable Object SQLite; rows insert singly, so it binds the column
+ * count (the driver's own error names no table).
  */
 export const MAX_BOUND_PARAMS = 100;
 
+/** whether a table is copied to a replica, and why */
 export type TableVerdict = {
 	table: string;
 	status: StateStatus;
@@ -34,28 +28,17 @@ export type TableVerdict = {
 };
 
 /**
- * Locally-owned tables handed over anyway, so a lane starts warm rather than empty.
- *
- * `LOCAL_EPHEMERAL` is the right WRITE verdict and it stays: a lane originates its own pages with
- * no forwarding. Whether to SEED one is a different question, and answering both with the same
- * rule is what made the pool lose the workload it exists for. Measured 2026-09-10 with three lanes
- * genuinely receiving traffic: anon-cached went from 2 ms at c=1 to 405 ms at c=4, because every
- * request routed to a lane met an empty page store and rendered. That slice is 82% of the traffic
- * weight.
- *
- * `cfw_page` alone. Enumerated rather than derived, because each entry needs its own argument that
- * a stale copy is reachable by an invalidation the lane will actually receive -- for this one,
- * `purgeAfterApply()` on the log pull. A bin whose staleness nothing on the lane can detect belongs
- * nowhere near this set.
+ * Locally-owned tables seeded anyway so a lane starts warm. Enumerated, since each needs an
+ * argument that a stale copy meets an invalidation the lane receives (`purgeAfterApply()`).
+ * Unseeded, anon-cached went from 2 ms at c=1 to 405 ms at c=4: every lane request met an empty
+ * page store (82% of traffic weight).
  */
 const SEED_ON_RESTORE: ReadonlySet<string> = new Set(['cfw_page']);
 
 /**
  * Which of the primary's tables belong on a replica.
- *
- * `UNKNOWN` is copied, the opposite of the request-time rule. An unclassified table that routes a
- * request to the primary costs capacity; one missing from a restore costs the replica whatever it
- * held, with no error until something reads it. Every copied unknown is named in the plan.
+ * `UNKNOWN` is copied, the opposite of the request-time rule: a table missing from a restore fails
+ * silently on first read. Every copied unknown is named in the plan.
  */
 export function planRestore(tables: readonly string[]): TableVerdict[] {
 	const out: TableVerdict[] = [];
@@ -112,43 +95,22 @@ export type RestoreChunk = {
 	/** the first chunk for this table; existing rows are cleared before it lands */
 	first?: boolean;
 	/**
-	 * The table's own DDL and its indexes, applied only when the replica lacks the table.
-	 *
-	 * Drupal's installer creates tables the packed migration does not (`batch` found this), so a lane
-	 * built from the pack alone fails every insert with `no such table`. Carrying the DDL lets a lane
-	 * exist without a second Drupal install on it.
+	 * The table's DDL and indexes, applied only when the replica lacks the table (the installer
+	 * makes tables the pack lacks, so a pack-only lane fails with `no such table`).
 	 */
 	ddl?: readonly string[];
-	/**
-	 * On the first chunk: every table the copy will deliver.
-	 *
-	 * `done` is a claim the driver makes, and the mandatory set catches only a missing identity. A
-	 * copy that stopped after `config` has a valid private key and no content.
-	 */
+	/** on the first chunk: every table the copy delivers (`done` alone passes a copy cut short) */
 	expect?: readonly string[];
 	/**
-	 * On the first chunk: the origin the PRIMARY renders against.
-	 *
-	 * Drupal derives the session cookie name from the request host --
-	 * `substr(hash('sha256', $request->getHost() . $base_path), 0, 32)` in `SessionConfiguration` --
-	 * so an object rendering against a different host looks for a cookie no browser sends and
-	 * resolves every authenticated visitor as uid 0. `canonicalOrigin()` pins trust-on-first-use PER
-	 * OBJECT, and a lane is its own object, so whatever request first touched a lane fixed its host
-	 * forever. Measured on a deployed 32-lane pool: the primary pinned
-	 * `https://cfw-pool.gmitch215.workers.dev` and every lane pinned `https://arm.invalid` from the
-	 * load generator's own service-binding URL, so all 32 held the session row and rendered anonymous.
-	 *
-	 * The origin is authoritative SITE state, like `system.private_key` in `MANDATORY_STATE`, and a
-	 * lane must inherit it rather than mint one. It rides here because `cfw_meta` is lane-local and
-	 * is deliberately not copied.
+	 * On the first chunk: the origin the primary renders against.
+	 * Drupal derives the session cookie name from the host, and `cfw_meta` is lane-local, so a lane
+	 * pinned its first caller's host (`https://arm.invalid` on a deployed 32-lane pool) and
+	 * rendered every session anonymous. Authoritative site state: a lane inherits it, never mints.
 	 */
 	origin?: string;
 	/**
-	 * On the first chunk: the primary's hash salt, for the same reason as `origin`.
-	 *
-	 * It signs form tokens, one-time login links and every `Crypt::hmacBase64` key. Measured on a
-	 * deployed 3-lane pool, the primary and each lane held four different salts, so a form a lane
-	 * rendered was refused on the primary as outdated.
+	 * On the first chunk: the primary's hash salt (signs form tokens, login links and
+	 * `Crypt::hmacBase64` keys); lanes each minted their own and the primary refused their forms.
 	 */
 	hashSalt?: string;
 	/** the last chunk of the whole copy */
@@ -158,9 +120,7 @@ export type RestoreChunk = {
 /**
  * Why this chunk cannot land, or null.
  *
- * @param begunAt
- *   The generation the restore in progress started at, or null when none has started. A mismatch is
- *   a torn copy and is the refusal this exists for.
+ * @param begunAt the generation the restore began at, or null; a mismatch is a torn copy
  */
 export function chunkRefusal(
 	chunk: RestoreChunk,
@@ -200,14 +160,10 @@ export function chunkRefusal(
 	return null;
 }
 
-/**
- * Where a bounded copy got to, handed back rather than stored on the primary.
- *
- * `generation` is the one the copy began at, so a commit part-way through is reported here rather
- * than surfacing as a refusal from the far end.
- */
+/** where a bounded copy got to, handed back rather than stored; `generation` is where it began */
 export type ProvisionCursor = { generation: number; index: number; offset: number };
 
+/** the result of one bounded provisioning step */
 export type ProvisionOutcome = {
 	ok: boolean;
 	reason: string;

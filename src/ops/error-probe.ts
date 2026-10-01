@@ -17,6 +17,7 @@ export type RangeReport = {
 	sub: unknown[];
 };
 
+/** whether an error looks like a typed-array or buffer length failure */
 export const isLengthError = (e: unknown): boolean =>
 	e instanceof RangeError ||
 	/array buffer|typed array length|invalid.*length/i.test(String((e as Error)?.message));

@@ -1,14 +1,9 @@
 /**
  * How much of PHP's log reaches `console.log`, and therefore `wrangler tail`.
  *
- * `CfwLogger` ships every Drupal log entry across the host bridge, and the DO mirrors all of it to
- * `console.log` so it survives the isolate that produced it. Unmirrored, that is the right default
- * for a ring buffer and the wrong one for a terminal: a single page render emits several
- * severity-7 deprecation notices with full stack traces, which is what a `wrangler dev` session
- * mostly prints.
- *
- * The ceiling is RFC 5424, so it is the same scale `CfwLogger` already sends in `severity` and the
- * same one Drupal's own `watchdog` uses. Lower is more severe.
+ * One render emits several severity-7 deprecation notices, so the mirror takes a ceiling on the
+ * RFC 5424 `severity` scale (lower is more severe).
+ * @module
  */
 
 /** the names `CfwLogger::LEVELS` maps severities onto, plus the two ends of the dial */
@@ -29,14 +24,13 @@ export const DEFAULT_PHP_LOG_LEVEL = 'info';
 
 /**
  * The highest RFC 5424 severity that may reach `console.log`.
- *
- * An unrecognised value is the default rather than an error: a typo in a var must not silence the
- * log, and it must not take the object down either.
+ * An unrecognised value falls back to the default, so a typo in a var neither silences the log nor
+ * throws.
  *
  * @param level - the configured name, case-insensitive; `off` silences the mirror entirely
  * @returns a severity ceiling, `-1` when nothing may pass
  */
-export function phpLogCeiling(level?: string | null): number {
+export function phpLogCeiling(level?: string): number {
 	const name = String(level ?? '')
 		.trim()
 		.toLowerCase();
@@ -45,10 +39,8 @@ export function phpLogCeiling(level?: string | null): number {
 
 /**
  * Whether one log entry passes the ceiling.
- *
- * The severity is read from the entry when it carries one and derived from `level` when it does not
- * -- `CfwLogger::installFatalHandler()` ships `level: "error"` with no severity, and a fatal is the
- * one entry that must never be dropped by a missing field.
+ * Severity comes from the entry, or from `level` when absent (`CfwLogger::installFatalHandler()`
+ * sends a fatal as `level: "error"` with no severity, and it must never be dropped).
  *
  * @param entry - the decoded payload `cfwLog` received
  * @param ceiling - from {@link phpLogCeiling}

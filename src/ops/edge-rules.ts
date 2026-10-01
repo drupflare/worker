@@ -1,12 +1,11 @@
 /**
- * Response headers and redirects the front worker applies for a site, from two levers.
+ * Response headers and redirects the front worker applies per site (no Durable Object request).
  *
- * A migrated project carries both in its old web server or CDN rules. They run in the front worker
- * so a redirect costs no Durable Object request, and they read `RESPONSE_HEADERS` and `REDIRECTS`
- * as a JSON string (KV, `--var`) or as the array itself (a wrangler `vars` entry).
- *
- * `RESPONSE_HEADERS` is `[{ "path": "/prefix*" | "/exact", "set": { "Name": "value" } }]`.
- * `REDIRECTS` is `[{ "from": "/old" | "/old/*", "to": "/new" | "/new/*" | "https://...", "status": 301 }]`.
+ * `RESPONSE_HEADERS` and `REDIRECTS` are a JSON string (KV, `--var`) or the array itself (`vars`).
+ * Headers: `[{ "path": "/prefix*" | "/exact", "set": { "Name": "value" } }]`.
+ * Redirects: `[{ "from": "/old" | "/old/*", "to": "/new" | "/new/*" | "https://..." }]`, with an
+ * optional `status` (301 by default, or 302, 307, 308).
+ * @module
  */
 
 const MAX_RULES = 100;
@@ -16,7 +15,7 @@ const MAX_DOCUMENT = 64 * 1024;
 const TOKEN = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/;
 const STATUSES = [301, 302, 307, 308] as const;
 
-/** names a rule may not set: cookies, this project's own headers, and the ones that frame the body */
+/** names a rule may not set: cookies, this project's own headers, and those that frame the body */
 const FORBIDDEN = new Set([
 	'set-cookie',
 	'content-length',
@@ -26,7 +25,9 @@ const FORBIDDEN = new Set([
 	'host'
 ]);
 
+/** one `RESPONSE_HEADERS` entry */
 export type HeaderRule = { path: string; set: Record<string, string> };
+/** one `REDIRECTS` entry */
 export type RedirectRule = { from: string; to: string; status: (typeof STATUSES)[number] };
 
 type Parsed<T> = { rules: T[]; problems: string[] };
@@ -34,24 +35,21 @@ type Parsed<T> = { rules: T[]; problems: string[] };
 const isObject = (v: unknown): v is Record<string, unknown> =>
 	typeof v === 'object' && v !== null && !Array.isArray(v);
 
-function document(raw: unknown, name: string): { list: unknown[] | null; problems: string[] } {
-	if (raw === undefined || raw === null || raw === '') return { list: null, problems: [] };
+function document(raw: unknown, name: string): { list?: unknown[]; problems: string[] } {
+	if (raw === undefined || raw === null || raw === '') return { problems: [] };
 	let value: unknown = raw;
 	if (typeof raw === 'string') {
 		if (raw.length > MAX_DOCUMENT) {
-			return {
-				list: null,
-				problems: [`${name}: longer than ${MAX_DOCUMENT} bytes, ignored`]
-			};
+			return { problems: [`${name}: longer than ${MAX_DOCUMENT} bytes, ignored`] };
 		}
 		try {
 			value = JSON.parse(raw);
 		} catch {
-			return { list: null, problems: [`${name}: not valid JSON, ignored`] };
+			return { problems: [`${name}: not valid JSON, ignored`] };
 		}
 	}
 	if (!Array.isArray(value)) {
-		return { list: null, problems: [`${name}: not a JSON array, ignored`] };
+		return { problems: [`${name}: not a JSON array, ignored`] };
 	}
 	const problems =
 		value.length > MAX_RULES
@@ -128,25 +126,25 @@ export function parseRedirects(raw: unknown): Parsed<RedirectRule> {
 	return { rules, problems };
 }
 
-/** why a lever value is refused as a whole, or null; the writer uses it so a bad document is never stored */
+/** why a lever value is refused as a whole, or undefined (the writer never stores a bad one) */
 export function ruleDocumentRefusal(
 	name: 'RESPONSE_HEADERS' | 'REDIRECTS',
 	value: unknown
-): string | null {
+): string | undefined {
 	const parsed = name === 'REDIRECTS' ? parseRedirects(value) : parseResponseHeaders(value);
-	if (parsed.problems.length === 0) return null;
+	if (parsed.problems.length === 0) return undefined;
 	return `${name} has ${parsed.problems.length} problem(s): ${parsed.problems[0]}`;
 }
 
 const trimSlash = (p: string) => (p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p);
 
-/** the first matching rule's target and status for a URL, or null */
+/** the first matching rule's target and status for a URL, or undefined */
 export function redirectMatch(
 	rules: readonly RedirectRule[],
 	url: URL
-): { to: string; status: RedirectRule['status'] } | null {
+): { to: string; status: RedirectRule['status'] } | undefined {
 	for (const rule of rules) {
-		let to: string | null = null;
+		let to: string | undefined;
 		if (rule.from.endsWith('*')) {
 			const prefix = rule.from.slice(0, -1);
 			if (url.pathname.startsWith(prefix)) {
@@ -155,22 +153,23 @@ export function redirectMatch(
 		} else if (trimSlash(url.pathname) === trimSlash(rule.from)) {
 			to = rule.to;
 		}
-		if (to !== null) {
+		if (to !== undefined) {
 			return {
 				to: to.includes('?') || url.search === '' ? to : to + url.search,
 				status: rule.status
 			};
 		}
 	}
-	return null;
+	return undefined;
 }
 
 const headerMatches = (rule: HeaderRule, pathname: string): boolean =>
 	rule.path.endsWith('*') ? pathname.startsWith(rule.path.slice(0, -1)) : pathname === rule.path;
 
+/** the two appliers {@link edgeRules} builds */
 export type EdgeRules = {
-	/** the redirect response for this URL, or null */
-	redirect(url: URL): Response | null;
+	/** the redirect response for this URL, or undefined */
+	redirect(url: URL): Response | undefined;
 	/** the response with every matching rule's headers set, later rules winning */
 	decorate(pathname: string, res: Response): Response;
 };
@@ -180,16 +179,16 @@ export type Reserved = (pathname: string) => boolean;
 
 /** builds the two appliers from a worker env; parsed on every call, which is a few microseconds */
 export function edgeRules(
-	env: { RESPONSE_HEADERS?: unknown; REDIRECTS?: unknown } | null | undefined,
+	env: { RESPONSE_HEADERS?: unknown; REDIRECTS?: unknown } | undefined,
 	reserved: Reserved = () => false
 ): EdgeRules {
 	const headers = parseResponseHeaders(env?.RESPONSE_HEADERS).rules;
 	const redirects = parseRedirects(env?.REDIRECTS).rules;
 	return {
 		redirect(url) {
-			if (redirects.length === 0 || reserved(url.pathname)) return null;
+			if (redirects.length === 0 || reserved(url.pathname)) return undefined;
 			const hit = redirectMatch(redirects, url);
-			if (hit === null) return null;
+			if (hit === undefined) return undefined;
 			return new Response(null, {
 				status: hit.status,
 				headers: { location: new URL(hit.to, url.origin).toString(), 'x-cfw-redirect': '1' }

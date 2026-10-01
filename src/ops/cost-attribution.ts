@@ -1,5 +1,16 @@
-import { isPaid, type PlanEnv } from './plan.js';
-import { replicaCount } from './replica-routing.js';
+/**
+ * Which of a site's own activities spent each meter.
+ *
+ * Several dimensions (a cache miss, a render, a warming firing, an outbound drain) draw on one
+ * Durable Object request meter, so a meter total cannot say which to change. A dimension nothing
+ * counts is reported with the reason rather than as zero: `alarmFirings` and `phpLaneEntries` are
+ * in-memory and reset on eviction, and `httpQueue` is a depth, so scoring them against a daily
+ * allowance would give a confident wrong percentage. No line carries a dollar figure.
+ * @module
+ */
+
+import { isPaid, type PlanEnv } from './plan';
+import { replicaCount } from './replica-routing';
 import {
 	THRESHOLDS,
 	WARN_FRACTION,
@@ -9,25 +20,7 @@ import {
 	type MeterPeriod,
 	type MeterStatus,
 	type Threshold
-} from './thresholds.js';
-
-/**
- * Which of a site's own activities spent each meter.
- *
- * `thresholdReport()` answers how close a meter is to its allowance; this answers what THIS site did
- * to get there. Several dimensions draw on one meter -- a cache miss, a render, a warming firing and
- * an outbound drain are all Durable Object requests -- so a meter total on its own cannot say which
- * of them to change.
- *
- * A dimension nothing counts is reported with the reason rather than as zero. Three of them read a
- * counter that exists and covers the wrong window: `alarmFirings` and `phpLaneEntries` are in-memory
- * and reset when the object is evicted, and `httpQueue` is a depth whose rows are deleted as they
- * drain. Scored against a daily allowance any of those gives a confident wrong percentage, which is
- * worse than a stated gap.
- *
- * No line carries a dollar figure. Every free-plan meter is an allowance rather than a bill, and no
- * per-unit price is recorded in this repository.
- */
+} from './thresholds';
 
 /** the `/__serve-stats` fields this reads; absent and null both mean "not supplied" */
 export type SiteSpend = {
@@ -50,7 +43,7 @@ export type SiteSpend = {
 };
 
 /** the environment a spend report reads: the plan, and the configured replica pool */
-export type SpendEnv = PlanEnv & { REPLICA_COUNT?: string | null };
+export type SpendEnv = PlanEnv & { REPLICA_COUNT?: string };
 
 /** what a dimension is counted in */
 export type SpendUnit = 'requests' | 'rows' | 'bytes' | 'transformations';
@@ -58,6 +51,7 @@ export type SpendUnit = 'requests' | 'rows' | 'bytes' | 'transformations';
 /** what running out of the meter does, once the plan is resolved */
 export type Consequence = 'bills' | 'stops working' | 'requests are refused';
 
+/** one dimension's spend, scored against the meter it draws on */
 export type SpendLine = {
 	/** stable id, safe to key a UI row on */
 	id: string;
@@ -80,6 +74,7 @@ export type SpendLine = {
 	source: string;
 };
 
+/** every dimension's line for one site; there is never a dollar figure (`usd` is null) */
 export type SpendReport = {
 	plan: 'free' | 'paid';
 	lines: SpendLine[];
@@ -133,7 +128,7 @@ function consequenceOf(failure: FailureMode, allowance: number | null): Conseque
 	return failure === 'billed' ? 'bills' : 'requests are refused';
 }
 
-/** the same rule `readMeter()` applies, for the level meter whose period it has no vocabulary for */
+/** the rule `readMeter()` applies, for the level meter whose period it has no word for */
 function scoreLevel(
 	quantity: number | null,
 	allowance: number | null
@@ -151,7 +146,7 @@ function meteredLine(
 	meter: Threshold,
 	quantity: number | null,
 	source: string,
-	env: SpendEnv | null | undefined
+	env: SpendEnv | undefined
 ): SpendLine {
 	const reading = readMeter(meter, quantity, env);
 	return {
@@ -175,7 +170,7 @@ function storageLine(
 	dimension: { id: string; label: string },
 	quantity: number | null,
 	source: string,
-	env: SpendEnv | null | undefined
+	env: SpendEnv | undefined
 ): SpendLine {
 	const allowance = isPaid(env) ? STORAGE_METER.paid : STORAGE_METER.free;
 	const { fraction, status } = scoreLevel(quantity, allowance);
@@ -198,18 +193,16 @@ function storageLine(
 
 /**
  * Attributes one site's spend across the meters it draws on.
- *
- * Every dimension is reported, including the ones with no quantity. An omitted row and a null row
- * read the same in a table and mean opposite things, and the null is the one that needs acting on.
+ * Every dimension is reported, null quantities included: an omitted row reads like a null one.
  */
-export function attributeSpend(spend: SiteSpend, env?: SpendEnv | null): SpendReport {
+export function attributeSpend(spend: SiteSpend, env?: SpendEnv): SpendReport {
 	const workerRequests = threshold('worker-requests');
 	const doRequests = threshold('do-requests');
 	const rowsWritten = threshold('rows-written');
 	const imageTransforms = threshold('image-transforms');
 
 	const stored = num(spend.storage);
-	const lanes = replicaCount(env ?? undefined);
+	const lanes = replicaCount(env);
 	const styles = num(spend.imageStyles);
 	const images = num(spend.managedImages);
 
@@ -303,6 +296,7 @@ export function attributeSpend(spend: SiteSpend, env?: SpendEnv | null): SpendRe
 export type ProjectionBasis =
 	'projected from today' | 'already a whole month' | 'a level, not a rate' | 'nothing counts it';
 
+/** one `SpendLine` extrapolated over the month */
 export type ProjectedLine = {
 	id: string;
 	label: string;
@@ -316,6 +310,7 @@ export type ProjectedLine = {
 	basis: ProjectionBasis;
 };
 
+/** a straight-line month for every line, with how much of the month was observed */
 export type MonthProjection = {
 	dayOfMonth: number;
 	daysInMonth: number;
@@ -355,17 +350,16 @@ function projectLine(line: SpendLine, days: number): ProjectedLine {
 /**
  * A straight-line month from today's counters.
  *
- * Today's total is taken as the daily rate and multiplied by the days in the month. The elapsed
- * fraction is reported and never divided by: month-to-date over an elapsed fraction multiplies a
- * few hours of day 1 by thirty, and this input carries daily counters rather than a month-to-date
- * basis. `partialDay` says when the whole figure rests on one incomplete day.
+ * Today's total is the daily rate times the days in the month. The elapsed fraction is reported
+ * and never divided by (that would multiply a few hours of day 1 by thirty); `partialDay` flags a
+ * figure resting on one incomplete day.
  *
- * @param dayOfMonth clamped into 1..daysInMonth; a non-finite value reads as day 1.
+ * @param dayOfMonth clamped into 1..daysInMonth; a non-finite value reads as day 1
  */
 export function projectMonth(
 	spend: SiteSpend,
 	dayOfMonth: number,
-	env?: SpendEnv | null,
+	env?: SpendEnv,
 	daysInMonth: number = DAYS_PER_MONTH
 ): MonthProjection {
 	const days = Math.max(

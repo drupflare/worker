@@ -1,16 +1,10 @@
 /**
  * The browser's way of presenting the owner token.
  *
- * A page cannot set an `Authorization` header on its own navigation, so the admin surface had two
- * states and both were wrong: behind `PW_DIAGNOSTICS` it was reachable by anybody who could reach
- * the worker, and without it every button called `window.prompt()` and pasted the token again. The
- * Access page's Configure form could not work in either state, because a plain HTML POST has nowhere
- * to put a bearer token.
- *
- * The cookie carries the token itself rather than a session id derived from it. A session id would
- * need its own row and its own expiry in the object; the token already exists, already has a
- * constant-time comparison, and is checked on exactly the hop that a session id would have cost.
- * `HttpOnly` keeps it out of reach of page script, which is stronger than the prompt it replaces.
+ * A page cannot set an `Authorization` header on its own navigation, so the cookie carries the
+ * token itself (no session id, which would need its own row and expiry). `HttpOnly` keeps it away
+ * from page script.
+ * @module
  */
 
 /** not session-shaped, so `hasSessionCookie()` never reads it as a Drupal login */
@@ -19,25 +13,25 @@ export const ADMIN_COOKIE = 'cfw_admin';
 /** a working day; an operator who leaves a tab open overnight signs in again */
 export const ADMIN_SESSION_MAX_AGE_S = 43_200;
 
-/** the token a browser presented, or null */
-export function adminCookieToken(cookieHeader: string | null | undefined): string | null {
-	if (!cookieHeader) return null;
+/** the token a browser presented, or undefined */
+export function adminCookieToken(cookieHeader: string | null | undefined): string | undefined {
+	if (!cookieHeader) return undefined;
 	for (const pair of cookieHeader.split(';')) {
 		const eq = pair.indexOf('=');
 		if (eq < 0) continue;
 		if (pair.slice(0, eq).trim() !== ADMIN_COOKIE) continue;
 		const value = pair.slice(eq + 1).trim();
-		return value === '' ? null : decodeURIComponent(value);
+		return value === '' ? undefined : decodeURIComponent(value);
 	}
-	return null;
+	return undefined;
 }
 
 /**
  * The `Set-Cookie` line that signs an operator in.
  *
- * `SameSite=Strict` is the CSRF defence and it is load-bearing: several owner routes act on a GET,
- * so a cross-site navigation carrying this cookie would be enough to install a module. Strict means
- * no cross-site request carries it at all, including a top-level link.
+ * `SameSite=Strict` is the CSRF defence: several owner routes act on a GET, so a cross-site
+ * navigation carrying the cookie could install a module. Strict sends it on no cross-site request,
+ * top-level links included.
  *
  * @param secure false only for a plain-http local dev origin, where a `Secure` cookie is dropped
  */
@@ -70,17 +64,9 @@ export function secureOrigin(url: { protocol: string }): boolean {
 /**
  * How many wrong tokens one client may present before it is refused without an object hop.
  *
- * **THE THREAT IS THE METER, NOT THE TOKEN.** The owner token is 32 CSPRNG bytes and
- * `tokenMatches()` is constant-time over its full width, so guessing it is not a practical attack
- * and this is not a brute-force defence. What was unbounded is the COST of guessing:
- * `ownerCredential()` resolves the site and fetches `/__ownercheck` on the Durable Object for every
- * presented token, so an unauthenticated client could drive the object's request counter -- the
- * meter the whole free-plan model is scored against -- at one request per HTTP request, for free,
- * until the site degraded to read-only.
- *
- * 12 rather than 3, because an operator with a stale cookie in an open tab should not lock
- * themselves out of their own site: every navigation presents the same wrong token, and the window
- * below is what clears it.
+ * Guessing the token is not the threat (32 CSPRNG bytes, constant-time compare); the unbounded cost
+ * is: each presented token costs a `/__ownercheck` object request, the meter the free plan is
+ * scored against. 12 rather than 3 so a stale cookie in an open tab does not lock its owner out.
  */
 export const OWNER_FAIL_LIMIT = 12;
 
@@ -88,12 +74,8 @@ export const OWNER_FAIL_LIMIT = 12;
 export const OWNER_FAIL_WINDOW_MS = 60_000;
 
 /**
- * Per isolate, deliberately.
- *
- * A durable counter would need a row per attempt, which spends the meter this exists to protect --
- * the same self-defeating shape as the daily counters that were most of what they counted. An
- * isolate-local bound does not stop a distributed attacker and is not meant to; it removes the
- * amplification, which is the part that was free.
+ * Per isolate, deliberately: a durable counter needs a row per attempt, which spends the meter this
+ * protects. It does not stop a distributed attacker; it removes the amplification.
  */
 const failures = new Map<string, { count: number; first: number }>();
 
@@ -120,8 +102,7 @@ export function ownerRefusedForNow(key: string, nowMs: number): boolean {
 
 /** records one refused credential; returns how many this client has spent */
 export function noteOwnerFailure(key: string, nowMs: number): number {
-	// bounded, because the key is attacker-supplied: a rotating IP would otherwise grow this map
-	// without limit inside one isolate, which is a second amplification through the same door
+	// bounded because the key is attacker-supplied (a rotating IP would grow the map without limit)
 	if (failures.size > 4096) failures.clear();
 	const held = failures.get(key);
 	if (!held || nowMs - held.first >= OWNER_FAIL_WINDOW_MS) {

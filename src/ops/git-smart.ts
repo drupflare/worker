@@ -1,11 +1,10 @@
-import { inflateZlib } from './inflate-raw.js';
-
 /**
- * Git's smart HTTP protocol, which is the transport every remote speaks.
- *
- * The provider adapters in `git-provider.ts` are a convenience over three APIs; this is the floor
- * underneath them, so a self-hosted Gitea, a bare repository behind nginx or a mirror all work.
+ * Git's smart HTTP protocol, the transport every remote speaks; the floor under the provider
+ * adapters in `git-provider.ts`, so a self-hosted Gitea, a bare repository or a mirror all work.
+ * @module
  */
+import { bytesToHex } from '../util/hex';
+import { inflateZlib } from './inflate-raw';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -25,6 +24,7 @@ export function pktLine(payload: string): Uint8Array {
 /** the flush packet, which ends a section */
 export const FLUSH = encoder.encode('0000');
 
+/** one parsed pkt-line */
 export interface PktLine {
 	/** null for a flush (0000) or delimiter (0001) packet */
 	text: string | null;
@@ -70,12 +70,13 @@ export function readPktLines(
 
 // #region ref discovery
 
+/** what `info/refs` advertised */
 export interface Advertisement {
 	/** ref name to sha, `HEAD` included when the server advertises it */
 	refs: Map<string, string>;
 	capabilities: string[];
 	/** what `HEAD` points at, from the `symref=` capability */
-	defaultBranch: string | null;
+	defaultBranch: string | undefined;
 }
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -83,13 +84,12 @@ const SHA = /^[0-9a-f]{40}$/;
 /**
  * Parses `GET /info/refs?service=git-upload-pack`.
  *
- * Tolerates the `# service=` banner being present or absent -- a dumb-HTTP mirror omits it, and the
- * refs after it are the same either way.
+ * Tolerates the `# service=` banner being present or absent (a dumb-HTTP mirror omits it).
  */
 export function parseAdvertisement(body: Uint8Array): Advertisement {
 	const refs = new Map<string, string>();
 	let capabilities: string[] = [];
-	let defaultBranch: string | null = null;
+	let defaultBranch: string | undefined;
 
 	for (const line of readPktLines(body).lines) {
 		if (line.text === null) continue;
@@ -117,13 +117,13 @@ export function parseAdvertisement(body: Uint8Array): Advertisement {
 }
 
 /** the sha one branch is at, tolerating a caller who passed a full ref or a bare name */
-export function refSha(ad: Advertisement, branch: string): string | null {
+export function refSha(ad: Advertisement, branch: string): string | undefined {
 	return (
 		ad.refs.get(branch) ??
 		ad.refs.get(`refs/heads/${branch}`) ??
 		ad.refs.get(`refs/tags/${branch}^{}`) ??
 		ad.refs.get(`refs/tags/${branch}`) ??
-		(SHA.test(branch) ? branch : null)
+		(SHA.test(branch) ? branch : undefined)
 	);
 }
 
@@ -154,8 +154,8 @@ export function requestRefs(ad: Advertisement): { id: string; ref: string; sha: 
 /**
  * The `POST /git-upload-pack` body for a shallow single-commit fetch.
  *
- * `side-band-64k` is NOT requested: without it the server writes the packfile as raw
- * bytes after the NAK instead of framing it, which removes a demux stage and cannot be sent anyway.
+ * `side-band-64k` is not requested: the server then writes the packfile raw after the NAK, which
+ * removes a demux stage.
  */
 export function uploadPackRequest(want: string, depth = 1): Uint8Array {
 	const caps = 'ofs-delta no-progress agent=drupflare/1';
@@ -198,10 +198,12 @@ export function packOffset(body: Uint8Array): number {
 
 // #region packfile
 
+/** the four git object kinds */
 export type GitObjectType = 'commit' | 'tree' | 'blob' | 'tag';
 
 const TYPE_NAME: Record<number, GitObjectType> = { 1: 'commit', 2: 'tree', 3: 'blob', 4: 'tag' };
 
+/** a resolved object */
 export interface GitObject {
 	type: GitObjectType;
 	data: Uint8Array;
@@ -287,9 +289,6 @@ export function applyDelta(base: Uint8Array, delta: Uint8Array): Uint8Array {
 	return out;
 }
 
-const HEX = (buf: ArrayBuffer): string =>
-	[...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
-
 /** hex of a slice, without the buffer copy `.buffer.slice()` would need */
 function hexOf(src: Uint8Array, from: number, length: number): string {
 	let out = '';
@@ -303,9 +302,10 @@ export async function objectSha(type: GitObjectType, data: Uint8Array): Promise<
 	const full = new Uint8Array(header.length + data.length);
 	full.set(header);
 	full.set(data, header.length);
-	return HEX(await crypto.subtle.digest('SHA-1', full));
+	return bytesToHex(await crypto.subtle.digest('SHA-1', full));
 }
 
+/** a parsed packfile */
 export interface Packfile {
 	/** every object, keyed by its sha */
 	objects: Map<string, GitObject>;
@@ -397,11 +397,12 @@ export async function parsePackfile(pack: Uint8Array, at = 0): Promise<Packfile>
 // #region walking a commit
 
 /** the tree sha out of a commit object */
-export function commitTree(commit: Uint8Array): string | null {
+export function commitTree(commit: Uint8Array): string | undefined {
 	const match = /^tree ([0-9a-f]{40})$/m.exec(decoder.decode(commit.subarray(0, 512)));
-	return match?.[1] ?? null;
+	return match?.[1];
 }
 
+/** one entry of a tree object */
 export interface TreeEntry {
 	mode: string;
 	name: string;
@@ -428,24 +429,25 @@ export function parseTree(tree: Uint8Array): TreeEntry[] {
 	return entries;
 }
 
+/** one file of a flattened commit */
 export interface WorkingFile {
 	path: string;
 	bytes: Uint8Array;
-	/** `100755` for an executable, which Drupal never needs but a diff should still notice */
+	/** `100755` for an executable (Drupal never needs it, a diff should notice) */
 	mode: string;
 }
 
 /**
  * Flattens a commit into the files it contains.
  *
- * Submodules (`160000`) and symlinks (`120000`) are skipped: neither has content in this pack, and a
- * symlink target written as a regular file is a silently wrong tree.
+ * Submodules (`160000`) and symlinks (`120000`) are skipped (a symlink written as a regular file
+ * is a silently wrong tree).
  */
 export function readWorkingTree(pack: Packfile, commitSha: string): WorkingFile[] {
 	const commit = pack.objects.get(commitSha);
 	if (commit === undefined) throw new Error(`git: ${commitSha.slice(0, 12)} is not in the pack`);
 	const rootSha = commit.type === 'commit' ? commitTree(commit.data) : commitSha;
-	if (rootSha === null) throw new Error('git: the commit names no tree');
+	if (rootSha === undefined) throw new Error('git: the commit names no tree');
 
 	const files: WorkingFile[] = [];
 	const walk = (sha: string, prefix: string): void => {
@@ -470,6 +472,7 @@ export function readWorkingTree(pack: Packfile, commitSha: string): WorkingFile[
 
 // #region the two HTTP calls
 
+/** a remote reachable over smart HTTP */
 export interface SmartRemote {
 	/** the clone URL, with or without `.git` */
 	url: string;
@@ -487,7 +490,7 @@ function smartHeaders(remote: SmartRemote, extra: Record<string, string> = {}): 
 	return headers;
 }
 
-/** the base URL git talks to, which is the clone URL with any trailing slash and `.git` normalised */
+/** the base URL git talks to: the clone URL with trailing slashes dropped and `.git` appended */
 export function smartBase(url: string): string {
 	const trimmed = url.trim().replace(/\/+$/, '');
 	return trimmed.endsWith('.git') ? trimmed : `${trimmed}.git`;

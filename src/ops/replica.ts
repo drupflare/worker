@@ -1,34 +1,24 @@
 /**
  * What a read replica may do to itself, and what it must refuse and send to the primary.
  *
- * TWO ALLOW-LISTS AND NO DENY-LIST, which is the whole design. A deny-list is wrong here by
- * construction: the failure it produces is a replica silently committing an authoritative write
- * that the primary never sees, and the write it misses is by definition the one nobody thought of.
- * So a table is authoritative unless named local, a statement is a write unless proven a read, and
- * a capability is mutating unless named safe.
+ * Two allow-lists and no deny-list: a table is authoritative unless named local, a statement is a
+ * write unless proven a read, a capability is mutating unless named safe. A deny-list misses the
+ * write nobody thought of, which a replica would commit silently. {@link enforceReadOnly} walks the
+ * capabilities installed on the module, not `CROSSING_NAMES`, which has drifted (`cfwOidcClaims`
+ * and `cfwTcp` mutate and never joined it).
  *
- * The bridge surface is the reason this cannot enumerate: `CROSSING_NAMES` in `crossings.ts` is a
- * hand-maintained list whose own docblock says a new capability should show up rather than be
- * "counted by accident", and TWO have been added since without joining it -- `cfwOidcClaims`, which
- * deletes a durable ticket, and `cfwTcp`, which queues an outbound exchange. Both mutate. So
- * {@link enforceReadOnly} walks what is INSTALLED on the module and refuses anything it does not
- * recognise, rather than walking a list that has already drifted twice.
+ * @module
  */
 
 import type { TxnRequest } from '@drupflare/durabledb/do-sqlite';
-import { STORAGE_TABLE_PREFIX, writeTargetTable } from '../db/write-tally.js';
+import { STORAGE_TABLE_PREFIX, writeTargetTable } from '../db/write-tally';
 
 /**
  * Tables a replica may write to itself with nothing lost if the write is discarded.
  *
- * `cache_` covers Drupal's bins, which are derived from authoritative state and rebuildable.
- * `?storage.` is {@link STORAGE_TABLE_PREFIX}, the host's own alarm and key-value bookkeeping,
- * which is per-object by construction.
- *
- * The named set is SHORT and is not `cfw_`. A prefix rule over the host's
- * own tables would sweep in `cfw_mail_queue` (a committed message), `cfw_file` (durable file bytes)
- * and `cfw_http_queue` (an outbound request) -- three authoritative stores that happen to share a
- * naming convention with the page cache.
+ * `cache_` covers rebuildable bins; `?storage.` is {@link STORAGE_TABLE_PREFIX} (per-object
+ * bookkeeping). The set is not `cfw_`: that would sweep in the authoritative `cfw_mail_queue`,
+ * `cfw_file` and `cfw_http_queue`.
  */
 const REPLICA_LOCAL_PREFIXES = ['cache_', STORAGE_TABLE_PREFIX] as const;
 
@@ -42,21 +32,16 @@ const REPLICA_LOCAL_TABLES: ReadonlySet<string> = new Set([
 	'cfw_health'
 ]);
 
+/** whether a write to `table` is safe for a replica to keep and discard */
 export function isReplicaLocalTable(table: string): boolean {
 	if (REPLICA_LOCAL_TABLES.has(table)) return true;
 	return REPLICA_LOCAL_PREFIXES.some((prefix) => table.startsWith(prefix));
 }
 
 /**
- * Expiry sweeps the HOST's own cron already performs, table by table and column by column.
- *
- * The pairs are `EXPIRED_ROW_RULES` in `cron.ts`, minus `queue`. Not imported from there because
- * `cron.ts` pulls the cron PHP fragments in with it and this module is on the front worker's routing
- * path; `tests/unit/ops/replica.spec.ts` drives both lists and fails when they disagree.
- *
- * `queue` is left out on purpose. Its rule carries a second `name LIKE` predicate and a queue item is
- * pending WORK rather than an expired copy of something, so discarding a replica's delete of one is
- * not the same trade as discarding a delete of a stale session.
+ * `EXPIRED_ROW_RULES` in `cron.ts` minus `queue` (a queue item is pending work, not an expired
+ * copy); copied because `cron.ts` pulls PHP fragments onto the front worker's routing path.
+ * `tests/unit/ops/replica.spec.ts` fails when the lists disagree.
  */
 const EXPIRY_GC: ReadonlyArray<{ table: string; column: string }> = [
 	{ table: 'sessions', column: 'timestamp' },
@@ -67,17 +52,12 @@ const EXPIRY_GC: ReadonlyArray<{ table: string; column: string }> = [
 ];
 
 /**
- * The table an expiry-GC delete sweeps, or `null` when the statement is not one.
+ * The table an expiry-GC delete sweeps, or `undefined` when the statement is not one.
  *
- * SAME TABLE, TWO EFFECTS, which is the `key_value` lesson pointed at `sessions`. Writing a session
- * row is authoritative; deleting rows whose `timestamp` has passed is the primary's own cron rule
- * executed by a different caller, so a replica running it loses nothing when its copy is discarded --
- * both sides converge on the same set.
- *
- * Anchored at both ends, so a delete carrying any extra predicate does not match and stays
- * authoritative. That is the direction to fail in: a shape this does not recognise is reported.
+ * Writing a session row is authoritative but the expiry delete is the primary's own cron rule, so a
+ * replica running it loses nothing. Anchored at both ends: any extra predicate stays authoritative.
  */
-export function expiryGcTable(sql: string): string | null {
+export function expiryGcTable(sql: string): string | undefined {
 	const text = String(sql ?? '')
 		.replace(/\s+/g, ' ')
 		.trim();
@@ -88,15 +68,14 @@ export function expiryGcTable(sql: string): string | null {
 		);
 		if (pattern.test(text)) return rule.table;
 	}
-	return null;
+	return undefined;
 }
 
 /**
  * Whether every write statement a tally recorded against `table` was an expiry sweep of it.
  *
- * Reads the tally's `shapes`, which is a diagnostic with a cap and a truncation, so this fails
- * CLOSED in three ways: no `shapes` at all, a shape that does not parse as a sweep, or a shape count
- * that does not add up to the statements recorded. Any of them reports the table.
+ * `shapes` is capped, so this fails closed: missing shapes, a non-sweep shape or a count that does
+ * not add up to the recorded statements all report the table.
  */
 function sweptOnly(
 	shapes: Record<string, number> | undefined,
@@ -115,11 +94,8 @@ function sweptOnly(
 export type AuthoritativeWrite = { table: string; rows: number; statements: number };
 
 /**
- * The authoritative half of a write tally, which is the quantity the replica bet rests on.
- *
- * Rows AND statements, because they answer different questions and the invariant needs both: rows
- * say whether anything was committed, statements say whether anything was attempted. A DELETE that
- * matched nothing writes no rows on this object and would match on one whose state differs.
+ * The authoritative half of a write tally. Rows and statements both: a `DELETE` matching nothing
+ * writes no rows here but could match on an object whose state differs.
  */
 export function authoritativeWrites(tally: {
 	byTable: Record<string, number>;
@@ -144,19 +120,13 @@ export function authoritativeWrites(tally: {
 }
 
 /**
- * Whether a statement is PROVEN to be a read.
- *
- * Anything unrecognised answers false. `writeTargetTable()` is not usable for this: it exists to
- * attribute a write to a table and answers null both for "this is a read" and for "this is a write
- * whose shape the parser does not know", and those two must not collapse here.
- *
- * `WITH` is refused despite usually introducing a SELECT, because SQLite accepts a CTE followed by
- * INSERT/UPDATE/DELETE and telling the two apart needs a parser.
+ * Whether a statement is proven to be a read; unrecognised answers false. `writeTargetTable()`
+ * cannot serve: it answers undefined for both a read and an unparsed write. `WITH` is refused
+ * because SQLite accepts a CTE before a write.
  */
 export function isProvenRead(sql: string): boolean {
 	const text = sql.trim();
-	// a compound is not a proven read whatever it starts with, and this is exported: the admission
-	// path guards it too, but a future caller reaching the leaf directly would reopen the hole
+	// exported, so guard the compound here too
 	if (compound(text)) return false;
 	if (/^SELECT\b/i.test(text)) return true;
 	if (/^EXPLAIN\b/i.test(text)) return true;
@@ -166,16 +136,9 @@ export function isProvenRead(sql: string): boolean {
 }
 
 /**
- * Whether the text carries more than one statement.
- *
- * `sql.exec()` runs every statement in the string it is handed, and every classifier below reads the
- * LEADING keyword -- so a compound describes only its first statement. `SELECT 1; DELETE FROM users`
- * is a proven read and `INSERT INTO cache_render (...); DELETE FROM users` attributes to a
- * replica-local table, and both then mutate authoritative state on a lane. Refused rather than
- * parsed, which is the call {@link isProvenRead} already makes about a CTE.
- *
- * One trailing separator is not a second statement; Drupal binds values rather than inlining them,
- * so a literal `;` inside the text is rare and costs a hop to the primary rather than a wrong answer.
+ * Whether the text carries more than one statement. `sql.exec()` runs them all but the classifiers
+ * read only the leading keyword, so `SELECT 1; DELETE FROM users` would pass as a read. A literal
+ * `;` in the text costs a hop to the primary, not a wrong answer; one trailing separator is fine.
  */
 function compound(text: string): boolean {
 	return text.replace(/;\s*$/, '').includes(';');
@@ -184,32 +147,23 @@ function compound(text: string): boolean {
 /**
  * Whether a replica may run this statement against its own database.
  *
- * THE TWO ALLOW-LISTS HAVE TO MEET HERE, and they did not at first: `isProvenRead()` alone refuses
- * `INSERT INTO cache_render`, which `isReplicaLocalTable()` calls local -- so a replica could not
- * fill its own cache bins and would re-render every request, which is the entire thing it exists to
- * avoid. A read is allowed, and so is a write whose target is replica-local.
- *
- * Still fail-closed: `writeTargetTable()` returns null both for a read and for a write it cannot
- * parse, and a null answer refuses.
+ * Allowed: a proven read, an expiry sweep, or a write to a replica-local table (so a replica can
+ * fill its own cache bins). Fail-closed: an unparsed target refuses.
  */
 export function statementAllowedOnReplica(sql: string): boolean {
 	if (compound(String(sql ?? '').trim())) return false;
 	if (isProvenRead(sql)) return true;
-	if (expiryGcTable(sql) !== null) return true;
+	if (expiryGcTable(sql) !== undefined) return true;
 	const target = writeTargetTable(sql);
-	return target !== null && isReplicaLocalTable(target);
+	return target !== undefined && isReplicaLocalTable(target);
 }
 
 /**
  * The generation fence: whether a replica's view is fresh enough to answer.
  *
- * A REPLICA MAY ONLY SERVE STATE FOR GENERATION G IF ITS AUTHORITATIVE VIEW IS VALID THROUGH G.
- * Equality is sufficient and being ahead is fine; being behind by any amount refuses.
- *
- * The fence is only as strong as the generation ADVANCING on every change that matters, which is a
- * separate property and is measured by `tests/integration/generation-fence.spec.ts`. A change that
- * mutates authoritative state without bumping leaves a stale replica believing it is current, and
- * the fence cannot see it -- so the fence is necessary and is not on its own sufficient.
+ * A replica may serve generation G only if its view is valid through G; behind by any amount
+ * refuses. It relies on the generation advancing on every change that matters
+ * (`tests/integration/generation-fence.spec.ts`); an unbumped mutation is invisible to it.
  */
 export function fenceAllows(appliedGeneration: number, requiredGeneration: number): boolean {
 	if (!Number.isFinite(appliedGeneration) || !Number.isFinite(requiredGeneration)) return false;
@@ -219,13 +173,9 @@ export function fenceAllows(appliedGeneration: number, requiredGeneration: numbe
 /**
  * Drupal's own session id, which is what `sessions.sid` holds.
  *
- * `SessionHandler::read()` looks the row up by `Crypt::hashBase64($sid)` -- base64 of the RAW
- * sha256, with `+/` mapped to `-_` and padding stripped -- never by the cookie value itself. So a
- * lane can ask whether it holds a visitor's session with one indexed read, without rendering
- * anything and without the cookie value ever being compared against stored bytes.
- *
- * Verified against a deployed site: cookie value `78e0948463...` hashes to
- * `TIkEn6fkVm-NaFDE5eDlIfIXxgfFJXI2XRRnMxjurwI`, which is the row the primary had written.
+ * `SessionHandler::read()` keys on `Crypt::hashBase64($sid)` (base64 of the raw sha256, `+/` to
+ * `-_`, padding stripped), never the cookie value. Golden vector from a deployed site:
+ * `78e0948463...` hashes to `TIkEn6fkVm-NaFDE5eDlIfIXxgfFJXI2XRRnMxjurwI`.
  */
 export async function drupalSessionRowId(cookieValue: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(cookieValue));
@@ -236,7 +186,9 @@ export async function drupalSessionRowId(cookieValue: string): Promise<string> {
 
 /** why a replica refused; the sentence a caller logs and the reason it fails over */
 export class ReplicaRequiresPrimary extends Error {
+	/** the refused capability name */
 	readonly capability: string;
+	/** why it needs the primary */
 	readonly detail: string;
 	constructor(capability: string, detail: string) {
 		super(`${capability} requires the primary: ${detail}`);
@@ -247,14 +199,9 @@ export class ReplicaRequiresPrimary extends Error {
 }
 
 /**
- * Capabilities a replica may serve itself.
- *
- * Every one is a pure function of its arguments or a read of replica-local state. Everything else
- * -- including anything absent from this set -- is mutating and refused.
- *
- * `cfwLog` is the one judgement call: it appends to an in-memory ring and
- * writes `console.log`, neither of which is authoritative state. A watchdog ROW would be, and this
- * capability does not write one.
+ * Capabilities a replica may serve itself: pure functions or reads of replica-local state;
+ * anything absent is mutating and refused. `cfwLog` only appends to an in-memory ring and
+ * `console.log`, never a watchdog row.
  */
 export const REPLICA_SAFE_CAPABILITIES: ReadonlySet<string> = new Set([
 	'cfwStats',
@@ -271,18 +218,17 @@ export const REPLICA_SAFE_CAPABILITIES: ReadonlySet<string> = new Set([
 	'cfwFileStat',
 	// a configured string, identical on every lane
 	'cfwFilePublicBase',
-	// a read of this object's own replicated `cfw_module_rev` rows. Its sibling `cfwSettings` is
-	// deliberately NOT here: it writes account KV, which is off this object entirely, so a lane
-	// must refuse it and the Drupal settings form is served from the primary
+	// reads replicated `cfw_module_rev` rows; sibling `cfwSettings` is absent (writes account KV)
 	'cfwModules',
 	// classified per statement rather than wholesale; see below
 	'cfwSqlExec',
 	'cfwSqlTxn'
 ]);
 
-/** capabilities whose every call is refused outright */
+/** `per-call` is classified by statement; `mutating` is refused outright */
 export type CapabilityVerdict = 'safe' | 'per-call' | 'mutating';
 
+/** the verdict for a bridge capability name; unnamed means mutating */
 export function classifyCapability(name: string): CapabilityVerdict {
 	if (name === 'cfwSqlExec' || name === 'cfwSqlTxn') return 'per-call';
 	return REPLICA_SAFE_CAPABILITIES.has(name) ? 'safe' : 'mutating';
@@ -291,7 +237,8 @@ export function classifyCapability(name: string): CapabilityVerdict {
 /** the one binding that puts an object into replica mode; absent or `'0'` means primary */
 export type ReplicaEnv = { REPLICA_READ_ONLY?: string | undefined };
 
-export function replicaReadOnly(env?: ReplicaEnv | null): boolean {
+/** whether `REPLICA_READ_ONLY` is `'1'` */
+export function replicaReadOnly(env?: ReplicaEnv): boolean {
 	return String(env?.REPLICA_READ_ONLY ?? '') === '1';
 }
 
@@ -301,85 +248,69 @@ export type ReadOnlyGuard = {
 	wrapped: Record<string, CapabilityVerdict>;
 	/** refusals so far this request, most recent last */
 	refusals: ReplicaRequiresPrimary[];
-	/**
-	 * whether any mutating inner function was reached.
-	 *
-	 * Always false by construction -- a refusal throws BEFORE the inner call -- and asserted rather
-	 * than assumed, because it is the precondition for retrying on the primary. A retry after a
-	 * partial mutation double-applies it.
-	 */
+	/** whether a mutating inner function was reached; must be false before a primary retry */
 	didMutate: () => boolean;
 };
 
 /** the payload shape both SQL capabilities are handed: a JSON string */
 function parseJson(json: unknown): unknown {
-	if (typeof json !== 'string') return null;
+	if (typeof json !== 'string') return undefined;
 	try {
-		return JSON.parse(json);
+		return JSON.parse(json) ?? undefined;
 	} catch {
-		return null;
+		return undefined;
 	}
 }
 
 /**
  * Reads the statement text out of a `cfwSqlExec` payload.
  *
- * The payload crosses the bridge through the codec, so a bare `JSON.parse` sees the encoded form.
- * Only the `sql` field is needed and it is a plain string on both sides, so this does not decode.
+ * Only the `sql` field is read; it is a plain string on both sides of the codec, so no decode.
  */
-function execStatements(json: unknown): string[] | null {
-	const body = parseJson(json) as { sql?: unknown } | null;
-	if (body === null || typeof body.sql !== 'string') return null;
+function execStatements(json: unknown): string[] | undefined {
+	const body = parseJson(json) as { sql?: unknown } | undefined;
+	if (body === undefined || typeof body.sql !== 'string') return undefined;
 	return [body.sql];
 }
 
-function txnStatements(json: unknown): string[] | null {
-	const body = parseJson(json) as Partial<TxnRequest> | null;
-	if (body === null || !Array.isArray(body.statements)) return null;
+/** every statement in a `cfwSqlTxn` payload, including the speculative read */
+function txnStatements(json: unknown): string[] | undefined {
+	const body = parseJson(json) as Partial<TxnRequest> | undefined;
+	if (body === undefined || !Array.isArray(body.statements)) return undefined;
 	const out: string[] = [];
 	for (const statement of body.statements) {
-		if (typeof statement?.sql !== 'string') return null;
+		if (typeof statement?.sql !== 'string') return undefined;
 		out.push(statement.sql);
 	}
-	// the speculative read rides alongside the buffer and is a read by construction; included
-	// anyway, because "by construction" is what this module refuses to take on trust
+	// the speculative read is checked too; nothing here is trusted by construction (PHP sends
+	// `"read": null` when there is none)
 	if (body.read !== undefined && body.read !== null) {
-		if (typeof body.read.sql !== 'string') return null;
+		if (typeof body.read.sql !== 'string') return undefined;
 		out.push(body.read.sql);
 	}
 	return out;
 }
 
 /**
- * The same transaction payload with `commit` forced off, or null when it cannot be read.
+ * The same transaction payload with `commit` forced off, or undefined when it cannot be read.
  *
- * Returned as a JSON string because that is what the capability was handed; rewriting the object in
- * place would mutate what the caller still holds.
+ * Returned as a JSON string, as handed in; editing the object would mutate the caller's copy.
  */
-export function speculative(json: unknown): string | null {
-	const body = parseJson(json) as Partial<TxnRequest> | null;
-	if (body === null || !Array.isArray(body.statements)) return null;
+export function speculative(json: unknown): string | undefined {
+	const body = parseJson(json) as Partial<TxnRequest> | undefined;
+	if (body === undefined || !Array.isArray(body.statements)) return undefined;
 	return JSON.stringify({ ...body, commit: false });
 }
 
 /**
- * Makes a replica physically unable to commit an authoritative side effect.
+ * Makes a replica unable to commit an authoritative side effect by wrapping the installed surface,
+ * so a later capability is refused until classified. A refusal throws before the inner call.
  *
- * Wraps the INSTALLED surface rather than a known list, so a capability added later is refused
- * until somebody classifies it. That direction is the safe one: an unclassified capability costs a
- * failover to the primary, where an unclassified capability waved through costs a divergent site.
- *
- * A refusal throws before the inner function is called, which is what makes the primary retry safe.
- *
- * @param binary
- *   The instantiated PHP module, mutated in place.
- * @param onRefusal
- *   Called with each refusal before it is thrown; the caller uses it to record the failover.
- * @param collect
- *   Turns SQL refusal into forwarding. Given one, a mutating transaction is downgraded to the
- *   driver's speculative path -- replayed, read through, rolled back -- and its statements are handed
- *   here for the primary to commit. Only SQL forwards: a `mutating` capability is an outbound effect
- *   like mail, and there is no rollback for one that has been sent.
+ * @param binary - the instantiated PHP module, mutated in place
+ * @param onRefusal - called with each refusal before it is thrown
+ * @param collect - turns an SQL refusal into forwarding: the mutating transaction runs on the
+ *   driver's speculative path (rolled back) and its statements go here for the primary to commit;
+ *   only SQL forwards, since a sent mail has no rollback
  */
 export function enforceReadOnly(
 	binary: Record<string, unknown>,
@@ -400,8 +331,7 @@ export function enforceReadOnly(
 	for (const name of Object.keys(binary)) {
 		if (!name.startsWith('cfw')) continue;
 		const fn = binary[name];
-		// `cfwCanSuspend` is a boolean the service provider probes; wrapping it would hand PHP a
-		// callable where it expects a flag, which reads true and installs a handler that cannot work
+		// skip flags like `cfwCanSuspend`: wrapping one hands PHP a callable that reads true
 		if (typeof fn !== 'function') continue;
 
 		const verdict = classifyCapability(name);
@@ -418,9 +348,8 @@ export function enforceReadOnly(
 		const read = name === 'cfwSqlTxn' ? txnStatements : execStatements;
 		binary[name] = (...args: unknown[]) => {
 			const statements = read(args[0]);
-			// an unparseable payload is refused rather than passed through: the guard cannot see what
-			// it would be authorising
-			if (statements === null) refuse(name, 'the statement payload could not be read');
+			// refuse an unreadable payload; the guard cannot see what it would authorise
+			if (statements === undefined) refuse(name, 'the statement payload could not be read');
 			const write = statements!.find((sql) => !statementAllowedOnReplica(sql));
 			if (write !== undefined) {
 				if (collect === undefined) {
@@ -429,17 +358,10 @@ export function enforceReadOnly(
 						`not a read and not replica-local: ${write.replace(/\s+/g, ' ').trim().slice(0, 120)}`
 					);
 				}
-				// forwarded rather than refused: run it speculatively so PHP reads through its own
-				// write, and hand the statements to the primary. `commit: false` is the driver's
-				// existing path and the rollback is what keeps this lane's database at its
-				// applied generation
+				// run speculatively (`commit: false`, rolled back) so PHP reads its own write
 				const payload = speculative(args[0]);
-				if (payload === null) {
-					// AN EXEC WRITE IS NOT FORWARDABLE HERE AND THAT IS THE DRIVER'S JOB TO AVOID.
-					// `cfwSqlExec` has no rollback, so there is no way to run this locally and discard
-					// it; the driver replays an unbuffered write as a one-statement transaction so it
-					// arrives on the branch above. Reaching this means the two disagree about whether
-					// this connection holds a residue class, and a failover is the safe answer
+				if (payload === undefined) {
+					// `cfwSqlExec` has no rollback and the driver sends writes as transactions
 					refuse(
 						name,
 						name === 'cfwSqlExec'
@@ -447,9 +369,8 @@ export function enforceReadOnly(
 							: 'the transaction payload could not be downgraded'
 					);
 				}
-				// a speculative replay resends the whole buffer beside each read, so only the commit
-				// carries the batch; collecting every replay forwarded one insert several times
-				if ((parseJson(args[0]) as Partial<TxnRequest> | null)?.commit !== false) {
+				// a replay resends the whole buffer beside each read; collect only the commit
+				if ((parseJson(args[0]) as Partial<TxnRequest> | undefined)?.commit !== false) {
 					collect!(statements!, args[0]);
 				}
 				mutated = true;

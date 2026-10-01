@@ -1,20 +1,24 @@
 /**
- * Decomposes the PHP-to-host crossings of ONE render into statements, and classifies each.
+ * Decomposes the PHP-to-host crossings of one render into statements, and classifies each.
  *
- * the five categories are a partition, first match wins, so counts sum to the total; counts and
- * bytes only, never time, because a count is the same number locally and on the edge
+ * The five categories partition the statements (first match wins). Counts and bytes only, never
+ * time, because a count is the same locally and on the edge.
+ *
+ * @module
  */
-import { writeTargetTable } from '../db/write-tally.js';
+import { writeTargetTable } from '../db/write-tally';
 
 /** one statement, decomposed far enough to classify it */
 export type CensusCall = {
 	/** the capability crossed for; `cfwSqlExec` and `cfwSqlTxn` are the only ones carrying SQL */
 	name: string;
-	/** the statement's shape, literals and bindings normalised to `?`; null when it carried no SQL */
+	/** the statement's shape with literals and bindings as `?`; null when it carried no SQL */
 	fingerprint: string | null;
+	/** the table read or written */
 	table: string | null;
 	/** rows SQLite touched, which is what the row-read meter charges */
 	rowsRead: number;
+	/** rows written */
 	rowsWritten: number;
 	/** rows handed back across the bridge, which is not `rowsRead` */
 	rows: number;
@@ -22,43 +26,30 @@ export type CensusCall = {
 	resultBytes: number;
 	/** true when the statement arrived inside a `cfwSqlTxn` batch rather than on its own */
 	viaTxn: boolean;
-	// the first bound parameter when short, which on a cache bin is a cid; only the first, because
-	// an upsert's later parameters are the payload and one row measured 97,749 bytes
+	/** the first bound parameter when short (a cid on a cache bin); later ones are payload */
 	key: string | null;
 };
 
-/**
- * The longest cid kept.
- *
- * 512 rather than a tighter bound: a `cache_render` cid carries every cache context it varied on
- * (`[languages:language_interface]=en:[theme]=olivero:[user.permissions]=...`) and routinely passes
- * 200 characters, so a 160-char cap read null for the single largest group in the census.
- */
+// the longest cid kept (a `cache_render` cid carries its cache contexts and passes 200 chars)
 const MAX_KEY_CHARS = 512;
 
-/**
- * An OBJECT as well as an array, and the array-only version read null for every statement.
- *
- * Drupal binds NAMED placeholders, so `params` arrives from PHP as an associative array and
- * `json_encode` writes it as `{":db_condition_placeholder_0": "..."}`. Insertion order is the bind
- * order for these keys, so the first value is still the first parameter.
- */
-function firstKey(params: unknown): string | null {
+// an object as well as an array: Drupal binds named placeholders, and insertion order is bind order
+function firstKey(params: unknown): string | undefined {
 	const list = Array.isArray(params)
 		? params
 		: params !== null && typeof params === 'object'
 			? Object.values(params as Record<string, unknown>)
 			: [];
 	const head = list[0];
-	if (typeof head !== 'string' || head.length === 0 || head.length > MAX_KEY_CHARS) return null;
+	if (typeof head !== 'string' || head.length === 0 || head.length > MAX_KEY_CHARS) {
+		return undefined;
+	}
 	return head;
 }
 
 /**
- * The statement's shape: every literal, bound value and placeholder list normalised to `?`.
- *
- * Placeholder GROUPS collapse too, arity included, or six reads of one bin split into two
- * "distinct operations" on nothing but a one-element `IN` spelled differently.
+ * The statement's shape: every literal, bound value and placeholder list normalised to `?`, with
+ * placeholder groups collapsed whatever their arity.
  */
 export function fingerprint(sql: string): string {
 	return String(sql ?? '')
@@ -71,33 +62,28 @@ export function fingerprint(sql: string): string {
 		.trim();
 }
 
-/** quoting stripped, so `"main"."cache_default"` and `cache_default` are one table rather than two */
+// quoting stripped, so `"main"."cache_default"` and `cache_default` are one table
 const unquote = (sql: string) => String(sql ?? '').replace(/["`[\]]/g, '');
 
 /**
- * The table a statement reads or writes.
- *
- * Reuses `writeTargetTable()` for the write forms rather than restating them, and adds the read
- * form. Drupal emits both the qualified and the bare spelling for the same table, and treating them
- * as two would hide the repetition this instrument exists to find.
+ * The table a statement reads or writes, via `writeTargetTable()` plus the `FROM` form, with
+ * `main.` dropped so both spellings count as one table.
  */
-export function targetTable(sql: string): string | null {
+export function targetTable(sql: string): string | undefined {
 	const bare = unquote(sql);
-	const table = writeTargetTable(bare) ?? /\bFROM\s+([A-Za-z0-9_.]+)/i.exec(bare)?.[1] ?? null;
-	return table === null ? null : table.replace(/^main\./i, '');
+	const table = writeTargetTable(bare) ?? /\bFROM\s+([A-Za-z0-9_.]+)/i.exec(bare)?.[1];
+	return table ? table.replace(/^main\./i, '') : undefined;
 }
 
-/** a statement that changes rows, decided from its text rather than from what it happened to write */
+/** a statement that changes rows, decided from its text rather than its row count */
 export const isWriteStatement = (sql: string | null): boolean =>
-	sql !== null && writeTargetTable(unquote(sql)) !== null;
+	sql !== null && writeTargetTable(unquote(sql)) !== undefined;
 
-/** the shared cache bins, whose read returning nothing is a MISS rather than an absence */
+// a cache bin read that returns nothing is a miss rather than an absence
 const isCacheBin = (table: string | null) => table !== null && /^cache_/.test(table);
 
 /**
- * Which part of Drupal asked for a statement, which `targetTable()` cannot answer.
- *
- * Three of the bins a render touches are SHARED, so a table names a location and not a caller.
+ * Which part of Drupal asked for a statement; a shared bin names a location, not a caller.
  */
 export type Subsystem =
 	| 'render'
@@ -112,6 +98,7 @@ export type Subsystem =
 	| 'host'
 	| 'other';
 
+/** every {@link Subsystem}, in report order */
 export const SUBSYSTEMS: Subsystem[] = [
 	'render',
 	'page-assembly',
@@ -126,12 +113,7 @@ export const SUBSYSTEMS: Subsystem[] = [
 	'other'
 ];
 
-/**
- * cid prefixes, tried before the table.
- *
- * Every entry is a cid this project has actually observed in a census run rather than one read out
- * of core, which is the difference between a classification and a note. First match wins.
- */
+// cid prefixes observed in census runs, tried before the table; first match wins
 const KEY_RULES: Array<[RegExp, Subsystem]> = [
 	[/^entity_view:/, 'render'],
 	[/^response:/, 'page-assembly'],
@@ -146,7 +128,7 @@ const KEY_RULES: Array<[RegExp, Subsystem]> = [
 	[/field_storage_definitions/, 'entity']
 ];
 
-/** the bin or table's owner, used when a statement carries no cid to be more specific with */
+// the bin or table's owner, used when a statement carries no cid
 const TABLE_RULES: Array<[RegExp, Subsystem]> = [
 	[/^cfw_/, 'host'],
 	[/^cache_(dynamic_page_cache|page)$/, 'page-assembly'],
@@ -160,10 +142,8 @@ const TABLE_RULES: Array<[RegExp, Subsystem]> = [
 ];
 
 /**
- * The subsystem a statement belongs to.
- *
- * the cid decides when there is one; the shared bins are absent from the table rules so a
- * statement with no cid stays `other` rather than getting an invented owner
+ * The subsystem a statement belongs to; the cid decides when there is one, and a shared bin with
+ * no cid stays `other` rather than getting an invented owner.
  */
 export function subsystemOf(table: string | null, key: string | null = null): Subsystem {
 	if (key !== null) {
@@ -175,14 +155,14 @@ export function subsystemOf(table: string | null, key: string | null = null): Su
 	return 'other';
 }
 
-function parseJson(value: unknown): Record<string, unknown> | null {
-	if (typeof value !== 'string') return null;
+function parseJson(value: unknown): Record<string, unknown> | undefined {
+	if (typeof value !== 'string') return undefined;
 	try {
 		const parsed: unknown = JSON.parse(value);
-		if (parsed === null || typeof parsed !== 'object') return null;
+		if (parsed === null || typeof parsed !== 'object') return undefined;
 		return parsed as Record<string, unknown>;
 	} catch {
-		return null;
+		return undefined;
 	}
 }
 
@@ -192,7 +172,7 @@ function statementRecord(
 	name: string,
 	sql: unknown,
 	params: unknown,
-	result: Record<string, unknown> | null,
+	result: Record<string, unknown> | undefined,
 	resultBytes: number,
 	viaTxn: boolean
 ): CensusCall {
@@ -200,21 +180,19 @@ function statementRecord(
 	return {
 		name,
 		fingerprint: text === '' ? null : fingerprint(text),
-		table: text === '' ? null : targetTable(text),
+		table: text === '' ? null : (targetTable(text) ?? null),
 		rowsRead: num(result?.rowsRead),
 		rowsWritten: num(result?.rowsWritten),
 		rows: Array.isArray(result?.rows) ? result.rows.length : 0,
 		resultBytes,
 		viaTxn,
-		key: firstKey(params)
+		key: firstKey(params) ?? null
 	};
 }
 
 /**
- * Records one crossing as one or more statements.
- *
- * a `cfwSqlTxn` carries a whole transaction, so statements run ahead of crossings; an unparseable
- * payload keeps a null fingerprint rather than being dropped
+ * Records one crossing as one or more statements (a `cfwSqlTxn` carries a whole transaction); an
+ * unparseable payload keeps a null fingerprint rather than being dropped.
  */
 export function recordCrossing(
 	log: CensusCall[],
@@ -238,17 +216,16 @@ export function recordCrossing(
 			return;
 		}
 		statements.forEach((statement, i) => {
-			const one = (results[i] ?? null) as Record<string, unknown> | null;
-			const entry = statement as Record<string, unknown> | null;
-			// a batch's framing cannot be split N ways honestly, so each statement carries the size
-			// of ITS reply and nothing carries the envelope
+			const one = results[i] as Record<string, unknown> | undefined;
+			const entry = statement as Record<string, unknown> | undefined;
+			// each statement carries its own reply size; nothing carries the batch envelope
 			log.push(
 				statementRecord(
 					name,
 					entry?.sql,
 					entry?.params,
 					one,
-					one === null ? 0 : JSON.stringify(one).length,
+					one === undefined ? 0 : JSON.stringify(one).length,
 					true
 				)
 			);
@@ -259,13 +236,12 @@ export function recordCrossing(
 }
 
 /**
- * The five buckets, in the order a statement is tested against them.
- *
- * `bridge` no SQL; `duplicate` same fingerprint again; `cache-miss` empty `cache_*` read;
- * `repeated-table` same table via a different fingerprint; `necessary` everything left
+ * The five buckets in test order: `bridge` (no SQL), `duplicate`, `cache-miss` (empty `cache_*`
+ * read), `repeated-table` (same table, other fingerprint), `necessary`.
  */
 export type CensusCategory = 'bridge' | 'duplicate' | 'cache-miss' | 'repeated-table' | 'necessary';
 
+/** every {@link CensusCategory}, in test order */
 export const CENSUS_CATEGORIES: CensusCategory[] = [
 	'bridge',
 	'duplicate',
@@ -284,24 +260,17 @@ export type CensusRow = {
 	rowsWritten: number;
 	rows: number;
 	resultBytes: number;
-	/** the category of the FIRST occurrence; every later one is `duplicate` by construction */
+	/** the category of the first occurrence; every later one is `duplicate` */
 	category: CensusCategory;
-	/** distinct first-parameter cids seen under this fingerprint, capped; see {@link CensusCall.key} */
+	/** distinct first-parameter cids seen under this fingerprint, capped */
 	keys: string[];
-	// distinct cids for this fingerprint, uncapped; `keys.length` is a capped sample, and
-	// `count - distinctKeys` is the reducible half against a batchable remainder
+	/** distinct cids, uncapped; `count - distinctKeys` is the reducible repetition */
 	distinctKeys: number;
-	/**
-	 * the subsystem of the FIRST occurrence.
-	 *
-	 * One fingerprint against a SHARED bin can span subsystems -- the `cache_data` read is a route
-	 * lookup once and a CSS aggregate twice -- so read {@link Census.bySubsystem} for the split and
-	 * this field only as the row's label.
-	 */
+	/** the first occurrence's subsystem, a label only; {@link Census.bySubsystem} has the split */
 	subsystem: Subsystem;
 };
 
-/** what one subsystem spent, summed per STATEMENT rather than per fingerprint */
+/** what one subsystem spent, summed per statement rather than per fingerprint */
 export type SubsystemSpend = {
 	statements: number;
 	rowsRead: number;
@@ -309,9 +278,10 @@ export type SubsystemSpend = {
 	resultBytes: number;
 };
 
-/** cids kept per fingerprint; enough to name the callers, not enough to reprint the render */
+// cids kept per fingerprint; enough to name the callers
 const MAX_KEYS_PER_ROW = 8;
 
+/** one render's statements aggregated by fingerprint, category, table and subsystem */
 export type Census = {
 	statements: number;
 	/** distinct fingerprints, which is the floor a perfect deduplication would reach */
@@ -324,7 +294,7 @@ export type Census = {
 	totals: { rowsRead: number; rowsWritten: number; resultBytes: number };
 };
 
-/** appends a cid once, up to the cap; silent past it, since a row is a summary rather than a log */
+// appends a cid once, silently stopping at the cap
 function addKey(keys: string[], key: string | null): void {
 	if (key === null || keys.length >= MAX_KEYS_PER_ROW || keys.includes(key)) return;
 	keys.push(key);
@@ -340,11 +310,8 @@ function classify(call: CensusCall, readsByTable: Map<string, Set<string>>): Cen
 }
 
 /**
- * Aggregates a render's statements by fingerprint and classifies each one.
- *
- * The classification needs the WHOLE render before it can answer, which is why it is a function over
- * the finished log rather than a field set at record time: `repeated-table` is a property of the set,
- * and a statement cannot know whether a later one will read its table.
+ * Aggregates a render's statements by fingerprint and classifies each, over the finished log
+ * because `repeated-table` depends on later statements.
  */
 export function census(log: CensusCall[]): Census {
 	const readsByTable = new Map<string, Set<string>>();

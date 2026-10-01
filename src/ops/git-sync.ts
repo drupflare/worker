@@ -1,16 +1,15 @@
-import type { WorkingFile } from './git-smart.js';
-import { DROP, KEEP, RECORD_CAP } from './package-install.js';
-
 /**
  * Turning a fetched working tree into a set of writes, and saying what changed.
- *
- * Pure, because every interesting case here -- a branch switch that deletes files, two remotes
- * claiming one path, a repository holding three modules -- is a decision about paths rather than
- * about storage.
+ * Pure: every case here (branch switch deleting files, two remotes claiming a path, a repository
+ * holding three modules) is a decision about paths, not storage.
+ * @module
  */
+import type { WorkingFile } from './git-smart';
+import { DROP, KEEP, RECORD_CAP } from './package-install';
 
 // #region layout
 
+/** a module, theme or profile found in a repository */
 export interface ModuleRoot {
 	/** the machine name, taken from `<name>.info.yml` rather than from the directory */
 	name: string;
@@ -22,10 +21,8 @@ export interface ModuleRoot {
 const INFO = /(?:^|\/)([a-z0-9_]+)\.info\.yml$/;
 
 /**
- * Finds the modules a repository contains.
- *
- * The machine name comes from the info file because that is what Drupal reads: `../rom` is checked
- * out as `rom` and provides `cfw_do_sqlite`, so deriving it from the directory names the wrong module.
+ * Finds the modules a repository contains. The name comes from the info file, as Drupal reads it
+ * (`../rom` is checked out as `rom` but provides `cfw_do_sqlite`).
  */
 export function moduleRoots(
 	paths: readonly string[],
@@ -105,6 +102,7 @@ export function mountFor(plan: ReadonlyMap<string, string>, path: string): strin
 
 // #region selecting
 
+/** a file that will be written into the Drupal tree */
 export interface SelectedFile {
 	/** the path inside the Drupal tree */
 	path: string;
@@ -112,6 +110,7 @@ export interface SelectedFile {
 	bytes: number;
 }
 
+/** the result of filtering a working tree: what lands, what was skipped and why */
 export interface Selection {
 	files: SelectedFile[];
 	skipped: { path: string; why: string }[];
@@ -121,12 +120,7 @@ export interface Selection {
 
 const decoder = new TextDecoder();
 
-/**
- * Filters a working tree down to what a mounted Drupal tree can use.
- *
- * The same allow-list a package archive goes through, so a git delivery and a `composer require`
- * cannot disagree about what a module is.
- */
+/** filters a working tree to what a mounted Drupal tree can use (same allow-list as packages) */
 export function selectFiles(tree: readonly WorkingFile[], fallbackName: string): Selection {
 	const sources = new Map<string, string>();
 	for (const file of tree) {
@@ -178,8 +172,10 @@ export function selectFiles(tree: readonly WorkingFile[], fallbackName: string):
 
 // #region the diff
 
+/** how one path differs between the stored tree and the incoming one */
 export type ChangeKind = 'added' | 'modified' | 'removed' | 'unchanged';
 
+/** one path's change, with line counts for a change a person is about to approve */
 export interface FileChange {
 	path: string;
 	kind: ChangeKind;
@@ -190,6 +186,7 @@ export interface FileChange {
 	removed?: number;
 }
 
+/** what a sync would do: per-path changes, the writes and deletes, and the rows it charges */
 export interface SyncPlan {
 	changes: FileChange[];
 	writes: SelectedFile[];
@@ -199,7 +196,7 @@ export interface SyncPlan {
 	rowsWritten: number;
 }
 
-/** line counts for a single file, which is what a reviewer reads before approving a pull */
+/** line counts for a single file, as a reviewer reads them before approving a pull */
 export function lineDelta(before: string, after: string): { added: number; removed: number } {
 	if (before === after) return { added: 0, removed: 0 };
 	const a = before === '' ? [] : before.split('\n');
@@ -218,10 +215,8 @@ export function lineDelta(before: string, after: string): { added: number; remov
 }
 
 /**
- * What applying `incoming` to `stored` would do.
- *
- * `stored` is only this remote's files: a branch switch removes what the old branch had and the new
- * one does not, and scoping the delete set by owner is what stops it deleting another remote's tree.
+ * What applying `incoming` to `stored` would do. `stored` is only this remote's files, so a branch
+ * switch cannot delete another remote's tree.
  */
 export function planSync(
 	stored: ReadonlyMap<string, string>,
@@ -281,6 +276,7 @@ export function planSync(
 
 // #region conflicts
 
+/** a path a pull would take from another package */
 export interface Conflict {
 	path: string;
 	/** the package that already owns it */
@@ -289,11 +285,8 @@ export interface Conflict {
 }
 
 /**
- * Paths a pull would take from somebody else.
- *
- * Two remotes mounting the same module name is the common shape -- a fork and its upstream both
- * provide `mymodule` -- and silently letting the later pull win produces a tree neither repository
- * describes.
+ * Paths a pull would take from somebody else (a fork and its upstream both providing `mymodule`;
+ * letting the later pull win yields a tree neither repository describes).
  */
 export function detectConflicts(
 	incoming: readonly SelectedFile[],
@@ -314,15 +307,18 @@ export function detectConflicts(
 
 // #region polling cadence
 
-/** the smallest interval offered; below this a fleet saturates the DO request meter on polls alone */
+/** the smallest interval offered (below it, polls alone saturate a fleet's DO request meter) */
 export const MIN_POLL_MINUTES = 5;
+/** the interval a remote polls at unless told otherwise */
 export const DEFAULT_POLL_MINUTES = 60;
 
+/** clamps a poll interval to the minimum; 0 means polling is off */
 export function clampInterval(minutes: number): number {
 	if (!Number.isFinite(minutes) || minutes <= 0) return 0;
 	return Math.max(MIN_POLL_MINUTES, Math.floor(minutes));
 }
 
+/** one remote's polling schedule */
 export interface PollState {
 	id: string;
 	intervalMinutes: number;

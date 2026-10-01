@@ -1,9 +1,38 @@
-import {
-	pageKvEnabled,
-	planKvWritesEnabled,
-	type PageKv,
-	type PageStoreEnv
-} from './page-store.js';
+/**
+ * Compiled render plans answered by the front worker, with no Durable Object hop.
+ *
+ * An authenticated page cannot use `caches.default` or the KV page tier (both are keyed without a
+ * user). Every tier outside the isolate costs 5-12 ms (the object hop 12); isolate memory costs 0.
+ *
+ * Why serving a plan is safe:
+ *
+ * 1. A plan is compiled from two different sessions of one role set and served only to a session
+ *    whose own live render has agreed with it. Anything constant for one user and different for
+ *    another varies between the samples, so the compiler names an unknown slot and
+ *    {@link unservableSlots} refuses the plan. The per-session agreement in {@link lookupEdgePlan}
+ *    is unconditional: the two-session proof cannot see a third user whose shared region differs.
+ * 2. The plan must reproduce both renders byte for byte ({@link planExplainsBoth}), hold no slot it
+ *    cannot generate and survive {@link generatorAgrees}.
+ * 3. The generation is in the key, so a content invalidation drops every plan at once.
+ * 4. The structural refusals mirror `putPage()`: GET, 200, HTML, a real render, and no changed
+ *    session cookie.
+ *
+ * Private fallback: a site with one editor never gets two sessions, so two renders of the same
+ * session compile a plan under {@link privatePlanKey}, served to that session only. Every other
+ * refusal still runs. It is never mirrored to KV and is compiled only while the shared key has no
+ * serving plan.
+ *
+ * Not covered: staleness up to {@link GENERATION_TRUST_MS} for a bump made elsewhere, and a message
+ * Drupal queued for the visitor's next page (a plan compiled from renders without it would omit it;
+ * {@link forgetWitness} drops that session's agreement on any non-GET).
+ *
+ * Session lifetime: Drupal can end a session under a cookie the client keeps sending.
+ * {@link rememberRoles} records what the object reported per cookie, and {@link PLAN_TTL_MS} stops
+ * the plan serving until a live render agrees again (once a minute, not once per request).
+ * @module
+ */
+
+import { pageKvEnabled, planKvWritesEnabled, type PageKv, type PageStoreEnv } from './page-store';
 import {
 	compilePlan,
 	fillSlots,
@@ -13,85 +42,7 @@ import {
 	sessionCsrf,
 	unservableSlots,
 	type RenderPlan
-} from './render-plan.js';
-
-/**
- * Compiled render plans answered by the front worker, with no Durable Object hop.
- *
- * ## Why this tier exists at all
- *
- * Measured on deployed paid workers: every tier the front worker can reach outside its own isolate
- * costs 5-12 ms, and the Durable Object hop is 12 of them for a payload-independent round trip.
- * Isolate memory costs 0. An authenticated page cannot use `caches.default` or the KV page tier --
- * both are keyed without a user and this project has already shipped one uid-1 leak into the
- * anonymous cache -- so the DO hop was the whole bill for an authenticated view.
- *
- * ## Why serving one is safe, which is the part that must not be got wrong
- *
- * Four properties, and the first is the load-bearing one:
- *
- * 1. **THE PLAN IS COMPILED FROM TWO DIFFERENT SESSIONS OF THE SAME ROLE SET, AND SERVED ONLY TO A
- *    SESSION THAT HAS SINCE AGREED WITH IT.** This used to be "the key carries the visitor's own
- *    cookie header", which was structurally airtight and also held one plan per session per path --
- *    the combinatorial cache the tier exists to avoid, with every first use paying a 46-140 ms cold
- *    KV read. Compiled across two sessions instead, anything that is constant for one user and
- *    different for another varies between the samples, so the compiler names it an unknown slot and
- *    {@link unservableSlots} refuses the plan rather than baking one user's toolbar into it. The
- *    per-session agreement in {@link lookupEdgePlan} is the other half and is unconditional: the
- *    two-session proof is a statement about two people, and a third whose shared region differs is
- *    exactly what it cannot see. That is the same reasoning `verifyShellFor()` applies in the shell
- *    tier, which has needed it since it shipped.
- * 2. **The plan is a differential proof that nothing else on the page varies.** It must reproduce
- *    both renders byte for byte ({@link planExplainsBoth}), hold no slot it cannot generate
- *    ({@link unservableSlots}) and survive {@link generatorAgrees}. A single-render byte cache has
- *    no such proof; anything that varies and is not a recognised slot makes the compile refuse.
- * 3. **The generation is in the key**, the same fence `pageKey()` and `pageKvKey()` already use, so
- *    a content invalidation drops every plan at once with nothing to enumerate.
- * 4. **The structural refusals mirror `putPage()`**: GET only, 200 only, HTML only, a real render
- *    rather than a warming placeholder, and never a response carrying `Set-Cookie` -- which is both
- *    a session rotation and the marker that the key is about to stop being this visitor's.
- *
- * ## The private fallback, for a site that can never produce a second witness
- *
- * A shared plan needs two DIFFERENT sessions of a role set to agree, so a site with one editor never
- * compiles one and pays the object hop on every authenticated view -- the case where the hop is least
- * amortised gets the least help. Two renders of the SAME session prove nothing about another user and
- * everything about that one, so they compile a plan under {@link privatePlanKey} that is served to
- * that session and to nobody else.
- *
- * The two-session requirement exists to stop one user's toolbar reaching another's page. A key that
- * names the session cannot do that, so dropping the requirement under that key removes no proof. What
- * survives unchanged is every OTHER refusal: {@link unservableSlots}, {@link planExplainsBoth} and
- * {@link generatorAgrees} all still run, so a form build id or an unrecognised varying region refuses
- * the plan exactly as it does for a shared one.
- *
- * Two things bound it. A private plan is never mirrored to KV, so the combinatorial cache the role key
- * exists to avoid stays out of the shared namespace; and it is compiled only while the shared key has
- * no serving plan, so a page two sessions have already agreed on never pays for one.
- *
- * ## What it does NOT protect against
- *
- * Staleness bounded by {@link GENERATION_TRUST_MS}. An isolate serves against the last generation it
- * learned, and it learns one from every Durable Object response, so a bump made by this visitor is
- * seen immediately and a bump made elsewhere within that window.
- *
- * A message Drupal queued for the visitor's NEXT page. A save sets one in the session and it renders
- * once, so a plan compiled from two renders that carried none serves a page missing it. The shared
- * tier has the same exposure and rarely reaches a post-save page; a single editor reaches one every
- * time they save. {@link forgetWitness} is the guard: a non-GET drops that session's agreement, so its
- * next GET renders and the message arrives.
- *
- * ## The session's own lifetime
- *
- * Drupal can end a session under a cookie a client keeps sending -- a logout, an expiry, a blocked
- * account -- and neither the key nor the role set can see that on its own. Two things do.
- * {@link rememberRoles} records what the OBJECT reported for a cookie, so a session Drupal has
- * downgraded keys somewhere else on its next hop; and {@link PLAN_TTL_MS} stops the plan serving
- * until a live render agrees with it again, so a session that has changed costs a render whose
- * output no longer matches and the plan is dropped for everyone rather than only for that visitor.
- * That is the same revalidation the shell tier gets from rendering fragments on every request,
- * taken once per minute instead of once per request.
- */
+} from './render-plan';
 
 /** how long an isolate serves plans against a generation it learned, in ms */
 export const GENERATION_TRUST_MS = 10_000;
@@ -99,54 +50,47 @@ export const GENERATION_TRUST_MS = 10_000;
 /**
  * How long a compiled plan serves before one live render has to agree with it again, in ms.
  *
- * The bound on how long a session Drupal has ended keeps being answered from a plan, so it is a
- * security parameter rather than a freshness one. Revalidation costs ONE render rather than the
- * three a compile costs, because the plan is kept across it and only re-proved.
+ * It bounds how long an ended session keeps being answered from a plan, so it is a security
+ * parameter. Revalidation costs one render, not the three a compile costs.
  */
 export const PLAN_TTL_MS = 60_000;
 
 /**
- * Whether the tier runs at all. ON unless an operator says `0`, on both plans.
+ * Whether the tier runs at all: on unless an operator sets `0`, on both plans.
  *
- * On `KV_OVERRIDABLE` for the reason that list exists: the worst case of turning it off is a site
- * that pays the object hop it always paid, which is a slow site rather than a changed reachability.
+ * It is on `KV_OVERRIDABLE` because turning it off only costs the object hop.
  */
-export function edgePlanEnabled(env?: { EDGE_PLAN?: string | null } | null): boolean {
+export function edgePlanEnabled(env?: { EDGE_PLAN?: string }): boolean {
 	const set = env?.EDGE_PLAN;
-	if (set !== undefined && set !== null && String(set) !== '') return String(set) === '1';
+	if (set !== undefined && String(set) !== '') return String(set) === '1';
 	return true;
 }
 
 /**
  * Renders kept for one key before a compile is attempted.
  *
- * THREE, because the first render of a route warms Drupal's asset library cache: renders 1 and 2
- * differ in their stylesheet list and every region behind it misaligns, which measured 8 of 124
- * routes servable against 123 from the third and fourth. Sample 0 is discarded.
+ * Three, because a route's first render warms Drupal's asset library cache and misaligns the
+ * regions behind the stylesheet list (8 of 124 routes servable, against 123 from renders 3 and 4).
+ * Sample 0 is discarded.
  */
 export const SAMPLES_PER_COMPILE = 3;
 
 /**
  * Compiles the proofs may refuse for one key before it stops trying.
  *
- * ONE REFUSAL USED TO BE PERMANENT, and a single unlucky pair of renders is enough to produce one:
- * anything that varies between two consecutive renders and is not a recognised slot -- an `H:i`
- * timestamp crossing a minute, a queue count, a message -- makes the compiler name an unknown region
- * and refuse. Nothing cleared the latch until the generation moved, so the path paid a Durable
- * Object render on every authenticated view for the rest of that generation.
+ * One unlucky pair of renders can refuse (an `H:i` timestamp crossing a minute, a queue count, a
+ * message varies and is not a slot), so a single refusal must not latch for the generation:
+ * `/admin/content` on `wrangler dev` is 12.6-17.9 req/s unserved against 221-400 req/s served.
  *
- * Measured on `wrangler dev`, `/admin/content` in the two states: 12.6-17.9 req/s at p50 60-939 ms
- * when the tier is not answering, against 221-400 req/s at p50 4-38 ms when it is.
- *
- * Still BOUNDED, because the latch was protecting something real: a page that genuinely varies every
- * render would otherwise spend a diff every third render forever.
+ * It stays bounded, since a page that varies every render would otherwise spend a diff every third
+ * render forever.
  */
 export const PLAN_COMPILE_ATTEMPTS = 3;
 
-/** how many keys one isolate holds; a clear is cheaper than an LRU, as with `genMemo` */
+/** how many keys one isolate holds (a clear is cheaper than an LRU, as with `genMemo`) */
 export const EDGE_PLAN_ENTRIES = 64;
 
-/** and the ceiling on what they hold, against a 128 MB isolate */
+/** ceiling on the bytes those keys hold, against a 128 MB isolate */
 export const EDGE_PLAN_BYTES = 8_388_608;
 
 /** seconds a plan lives in KV; it is generation-keyed, so this is a floor on garbage */
@@ -196,6 +140,7 @@ export function resetEdgePlans(): void {
 	heldBytes = 0;
 }
 
+/** how many keys, bytes and compiled plans this isolate holds */
 export function edgePlanStats(): { entries: number; bytes: number; plans: number } {
 	let plans = 0;
 	for (const e of store.values()) if (e.plan) plans++;
@@ -203,15 +148,12 @@ export function edgePlanStats(): { entries: number; bytes: number; plans: number
 }
 
 /**
- * The isolate-local key.
+ * The isolate-local key: site, generation, role set and path.
  *
- * THE ROLE SET, not the cookie. Keyed on the cookie header this held one plan per session per path:
- * a site with 200 logged-in users over 50 authenticated paths reached 10,000 keys where
- * `role_sets x 50` is about 150, every first use of one was a cold KV read at 46-140 ms against
- * 4-5 warm, and a logout minted a fresh key -- so the widest key maximised the expensive case.
- * What makes the narrower one safe is in {@link noteEdgeRender}: a plan reaches the store only when
- * two DIFFERENT sessions of this role set produced it and the compiler found no region it could not
- * name, and it serves a session only once that session's own render has agreed with it.
+ * It is the role set, not the cookie: a cookie key held one plan per session per path (200 users
+ * over 50 paths is 10,000 keys against about 150) and every first use was a cold KV read (46-140 ms
+ * against 4-5 warm). The narrower key is safe because of {@link noteEdgeRender}: two different
+ * sessions must produce the plan and each session must agree with it before being served.
  */
 export function edgePlanKey(site: string, generation: number, roles: string, path: string): string {
 	return `${site} ${generation} ${roles} ${path}`;
@@ -220,8 +162,8 @@ export function edgePlanKey(site: string, generation: number, roles: string, pat
 /**
  * The same key narrowed to one session, for the private fallback.
  *
- * Isolate-local only, and never a KV key: `roleSeen` already holds raw cookies in this isolate for
- * the same reason, and {@link writeEdgePlan} is only ever called with a shared key.
+ * Isolate-local only, never a KV key (`roleSeen` already holds raw cookies here, and
+ * {@link writeEdgePlan} takes only a shared key).
  */
 export function privatePlanKey(key: string, witness: string): string {
 	return `${key} @${witness}`;
@@ -233,8 +175,8 @@ export const ROLE_TRUST_MS = 60_000;
 /**
  * The role set as one key component.
  *
- * Sorted by the object before it leaves, so this only joins. Empty for a request whose role set is
- * unknown, which the caller treats as "do not key a plan yet" rather than as a role set of its own.
+ * The object sorts the roles before they leave, so this only joins. Empty means unknown: do not key
+ * a plan yet.
  */
 export function roleFingerprint(roles: readonly string[] | null | undefined): string {
 	if (!Array.isArray(roles) || roles.length === 0) return '';
@@ -244,10 +186,9 @@ export function roleFingerprint(roles: readonly string[] | null | undefined): st
 /**
  * Records the role set a Durable Object reported for a session.
  *
- * READ OFF THE OBJECT'S OWN RESPONSE, never off the inbound request, which is what makes it
- * trustworthy without a signature: a client cannot present a role set at all, only a cookie, and it
- * is told what that cookie is. A role change, a logout and a password change all move what the
- * object reports for the same cookie, and the key moves with it.
+ * It is read off the object's own response, never the request, so it needs no signature (a client
+ * presents a cookie, not a role set). A role change, logout or password change moves what the
+ * object reports for that cookie, and the key moves with it.
  */
 export function rememberRoles(cookie: string, roles: string, nowMs: number): void {
 	if (roles === '') return;
@@ -255,42 +196,38 @@ export function rememberRoles(cookie: string, roles: string, nowMs: number): voi
 	roleSeen.set(cookie, { roles, at: nowMs });
 }
 
-/** the role set this isolate may key on for a session, or null when it has not learned one */
-export function believedRoles(cookie: string, nowMs: number): string | null {
+/** the role set this isolate may key on for a session, or undefined when it has not learned one */
+export function believedRoles(cookie: string, nowMs: number): string | undefined {
 	const seen = roleSeen.get(cookie);
-	if (!seen) return null;
-	return nowMs - seen.at < ROLE_TRUST_MS ? seen.roles : null;
+	if (!seen) return undefined;
+	return nowMs - seen.at < ROLE_TRUST_MS ? seen.roles : undefined;
 }
 
 /**
  * Records the session CSRF token a render carried, so a shared plan can substitute it.
  *
- * The token is what a shared plan holds a slot for, and it is the one slot value the front worker
- * cannot generate. Learned the same way the role set is -- out of the OBJECT'S OWN RENDER for this
- * cookie, never off the request -- so a client cannot present a token, it is told what its own is.
- * Serving a visitor a page carrying someone else's token would be inert rather than dangerous
- * (Drupal refuses it), but it would break their logout link, so the value is per session.
+ * The token is the one slot value the front worker cannot generate. Like the role set it is learned
+ * from the object's own render for this cookie, never the request. Someone else's token would be
+ * inert (Drupal refuses it) but break the logout link, so the value is per session.
  */
-export function rememberCsrf(cookie: string, token: string | null, nowMs: number): void {
-	if (token === null || cookie === '') return;
+export function rememberCsrf(cookie: string, token: string | undefined, nowMs: number): void {
+	if (token === undefined || cookie === '') return;
 	if (csrfSeen.size > 256) csrfSeen.clear();
 	csrfSeen.set(cookie, { token, at: nowMs });
 }
 
-/** the token this isolate may fill a slot with for a session, or null when it has not learned one */
-export function believedCsrf(cookie: string, nowMs: number): string | null {
+/** the token this isolate may fill a slot with for a session, or undefined if none is known */
+export function believedCsrf(cookie: string, nowMs: number): string | undefined {
 	const seen = csrfSeen.get(cookie);
-	if (!seen) return null;
-	return nowMs - seen.at < ROLE_TRUST_MS ? seen.token : null;
+	if (!seen) return undefined;
+	return nowMs - seen.at < ROLE_TRUST_MS ? seen.token : undefined;
 }
 
 /**
  * 128 bits of SHA-256 over a key component, so a session token never reaches a listable namespace.
  *
- * Applied to the ROLE SET now rather than to the cookie. The hash was never there to widen the key
- * -- it was there to keep a credential out of KV -- and the role set is not a credential, but the
- * shared tier is keyed the same way as the isolate-local one so the two cannot disagree about what
- * a plan is for.
+ * It is applied to the role set, which is not a credential; the shared tier is keyed like the
+ * isolate-local one so the two cannot disagree about what a plan is for.
  */
 export async function cookieFingerprint(cookie: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(cookie));
@@ -299,6 +236,7 @@ export async function cookieFingerprint(cookie: string): Promise<string> {
 	return out;
 }
 
+/** the shared-tier KV key for a plan, keyed on the hashed role set */
 export function edgePlanKvKey(
 	site: string,
 	generation: number,
@@ -315,30 +253,29 @@ export function rememberEdgeGeneration(site: string, generation: number, nowMs: 
 }
 
 /**
- * The generation this isolate may serve against, or null when it does not know one.
+ * The generation this isolate may serve against, or undefined when it does not know one.
  *
- * Null past {@link GENERATION_TRUST_MS}, which is what bounds staleness: the request then falls
- * through to the object, whose response teaches this isolate the current generation again.
+ * Undefined past {@link GENERATION_TRUST_MS}, which bounds staleness: the request falls through to
+ * the object, whose response teaches this isolate the current generation again.
  */
-export function believedGeneration(site: string, nowMs: number): number | null {
+export function believedGeneration(site: string, nowMs: number): number | undefined {
 	const seen = genSeen.get(site);
-	if (!seen || nowMs - seen.at >= GENERATION_TRUST_MS) return null;
+	if (!seen || nowMs - seen.at >= GENERATION_TRUST_MS) return undefined;
 	return seen.gen;
 }
 
 function evict(): void {
 	while (store.size > EDGE_PLAN_ENTRIES || heldBytes > EDGE_PLAN_BYTES) {
-		// the oldest PRIVATE entry goes first. One serves a single session and a shared one serves a
-		// whole role set, so evicting in insertion order alone lets a burst of one-off private keys
-		// drop the plans carrying the traffic
-		let victim: string | null = null;
+		// private entries go first (one session each; insertion order alone would let a burst of
+		// them evict the shared plans carrying the traffic)
+		let victim: string | undefined;
 		for (const [k, e] of store) {
 			if (e.owned) {
 				victim = k;
 				break;
 			}
 		}
-		if (victim === null) {
+		if (victim === undefined) {
 			const oldest = store.keys().next();
 			if (oldest.done) break;
 			victim = oldest.value;
@@ -359,7 +296,7 @@ function entryFor(key: string, owned = false): Entry {
 }
 
 /**
- * The plan for this key, or null when it has none or has not been proved recently enough.
+ * The plan for this key, or undefined when it has none or has not been proved recently enough.
  *
  * An expired entry keeps its plan: {@link noteEdgeRender} re-proves it against the next live render
  * for one render rather than the three a fresh compile costs.
@@ -368,16 +305,13 @@ export function lookupEdgePlan(
 	key: string,
 	nowMs: number = Date.now(),
 	witness?: string
-): RenderPlan | null {
+): RenderPlan | undefined {
 	const entry = store.get(key);
-	if (!entry?.plan) return null;
-	if (nowMs >= (entry.provenUntil ?? 0)) return null;
-	// THE PER-SESSION PROOF, and it is unconditional. The two-session agreement that authorised the
-	// store is a statement about two people; a third whose shared region differs -- an unread count,
-	// a per-user block core did not placeholder -- is exactly what it cannot see. So a session is
-	// served only after one of its OWN live renders has agreed with this plan, which is the same
-	// shape `verifyShellFor()` gives the shell tier and the reason that tier needs one at all
-	if (witness !== undefined && !entry.agreed.has(witness)) return null;
+	if (!entry?.plan) return undefined;
+	if (nowMs >= (entry.provenUntil ?? 0)) return undefined;
+	// per-session proof, unconditional: the two-session agreement cannot see a third user whose
+	// shared region differs (an unread count, a per-user block that is not a placeholder)
+	if (witness !== undefined && !entry.agreed.has(witness)) return undefined;
 	return entry.plan;
 }
 
@@ -390,10 +324,7 @@ export function hasEdgePlan(key: string, nowMs: number = Date.now()): boolean {
 /**
  * Whether this key has spent its compile attempts and will not try again.
  *
- * REPORTED BECAUSE A LATCHED REFUSAL LOOKED EXACTLY LIKE SAMPLING. `x-cfw-plan` read `sampling` on
- * every render that fed the compiler whether the compile stored a plan or gave up on the key
- * forever, so a path that had permanently left the tier was indistinguishable from one about to
- * join it -- and the two differ by a factor of 18 in throughput.
+ * Reported so a latched refusal differs from sampling on `x-cfw-plan` (an 18x throughput gap).
  */
 export function edgePlanRefused(key: string): boolean {
 	return (store.get(key)?.refusals ?? 0) >= PLAN_COMPILE_ATTEMPTS;
@@ -402,9 +333,9 @@ export function edgePlanRefused(key: string): boolean {
 /**
  * Drops what a session has proven, and every plan compiled for it alone.
  *
- * Called on a non-GET, which is the only thing that queues a Drupal message for the next page. The
- * session then owes a live render before any plan may answer it again, and that render carries the
- * message. A shared plan survives for everybody else; only this session's agreement is spent.
+ * Called on a non-GET (the only thing that queues a Drupal message for the next page): the session
+ * owes a live render before any plan answers it again, and that render carries the message. A
+ * shared plan survives for everybody else.
  */
 export function forgetWitness(cookie: string): void {
 	if (cookie === '') return;
@@ -454,15 +385,14 @@ function planBytes(plan: RenderPlan): number {
 /**
  * Whether a live render still agrees with a plan.
  *
- * Re-diffs, the same falsification {@link generatorAgrees} makes: the plan's own output for fresh
- * slot values is compiled against what Drupal just produced, and the two have to differ only where
- * the plan already has slots. A page that has changed, or a session Drupal has ended and now renders
- * as somebody else, moves a constant and the compile finds a region it cannot name.
+ * It re-diffs as {@link generatorAgrees} does: the plan's output for fresh slot values is compiled
+ * against Drupal's render and may differ only where the plan has slots. A changed page, or an ended
+ * session now rendering as somebody else, moves a constant.
  */
 function stillAgrees(plan: RenderPlan, html: string): boolean {
-	// the token comes out of the render being checked, which is this session's own
+	// the token is from the render being checked (the session's own)
 	const values = fillSlots(plan, { csrf: sessionCsrf(html) });
-	if (values === null) return false;
+	if (values === undefined) return false;
 	const generated = runPlan(plan, values);
 	if (generated === html) return true;
 	const again = compilePlan(generated, html, plan.path);
@@ -475,21 +405,18 @@ function stillAgrees(plan: RenderPlan, html: string): boolean {
 /**
  * Records one render, and compiles or re-proves against it.
  *
- * The proofs are applied HERE rather than at serve time, so a plan that reaches the store is one
- * that has already reproduced both renders it came from. A refusal is remembered, because retrying
- * a compile that cannot succeed spends CPU on every later render of the same page; the generation is
- * in the key, so a moved generation gives it another go.
+ * The proofs run here, not at serve time, so a stored plan has already reproduced both renders. A
+ * refusal is remembered (a moved generation gives another go) so a hopeless compile does not spend
+ * CPU on every render.
  *
- * A plan past {@link PLAN_TTL_MS} is re-proved against this render instead of being recompiled,
- * which is one render rather than three. One that no longer agrees is dropped and sampling restarts.
+ * A plan past {@link PLAN_TTL_MS} is re-proved against this render (one render, not three); one
+ * that stops agreeing is dropped and sampling restarts.
  *
- * `owned` marks a key that names one session ({@link privatePlanKey}). It drops the two-witness
- * requirement and nothing else: a key nobody else is served from cannot leak one user's page to
- * another, so the requirement has no work to do there.
+ * `owned` marks a key that names one session ({@link privatePlanKey}); it drops only the
+ * two-witness requirement, which has no work to do when nobody else is served from the key.
  *
- * @returns the plan when this render completed a COMPILE, so the caller can mirror it to KV; a
- *   re-proof returns null, because the record in KV is the one that was already written. A private
- *   plan returns null too, since it is never mirrored
+ * @returns the plan when this render completed a compile, so the caller can mirror it to KV;
+ *   undefined for a re-proof (KV already holds it) and for a private plan (never mirrored)
  */
 export function noteEdgeRender(
 	key: string,
@@ -498,33 +425,30 @@ export function noteEdgeRender(
 	nowMs: number = Date.now(),
 	witness = '',
 	owned = false
-): RenderPlan | null {
+): RenderPlan | undefined {
 	const entry = entryFor(key, owned);
 	if (entry.plan) {
-		// a session that has already agreed costs nothing inside the proof window, which is what
-		// keeps the re-diff once a minute rather than once a request. A session that has NOT is the
-		// one case worth spending it on: until it agrees, `lookupEdgePlan()` will not serve it
+		// an agreed session costs nothing inside the proof window (one re-diff a minute); one that
+		// has not agreed is worth a diff, since `lookupEdgePlan()` will not serve it until it does
 		const owed = witness !== '' && !entry.agreed.has(witness);
-		if (!owed && nowMs < (entry.provenUntil ?? 0)) return null;
+		if (!owed && nowMs < (entry.provenUntil ?? 0)) return undefined;
 		if (stillAgrees(entry.plan, html)) {
-			// this session has now proven the plan against its own render, which is what
-			// `lookupEdgePlan()` requires before serving it one
+			// the session's own render now agrees, which `lookupEdgePlan()` requires
 			if (witness !== '') entry.agreed.add(witness);
 			if (nowMs >= (entry.provenUntil ?? 0)) entry.provenUntil = nowMs + PLAN_TTL_MS;
-			return null;
+			return undefined;
 		}
-		// a session that DISAGREES invalidates the plan for everyone, not just for itself: the
-		// disagreement is evidence the shared region is not shared after all
+		// a disagreement drops the plan for everyone (the shared region is not shared)
 		heldBytes -= entry.bytes;
 		entry.plan = undefined;
 		entry.bytes = 0;
 		entry.provenUntil = 0;
 		entry.agreed.clear();
 	}
-	if ((entry.refusals ?? 0) >= PLAN_COMPILE_ATTEMPTS) return null;
+	if ((entry.refusals ?? 0) >= PLAN_COMPILE_ATTEMPTS) return undefined;
 	entry.samples.push(html);
 	entry.witnesses.push(witness);
-	if (entry.samples.length < SAMPLES_PER_COMPILE) return null;
+	if (entry.samples.length < SAMPLES_PER_COMPILE) return undefined;
 
 	// sample 0 is the asset-library warm-up and is discarded; see SAMPLES_PER_COMPILE
 	const a = entry.samples[SAMPLES_PER_COMPILE - 2] as string;
@@ -533,18 +457,12 @@ export function noteEdgeRender(
 	const wb = entry.witnesses[SAMPLES_PER_COMPILE - 1] ?? '';
 	entry.samples = [];
 	entry.witnesses = [];
-	// TWO DIFFERENT SESSIONS, and this is what replaces the cookie in the key. Compiled from one
-	// session's two renders, anything constant for that user and different for another -- their
-	// name in the toolbar, their unread count -- is a CONSTANT in the plan and would be served to
-	// everyone in the role set. Across two sessions the same region varies, so the compiler names
-	// it an unknown slot and `unservableSlots()` refuses the plan outright.
-	//
-	// Waiting rather than refusing: a page nobody else has loaded yet is not a page that cannot be
-	// planned, so the samples are kept and the next session completes the pair
+	// two different sessions are required (one session's per-user region, such as the toolbar
+	// name, would be a constant served to the whole role set); keep the samples and wait
 	if (wa === '' || wb === '' || (wa === wb && !owned)) {
 		entry.samples = [a, b];
 		entry.witnesses = [wa, wb];
-		return null;
+		return undefined;
 	}
 	const plan = compilePlan(a, b, path);
 	if (
@@ -553,20 +471,20 @@ export function noteEdgeRender(
 		!generatorAgrees(plan)
 	) {
 		entry.refusals = (entry.refusals ?? 0) + 1;
-		return null;
+		return undefined;
 	}
 	storeEdgePlan(key, plan, nowMs, owned);
 	// both sessions that produced it have agreed with it by construction
 	entry.agreed.add(wa);
 	entry.agreed.add(wb);
-	// a private plan belongs to this isolate; there is nothing to mirror and nobody to mirror it for
-	return owned ? null : plan;
+	// a private plan is never mirrored
+	return owned ? undefined : plan;
 }
 
-/** this request's page, or null when the plan holds a slot it cannot fill */
-export function runEdgePlan(plan: RenderPlan, csrf?: string | null): string | null {
+/** this request's page, or undefined when the plan holds a slot it cannot fill */
+export function runEdgePlan(plan: RenderPlan, csrf?: string): string | undefined {
 	const values = fillSlots(plan, { csrf });
-	if (values === null) return null;
+	if (values === undefined) return undefined;
 	return runPlan(plan, values);
 }
 
@@ -582,18 +500,12 @@ function readCookieJar(header: string): Map<string, string> {
 }
 
 /**
- * Whether a response CHANGES any cookie the request arrived with.
+ * Whether a response changes any cookie the request arrived with.
  *
- * NOT "does the response carry `Set-Cookie`", which is what this used to ask and is why the tier
- * never compiled anything on any site. PHP re-emits the session cookie on every `session_start()`
- * when `session.cookie_lifetime` is non-zero and Drupal ships 2000000, so EVERY authenticated
- * response carries a `Set-Cookie` byte-identical to the cookie the request already held. Measured on
- * a running site: `skip:set-cookie` on every authenticated GET, with the value unchanged across
- * consecutive requests and equal to the jar's.
- *
- * A re-send of a value the client already has cannot make the key stop being this visitor's. A new
- * value, or a deletion, can -- so both still refuse, which is what a login, a logout and a session
- * regeneration all look like.
+ * Mere presence of `Set-Cookie` is the wrong test: PHP re-emits the session cookie on every
+ * `session_start()` while `session.cookie_lifetime` is non-zero (Drupal ships 2000000), so every
+ * authenticated response carries one equal to the request's. A re-send cannot change whose key this
+ * is; a new value or a deletion (login, logout, session regeneration) can, and refuses.
  */
 export function rotatesSession(cookie: string, setCookie: readonly string[]): boolean {
 	if (setCookie.length === 0) return false;
@@ -611,19 +523,13 @@ export function rotatesSession(cookie: string, setCookie: readonly string[]): bo
 /**
  * A redirect expressed as the body the plan compiler already knows how to diff.
  *
- * `auth-account` (`/user`) is the only profile the tier structurally could not serve, and it was the
- * only one still losing on service time once the isolate page memo landed: measured on a deployed
- * free worker, `x-worker-ms` 68.1 / 76.5 / 226.9 ms at c=1 / 4 / 16 against a localhost VPS's
- * 5 / 6 / 83, because `/user` is a 302 to `/user/<uid>` and every request rendered it.
+ * `/user` is a 302 to `/user/<uid>` that rendered on every request (`x-worker-ms` 68.1 / 76.5 /
+ * 226.9 at c=1 / 4 / 16 against a localhost VPS's 5 / 6 / 83). Synthesising the redirect into a
+ * body reuses every existing guard: disagreeing renders refuse, the generation fences the key, the
+ * session must agree, and `forgetWitness()` spends that on a write. A per-user `Location` differs
+ * across sessions, so a shared plan refuses it and only the private key serves it.
  *
- * The redirect is SYNTHESISED INTO A BODY rather than given a store of its own, which is what keeps
- * this small: two renders that disagree still refuse, `unservableSlots` still runs, the generation
- * still fences the key, the session still has to agree before it is served, and `forgetWitness()`
- * still spends that agreement on a write. A per-user `Location` is exactly what a shared plan
- * refuses -- two sessions redirect to different uids, the compiler names an unknown region and
- * `unservableSlots` declines -- so it reaches only the private key, which is the correct scope.
- *
- * NUL-prefixed because it must be unmistakable for a page: no HTML render can begin with one.
+ * It is NUL-prefixed so no HTML render can be mistaken for it.
  */
 export const REDIRECT_PLAN_PREFIX = '\u0000cfw-redirect\n';
 
@@ -637,13 +543,13 @@ export function redirectPlanBody(status: number, location: string): string {
 	return `${REDIRECT_PLAN_PREFIX}${status}\n${location}`;
 }
 
-/** the status and target a redirect plan holds, or null when the plan is an ordinary page */
-export function readRedirectPlan(body: string): { status: number; location: string } | null {
-	if (!body.startsWith(REDIRECT_PLAN_PREFIX)) return null;
+/** the status and target a redirect plan holds, or undefined when the plan is an ordinary page */
+export function readRedirectPlan(body: string): { status: number; location: string } | undefined {
+	if (!body.startsWith(REDIRECT_PLAN_PREFIX)) return undefined;
 	const [status, ...rest] = body.slice(REDIRECT_PLAN_PREFIX.length).split('\n');
 	const code = Number(status);
 	const location = rest.join('\n');
-	if (!isRedirectStatus(code) || location === '') return null;
+	if (!isRedirectStatus(code) || location === '') return undefined;
 	return { status: code, location };
 }
 
@@ -653,22 +559,21 @@ export interface PlanEligibilityInput {
 	status: number;
 	/** the object's own `x-cfw-cache` verdict */
 	doCache: string;
-	contentType: string | null;
+	contentType?: string;
 	/** every `Set-Cookie` line the response carries, compared against the request's own jar */
 	setCookie: readonly string[];
 	personalised: boolean;
-	generation: number | null;
+	generation?: number;
 	cookie: string;
 	/** the `Location` header, when the response is a redirect; see {@link REDIRECT_PLAN_PREFIX} */
-	location?: string | null;
+	location?: string;
 }
 
 /**
  * Whether one render may become a plan.
  *
- * The same shape and the same refusals as `putPage()`, plus the two this tier adds: a request with
- * no cookie has no key that identifies anybody, and an anonymous request is already answered by
- * cheaper tiers that do not have to be per-visitor.
+ * The refusals of `putPage()` plus two: a request with no cookie identifies nobody, and an
+ * anonymous request is already served by cheaper tiers.
  */
 export function planEligibility(
 	input: PlanEligibilityInput
@@ -678,11 +583,8 @@ export function planEligibility(
 	if (input.cookie === '') return { ok: false, reason: 'skip:no-cookie' };
 	const redirect = isRedirectStatus(input.status) && (input.location ?? '') !== '';
 	if (input.status !== 200 && !redirect) return { ok: false, reason: `skip:${input.status}` };
-	// `ASSEMBLED` joined `VERIFY` here, and until a shell response carried `x-cfw-roles` the
-	// `VERIFY` entry was decorative: the caller cannot reach the compile without a role set, so
-	// naming the tier bought nothing. Both are the shell tier and both are worth compiling away --
-	// an assembly still costs a Durable Object hop and a real fragment render, where a plan costs
-	// neither.
+	// `VERIFY` and `ASSEMBLED` are the shell tier: compiling them away saves the object hop and
+	// the fragment render (the compile needs `x-cfw-roles`, which shell responses carry)
 	if (
 		input.doCache !== 'HIT' &&
 		input.doCache !== 'RENDER' &&
@@ -691,9 +593,8 @@ export function planEligibility(
 	) {
 		return { ok: false, reason: `skip:${input.doCache}` };
 	}
-	if (input.generation === null) return { ok: false, reason: 'skip:no-generation' };
-	// a rotated session means the key is about to stop being this visitor's; a re-send of a value
-	// the client already holds does not, and refusing on that refused every authenticated page
+	if (input.generation === undefined) return { ok: false, reason: 'skip:no-generation' };
+	// a rotated session ends the key's meaning; a re-sent cookie does not
 	if (rotatesSession(input.cookie, input.setCookie)) {
 		return { ok: false, reason: 'skip:set-cookie' };
 	}
@@ -704,72 +605,71 @@ export function planEligibility(
 	return { ok: true };
 }
 
-export type EdgePlanEnv = PageStoreEnv & { PAGE_KV?: PageKv | null };
+/** the bindings the shared plan tier reads */
+export type EdgePlanEnv = PageStoreEnv & { PAGE_KV?: PageKv };
 
 /**
  * How long a cold-isolate read may sit in front of the object, in ms.
  *
- * MEASURED, and the recorded "a KV get costs 5-6 ms" turned out to be a claim about a WARM key.
- * On a deployed paid worker in one colo, n=20 per arm: the first read of a key that colo has not
- * seen costs 46-140 ms whether the key exists or not, and every later read of the same key costs
- * 4-5. A plan key for a session and path nobody has compiled is new by construction, so an unbounded
- * read puts 78 ms at the median in front of a 12 ms object hop on the FIRST visit to every page.
- *
- * 8 ms is above the warm read's 3-5 and far below the cold one, so a hit answers and a miss falls
- * through having spent less than the hop it was trying to avoid.
+ * A KV get costs 46-140 ms the first time a colo sees a key (hit or miss) and 4-5 ms after
+ * (deployed paid, n=20 per arm), and a never-compiled plan key is always new, so an unbounded read
+ * would put ~78 ms in front of a 12 ms object hop. 8 ms is above the warm read and far below the
+ * cold one.
  */
 export const COLD_READ_DEADLINE_MS = 8;
 
 /**
- * Resolves `p`, or null once the deadline passes.
+ * Resolves `p`, or undefined once the deadline passes.
  *
- * The abandoned read is not cancelled -- there is no way to cancel a KV get -- so the caller hands
- * it to `waitUntil` and a late answer still warms this isolate for the next request.
+ * A KV get cannot be cancelled, so the caller hands the late read to `waitUntil` and its answer
+ * still warms this isolate.
  */
-export function withDeadline<T>(p: Promise<T>, ms = COLD_READ_DEADLINE_MS): Promise<T | null> {
-	return Promise.race([p, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
+export function withDeadline<T>(p: Promise<T>, ms = COLD_READ_DEADLINE_MS): Promise<T | undefined> {
+	return Promise.race([
+		p,
+		new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), ms))
+	]);
 }
 
 /**
- * Reads a plan compiled by another isolate, or null.
+ * Reads a plan compiled by another isolate, or undefined.
  *
- * The tier that answers an isolate which knows the site's generation and has never seen this page.
- * It is worth having only inside {@link COLD_READ_DEADLINE_MS}: a key this colo already holds
- * answers in 4-5 ms against the object's 12, and one it does not costs more than the object would
- * have. Never throws; an unreadable record is a miss and one tier down still answers.
+ * It serves an isolate that knows the generation and has not seen this page, and is worth having
+ * only inside {@link COLD_READ_DEADLINE_MS} (4-5 ms warm against the object's 12). It never throws;
+ * an unreadable record is a miss.
  */
 export async function readEdgePlan(
-	env: EdgePlanEnv | null | undefined,
+	env: EdgePlanEnv | undefined,
 	site: string,
 	generation: number,
 	roles: string,
 	path: string
-): Promise<RenderPlan | null> {
-	if (!pageKvEnabled(env) || !env?.PAGE_KV) return null;
+): Promise<RenderPlan | undefined> {
+	if (!pageKvEnabled(env) || !env?.PAGE_KV) return undefined;
 	try {
 		const raw = await env.PAGE_KV.get(
 			edgePlanKvKey(site, generation, await cookieFingerprint(roles), path),
 			'text'
 		);
-		if (raw === null) return null;
+		if (raw === null) return undefined;
 		const parsed = JSON.parse(raw) as RenderPlan;
-		if (!Array.isArray(parsed?.ops) || typeof parsed?.slots !== 'object') return null;
+		if (!Array.isArray(parsed?.ops) || typeof parsed?.slots !== 'object') return undefined;
 		// the proofs are re-applied on the way in: a record this isolate did not compile is input
-		if (unservableSlots(parsed).length > 0 || !generatorAgrees(parsed)) return null;
+		if (unservableSlots(parsed).length > 0 || !generatorAgrees(parsed)) return undefined;
 		return parsed;
 	} catch {
-		return null;
+		return undefined;
 	}
 }
 
 /**
  * Mirrors a plan so another isolate does not have to compile it.
  *
- * DEFERRED BY THE CALLER through `ctx.waitUntil`: measured on a deployed worker, an awaited write of
- * a 97 KB body costs 12.5 ms before the response leaves and the same write deferred costs 0.
+ * The caller defers it with `ctx.waitUntil` (an awaited 97 KB write costs 12.5 ms before the
+ * response leaves; deferred it costs 0).
  */
 export async function writeEdgePlan(
-	env: EdgePlanEnv | null | undefined,
+	env: EdgePlanEnv | undefined,
 	site: string,
 	generation: number,
 	roles: string,

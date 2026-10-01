@@ -1,19 +1,7 @@
 /**
- * The host half of the health layer: tripwires, the ledger, the breaker, quarantine.
- *
- * Half of this has to be JavaScript, for one reason:
- * **a repair path must not depend on the subsystem it repairs.** PHP cannot observe a JS throw
- * out of a wasm import (measured twice -- `@` and `catch (\Throwable)` are both useless, and the
- * whole invocation dies), cannot observe its own isolate being killed, and cannot be trusted to
- * fix itself once poisoned. Detection and repair for those classes live here.
- *
- * Every tripwire in this file corresponds to a defect this project has ALREADY SHIPPED and then
- * found: a tripwire earns its place by having caught something real, so each one names its
- * incident.
- *
- * Everything here is a pure function of an observation, so it is testable without a Durable
- * Object, a wasm instance, or a clock. The wiring that gathers observations lives in
- * `src/site-do.js`; this module never reads global state.
+ * The host half of the health layer: pure-function tripwires, the ledger and quarantine.
+ * It lives in JS because PHP cannot observe a JS throw out of a wasm import or its isolate dying.
+ * @module
  */
 
 /** severity ladder; the ledger stores the number so a query can range over it */
@@ -24,6 +12,7 @@ export const SEVERITY = {
 	critical: 3
 } as const;
 
+/** a level name from the severity ladder */
 export type Severity = keyof typeof SEVERITY;
 
 /** one thing a tripwire noticed */
@@ -31,7 +20,7 @@ export interface Finding {
 	/** stable dotted identifier; the breaker keys on this */
 	code: string;
 	severity: Severity;
-	/** what it was about -- a path, a bin, a table */
+	/** what it was about: a path, a bin, a table */
 	scope: string;
 	/** short human-readable detail; never unbounded */
 	context: string;
@@ -39,9 +28,7 @@ export interface Finding {
 
 /**
  * What the host can see at the end of a request or an alarm.
- *
- * A flat bag of primitives rather than a live object: a tripwire that holds a
- * reference to the interpreter could keep a poisoned one alive.
+ * Primitives only: a tripwire holding the interpreter could keep a poisoned one alive.
  */
 export interface Observation {
 	/** HTTP status the object is about to return */
@@ -50,7 +37,7 @@ export interface Observation {
 	bytes?: number;
 	/** the path that produced it */
 	path?: string;
-	/** rolling median byte length for THIS path, if known */
+	/** rolling median byte length for this path, if known */
 	medianBytes?: number;
 	/** `globalThis.__cfwAsyncifyCalls`; anything above 0 means the stub was reached */
 	asyncifyCalls?: number;
@@ -78,12 +65,7 @@ export interface Observation {
 	doRequestsSamples?: number[];
 	/** rows in the health ledger itself, so it can police its own growth */
 	ledgerRows?: number;
-	/**
-	 * Unique image transformations this site's CONFIGURATION implies: styles x images.
-	 *
-	 * A projection rather than a count: the meter is a function of content and configuration, both
-	 * known in advance, so the answer does not have to wait for the failure.
-	 */
+	/** unique image transformations the configuration implies (styles x images), a projection */
 	imageTransforms?: number;
 	/** the monthly allowance, when the plan has one */
 	imageTransformsLimit?: number;
@@ -98,25 +80,18 @@ export const BUDGET_WARN_FRACTION = 0.8;
 /** how many rising samples in a row count as a leak rather than noise */
 export const MEMORY_RISE_SAMPLES = 4;
 
-/** capacity of one signal's ring. Small: the whole layer is per-object state */
+/** capacity of one signal's ring; small, since the whole layer is per-object state */
 export const TREND_RING_SAMPLES = 8;
 
-/**
- * Fewest readings a slope claim may be made from.
- *
- * Below five, one outlier IS the trend, and a check that fires on noise is worse than no check.
- */
+/** fewest readings a slope claim may be made from (below five one outlier is the trend) */
 export const TREND_MIN_SAMPLES = 5;
 
 /** how many times the fitted rise must beat the wobble before it counts as a trend */
 export const TREND_MIN_SNR = 2;
 
 /**
- * How far ahead a budget projection may extrapolate, in samples.
- *
- * Tied to the ring size rather than picked, so the check never claims to see further forward than
- * it can see back. Samples, never milliseconds: `Date.now()` inside the isolate reads **0** on the
- * edge, so a time-based projection cannot be computed there at all.
+ * How far ahead a budget projection may extrapolate, in samples; tied to the ring size.
+ * Samples, never ms: `Date.now()` reads 0 inside the isolate on the edge.
  */
 export const BUDGET_PROJECTION_SAMPLES = TREND_RING_SAMPLES;
 
@@ -124,16 +99,12 @@ export const BUDGET_PROJECTION_SAMPLES = TREND_RING_SAMPLES;
 export const LEDGER_MAX_ROWS = 500;
 
 /**
- * A 200 response with a zero-byte body.
- *
- * THIS SHIPPED. Destructing `theme.registry` on a persistent interpreter made render 1 return
- * 12,304 bytes and every render after it return 0, while rows-written per render jumped 15 -> 85.
- * A cache cannot tell an empty 200 from a real page, so it stores and re-serves it. This is the
- * tripwire the whole "quarantine beats wrong output" rule exists for.
+ * A 200 response with a zero-byte body, which a cache stores and re-serves as a real page.
+ * Shipped once, when destructing `theme.registry` emptied every render after the first.
  */
-export function renderEmpty(obs: Observation): Finding | null {
-	if (obs.status !== 200) return null;
-	if ((obs.bytes ?? 0) > 0) return null;
+export function renderEmpty(obs: Observation): Finding | undefined {
+	if (obs.status !== 200) return undefined;
+	if ((obs.bytes ?? 0) > 0) return undefined;
 	return {
 		code: 'render.empty',
 		severity: 'critical',
@@ -143,20 +114,15 @@ export function renderEmpty(obs: Observation): Finding | null {
 }
 
 /**
- * A body whose length falls far outside the rolling median for its own path.
- *
- * This shipped too, and it is the other half of the empty-body failure. A save that switched
- * `\Drupal::currentUser()` to uid 1 and never switched back rendered the front page as an admin:
- * 12,296 bytes became **90,038**, and that admin HTML was written to the ANONYMOUS page cache and
- * served to the next anonymous visitor. An information-disclosure bug from one unrestored global,
- * and its only outward symptom was the byte count.
+ * A body far outside the rolling median for its path; its only symptom was the byte count
+ * when an unrestored uid 1 cached admin HTML (12,296 to 90,038 bytes) for anonymous visitors.
  */
-export function renderSizeAnomaly(obs: Observation): Finding | null {
+export function renderSizeAnomaly(obs: Observation): Finding | undefined {
 	const bytes = obs.bytes ?? 0;
 	const median = obs.medianBytes ?? 0;
-	if (obs.status !== 200 || median <= 0 || bytes <= 0) return null;
+	if (obs.status !== 200 || median <= 0 || bytes <= 0) return undefined;
 	const ratio = bytes / median;
-	if (ratio <= SIZE_ANOMALY_FACTOR && ratio >= 1 / SIZE_ANOMALY_FACTOR) return null;
+	if (ratio <= SIZE_ANOMALY_FACTOR && ratio >= 1 / SIZE_ANOMALY_FACTOR) return undefined;
 	return {
 		code: 'render.size_anomaly',
 		severity: 'error',
@@ -166,30 +132,12 @@ export function renderSizeAnomaly(obs: Observation): Finding | null {
 }
 
 /**
- * The Asyncify stub was reached.
- *
- * The glue calls `Asyncify.handleAsync(...)` from the http/https stream wrapper and from
- * `vrzno_await`, and declares `Asyncify` nowhere, so it was a free identifier that `ASYNCIFY=0`
- * compiled out. Reaching it threw `ReferenceError` out of a wasm import, which **PHP cannot catch
- * at all** -- measured from two unrelated routes -- and killed the invocation. `stream_get_wrappers()`
- * advertises http and https, so ordinary contrib code reaches for them.
- *
- * A PHP-side handler cannot see this: no PHP fatal, no printErr, Drupal's logger never runs. The
- * counter on `globalThis` is the ONLY place it is observable, which is exactly why this tripwire
- * is in the host and not in PHP.
- *
- * `warn` AND NOT `error`, because the severity above was calibrated to the paragraph above it and
- * the stub is what stopped that being true. Reaching a free identifier killed the invocation;
- * reaching the stub returns -1, `fopen()` returns false, and PHP handles it. Measured: with the
- * three outbound-HTTPS cron hooks on and a cold fetch cache, the first round trips this 10 times,
- * `error` starts at `reset`, three rounds reach `quarantine` and EVERY PAGE ANSWERS 503 -- so a
- * newly provisioned site took itself down the first time cron ran, over a feed fetch that had
- * already fallen back correctly. A graceful degradation must not escalate to an outage. An
- * invocation that does die is caught by the tripwires that watch renders.
+ * The Asyncify stub was reached; only the `globalThis` counter shows it, PHP sees no fatal.
+ * `warn`, not `error`: the stub returns -1 and `error` quarantined fresh sites on first cron.
  */
-export function bridgeAsyncifyCalled(obs: Observation): Finding | null {
+export function bridgeAsyncifyCalled(obs: Observation): Finding | undefined {
 	const calls = obs.asyncifyCalls ?? 0;
-	if (calls <= 0) return null;
+	if (calls <= 0) return undefined;
 	return {
 		code: 'bridge.asyncify_called',
 		severity: 'warn',
@@ -200,14 +148,11 @@ export function bridgeAsyncifyCalled(obs: Observation): Finding | null {
 
 /**
  * The interrupt mask was still held when the request ended.
- *
- * The mask is refcounted around every host call that enters JS. A leaked depth means a later
- * suspension point is masked forever, so slicing silently stops happening -- and a dev assertion
- * that fires on suspension above depth 0 would never run, because the suspension never comes.
+ * A leaked depth masks later suspension points forever, so slicing silently stops.
  */
-export function bridgeMaskLeaked(obs: Observation): Finding | null {
+export function bridgeMaskLeaked(obs: Observation): Finding | undefined {
 	const depth = obs.maskDepth ?? 0;
-	if (depth === 0) return null;
+	if (depth === 0) return undefined;
 	return {
 		code: 'bridge.mask_leaked',
 		severity: 'error',
@@ -217,17 +162,12 @@ export function bridgeMaskLeaked(obs: Observation): Finding | null {
 }
 
 /**
- * Rows left in `semaphore` after a request.
- *
- * `DatabaseLockBackend` relies on `releaseAll()` at process shutdown and this interpreter never
- * shuts down. A held lock is worse than a stale cache, because `Lock::wait()` calls `usleep()`
- * inside a synchronous wasm call that nothing can interrupt -- it stalls rather than failing. The
- * table was measured empty on every site exercised, so this is the tripwire that turns an
- * unobserved hazard into a test rather than a stall.
+ * Rows left in `semaphore` after a request; shutdown never releases them here, and a held lock
+ * stalls because `Lock::wait()` calls `usleep()` inside a wasm call nothing can interrupt.
  */
-export function dbSemaphoreDirty(obs: Observation): Finding | null {
+export function dbSemaphoreDirty(obs: Observation): Finding | undefined {
 	const rows = obs.semaphoreRows ?? 0;
-	if (rows <= 0) return null;
+	if (rows <= 0) return undefined;
 	return {
 		code: 'db.semaphore_dirty',
 		severity: 'warn',
@@ -237,18 +177,13 @@ export function dbSemaphoreDirty(obs: Observation): Finding | null {
 }
 
 /**
- * Serving while the migration cursor is incomplete.
- *
- * Chunked replay made "partway" a real state lasting ~99 alarm firings. **Drupal does not fail
- * cleanly against a quarter of its own database -- it renders**, with truncated caches, and that
- * render is then written to the page cache AND to the edge. Three serve-chain assertions failed
- * exactly that way. A site with no cursor at all is a different state (every deploy predating the
- * engine) and must NOT be flagged.
+ * Serving while the migration cursor is incomplete (Drupal renders a partial database and the
+ * page is cached); a site with no cursor at all is a different state and is not flagged.
  */
-export function migrateIncomplete(obs: Observation): Finding | null {
+export function migrateIncomplete(obs: Observation): Finding | undefined {
 	const { migrateChunk, migrateChunks } = obs;
-	if (migrateChunk === undefined || migrateChunks === undefined) return null;
-	if (migrateChunks <= 0 || migrateChunk >= migrateChunks) return null;
+	if (migrateChunk === undefined || migrateChunks === undefined) return undefined;
+	if (migrateChunks <= 0 || migrateChunk >= migrateChunks) return undefined;
 	return {
 		code: 'migrate.incomplete',
 		severity: 'critical',
@@ -258,14 +193,11 @@ export function migrateIncomplete(obs: Observation): Finding | null {
 }
 
 /**
- * A database update run sitting in a terminal-but-blocking phase.
- *
- * `UPDB_PHASES` is planning, running, complete, halted, rolled_back, abandoned. `halted` holds the
- * chain and does not clear itself, by design, so that a second cursor can never open
- * over the same schema -- which means nothing else notices unless something looks.
+ * A database update run in the `halted` phase, which holds the alarm chain and never clears
+ * itself (by design), so nothing else notices.
  */
-export function updbHalted(obs: Observation): Finding | null {
-	if (obs.updbPhase !== 'halted') return null;
+export function updbHalted(obs: Observation): Finding | undefined {
+	if (obs.updbPhase !== 'halted') return undefined;
 	return {
 		code: 'updb.halted',
 		severity: 'error',
@@ -276,14 +208,11 @@ export function updbHalted(obs: Observation): Finding | null {
 
 /**
  * The packed assets and the database disagree about which generation they are.
- *
- * Becomes reachable the moment modules live in a mutable second pack tier: install writes a new
- * object and bumps a counter, and a Durable Object that restarted against the old pack would serve
- * a tree whose database has already moved.
+ * An install bumps the counter, so an object restarted on the old pack serves a moved database.
  */
-export function packGenerationMismatch(obs: Observation): Finding | null {
+export function packGenerationMismatch(obs: Observation): Finding | undefined {
 	const { packGeneration, dbGeneration } = obs;
-	if (!packGeneration || !dbGeneration || packGeneration === dbGeneration) return null;
+	if (!packGeneration || !dbGeneration || packGeneration === dbGeneration) return undefined;
 	return {
 		code: 'pack.generation_mismatch',
 		severity: 'critical',
@@ -293,29 +222,17 @@ export function packGenerationMismatch(obs: Observation): Finding | null {
 }
 
 /**
- * Mounted-filesystem bytes rising monotonically across warm requests.
- *
- * Trend, not threshold, and the distinction matters: neither quantity ever shrinks, so an absolute
- * reading says nothing, while a monotonic rise across N warm requests is a leak. The lazy FS is
- * what this watches -- it converges on the union of every route ever served (up to ~52 MB against
- * the streaming mount's 39 MB) unless its LRU is holding.
- *
- * THE SAMPLE IS MEMFS RESIDENT BYTES. It used to be `HEAPU8.length`, which moves only on a
- * `memory.grow`: from 96 MiB at the shipping step two rungs reach workerd's cap, so four
- * strictly-increasing readings of it were unreachable and this never fired. `site-do.ts` falls back
- * to the heap only on the streaming mount, which has no LRU to leak through.
- *
- * Acts at the next quiet moment rather than the next request, because recycling the interpreter
- * mid-traffic trades a leak for a 4,019 ms boot.
+ * Mounted-filesystem bytes rising on every warm request; the sample is `MEMFS` resident bytes
+ * (`HEAPU8.length` moves only on grow). Acts at a quiet moment: a recycle costs a 4,019 ms boot.
  */
-export function memoryHighwaterRising(obs: Observation): Finding | null {
+export function memoryHighwaterRising(obs: Observation): Finding | undefined {
 	const s = obs.memorySamples;
-	if (!s || s.length < MEMORY_RISE_SAMPLES) return null;
+	if (!s || s.length < MEMORY_RISE_SAMPLES) return undefined;
 	const tail = s.slice(-MEMORY_RISE_SAMPLES);
 	for (let i = 1; i < tail.length; i++) {
 		const prev = tail[i - 1];
 		const cur = tail[i];
-		if (prev === undefined || cur === undefined || cur <= prev) return null;
+		if (prev === undefined || cur === undefined || cur <= prev) return undefined;
 	}
 	const first = tail[0] ?? 0;
 	const last = tail[tail.length - 1] ?? 0;
@@ -328,11 +245,8 @@ export function memoryHighwaterRising(obs: Observation): Finding | null {
 }
 
 /**
- * A daily free-plan meter projected past its allowance.
- *
- * Rows written at 100,000/day is the meter that actually binds fills, and `setAlarm()` is itself
- * one row written. The watchdog lesson is the reason this exists: an unbounded log table became
- * **46% of the database** before anybody looked.
+ * A daily free-plan meter at or past its warn fraction.
+ * Rows written (100,000/day, `setAlarm()` included) is the meter that binds fills.
  */
 export function budgetPressure(obs: Observation): Finding[] {
 	const out: Finding[] = [];
@@ -353,30 +267,29 @@ export function budgetPressure(obs: Observation): Finding[] {
 }
 
 /**
- * A fixed-size ring of readings for one signal.
- *
- * One per signal, held by the caller in `src/site-do.ts` alongside the interpreter, because this
- * module is not allowed to own state -- a tripwire that kept its own history would keep a poisoned
- * observation alive across a recycle, which is the failure the whole layer exists to survive.
- *
- * `samples()` returns oldest-first, matching the order every check in this file already expects.
+ * A fixed-size ring of readings for one signal, held by the caller beside the interpreter.
+ * This module owns no state: its own history would keep a poisoned observation across a recycle.
  */
 export class RingBuffer {
+	/** most readings kept; older ones are dropped */
 	readonly capacity: number;
+	/** the readings, oldest first */
 	private buf: number[] = [];
 
 	constructor(capacity = TREND_RING_SAMPLES) {
-		// a zero-capacity ring would silently swallow every push, so it is refused rather than eaten
+		// a zero-capacity ring would silently swallow every push
 		if (!Number.isInteger(capacity) || capacity < 1) {
 			throw new RangeError(`RingBuffer capacity must be a positive integer, got ${capacity}`);
 		}
 		this.capacity = capacity;
 	}
 
+	/** readings currently held */
 	get length(): number {
 		return this.buf.length;
 	}
 
+	/** appends a reading, dropping the oldest past capacity; a non-finite value is ignored */
 	push(value: number): void {
 		// a NaN sample poisons every later mean, so it is dropped at the door
 		if (!Number.isFinite(value)) return;
@@ -389,6 +302,7 @@ export class RingBuffer {
 		return [...this.buf];
 	}
 
+	/** drops every reading */
 	clear(): void {
 		this.buf = [];
 	}
@@ -402,24 +316,16 @@ export interface Trend {
 	rise: number;
 	/** mean absolute residual from the fit line; the wobble the rise has to beat */
 	noise: number;
-	/** the rise points up AND dominates the noise */
+	/** the rise points up and dominates the noise */
 	rising: boolean;
 }
 
 /**
- * Least-squares slope over a ring, with a signal-to-noise gate.
- *
- * WHY A GATE AND NOT JUST `slope > 0`. Any real series wobbles, so a bare positive slope fires on
- * noise, and a trend check that fires on noise is worse than none -- it trains the operator to
- * ignore the ledger, which is the only place the host's findings are visible at all. So the fitted
- * rise across the window has to be at least `TREND_MIN_SNR` times the mean absolute residual.
- *
- * A perfectly straight line has zero residual, and `rise >= 2 * 0` holds, so the ideal case passes
- * rather than dividing by zero. The x-variance denominator cannot be zero either: x is 0..n-1 with
- * n >= TREND_MIN_SAMPLES.
+ * Least-squares slope over a ring; `rising` needs the rise to beat `TREND_MIN_SNR` times the
+ * mean residual, since a bare `slope > 0` fires on wobble. A straight line (zero residual) passes.
  */
-export function fitTrend(samples: number[] | undefined): Trend | null {
-	if (!samples || samples.length < TREND_MIN_SAMPLES) return null;
+export function fitTrend(samples: number[] | undefined): Trend | undefined {
+	if (!samples || samples.length < TREND_MIN_SAMPLES) return undefined;
 	const n = samples.length;
 	const xMean = (n - 1) / 2;
 	const yMean = samples.reduce((a, b) => a + b, 0) / n;
@@ -442,16 +348,8 @@ export function fitTrend(samples: number[] | undefined): Trend | null {
 }
 
 /**
- * A daily meter whose TREND crosses its allowance, while the reading itself still looks fine.
- *
- * This is the predictive half of `budgetPressure`, and it exists because a threshold at 80% is
- * information that arrives too late to be acted on: rows-written at 100,000/day is the meter that
- * binds, `setAlarm()` is itself one row, and the only cheap repair -- serving from a colder tier --
- * has to be chosen before the allowance is gone, not after.
- *
- * Silent once the meter has crossed its limit: at that point `budgetPressure`
- * reports the fact, and a projection about a limit already passed is noise. So the two never both
- * fire for the same meter.
+ * A daily meter whose trend crosses its allowance while the reading still looks fine.
+ * Silent once the limit is crossed, so it never fires beside `budgetPressure` for one meter.
  */
 export function budgetTrendProjected(obs: Observation): Finding[] {
 	const out: Finding[] = [];
@@ -479,29 +377,15 @@ export function budgetTrendProjected(obs: Observation): Finding[] {
 }
 
 /**
- * Linear memory trending up across warm requests without rising every single time.
- *
- * The complement of `memoryHighwaterRising`, not a replacement for it. That check demands a
- * strictly monotonic rise over the last four samples, which emscripten's geometric growth makes a
- * reasonable shape to demand -- but it also means one plateau or one dip inside the window hides a
- * real leak completely, and the lazy FS converges on the union of every route ever served, which
- * climbs in steps rather than smoothly.
- *
- * So this one fits the whole ring and asks whether the rise beats the wobble, and it returns null
- * whenever the strict check already fired: two findings for one leak would escalate the breaker
- * twice as fast for no extra information.
- *
- * **Acts at the next quiet moment, never the next request.** Recycling the interpreter mid-traffic
- * trades a leak nobody has noticed for a 4,019 ms boot every waiting request pays for, so the
- * severity is `warn`: `initialRung('warn')` is `observe`, which schedules rather than
- * resets.
+ * Memory trending up with plateaus, which hide it from `memoryHighwaterRising`; silent when
+ * that fired. `warn` schedules a quiet-moment recycle, since a mid-traffic reset costs 4,019 ms.
  */
-export function memoryTrendRising(obs: Observation): Finding | null {
+export function memoryTrendRising(obs: Observation): Finding | undefined {
 	// the monotonic case belongs to the check that already covers it
-	if (memoryHighwaterRising(obs) !== null) return null;
+	if (memoryHighwaterRising(obs) !== undefined) return undefined;
 	const samples = obs.memorySamples;
 	const trend = fitTrend(samples);
-	if (!trend || !trend.rising) return null;
+	if (!trend || !trend.rising) return undefined;
 	return {
 		code: 'memory.trend_rising',
 		severity: 'warn',
@@ -512,15 +396,10 @@ export function memoryTrendRising(obs: Observation): Finding | null {
 	};
 }
 
-/**
- * The ledger policing its own size.
- *
- * Listed as a tripwire rather than left to the GC pass because the failure it guards against is
- * the health layer becoming the thing that exhausts the budget it was built to watch.
- */
-export function ledgerOversized(obs: Observation): Finding | null {
+/** the ledger over its row cap; guards the health layer exhausting the budget it watches */
+export function ledgerOversized(obs: Observation): Finding | undefined {
 	const rows = obs.ledgerRows ?? 0;
-	if (rows <= LEDGER_MAX_ROWS) return null;
+	if (rows <= LEDGER_MAX_ROWS) return undefined;
 	return {
 		code: 'health.ledger_oversized',
 		severity: 'warn',
@@ -530,26 +409,14 @@ export function ledgerOversized(obs: Observation): Finding | null {
 }
 
 /**
- * The image-transformation cap, projected from the site's own configuration.
- *
- * THE THIRD METER, and neither ceiling in the cost model can see it. Serving is bound by Worker
- * requests and regeneration by rows written; this one is bound by CONTENT -- 5,000 unique
- * transformations per MONTH on free, and it fails as a hard cap rather than as a bill. Ten image
- * styles over 2,000 images is 20,000, four times over, and images simply stop being transformed
- * partway through the month with nothing reporting it.
- *
- * Monthly, so unlike every other meter here it does NOT clear at midnight -- which is why it warns
- * on the projection rather than on a reading. By the time a count crossed the line the month would
- * already be spent, and the only remedies (drop a style, cut the image count) take effect next month.
- *
- * `warn` rather than `error` even when it is over: this quarantines nothing and repairs nothing,
- * because the fix is a configuration decision a human makes. It has to be SAID, not acted on.
+ * The 5,000-a-month free image-transformation cap, projected from configuration; images just
+ * stop transforming at the cap. Always `warn`: the fix is a human's config decision.
  */
-export function imageCapProjected(obs: Observation): Finding | null {
+export function imageCapProjected(obs: Observation): Finding | undefined {
 	const { imageTransforms: used, imageTransformsLimit: limit } = obs;
-	if (used === undefined || !limit || limit <= 0) return null;
+	if (used === undefined || !limit || limit <= 0) return undefined;
 	const fraction = used / limit;
-	if (fraction < BUDGET_WARN_FRACTION) return null;
+	if (fraction < BUDGET_WARN_FRACTION) return undefined;
 	const over = fraction >= 1;
 	return {
 		code: 'budget.image_transforms',
@@ -577,13 +444,7 @@ export const HOST_TRIPWIRES = [
 	imageCapProjected
 ] as const;
 
-/**
- * Runs every host tripwire over one observation.
- *
- * O(1) in the size of the database by construction: every input is either a scalar the caller
- * already had or a ring capped at `TREND_RING_SAMPLES`, so nothing here can become a full-table
- * scan on the request path.
- */
+/** runs every host tripwire over one observation; O(1), inputs are scalars or capped rings */
 export function runHostTripwires(obs: Observation): Finding[] {
 	const found: Finding[] = [];
 	for (const wire of HOST_TRIPWIRES) {
@@ -595,24 +456,14 @@ export function runHostTripwires(obs: Observation): Finding[] {
 	return found;
 }
 
-/**
- * The repair ladder, re-exported from where it lives.
- *
- * There used to be a SECOND copy here, byte-identical, alongside `initialRung()` and a
- * `CircuitBreaker` state machine with decay. The escalation that actually runs is `recordOutcome()`
- * in `repair.ts`, driven from `supervise()`; the copy here was reached only by its own spec and by a
- * test using it as a lookup table, so it was a duplicate ladder free to drift from the live one.
- */
-export { RUNGS as LADDER } from './repair.js';
+/** the repair ladder, re-exported from `repair.ts` where `recordOutcome()` runs it */
+export { RUNGS as LADDER } from './repair';
 export type { Rung };
-import type { Rung } from './repair.js';
+import type { Rung } from './repair';
 
 /**
  * Whether the object should stop serving rather than serve something wrong.
- *
- * **Quarantine beats wrong output.** A 503 with `Retry-After` is a better answer than a 0-byte
- * 200, and this project has shipped the 0-byte 200 -- and then cached it, and then served it from
- * the edge.
+ * A 503 with `Retry-After` beats a 0-byte 200 that gets cached and served from the edge.
  */
 export function quarantineDecision(findings: Finding[]): { quarantine: boolean; reason: string } {
 	const critical = findings.filter((f) => SEVERITY[f.severity] >= SEVERITY.critical);
@@ -624,7 +475,7 @@ export function quarantineDecision(findings: Finding[]): { quarantine: boolean; 
 	};
 }
 
-/** the ledger, in DO SQLite. One table, two writers -- this module and PHP */
+/** the ledger, in DO SQLite; one table, two writers (this module and PHP) */
 export const HEALTH_DDL = [
 	`CREATE TABLE IF NOT EXISTS cfw_health (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -647,6 +498,7 @@ export interface HealthSql {
 	exec(query: string, ...params: unknown[]): { toArray(): Record<string, unknown>[] };
 }
 
+/** creates the ledger table and its index when absent */
 export function ensureHealthTable(sql: HealthSql): void {
 	for (const ddl of HEALTH_DDL) sql.exec(ddl);
 }
@@ -654,6 +506,7 @@ export function ensureHealthTable(sql: HealthSql): void {
 /** context is truncated rather than trusted; an unbounded column is how a log table wins */
 export const MAX_CONTEXT_BYTES = 400;
 
+/** appends one finding to the ledger with the repair action taken, its outcome and attempt */
 export function recordFinding(
 	sql: HealthSql,
 	finding: Finding,
@@ -676,13 +529,7 @@ export function recordFinding(
 	);
 }
 
-/**
- * Trims the ledger to its cap, newest kept.
- *
- * Counts and returns what it deleted so the caller can bill it against the rows-written budget
- * explicitly. A GC pass that does not report its own cost is how the watchdog table got to 46% of
- * the database while every figure looked fine.
- */
+/** trims the ledger to its cap, newest kept; returns rows deleted so the caller can bill them */
 export function gcHealthLedger(sql: HealthSql, maxRows = LEDGER_MAX_ROWS): number {
 	const rows = sql.exec('SELECT COUNT(*) AS n FROM cfw_health').toArray();
 	const n = Number(rows[0]?.n ?? 0);

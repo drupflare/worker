@@ -1,3 +1,11 @@
+/**
+ * Garbage collection and the decomposed cron chain.
+ *
+ * The GC passes are pure SQL against `ctx.storage.sql`; the chain runs one unit per alarm
+ * invocation (a fresh CPU budget each), with PHP units last in an invocation.
+ * @module
+ */
+
 import {
 	cronHookList,
 	runAdvisoryScan,
@@ -5,32 +13,29 @@ import {
 	runCronQueue,
 	runFetchReopen,
 	runHealthSelfTest
-} from '../drupal/cron-php.js';
-import { GENERATED_CRON_KNOWN, GENERATED_CRON_POLICY } from './generated/modules.js';
+} from '../drupal/cron-php';
+import { errorMessage } from '../util/errors';
+import { GENERATED_CRON_KNOWN, GENERATED_CRON_POLICY } from './generated/modules';
 
-/**
- * Garbage collection and the decomposed cron chain.
- */
-
-/** The cursor `exec()` hands back, narrowed to the three things a ledger reads off it. */
+/** the cursor `exec()` hands back, narrowed to what a ledger reads */
 export interface CronCursor {
 	toArray(): Record<string, unknown>[];
 	rowsWritten: number;
 	rowsRead: number;
 }
 
-/** `ctx.storage.sql`, or anything with the same exec()/cursor shape. */
+/** `ctx.storage.sql`, or anything with the same `exec()`/cursor shape */
 export interface CronSql {
 	exec(text: string, ...params: unknown[]): CronCursor;
 }
 
-/** Whether one module's `hook_cron` runs, and the reason when it does not. */
+/** whether one module's `hook_cron` runs, and the reason when it does not */
 export interface CronHookPolicy {
 	run: boolean;
 	reason?: string;
 }
 
-/** One table's share of a pass. `rowsReleased` is the queue-lease UPDATE only. */
+/** one table's share of a pass; `rowsReleased` is the queue-lease `UPDATE` only */
 export type TableLedger = {
 	rowsDeleted: number;
 	rowsWritten: number;
@@ -41,13 +46,9 @@ export type TableLedger = {
 /**
  * A pass's accounting record.
  *
- * A `type` rather than an `interface`: an object type alias carries an implicit index
- * signature, which is what lets a ledger be returned as `cronStep()`'s `result` alongside a PHP
- * reply. An interface would not be assignable there.
- *
- * `t0` exists only until `finish()` seals the record and deletes it; everything from `rowLimit`
- * down is set by the one pass that computes it, which is why they are optional rather than a
- * union of five shapes.
+ * It is a `type`, not an `interface`, so its implicit index signature lets it be returned as
+ * `cronStep()`'s `result` beside a PHP reply. `t0` lives only until `finish()` seals the record;
+ * the fields from `rowLimit` down are set by the one pass that computes them.
  */
 export type Ledger = {
 	pass: string;
@@ -72,7 +73,7 @@ export type Ledger = {
 	passes?: Record<string, Ledger>;
 };
 
-/** One statement's rows and cost; `missing` and `error` are the two guarded outcomes. */
+/** one statement's rows and cost; `missing` and `error` are the two guarded outcomes */
 export interface ExecResult {
 	rows: Record<string, unknown>[];
 	rowsWritten: number;
@@ -81,11 +82,11 @@ export interface ExecResult {
 	error?: string;
 }
 
-/** Every knob the GC passes and the chain accept; each one reads only what it needs. */
+/** every knob the GC passes and the chain accept; each reads only what it needs */
 export interface CronOptions {
 	pass?: string;
 	nowMs?: number;
-	rowLimit?: number | null;
+	rowLimit?: number;
 	maxRows?: number;
 	tables?: string[];
 	queueBatchSize?: number;
@@ -102,24 +103,23 @@ export interface CronOptions {
 	/**
 	 * What the host already knows about itself, handed to `BootSelfTest`.
 	 *
-	 * Supplied rather than discovered: every key it reads is a host fact, so passing them in is
-	 * what lets the unit run with no Drupal kernel behind it.
+	 * Every key is a host fact, so passing them in lets the unit run with no Drupal kernel.
 	 */
 	healthObservation?: Record<string, unknown>;
 	/** the update-fetch reopen unit; off only for a test that is measuring something else */
 	includeFetchReopen?: boolean;
 	includeCronLast?: boolean;
 	/**
-	 * the `scheme://host[:port]` a cron fragment boots Drupal against.
+	 * The `scheme://host[:port]` a cron fragment boots Drupal against.
 	 *
-	 * Cron is where mail is sent, and `user_pass_reset_url()` builds an absolute link from the
-	 * request -- so booted against the default, every link Drupal mails points the recipient at
-	 * their own machine. Empty leaves the old behaviour, which is correct for a probe.
+	 * Cron sends mail and `user_pass_reset_url()` builds an absolute link from the request, so the
+	 * default would point every mailed link at the recipient's own machine. Empty keeps that
+	 * default, which is right for a probe.
 	 */
 	origin?: string;
 }
 
-/** One unit of the chain. `module` is set only on the hook units. */
+/** one unit of the chain; `module` is set only on hook units */
 export interface CronUnit {
 	id: string;
 	kind: string;
@@ -128,7 +128,7 @@ export interface CronUnit {
 	unreviewed?: boolean;
 }
 
-/** The cursor as it is stored; `wrapped` is not part of it. */
+/** the cursor as stored; `wrapped` is not part of it */
 export interface StoredCursor {
 	v: number;
 	i: number;
@@ -140,13 +140,13 @@ export interface StoredCursor {
 	lastAt: number;
 }
 
-/** What `advanceCursor()` returns: a stored cursor plus the end-of-round signal. */
+/** what `advanceCursor()` returns: a stored cursor plus the end-of-round signal */
 export type AdvancedCursor = StoredCursor & { wrapped: boolean };
 
-/** Whatever storage handed back. `undefined` is a real input: an evicted object has nothing. */
+/** whatever storage handed back; `undefined` is real (an evicted object has nothing) */
 export type CursorInput = Record<string, unknown> | string | null | undefined;
 
-/** The queue with work, or null plus the reason why not. */
+/** the queue with work, or null plus the reason why not */
 export interface QueuePending {
 	name: string | null;
 	reason?: string;
@@ -154,7 +154,7 @@ export interface QueuePending {
 	queues: Record<string, number>;
 }
 
-/** What a cron PHP fragment prints back; the shape depends on which fragment ran. */
+/** what a cron PHP fragment prints back; the shape depends on which fragment ran */
 export interface CronPhpReply {
 	skipped?: string;
 	remaining?: number;
@@ -164,14 +164,14 @@ export interface CronPhpReply {
 	[key: string]: unknown;
 }
 
-/** The dependency bag `cronStep()` takes; it owns no transport, alarm or env of its own. */
+/** the dependencies `cronStep()` takes; it owns no transport, alarm or env */
 export interface CronDeps {
 	sql: CronSql;
 	runJson: (code: string) => Promise<Record<string, unknown>>;
 	nowMs?: () => number;
 }
 
-/** One unit of cron work, done. */
+/** the outcome of one unit of cron work */
 export interface CronStep {
 	unit: string;
 	kind: string;
@@ -186,38 +186,29 @@ export interface CronStep {
 	ms: number;
 }
 
-/** Drupal's own default when dblog.settings has no row_limit */
+/** Drupal's own default when `dblog.settings` has no `row_limit` */
 export const WATCHDOG_DEFAULT_ROW_LIMIT = 1000;
 
-/** DatabaseBackend::DEFAULT_MAX_ROWS, the cap Drupal already sets on every bin */
+/** `DatabaseBackend::DEFAULT_MAX_ROWS`, the cap Drupal sets on every bin */
 export const CACHE_DATA_DEFAULT_MAX_ROWS = 5000;
 
-/** session.gc_maxlifetime as shipped in default.services.yml */
+/** `session.gc_maxlifetime` as shipped in `default.services.yml` */
 export const SESSION_DEFAULT_MAX_AGE_S = 200000;
 
-/** BatchStorage::cleanup() and DatabaseQueue::garbageCollection() both use 10 days */
+/** 10 days, as `BatchStorage::cleanup()` and `DatabaseQueue::garbageCollection()` use */
 export const BATCH_MAX_AGE_S = 864000;
 
 /**
  * Tables Drupal creates lazily, and the expiry condition each one needs.
  *
- * Every entry is guarded, because none of these tables is guaranteed to exist:
- * `sessions`, `flood`, `key_value_expire`, `batch`, `queue` and `semaphore` are
- * all created on first write by an ensureTableExists() call in their own backend,
- * so a site that has never had an anonymous session has no `sessions` table and a
- * DELETE against it is a hard error rather than a no-op.
+ * Every entry is guarded: each table is created on first write by its backend's
+ * `ensureTableExists()`, so a `DELETE` on a site that never wrote one is a hard error, not a no-op.
  *
- * Each condition is copied from the Drupal service that owns the table, so this
- * is Drupal's policy executed by a different caller, not a new policy:
- * SessionHandler::gc(), Flood\DatabaseBackend::garbageCollection(),
- * KeyValueDatabaseExpirableFactory::garbageCollection(), BatchStorage::cleanup()
- * and DatabaseQueue::garbageCollection().
- *
- * `batch` is the one with nothing behind it at all. BatchStorage::cleanup() has NO
- * CALLER anywhere in Drupal 11.4.5 -- grepped across core/lib, core/modules and
- * core/includes, the only hits are its own declaration, the interface, and the
- * lazy-loading ProxyClass that delegates to it -- so it is dead code upstream and
- * batch GC is ours or nobody's.
+ * Each condition is copied from the owning Drupal service (`SessionHandler::gc()`,
+ * `Flood\DatabaseBackend::garbageCollection()`, `KeyValueDatabaseExpirableFactory`,
+ * `BatchStorage::cleanup()`, `DatabaseQueue::garbageCollection()`), so this is Drupal's policy
+ * run by another caller. `BatchStorage::cleanup()` has no caller in Drupal 11.4.5 (only its
+ * declaration, interface and proxy), so batch GC is ours or nobody's.
  */
 export const EXPIRED_ROW_RULES = [
 	{
@@ -233,29 +224,24 @@ export const EXPIRED_ROW_RULES = [
 		where: "created < ? AND name LIKE 'drupal_batch:%'",
 		ageS: BATCH_MAX_AGE_S
 	},
-	// src/site-do's alarm() already runs this one inline; once gcPass is wired in,
-	// that line is a duplicate statement and should go
+	// `alarm()` in src/site-do already runs this one inline (a duplicate statement)
 	{ table: 'semaphore', where: 'expire < ?', ageS: 0 }
 ];
 
 /**
- * Which cron implementations run, and why the one that does not is skipped.
+ * Which cron implementations run, and why one that does not is skipped.
  *
- * The six here are the measured set on this install, taken from
- * invokeAllWith('cron') against the real site rather than from the module list:
- * announcements_feed, dblog, file, layout_builder, system, update. A module added
- * later shows up in cronHookList() and gets the unreviewed default, which is to
- * RUN it -- a hook that reaches for a socket fails into a caught error because
- * src/worker-shim.js stubs Asyncify, so running an unknown hook costs an
- * invocation rather than the interpreter.
+ * The measured set on this install (`invokeAllWith('cron')` against the real site) is
+ * announcements_feed, dblog, file, layout_builder, system, update. A module added later shows up in
+ * `cronHookList()` and runs by default; a hook that reaches for a socket fails into a caught
+ * error (the host stubs Asyncify), costing an invocation, not the interpreter.
  *
- * A `run: false` here is load-bearing in a way a skipped test is not: the hook is absent from every
- * site rather than merely unverified, and nothing reports it. Three of these entries outlived the
- * limit that justified them. Before adding one, check the limit still holds.
+ * A `run: false` removes the hook from every site and nothing reports it; three entries outlived
+ * their limit. Before adding one, check the limit still holds.
  */
 export const CRON_HOOKS: Record<string, CronHookPolicy> = GENERATED_CRON_POLICY;
 
-/** The four knobs the GC passes and the chain read from env; all arrive as strings. */
+/** the knobs the GC passes and the chain read from env; values arrive as strings */
 export interface CronEnv {
 	CRON_QUEUE_BATCH_SIZE?: string | number;
 	CACHE_DATA_MAX_ROWS?: string | number;
@@ -269,11 +255,9 @@ export interface CronEnv {
 /**
  * The cron hook modules this site has, measured, for when discovery has not run.
  *
- * THE ORDER CARRIES NOTHING. This list used to place `drupflare` after `update` "whose deferral it
- * corrects", and that was already dead: `cronHooksFromList()` sorts, so any site that has discovered
- * its hooks runs them alphabetically with `drupflare` first. What holds the dependency is
- * `fetch_reopen` and `advisories` being pushed after the whole loop in {@link cronUnits}, asserted
- * in `cron-step.spec.ts` against a reversed list.
+ * The order carries nothing: `cronHooksFromList()` sorts. The `update` dependency is held by
+ * `fetch_reopen` and `advisories` being pushed after the whole loop in {@link cronUnits}
+ * (`cron-step.spec.ts` asserts it against a reversed list).
  */
 export const KNOWN_CRON_HOOKS: readonly string[] = GENERATED_CRON_KNOWN;
 
@@ -283,64 +267,63 @@ export type CronHookCache = { at: string; hooks: string[] };
 /**
  * Module names out of a {@link cronHookList} payload.
  *
- * Null rather than an empty list when the run failed or reported nothing, so a caller keeps the
- * list it already had instead of scheduling no hooks at all.
+ * Undefined, not empty, when the run failed or reported nothing, so a caller keeps its list rather
+ * than scheduling no hooks.
  */
-export function cronHooksFromList(payload: unknown): string[] | null {
+export function cronHooksFromList(payload: unknown): string[] | undefined {
 	const body = payload as { ok?: unknown; shapes?: unknown } | null;
-	if (body === null || typeof body !== 'object' || body.ok !== true) return null;
+	if (body === null || typeof body !== 'object' || body.ok !== true) return undefined;
 	const shapes = body.shapes;
-	if (shapes === null || typeof shapes !== 'object') return null;
+	if (shapes === null || typeof shapes !== 'object') return undefined;
 	const names = Object.keys(shapes as Record<string, unknown>).filter((name) => name !== '');
-	return names.length > 0 ? names.sort() : null;
+	return names.length > 0 ? names.sort() : undefined;
 }
 
 /**
  * The hooks to schedule, and whether the cache still describes this site.
  *
- * `KNOWN_CRON_HOOKS` is the list measured on the shipped install, so a customer-installed module's
- * `hook_cron` was never scheduled on any site. Keyed on the enabled-module set rather than on the
- * generation, which moves on every content save and would re-boot the kernel for each one.
+ * `KNOWN_CRON_HOOKS` is only the shipped install's list, so a customer module's `hook_cron` needs
+ * discovery. The cache is keyed on the enabled-module set, not the generation (which moves on every
+ * content save and would re-boot the kernel each time).
  */
 export function cronHooksFor(
-	cache: CronHookCache | null,
+	cache: CronHookCache | undefined,
 	fingerprint: string
 ): { hooks: string[]; stale: boolean } {
-	if (cache === null || !Array.isArray(cache.hooks) || cache.hooks.length === 0) {
+	if (cache === undefined || !Array.isArray(cache.hooks) || cache.hooks.length === 0) {
 		return { hooks: [...KNOWN_CRON_HOOKS], stale: true };
 	}
 	return { hooks: cache.hooks, stale: cache.at !== fingerprint };
 }
 
 /** how many queue items one invocation may process */
-export function queueBatchSize(env?: CronEnv | null): number {
+export function queueBatchSize(env?: CronEnv): number {
 	const n = Number(env?.CRON_QUEUE_BATCH_SIZE ?? 5);
 	return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 50) : 5;
 }
 
 /** row cap for cache_data; Drupal's own bin default is 5000 */
-export function cacheDataMaxRows(env?: CronEnv | null): number {
+export function cacheDataMaxRows(env?: CronEnv): number {
 	const n = Number(env?.CACHE_DATA_MAX_ROWS ?? CACHE_DATA_DEFAULT_MAX_ROWS);
 	return Number.isFinite(n) && n >= 1
 		? Math.min(Math.floor(n), 1000000)
 		: CACHE_DATA_DEFAULT_MAX_ROWS;
 }
 
-/** row cap for watchdog, or null to read dblog.settings from the database */
-export function watchdogRowLimitOverride(env?: CronEnv | null): number | null {
-	if (env?.WATCHDOG_ROW_LIMIT === undefined) return null;
+/** row cap for watchdog, or undefined to read dblog.settings from the database */
+export function watchdogRowLimitOverride(env?: CronEnv): number | undefined {
+	if (env?.WATCHDOG_ROW_LIMIT === undefined) return undefined;
 	const n = Number(env.WATCHDOG_ROW_LIMIT);
-	return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+	return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
 }
 
 /**
- * Everything gcPass() and cronStep() need, read from env in one call.
+ * Everything `gcPass()` and `cronStep()` need, read from env in one call.
  *
- * The default path: `cronStep(cursor, deps, cronOptions(env))`. Every field stays
- * overridable, because the options object is plain data and the caller can spread
- * over it.
+ * The default path is `cronStep(cursor, deps, cronOptions(env))`; the result is plain data, so a
+ * caller can spread over any field.
  */
-export function cronOptions(env?: CronEnv | null): CronOptions {
+export function cronOptions(env?: CronEnv): CronOptions {
 	return {
 		rowLimit: watchdogRowLimitOverride(env),
 		maxRows: cacheDataMaxRows(env),
@@ -352,19 +335,15 @@ export function cronOptions(env?: CronEnv | null): CronOptions {
 /**
  * When a Durable Object loses its in-memory state, measured on a deployed worker.
  *
- * A throwaway object minted an id in its constructor and held a 32 MB allocation, so a changed id
- * IS a lost isolate rather than a proxy for one. Re-arming its alarm every 8 s held ONE incarnation
- * across 71 consecutive firings; at 12, 20, 30 and 45 s the id changed on every probe and
- * `alarmsSeen` never passed 1, so those firings were paid for and warmed nothing. With no alarm the
- * id changed across a 20 s gap, the shortest measured.
- *
- * The consequence for the name below: `KEEP_WARM_MS` shipped at 240,000, which is 24x this, so
- * nothing it governed was ever kept warm. It is an idle RE-ARM and that is all it is.
+ * A throwaway object minted an id in its constructor and held 32 MB, so a changed id is a lost
+ * isolate. Re-arming every 8 s held one incarnation across 71 firings; at 12, 20, 30 and 45 s the
+ * id changed on every probe. With no alarm it changed across a 20 s gap, the shortest measured.
+ * `KEEP_WARM_MS` (240,000) is 24x this, so it is an idle re-arm and keeps nothing warm.
  */
 export const HIBERNATION_IDLE_MS = 10_000;
 
-/** the idle re-arm; NOT a keep-warm, see {@link HIBERNATION_IDLE_MS} */
-export function keepWarmMs(env?: CronEnv | null): number {
+/** the idle re-arm, which keeps nothing warm; see {@link HIBERNATION_IDLE_MS} */
+export function keepWarmMs(env?: CronEnv): number {
 	const n = Number(env?.KEEP_WARM_MS ?? 240000);
 	return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 240000;
 }
@@ -372,14 +351,14 @@ export function keepWarmMs(env?: CronEnv | null): number {
 /**
  * The re-arm that actually holds an object resident, for a site designated warm.
  *
- * Clamped below the threshold rather than trusted: a value above it buys nothing and still spends
- * an object request and an alarm row per firing, which is the worst of both.
+ * Clamped below the threshold: a larger value buys nothing and still spends an object request and
+ * an alarm row per firing.
  */
-export function warmIntervalMs(env?: CronEnv | null): number {
+export function warmIntervalMs(env?: CronEnv): number {
 	const n = Number(env?.WARM_INTERVAL_MS ?? 8000);
 	const ms = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 8000;
-	// with retention, an interval past hibernation still leaves an interpreter to adopt some of the
-	// time; without it the object re-boots on every firing and the longer interval buys nothing
+	// with retention a longer interval still adopts an interpreter sometimes; without it every
+	// firing re-boots
 	if (String(env?.RETAIN_INTERPRETER ?? '1') !== '0') return Math.min(ms, WARM_INTERVAL_MAX_MS);
 	return Math.min(ms, HIBERNATION_IDLE_MS - 2000);
 }
@@ -387,80 +366,71 @@ export function warmIntervalMs(env?: CronEnv | null): number {
 /**
  * The longest warming interval a writer accepts.
  *
- * Past hibernation a firing buys adoption only when the next instance lands in the same isolate,
- * which is placement first: measured 2026-09-25 on 12 paid workers rotated through every interval,
- * 30 s adopted 36% of idle visits and 60, 90 and 120 s 14-15%, and four workers adopted at none.
+ * Past hibernation a firing buys adoption only when the next instance lands in the same isolate
+ * (placement first): on 12 paid workers rotated through every interval, 30 s adopted 36% of idle
+ * visits, 60/90/120 s 14-15%, and four workers adopted at none.
  */
 export const WARM_INTERVAL_MAX_MS = 600_000;
 
 /**
  * Whether warming is forced, off, or left to the thermal policy.
  *
- * An explicit `SITE_WARM` always wins. Unset, a PAID site warms: one site's 10,800 firings a day
- * sit inside paid's included Durable Object requests and rows, so the performance costs nothing
- * marginal. Unset on FREE it is the thermal policy, because the same firings are 10.8% of free's
- * daily row and request budgets and that trade is the operator's to make.
+ * An explicit `SITE_WARM` wins. Unset on paid it warms (10,800 firings a day sit inside included
+ * requests and rows). Unset on free it is the thermal policy: the same firings are 10.8% of free's
+ * daily row and request budgets, which is the operator's trade.
  */
-export function warmForced(env?: CronEnv | null, paid = false): boolean | null {
+export function warmForced(env?: CronEnv, paid = false): boolean | undefined {
 	const set = env?.SITE_WARM;
-	if (set !== undefined && set !== null && String(set) !== '') return String(set) === '1';
-	return paid ? true : null;
+	if (set !== undefined && String(set) !== '') return String(set) === '1';
+	return paid ? true : undefined;
 }
 
 /**
- * The same value, or null when nobody stated one.
+ * The same value, or undefined when nobody stated one.
  *
- * `warmIntervalMs()` cannot answer this because it folds the default in, and the two questions are
- * different: an operator who set the interval has made a decision the solver must not overrule,
- * while an unset variable is the case the solver exists for.
+ * `warmIntervalMs()` folds the default in; an explicit interval is a decision the solver must not
+ * overrule, while an unset one is what the solver is for.
  */
-export function warmIntervalConfigured(env?: CronEnv | null): number | null {
+export function warmIntervalConfigured(env?: CronEnv): number | undefined {
 	const set = env?.WARM_INTERVAL_MS;
-	if (set === undefined || set === null || String(set) === '') return null;
+	if (set === undefined || String(set) === '') return undefined;
 	const n = Number(set);
-	return Number.isFinite(n) && n >= 1 ? warmIntervalMs(env) : null;
+	return Number.isFinite(n) && n >= 1 ? warmIntervalMs(env) : undefined;
 }
 
 /**
  * Whether this site re-arms fast enough to stay resident.
  *
- * On by default on both plans. One site is the case to price, and there warming costs 10.8% of
- * free's two daily meters and $0 marginal on paid. What it removes is the 1,398 ms cold boot from
- * every page that renders, which is the authenticated tier.
- *
- * The figure that argued against it was a fleet figure, and fleet arithmetic is the wrong lever for
- * a default: past a hundred or so warm sites the answer is another account rather than a worse
- * default for the one site anybody has. {@link idleRearmMs}'s headroom argument is what handles an
- * account running out.
+ * On by default on both plans: for one site warming costs 10.8% of free's two daily meters and $0
+ * marginal on paid, and removes the 1,398 ms cold boot from every page that renders (the
+ * authenticated tier). Fleet arithmetic is the wrong lever for a default; {@link idleRearmMs}'s
+ * headroom check handles an account running out.
  */
-export function siteWarmEnabled(env?: CronEnv | null): boolean {
+export function siteWarmEnabled(env?: CronEnv): boolean {
 	const set = env?.SITE_WARM;
-	if (set !== undefined && set !== null && String(set) !== '') return String(set) === '1';
+	if (set !== undefined && String(set) !== '') return String(set) === '1';
 	return true;
 }
 
 /**
  * The idle re-arm a site should use.
  *
- * @param hasHeadroom whether the quota ladder still permits background work. FALSE drops back to the
- *   slow re-arm, which is what keeps an account-wide meter safe from several warm sites at once: on
- *   free the quotas are shared, so ten warm sites would spend 108% of the daily rows on staying warm
- *   and leave nothing to regenerate with. A degraded site un-warms itself and recovers at midnight
- *   UTC rather than needing anybody to notice.
+ * @param hasHeadroom whether the quota ladder still permits background work. False drops to the
+ *   slow re-arm, protecting account-wide meters (on free, ten warm sites would spend 108% of the
+ *   daily rows staying warm). A degraded site un-warms itself and recovers at midnight UTC.
  */
-export function idleRearmMs(env?: CronEnv | null, hasHeadroom = true): number {
+export function idleRearmMs(env?: CronEnv, hasHeadroom = true): number {
 	return hasHeadroom && siteWarmEnabled(env) ? warmIntervalMs(env) : keepWarmMs(env);
 }
 
-/** a missing table is "nothing to do"; anything else is a real failure */
+/** a missing table is nothing to do; anything else is a failure */
 const MISSING_TABLE = /no such table/i;
 
-/** workerd hands a TEXT column back as a string, but a real BLOB comes back binary */
+/** workerd returns a TEXT column as a string but a real BLOB as binary */
 function asText(value: unknown): string {
 	if (typeof value === 'string') return value;
 	if (value instanceof ArrayBuffer) return new TextDecoder().decode(value);
 	if (value && typeof value === 'object' && 'byteLength' in value) {
-		// the `byteLength` test above is the duck check; workerd hands back a real view
 		return new TextDecoder().decode(value as ArrayBufferView);
 	}
 	return value === null || value === undefined ? '' : String(value);
@@ -469,21 +439,18 @@ function asText(value: unknown): string {
 /**
  * Reads one integer out of a PHP-serialized array, without unserializing it.
  *
- * NOT a general unserializer. Drupal stores config as
- * `serialize($array)` and the only value read here is dblog.settings row_limit, so
- * the whole job is finding `s:9:"row_limit";i:<n>;`. The length prefix and the
- * requirement that the match follow a `;`, `{` or `}` are what stop a key name
- * appearing inside some other key's string VALUE from matching -- a string value
- * that itself contains the exact serialized bytes could still fool it, which is
- * why every caller has a fallback and an env override.
+ * Not a general unserializer: it finds `s:9:"row_limit";i:<n>;` in `dblog.settings`. The length
+ * prefix and the preceding `;`, `{` or `}` stop a key name inside another key's string value from
+ * matching; a value holding the exact serialized bytes could still fool it, so every caller has a
+ * fallback and an env override.
  *
  * @param blob the serialized array
  * @param key top-level key to read
- * @returns the integer, or null if it is absent or not an integer
+ * @returns the integer, or undefined if it is absent or not an integer
  */
-export function serializedInt(blob: unknown, key: string): number | null {
+export function serializedInt(blob: unknown, key: string): number | undefined {
 	const text = asText(blob);
-	if (typeof text !== 'string' || text.length === 0) return null;
+	if (typeof text !== 'string' || text.length === 0) return undefined;
 	const needle = `s:${key.length}:"${key}";i:`;
 	let at = text.indexOf(needle);
 	while (at >= 0) {
@@ -491,11 +458,11 @@ export function serializedInt(blob: unknown, key: string): number | null {
 		if (before === ';' || before === '{' || before === '}') {
 			const m = /^(-?\d+);/.exec(text.slice(at + needle.length));
 			if (m) return Number(m[1]);
-			return null;
+			return undefined;
 		}
 		at = text.indexOf(needle, at + 1);
 	}
-	return null;
+	return undefined;
 }
 
 /** the serialized form Drupal's state store expects for an integer */
@@ -503,7 +470,7 @@ export function serializeInt(value: unknown): string {
 	return `i:${Math.trunc(Number(value))};`;
 }
 
-/** a fresh accounting record; every field is reported, none is inferred */
+/** a fresh accounting record */
 function ledger(pass: string): Ledger {
 	return {
 		pass,
@@ -518,20 +485,19 @@ function ledger(pass: string): Ledger {
 	};
 }
 
+/** the ledger's per-table entry, created on first use */
 function bucket(led: Ledger, table: string): TableLedger {
 	if (!led.tables[table]) {
 		led.tables[table] = { rowsDeleted: 0, rowsWritten: 0, statements: 0 };
 	}
-	// created on the line above when it was absent
 	return led.tables[table] as TableLedger;
 }
 
 /**
  * Runs one statement and folds its cost into the ledger.
  *
- * Errors are recorded and execution continues rather than throwing: this runs on
- * an unattended alarm, and one broken table must not cost the other five their
- * collection. A missing table is not recorded as an error at all.
+ * Errors are recorded, not thrown: this runs on an unattended alarm and one broken table must not
+ * cost the others their collection. A missing table is not an error.
  */
 function exec(
 	sql: CronSql,
@@ -551,8 +517,8 @@ function exec(
 		led.rowsRead += rowsRead;
 		if (table) bucket(led, table).rowsWritten += rowsWritten;
 		return { rows, rowsWritten, rowsRead };
-	} catch (e: any) {
-		const message = String(e?.message ?? e);
+	} catch (e) {
+		const message = errorMessage(e);
 		if (MISSING_TABLE.test(message)) {
 			if (table && !led.missing.includes(table)) led.missing.push(table);
 			return { rows: [], rowsWritten: 0, rowsRead: 0, missing: true };
@@ -563,14 +529,10 @@ function exec(
 }
 
 /**
- * SQLite's own affected-row count, the way src/do-sqlite.js reads it.
+ * SQLite's own affected-row count.
  *
- * Needed separately from rowsWritten because they answer different questions:
- * changes() is how many rows the DELETE removed, rowsWritten is how many rows
- * Cloudflare bills for it, and the two differ by one write per index touched
- * (D1/DO pricing, footnote 6: "Indexes will add an additional written row"). The
- * ratio is reported, so the real amplification on the edge arrives as a
- * measurement on the first run.
+ * `changes()` is how many rows the `DELETE` removed; `rowsWritten` is what Cloudflare bills, one
+ * more per index touched. The ratio is reported as the edge's real amplification.
  */
 function changes(sql: CronSql, led: Ledger, table: string | null): number {
 	const r = exec(sql, led, table, 'SELECT changes() AS c');
@@ -583,26 +545,23 @@ function changes(sql: CronSql, led: Ledger, table: string | null): number {
 /**
  * Trims watchdog to the configured row limit, oldest first.
  *
- * The pivot-then-delete shape is copied from DblogHooks::cron() rather than
- * improved on, and core's own comment says why: counting the most recent N rows
- * survives an AUTOINCREMENT sequence that does not start at 1 and rows deleted
- * out from under it, which an arithmetic `wid < max - limit` does not.
- *
- * Under the limit it issues ONE statement, finds no pivot, and writes nothing.
+ * The pivot-then-delete shape is `DblogHooks::cron()`'s: counting the most recent N rows survives
+ * a sequence that does not start at 1 and rows deleted underneath it, which `wid < max - limit`
+ * does not. Under the limit it issues one statement and writes nothing.
  */
 export function gcWatchdog(sql: CronSql, options: CronOptions = {}): Ledger {
 	const led = ledger('watchdog');
-	let limit: number | null = options.rowLimit ?? null;
-	if (limit === null || limit === undefined) {
+	let limit = options.rowLimit;
+	if (limit === undefined) {
 		const row = exec(sql, led, 'config', 'SELECT data FROM config WHERE name = ?', [
 			'dblog.settings'
 		]).rows[0];
 		limit = serializedInt(row?.data, 'row_limit');
-		if (limit === null) limit = WATCHDOG_DEFAULT_ROW_LIMIT;
+		if (limit === undefined) limit = WATCHDOG_DEFAULT_ROW_LIMIT;
 	}
 	led.rowLimit = limit;
 
-	// 0 is Drupal's "All" setting in the logging form, not a request to empty it
+	// 0 is Drupal's "All" setting, not a request to empty the table
 	if (!(limit > 0)) {
 		led.skipped = 'row_limit is 0 (keep all)';
 		return finish(led);
@@ -629,23 +588,14 @@ export function gcWatchdog(sql: CronSql, options: CronOptions = {}): Ledger {
 /**
  * Enforces a row cap on cache_data, then clears anything expired.
  *
- * The row cap is the only thing that works here, and it is measured: all 144
- * cache_data rows on the reference site have `expire = -1`, so an expire-based
- * sweep removes exactly zero of them. 70 are RouteProvider's per-URL route cache
- * -- cid `route:[language]=en:[query_parameters]=<qs>:<path>`, written at
- * RouteProvider.php:222 with CACHE_PERMANENT -- so every distinct URL a scanner
- * probes adds a permanent row. (The mechanism is RouteProvider, not PageCache;
- * both write into the `data` bin but only the route cache is keyed per URL.)
+ * Only the row cap works: all 144 `cache_data` rows on the reference site have `expire = -1`, so an
+ * expire sweep removes none. 70 are `RouteProvider`'s per-URL route cache (`CACHE_PERMANENT`), so
+ * every distinct URL a scanner probes adds a permanent row.
  *
- * The cap is Drupal's own: cache.data reports getMaxRows() === 5000, set by
- * DatabaseBackend::DEFAULT_MAX_ROWS, enforced by DatabaseBackend
- * ::garbageCollection() -- which only ever runs from SystemHooks::cron(), the one
- * hook this runtime cannot call. So the policy was always there and the caller
- * never was.
- *
- * Ordering by `created, cid` rather than core's `created <= pivot`:
- * `created` is a float with millisecond resolution and a single request writes
- * several rows, so ties are ordinary and core's condition over-deletes them.
+ * The cap is Drupal's own (`getMaxRows()` is 5000, from `DatabaseBackend::DEFAULT_MAX_ROWS`),
+ * enforced by `garbageCollection()`, which only `SystemHooks::cron()` calls and this runtime
+ * cannot. It orders by `created, cid` rather than core's `created <= pivot`: `created` is a
+ * millisecond float and one request writes several rows, so ties over-delete under core's form.
  */
 export function gcCacheData(sql: CronSql, options: CronOptions = {}): Ledger {
 	return gcCacheBin('cache_data', 'cachedata', sql, options);
@@ -654,15 +604,14 @@ export function gcCacheData(sql: CronSql, options: CronOptions = {}): Ledger {
 /**
  * Collects `cache_dynamic_page_cache`, which had no collector at all.
  *
- * Its entries are written `expire = -1` and core's own GC runs from `SystemHooks::cron()`, which
- * this runtime never calls. Emptying it on every fill was the only thing bounding it, so a fill that
- * stops doing that leaves the bin growing forever.
+ * Its entries are `expire = -1` and core's GC runs only from `SystemHooks::cron()`, which this
+ * runtime never calls; emptying it on every fill was the only bound.
  */
 export function gcDynamicPageCache(sql: CronSql, options: CronOptions = {}): Ledger {
 	return gcCacheBin('cache_dynamic_page_cache', 'dynamicpagecache', sql, options);
 }
 
-/** oldest-first eviction down to a row cap, then whatever set a real expiry */
+/** oldest-first eviction down to a row cap, then rows with a real expiry */
 function gcCacheBin(table: string, name: string, sql: CronSql, options: CronOptions): Ledger {
 	const led = ledger(name);
 	const cap = options.maxRows ?? CACHE_DATA_DEFAULT_MAX_ROWS;
@@ -676,7 +625,7 @@ function gcCacheBin(table: string, name: string, sql: CronSql, options: CronOpti
 	const over = cap > 0 ? count - cap : 0;
 	led.overCap = over > 0 ? over : 0;
 
-	// the common case: under the cap, so one read and no writes at all
+	// under the cap (the common case) is one read and no writes
 	if (over > 0) {
 		exec(
 			sql,
@@ -690,7 +639,7 @@ function gcCacheBin(table: string, name: string, sql: CronSql, options: CronOpti
 		changes(sql, led, table);
 	}
 
-	// still worth issuing: other writers into this bin do set an expiry
+	// other writers into this bin do set an expiry
 	exec(sql, led, table, `DELETE FROM ${table} WHERE expire <> -1 AND expire < ?`, [nowS]);
 	changes(sql, led, table);
 
@@ -700,8 +649,7 @@ function gcCacheBin(table: string, name: string, sql: CronSql, options: CronOpti
 /**
  * Clears expired rows from the tables Drupal creates lazily.
  *
- * Guarded per table, so a site that has never written a session, a flood entry or
- * a batch collects the other five instead of failing on the first missing one.
+ * Guarded per table, so a site missing one collects the rest.
  */
 export function gcExpired(sql: CronSql, options: CronOptions = {}): Ledger {
 	const led = ledger('expired');
@@ -710,8 +658,7 @@ export function gcExpired(sql: CronSql, options: CronOptions = {}): Ledger {
 
 	for (const rule of EXPIRED_ROW_RULES) {
 		if (only && !only.includes(rule.table)) continue;
-		// the table name is interpolated rather than bound, so it is checked; a
-		// parameter cannot stand in for an identifier in SQLite
+		// the name is interpolated (SQLite cannot bind an identifier), so it is checked
 		if (!/^[a-z_][a-z0-9_]*$/.test(rule.table)) {
 			led.errors.push({ table: rule.table, error: 'refused table name' });
 			continue;
@@ -723,10 +670,8 @@ export function gcExpired(sql: CronSql, options: CronOptions = {}): Ledger {
 		changes(sql, led, rule.table);
 	}
 
-	// Releases leases nobody will ever come back for, per
-	// DatabaseQueue::garbageCollection(). An UPDATE, so it writes rows and reclaims
-	// no storage; it is correctness, and it is counted as `rowsReleased` rather than
-	// deleted so the two are not confused in the total.
+	// releases abandoned leases as `DatabaseQueue::garbageCollection()` does (an `UPDATE`, counted
+	// as `rowsReleased` not deleted)
 	if (!only || only.includes('queue')) {
 		const r = exec(
 			sql,
@@ -748,19 +693,16 @@ export function gcExpired(sql: CronSql, options: CronOptions = {}): Ledger {
 }
 
 /**
- * Records that cron ran, as Drupal\Core\Cron::setCronLastTime() would.
+ * Records that cron ran, as `Cron::setCronLastTime()` would.
  *
- * One serialized integer in key_value, so it needs no PHP. Not cosmetic: its
- * absence from the pack is why AutomatedCron's elapsed check passed on the very
- * first request and ran drupal_cron() inline, which is the failure TECHNICAL_REPORT.md
- * records as killing every render with an Asyncify throw.
+ * It is one serialized integer in `key_value`, so it needs no PHP. Its absence made
+ * `AutomatedCron` run `drupal_cron()` inline on the first request, which killed the render with an
+ * Asyncify throw.
  *
- * **THE ROW ALONE WAS INERT, AND IT READ AS WORKING.** `State` extends `CacheCollector` over
- * `cache.bootstrap` under the cid `state`, so `\Drupal::state()->get('system.cron_last')` answers
- * from `cache_bootstrap` and never sees a write that only touched `key_value`. Measured on a site
- * whose chain had fully drained with the `cron_last` unit among what ran: the status report still
- * said "Cron has not run recently" and sat at Error. The delete is what makes the write visible;
- * `tests/integration/module-converge.spec.ts` fails without it.
+ * The row alone is inert: `State` is a `CacheCollector` over `cache.bootstrap` (cid `state`), so
+ * `\Drupal::state()->get('system.cron_last')` never sees a `key_value`-only write and the status
+ * report keeps saying "Cron has not run recently". The `cache_bootstrap` delete makes it visible
+ * (`module-converge.spec.ts` fails without it).
  */
 export function setCronLast(sql: CronSql, options: CronOptions = {}): Ledger {
 	const led = ledger('cron_last');
@@ -773,8 +715,7 @@ export function setCronLast(sql: CronSql, options: CronOptions = {}): Ledger {
      ON CONFLICT(collection, name) DO UPDATE SET value = excluded.value`,
 		[serializeInt(nowS)]
 	);
-	// the whole collector entry rather than one key: it is a single serialized array, so there is
-	// nothing narrower to remove, and the next state read rebuilds it from key_value
+	// the whole entry (one serialized array); the next state read rebuilds it from `key_value`
 	exec(sql, led, 'cache_bootstrap', `DELETE FROM cache_bootstrap WHERE cid = 'state'`, []);
 	led.cronLast = nowS;
 	return finish(led);
@@ -782,7 +723,6 @@ export function setCronLast(sql: CronSql, options: CronOptions = {}): Ledger {
 
 /** seals a ledger: adds wall time and the observed index amplification */
 function finish(led: Ledger): Ledger {
-	// set by ledger(), and this is the only place it is removed
 	led.ms = Date.now() - (led.t0 as number);
 	delete led.t0;
 	led.amplification =
@@ -813,16 +753,14 @@ function merge(into: Ledger, from: Ledger): Ledger {
 	return into;
 }
 
-/** every pass name gcPass() accepts, in the order `all` runs them */
+/** every pass name `gcPass()` accepts, in the order `all` runs them */
 export const GC_PASSES = ['watchdog', 'cachedata', 'dynamicpagecache', 'expired'];
 
 /**
  * Runs one garbage-collection pass, or all of them, and reports what it cost.
  *
- * `passes` on the returned ledger is present only for `pass: 'all'`, which is where the per-pass
- * ledgers are kept; `rowsReleased` only for the queue-lease UPDATE, which writes rows and
- * reclaims no storage. Both were missing from this signature and a typed caller could not read
- * them.
+ * `passes` on the returned ledger is present only for `pass: 'all'`; `rowsReleased` only for the
+ * queue-lease `UPDATE`, which writes rows and reclaims no storage.
  */
 export function gcPass(sql: CronSql, options: CronOptions = {}): Ledger {
 	const pass = options.pass ?? 'all';
@@ -851,12 +789,9 @@ export function gcPass(sql: CronSql, options: CronOptions = {}): Ledger {
 /**
  * The ordered list of units the alarm chain walks, one per invocation.
  *
- * `hooks` is the discovered list when cronHookList() has run and KNOWN_CRON_HOOKS
- * otherwise. A module with no policy entry is unreviewed and RUNS, flagged, so
- * adding a contrib module does not silently mean its cron never fires.
- *
- * `module` is set only on the hook units, which is how a caller tells a cron hook apart from a
- * pure-SQL pass; it was missing from this signature, so a typed caller could not filter on it.
+ * `hooks` is the discovered list when `cronHookList()` has run, else `KNOWN_CRON_HOOKS`. A module
+ * with no policy entry is unreviewed and runs, flagged, so a new contrib module's cron still
+ * fires. `module` is set only on hook units, which tells them from pure-SQL passes.
  */
 export function cronUnits(options: CronOptions = {}): CronUnit[] {
 	const hooks = Array.isArray(options.hooks) ? options.hooks : KNOWN_CRON_HOOKS;
@@ -876,27 +811,16 @@ export function cronUnits(options: CronOptions = {}): CronUnit[] {
 			unreviewed: entry === undefined
 		});
 	}
-	// AFTER the hooks, because `update` is one of them and this reads what it computed. Its own unit
-	// rather than a module hook: the drupflare hook is not registered in the container the pack ships,
-	// so a site installed before the class existed would never run it
-	// BEFORE advisories and after the hooks, which is `DeferredCron`'s own `Order::Last` relative to
-	// `update_cron`. Its own unit for the same reason advisories is: the drupflare hook is not
-	// registered in the container the pack ships, so as a `#[Hook]` it has never fired anywhere
+	// fetch_reopen then advisories follow the hooks (they read `update`'s output); own units, since
+	// a `#[Hook]` added after the bake is not in the shipped container
 	if (options.includeFetchReopen !== false) {
 		units.push({ id: 'fetch_reopen', kind: 'php' });
 	}
 	if (options.includeAdvisories !== false) {
 		units.push({ id: 'advisories', kind: 'php' });
 	}
-	// THE PHP HEALTH LAYER, which had no caller of any kind. `src/Health/` is twelve files whose
-	// output all goes through `HealthLedger::record()`, and that opens by asking for a `cfwHealth`
-	// capability the host did not install -- so the tripwires, the boot self test and the circuit
-	// breaker were green in the module's own suite and absent from every site. Its own unit rather
-	// than a `#[Hook]` for the same reason advisories is one: a hook class added after the bake is
-	// not in the container the pack ships and `hasImplementations()` answers false forever.
-	//
-	// BEFORE the queue, which is what closes the round: `queue` holds the cursor and repeats while
-	// it is making progress, so a unit placed after it waits out every repeat before running
+	// the PHP health layer is its own unit for the same reason; it goes before the queue, which
+	// holds the cursor and repeats while progressing, so a later unit would wait out every repeat
 	if (options.includeHealth !== false) {
 		units.push({ id: 'health', kind: 'php' });
 	}
@@ -909,9 +833,8 @@ export function cronUnits(options: CronOptions = {}): CronUnit[] {
 	return units;
 }
 
-/** the units that are configured OUT, with the reason, for reporting */
 /**
- * The hooks that will NOT run, mapped to the reason.
+ * The hooks configured not to run, mapped to the reason, for reporting.
  */
 export function skippedCronHooks(options: CronOptions = {}): Record<string, string> {
 	const hooks = Array.isArray(options.hooks) ? options.hooks : KNOWN_CRON_HOOKS;
@@ -927,14 +850,12 @@ export function skippedCronHooks(options: CronOptions = {}): Record<string, stri
 /**
  * Rebuilds a usable cursor from whatever came back out of storage.
  *
- * Total: null, a string, a truncated object and an index that no longer addresses
- * a unit all resolve to the start of the chain rather than to an exception. That
- * last case is the one that matters in practice -- the unit list is derived from
- * configuration on every invocation, so a redeploy that removes a hook leaves a
- * stored `i` pointing past the end.
+ * Total: null, a string, a truncated object and an index past the end all resolve to the start of
+ * the chain. The last matters most: the unit list derives from configuration on every invocation,
+ * so a redeploy that removes a hook leaves a stored `i` past the end.
  */
 export function readCursor(raw: CursorInput, unitCount = 1): StoredCursor {
-	// widened once here rather than at eight reads; the guard below makes it good
+	// widened once; the guard below makes it safe
 	let c = raw as Record<string, unknown> | null;
 	if (typeof raw === 'string') {
 		try {
@@ -967,9 +888,8 @@ export function writeCursor(cursor: StoredCursor): string {
 /**
  * Moves the cursor on one unit, wrapping at the end of the list.
  *
- * `wrapped` is what tells the caller a full round finished, which is the signal to
- * stop chaining at +1 ms and go back to the idle interval. It is on the RETURN value only,
- * never on a stored cursor, which is why it has to be declared here for a typed caller.
+ * `wrapped` tells the caller a round finished (stop chaining at +1 ms, return to the idle
+ * interval). It is on the return value only, never a stored cursor.
  */
 export function advanceCursor(
 	cursor: StoredCursor,
@@ -988,27 +908,19 @@ export function advanceCursor(
 }
 
 /**
- * Does ONE unit of cron work and hands back the next cursor.
+ * Does one unit of cron work and returns the next cursor.
  *
- * Shaped as a pure-ish function of (cursor, deps) so the caller keeps ownership of
- * persistence: the cursor goes to `cfw_meta` or `ctx.storage.put()`, whichever the
- * Durable Object already uses, and neither choice leaks in here. That is also what
- * makes the chain testable without a Durable Object at all.
+ * It is a function of (cursor, deps) so the caller owns persistence and the chain is testable
+ * without a Durable Object. `mayContinue` is the CPU constraint as data: a `sql` unit costs
+ * microseconds so the caller may run another in the same invocation, while a `php` unit enters the
+ * interpreter and must be last (as `fillBatchSize()` never batches across a render).
  *
- * `mayContinue` is the CPU constraint expressed as data. A `sql` unit costs
- * microseconds, so the caller may run another in the same invocation; a `php` unit
- * enters the interpreter and must be the last thing that invocation does. This is
- * the same trade fillBatchSize() makes in src/site-do.js -- batch
- * to amortise the setAlarm() row write, but never batch across a render.
+ * `result` is the unit's own ledger or reply, typed as an index signature (a bare `object` makes
+ * its fields unreadable).
  *
- * `result` is the unit's own ledger or reply and its shape depends on the unit, so it is
- * declared as an index signature rather than `object` -- a bare `object` makes every field
- * unreadable to a typed caller, which is what the ported specs hit.
- *
- * @param rawCursor whatever storage returned. `undefined` is a real input, not a defensive
- *   allowance: an evicted Durable Object comes back with nothing, and that case is tested
+ * @param rawCursor whatever storage returned; `undefined` is real (an evicted object has nothing)
  * @param deps the transport and clock, injected so the chain owns neither
- * @param options passed through to cronUnits() and the GC passes
+ * @param options passed through to `cronUnits()` and the GC passes
  */
 export async function cronStep(
 	rawCursor: CursorInput,
@@ -1022,24 +934,21 @@ export async function cronStep(
 	const now = deps.nowMs ? deps.nowMs() : Date.now();
 	const t0 = Date.now();
 
-	let result: Record<string, unknown> | null = null;
+	let result: Record<string, unknown>;
 	let rowsWritten = 0;
 	let stay = false;
-	let servedQueue: string | null = null;
+	let servedQueue: string | undefined;
 
 	if (unit.kind === 'sql') {
 		result = gcPass(deps.sql, { ...options, pass: unit.pass, nowMs: now });
 		rowsWritten = result.rowsWritten as number;
 	} else if (unit.id === 'queue') {
-		// Discovery in SQL first, so an empty queue costs one read and no interpreter.
-		// The queue table is created lazily, so a site that has never queued anything
-		// has no table and this has to be a skip rather than an error.
-		// rotate off the queue this cursor served last, so a deep queue cannot starve
-		// a shallow one; a repeating unit keeps its queue because it is mid-drain
+		// discover in SQL (an empty queue costs one read, no interpreter); rotate off the last
+		// queue so a deep one cannot starve others, unless mid-drain
 		const draining = cursor.queueRepeats > 0;
 		const pending = queuePending(deps.sql, {
-			prefer: draining ? cursor.lastQueue : null,
-			exclude: draining ? null : cursor.lastQueue
+			prefer: draining ? (cursor.lastQueue ?? undefined) : undefined,
+			exclude: draining ? undefined : (cursor.lastQueue ?? undefined)
 		});
 		if (pending.name === null) {
 			result = { skipped: pending.reason, queues: pending.queues };
@@ -1051,8 +960,7 @@ export async function cronStep(
 			const remaining = Number(result?.remaining ?? 0);
 			const progressed = Number(result?.processed ?? 0) > 0;
 			const repeats = cursor.queueRepeats + 1;
-			// repeat the unit while it is making progress, but never forever: a worker
-			// that always fails would otherwise chain alarms at +1 ms indefinitely
+			// repeat while progressing, but bounded (a failing worker would chain at +1 ms forever)
 			stay =
 				remaining > 0 &&
 				progressed &&
@@ -1063,14 +971,13 @@ export async function cronStep(
 	} else if (unit.id === 'advisories') {
 		result = await deps.runJson(runAdvisoryScan(options.origin));
 	} else if (unit.id === 'health') {
-		// the observation is the HOST's, because `BootSelfTest` reads only facts the host holds --
-		// the bridge, the absent capabilities, the migration cursor, the two generations. Supplying
-		// it rather than discovering it is what keeps this unit free of a kernel boot
+		// the observation is the host's (bridge, absent capabilities, migration cursor,
+		// generations), which keeps this unit free of a kernel boot
 		result = await deps.runJson(runHealthSelfTest(options.healthObservation ?? {}));
 	} else if (unit.id === 'fetch_reopen') {
 		result = await deps.runJson(runFetchReopen(options.origin));
 	} else {
-		// the module-less php units are `queue`, `advisories` and `fetch_reopen`, all handled above
+		// the module-less php units (`queue`, `advisories`, `health`, `fetch_reopen`) are above
 		result = await deps.runJson(runCronHook(unit.module as string, options.origin));
 	}
 
@@ -1080,8 +987,7 @@ export async function cronStep(
 		lastAt: now,
 		rowsWritten: cursor.rowsWritten + rowsWritten,
 		queueRepeats: unit.id === 'queue' && stay ? cursor.queueRepeats + 1 : 0,
-		// remembered even when the unit advances, because that is what the next round
-		// rotates away from
+		// kept when the unit advances (the next round rotates away from it)
 		lastQueue: servedQueue ?? cursor.lastQueue
 	};
 	const next = stay
@@ -1108,20 +1014,15 @@ export async function cronStep(
 /**
  * The queue with the most items waiting, or null with the reason why not.
  *
- * Pure SQL: the only cron queue this site defines is
- * media_entity_thumbnail, and asking PHP which queues have work would cost a
- * kernel boot to be told "none", which is the answer every time until something
- * queues a thumbnail. `expire = 0` is the unclaimed condition, so an item another
- * invocation still holds a lease on is not counted as waiting.
+ * Pure SQL: asking PHP which queues have work costs a kernel boot to be told "none". `expire = 0`
+ * is the unclaimed condition, so an item under another invocation's lease is not waiting.
  *
- * `exclude` is what stops the deepest queue starving the others: without it a
- * queue with a thousand items would be picked every round forever, and a second
- * queue would never be reached. `prefer` is the other direction -- a unit that is
- * repeating itself is mid-drain and must stay on the queue it started.
+ * `exclude` stops the deepest queue starving the others; `prefer` keeps a repeating (mid-drain)
+ * unit on the queue it started.
  */
 export function queuePending(
 	sql: CronSql,
-	options: { exclude?: string | null; prefer?: string | null } = {}
+	options: { exclude?: string; prefer?: string } = {}
 ): QueuePending {
 	try {
 		const rows = sql
@@ -1133,21 +1034,19 @@ export function queuePending(
 		if (rows.length === 0) return { name: null, reason: 'queue is empty', queues: {} };
 		const queues: Record<string, number> = {};
 		for (const r of rows) queues[String(r.name)] = Number(r.c);
-		const exclude = options.exclude ?? null;
-		const prefer = options.prefer ?? null;
-		// `rows.length === 0` returned above, so index 0 is a row
+		const { exclude, prefer } = options;
 		let pick = rows[0] as Record<string, unknown>;
-		if (prefer !== null) {
+		if (prefer !== undefined) {
 			pick =
 				rows.find((r) => String(r.name) === prefer) ?? (rows[0] as Record<string, unknown>);
-		} else if (exclude !== null && rows.length > 1) {
+		} else if (exclude !== undefined && rows.length > 1) {
 			pick =
 				rows.find((r) => String(r.name) !== exclude) ??
 				(rows[0] as Record<string, unknown>);
 		}
 		return { name: String(pick.name), pending: Number(pick.c), queues };
-	} catch (e: any) {
-		const message = String(e?.message ?? e);
+	} catch (e) {
+		const message = errorMessage(e);
 		if (MISSING_TABLE.test(message)) {
 			return { name: null, reason: 'no queue table', queues: {} };
 		}
@@ -1158,15 +1057,10 @@ export function queuePending(
 /**
  * When the next alarm should fire.
  *
- * +1 ms while the chain has work, matching src/site-do.js: a fresh invocation is
- * a fresh CPU budget, and that is what makes a chain of 10 ms units able to do
- * work no single invocation could. The idle value matches the keep-warm interval
- * already in src/do-sqlite.js.
+ * +1 ms while the chain has work (a fresh invocation is a fresh CPU budget, which lets a chain of
+ * 10 ms units do what no single invocation could); otherwise the idle interval.
  */
-export function cronAlarmDelayMs(
-	step?: { more?: boolean } | null,
-	options: CronOptions = {}
-): number {
+export function cronAlarmDelayMs(step?: { more?: boolean }, options: CronOptions = {}): number {
 	if (step?.more) return options.chainMs ?? 1;
 	return options.idleMs ?? 240000;
 }

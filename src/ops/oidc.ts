@@ -1,35 +1,23 @@
-import { base64Url, createPkce, randomToken, timingSafeEqual, type Pkce } from './cf-oauth.js';
-
 /**
- * Tier B of the network capability: an OAuth/OIDC exchange that happens at a route the HOST owns.
+ * An OAuth/OIDC exchange at a route the host owns, so the awaiting happens in JavaScript before PHP
+ * is entered and PHP is handed a decided result.
  *
- * **THIS IS NOT A CHEAPER JSPI, IT IS THE ONLY ROUTE.** `WITH_OPENSSL=0`, so the shipping
- * interpreter cannot verify an RS256 `id_token` at all -- and an unverified `id_token` is an
- * unauthenticated login, so a JSPI build that let PHP fetch the token endpoint synchronously would
- * hand PHP a token it still could not check. The host has `crypto.subtle`. That is the whole
- * argument for doing this here, and it does not depend on a module count or a millisecond.
- *
- * The shape: the callback is an ordinary HTTP request to the Worker, so the awaiting happens in
- * JavaScript BEFORE PHP is entered, and PHP is handed a decided result rather than a promise. Same
- * move `src/ops/cf-oauth.ts` already makes for Cloudflare's own dashboard OAuth; this is the
- * provider-agnostic version of it.
- *
- * **THE CLAIMS NEVER TRAVEL IN A URL.** The browser carries a single-use ticket and nothing else;
- * the claims sit in the object's own storage and are deleted on first read. A redirect lands in
- * history, in a referrer and in any proxy log on the path, so claims in a query string would be a
- * login token pasted into three places nobody controls.
+ * This is the only route, not a cheaper JSPI: `WITH_OPENSSL=0`, so the interpreter cannot verify an
+ * RS256 `id_token`, and the host has `crypto.subtle`. The claims never travel in a URL; the browser
+ * carries a single-use ticket and the claims sit in the object's storage until first read.
+ * @module
  */
+import { binaryToBytes } from '../util/base64';
+import { base64Url, createPkce, randomToken, timingSafeEqual, type Pkce } from './cf-oauth';
 
 // #region configuration
 
 /**
  * The provider, assembled from the operator's configuration.
  *
- * `issuer`, `clientId` and `scopes` live in `cfw_meta` because an operator sets them from the setup
- * UI. **The SECRET is an env binding and must never join `KV_OVERRIDABLE`** -- and neither may the
- * issuer, for the reason `CF_OAUTH_CLIENT_ID` is kept off that list: a KV writer who could point the
- * issuer at a provider they control would have every login on the site authenticate against it, and
- * the operator would approve a consent screen showing the attacker's name.
+ * `issuer`, `clientId` and `scopes` live in `cfw_meta`. The secret is an env binding and neither it
+ * nor the issuer may join `KV_OVERRIDABLE`: a KV writer who could repoint the issuer would have
+ * every login authenticate against a provider they control.
  */
 export interface OidcConfig {
 	issuer: string;
@@ -48,11 +36,13 @@ export interface OidcProvider {
 	issuer: string;
 }
 
+/** the well-known path appended to an issuer to find its discovery document */
 export const DISCOVERY_PATH = '/.well-known/openid-configuration';
 
 /** `/oidc` rather than the object's `/__oidc`, which the front worker refuses from outside */
 export const CALLBACK_PATH = '/oidc?action=callback';
 
+/** the full callback URL for a site origin */
 export function callbackUri(origin: string): string {
 	return `${origin.replace(/\/+$/, '')}${CALLBACK_PATH}`;
 }
@@ -60,11 +50,12 @@ export function callbackUri(origin: string): string {
 /** the scopes a login needs and nothing more; `offline_access` is absent */
 export const DEFAULT_SCOPES = ['openid', 'profile', 'email'];
 
+/** the discovery document URL for an issuer */
 export function discoveryUrl(issuer: string): string {
 	return `${issuer.replace(/\/+$/, '')}${DISCOVERY_PATH}`;
 }
 
-/** loopback only; `site-origin.ts` keeps a wider set for a different question and `do.local` is in it */
+/** loopback only (`site-origin.ts` keeps a wider set for a different question) */
 const LOOPBACK = /^(localhost|127(\.\d{1,3}){3}|\[?::1\]?)$/;
 
 /** http is refused; loopback is exempt and a deployed Worker has no loopback to reach */
@@ -82,10 +73,8 @@ export function endpointUsable(url: string): boolean {
 /**
  * Validates what an operator typed into the setup form.
  *
- * `https` is a refusal rather than an upgrade: an issuer reached over plain http can be rewritten in
- * flight, and the discovery document is what names the jwks the whole login trusts. A query string
- * or fragment is refused for the same reason `discoveryUrl()` appends a fixed path -- an issuer
- * carrying one produces a discovery URL nobody intended.
+ * Plain http is refused, not upgraded: the discovery document names the jwks the login trusts. A
+ * query string or fragment is refused because `discoveryUrl()` appends a fixed path.
  */
 export function readOidcSetup(input: {
 	issuer?: string | null;
@@ -113,8 +102,8 @@ export function readOidcSetup(input: {
 /**
  * Reads a discovery document, refusing one whose `issuer` does not match where it was fetched from.
  *
- * That check is not ceremony: the `iss` claim is verified against this value later, so a document
- * free to name any issuer would let one provider mint tokens accepted as another's.
+ * The `iss` claim is verified against this value later, so a document free to name any issuer would
+ * let one provider mint tokens accepted as another's.
  */
 export function readProvider(
 	doc: unknown,
@@ -148,9 +137,8 @@ export function readProvider(
 /**
  * What the host remembers between the redirect out and the callback back.
  *
- * The verifier and the nonce NEVER leave the object. The browser carries `state` and nothing else,
- * which is what makes PKCE and the nonce worth having: an attacker who can read the redirect gets
- * the one value that is useless without the two that stayed behind.
+ * The verifier and the nonce never leave the object; the browser carries `state` only, so a reader
+ * of the redirect gets the one value that is useless without the other two.
  */
 export interface PendingLogin {
 	state: string;
@@ -161,18 +149,18 @@ export interface PendingLogin {
 	returnTo: string;
 }
 
+/** how long a pending login stays valid */
 export const PENDING_TTL_MS = 10 * 60_000;
 
 /**
  * The module route that redeems a ticket.
  *
- * `CfwOidc::complete` is bound to it and is the only thing that reads `?cfw_oidc`. The callback
- * used to redirect to the visitor's `returnTo`, so the ticket landed on a page with no controller
- * to spend it and the visitor stayed anonymous with no error. Kept beside `beginLogin()` because
- * the two ends of the round trip have to agree and nothing else made them.
+ * `CfwOidc::complete` is bound to it and is the only reader of `?cfw_oidc`; redirecting to
+ * `returnTo` instead lands the ticket on a page with no controller (the visitor stays anonymous).
  */
 export const OIDC_COMPLETE_PATH = '/drupflare/oidc/complete';
 
+/** stores a pending login's verifier and nonce and returns the redirect URL for the provider */
 export async function beginLogin(
 	returnTo = '/',
 	nowMs = 0
@@ -255,12 +243,10 @@ const ALGORITHMS: Record<
 
 function fromBase64Url(value: string): Uint8Array {
 	const padded = value.replace(/-/g, '+').replace(/_/g, '/');
-	const raw = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
-	const out = new Uint8Array(raw.length);
-	for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-	return out;
+	return binaryToBytes(atob(padded + '='.repeat((4 - (padded.length % 4)) % 4)));
 }
 
+/** the id_token claims this module reads */
 export interface IdTokenClaims {
 	iss: string;
 	sub: string;
@@ -280,18 +266,12 @@ export const CLOCK_SKEW_S = 120;
 /**
  * Verifies an `id_token` end to end and returns its claims.
  *
- * **EVERY REFUSAL HERE IS A SILENT FAILURE IF IT IS MISSING**, which is why each is separate and
- * separately tested rather than folded into one "is it valid" call:
+ * Each refusal is separate and separately tested, since a missing one fails silently: signature
+ * (anyone mints a login), `iss` (another provider's token), `aud` (a token for a different
+ * application of the same provider, the confused-deputy case), expiry and `nonce` (replay).
  *
- * - a bad SIGNATURE means anyone can mint a login for any account;
- * - a wrong `iss` means another provider's token is accepted as this one's;
- * - a wrong `aud` means a token issued to a DIFFERENT application of the same provider logs in here,
- *   which is the confused-deputy case and the one that looks most valid;
- * - an expired token means a captured one works forever;
- * - a wrong `nonce` means a token replayed from another session is accepted.
- *
- * `alg` comes from the KEY, never from the token header alone: trusting the header is how `none` and
- * the RS256-to-HS256 confusion attack work.
+ * `alg` comes from the key, never from the token header alone: trusting the header is how `none`
+ * and the RS256-to-HS256 confusion attack work.
  */
 export async function verifyIdToken(
 	idToken: string,
@@ -370,11 +350,10 @@ export async function verifyIdToken(
 // #region the claims ticket
 
 /**
- * What PHP is handed, and it is handed exactly once.
+ * What PHP is handed, exactly once.
  *
- * **SINGLE USE IS THE PROPERTY, not the TTL.** A ticket in a redirect URL lands in browser history
- * and in every proxy log on the path, so the guarantee that matters is that a second presentation
- * fails -- a short TTL only narrows the window.
+ * Single use is the guarantee (the ticket sits in a redirect URL, so history and proxy logs see
+ * it); the TTL only narrows the window.
  */
 export interface ClaimsTicket {
 	ticket: string;
@@ -385,8 +364,10 @@ export interface ClaimsTicket {
 	expiresAt: number;
 }
 
+/** how long a minted ticket may be redeemed */
 export const TICKET_TTL_MS = 60_000;
 
+/** builds a claims ticket from verified claims, expiring after `TICKET_TTL_MS` */
 export function mintTicket(
 	claims: IdTokenClaims,
 	provider: OidcProvider,
@@ -407,7 +388,7 @@ export function mintTicket(
 	};
 }
 
-/** whether a stored ticket may be redeemed; the CALLER must delete it either way */
+/** whether a stored ticket may be redeemed; the caller must delete it either way */
 export function ticketRedeemable(
 	stored: ClaimsTicket | null,
 	presented: string,
@@ -424,6 +405,7 @@ export function ticketRedeemable(
 
 // #region the exchange
 
+/** the network and crypto seams `completeLogin` calls, injectable for tests */
 export type OidcDeps = {
 	fetch: (
 		url: string,
@@ -452,8 +434,7 @@ export function tokenRequestBody(code: string, verifier: string, config: OidcCon
 /**
  * Exchanges the code and verifies what comes back.
  *
- * Tier B lives in the `await`s here: they happen at a route the host owns, before
- * PHP is entered, so PHP never has to suspend.
+ * The awaits run before PHP is entered, so PHP never has to suspend.
  */
 export async function completeLogin(
 	code: string,

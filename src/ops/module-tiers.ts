@@ -1,20 +1,16 @@
-import { type ModuleCapability } from './catalog.js';
-import { GENERATED_TIER_NOTES } from './generated/modules.js';
-
 /**
  * Capability classification for the stress-chosen module list.
  *
- * A SEPARATE FILE from `catalog.ts` so the table can grow without touching the classifier, and
- * because this is measurement output rather than mechanism. `KNOWN_MODULE_CAPABILITIES` there stays
- * the authority for what ships; this is the working set, merged into it by `allKnownCapabilities()`.
- *
- * **THESE ARE ENGINEERING POSITIONS, NOT VERDICTS.** A module is `refused` only where the platform
- * cannot host it after asking what a rewrite would take. Every non-empty entry carries
- * what it would take to move up a tier, because "blocked" without a route out is just a shrug.
- *
- * **An absent entry is `unknown`, never `works-today`.** `tierFor()` enforces that; this file must
- * never gain an entry that has not actually been looked at.
+ * Separate from `catalog.ts` (measurement output, not mechanism): `KNOWN_MODULE_CAPABILITIES` there
+ * stays the authority for what ships; this is the working set `allKnownCapabilities()` merges in.
+ * These are engineering positions: `refused` only where the platform cannot host the module, and a
+ * non-empty entry says what would move it up a tier. An absent entry is `unknown`, never
+ * `works-today`, so add no entry that has not been looked at.
+ * @module
  */
+
+import { type ModuleCapability } from './catalog';
+import { GENERATED_TIER_NOTES } from './generated/modules';
 
 /** what a classification cost to reach, so a later reader can retest it rather than trust it */
 export interface TierNote {
@@ -26,12 +22,10 @@ export interface TierNote {
 	/**
 	 * Capability-contract vector ids this module needs, beyond the three coarse ones.
 	 *
-	 * `needs` answers one question well -- can the module's outbound calls be split across
-	 * invocations -- and cannot express anything else. `simple_sitemap` is the case that forced
-	 * this: it refuses to install without `ext-xmlwriter`, which is neither outbound nor cron, so
-	 * the coarse vocabulary scored it as installable and the install then failed on its own
-	 * `hook_requirements`. Every id here is EXECUTED against the shipping interpreter by
-	 * `capability-contract.spec.ts`, so a refusal on this list rests on a measurement.
+	 * `needs` only says whether outbound calls can be split across invocations. `simple_sitemap`
+	 * forced this: it needs `ext-xmlwriter`, which the coarse vocabulary scored as installable and
+	 * `hook_requirements` then refused. `capability-contract.spec.ts` executes every id here on
+	 * the shipping interpreter.
 	 */
 	vectors?: readonly string[];
 }
@@ -39,17 +33,16 @@ export interface TierNote {
 /**
  * The per-module tier declarations, from `config/modules.yml`.
  *
- * Hand-maintained here until 2026-09-09. A module is added by declaring it in the YAML and running
- * `bun run gen:config`; nothing in this file needs editing for a new module.
+ * A module is added by declaring it in the YAML and running `bun run gen:config`; nothing here
+ * needs editing.
  */
 export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = GENERATED_TIER_NOTES;
 
 /**
  * The classification set, this table merged over the shipped one.
  *
- * `catalog.ts` keeps its own list because it ships with the artifact; this one is the working set
- * from the compatibility pass. Merging rather than replacing means a module classified in both
- * places takes the value here, which is the more recently measured of the two.
+ * `catalog.ts` keeps its own list because it ships with the artifact. A module classified in both
+ * takes the value here, the more recently measured.
  */
 export function allKnownCapabilities(
 	shipped: Readonly<Record<string, readonly ModuleCapability[]>>

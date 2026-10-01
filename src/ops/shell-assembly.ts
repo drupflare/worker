@@ -1,21 +1,10 @@
 /**
- * Fragment assembly: an anonymous shell from cache, personalised holes filled at the edge.
+ * Fragment assembly: a cached shell with the personalised holes filled at the edge.
  *
- * Authenticated HTML is never cached and must not be. What CAN be cached is the part of the page
- * that is identical for everyone, with the per-user parts left as holes -- which is exactly the
- * boundary Drupal already draws for BigPipe. `BigPipeStrategy` wraps every auto-placeholdered
- * element in `<span data-big-pipe-placeholder-id="...">`, so the seams exist in the markup already
- * and nothing here has to invent them.
- *
- * ## The dangerous half is deciding WHEN, not doing it
- *
- * Serving a shell that contains one visitor's content to another is the same defect as the static
- * -state leaks, arriving through a different door. So {@link shellSafety} refuses by default and
- * only permits a page it can positively account for: every personalised region must be inside a
- * placeholder, and anything that looks like identity outside one disqualifies the page.
- *
- * The refusal is cheap -- the page just renders the way it does today. A wrong permit is a
- * disclosure. That asymmetry is why every unknown here resolves to `unsafe`.
+ * The holes are BigPipe's own `data-big-pipe-placeholder-id` spans. Deciding when to serve a shell
+ * is the dangerous half: a wrong permit discloses one visitor's content to another while a refusal
+ * only renders the page as usual, so every unknown resolves to `unsafe`.
+ * @module
  */
 
 /** BigPipe's own placeholder marker; core writes it and core reads it back with this shape */
@@ -24,10 +13,8 @@ export const PLACEHOLDER_ATTR = 'data-big-pipe-placeholder-id';
 const PLACEHOLDER_RE = /<span data-big-pipe-placeholder-id="([^"]*)">\s*<\/span>/g;
 
 /**
- * Markers that mean a page carries identity OUTSIDE a placeholder.
- *
- * Drupal emits `is-logged-in` / `user-logged-in` body classes and a `uid` in `drupalSettings` on an
- * authenticated render. Any of them in a would-be shell means the shell was built for somebody.
+ * Markers that mean a page carries identity outside a placeholder: the logged-in body classes and
+ * a `uid` in `drupalSettings` on an authenticated render.
  */
 const IDENTITY_MARKERS = [
 	'user-logged-in',
@@ -37,6 +24,7 @@ const IDENTITY_MARKERS = [
 	'js-form-item-name'
 ];
 
+/** the verdict of {@link shellSafety}; `placeholders` is every id found either way */
 export type ShellSafety =
 	| { safe: true; placeholders: string[] }
 	| { safe: false; reason: string; placeholders: string[] };
@@ -51,9 +39,9 @@ export function placeholderIds(html: string): string[] {
 /**
  * Whether a rendered page may be stored as a shared shell.
  *
- * REFUSES BY DEFAULT. A page with no placeholders is not a shell -- it is a fully rendered page, and
- * caching it for everyone is what `cfw_page` already does for anonymous traffic. A page carrying an
- * identity marker outside a placeholder is a page built for one visitor.
+ * Refuses by default: a page with no placeholders is a fully rendered page (`cfw_page` already
+ * shares those for anonymous traffic), and an identity marker outside a placeholder means it was
+ * built for one visitor.
  */
 export function shellSafety(html: string): ShellSafety {
 	const placeholders = placeholderIds(html);
@@ -64,8 +52,7 @@ export function shellSafety(html: string): ShellSafety {
 			placeholders
 		};
 	}
-	// the identity scan runs against the page with its placeholders REMOVED, because a marker
-	// inside a hole is exactly what a hole is for
+	// scan with placeholders removed: a marker inside a hole is what a hole is for
 	const outside = html.replace(PLACEHOLDER_RE, '');
 	for (const marker of IDENTITY_MARKERS) {
 		if (outside.includes(marker)) {
@@ -82,6 +69,7 @@ export function shellSafety(html: string): ShellSafety {
 /** a filled hole; `html` is trusted markup produced by the same Drupal that produced the shell */
 export type Fragment = { id: string; html: string };
 
+/** what {@link assemble} produced, with the ids it filled and the ones that did not line up */
 export type AssemblyResult = {
 	html: string;
 	filled: string[];
@@ -92,22 +80,15 @@ export type AssemblyResult = {
 };
 
 /**
- * Fills a shell's holes, by string replacement rather than by HTMLRewriter.
+ * Fills a shell's holes by string replacement, not HTMLRewriter: a stream cannot report unfilled
+ * holes before the body is on the wire, and an unfilled hole means shell and fragments disagree.
  *
- * HTMLRewriter is the obvious tool and is the wrong one here. It streams, so it cannot report which
- * placeholders went unfilled until the body is already on the wire -- and an unfilled hole is the
- * case that has to be caught BEFORE anything is sent, because it means the shell and the fragment
- * set disagree. Streaming is worth having later for byte latency; correctness comes first, and a
- * cached shell is a string already in memory.
- *
- * AN UNFILLED PLACEHOLDER IS LEFT IN PLACE, never removed. Removing it would silently drop a
- * region -- a visitor would see a page with their account menu simply absent, and nothing would
- * report it. Left in place, it is an empty span that BigPipe's own JavaScript can still fill.
+ * An unfilled placeholder is left in place, never removed: removing it would silently drop a
+ * region, while the empty span can still be filled by BigPipe's own JavaScript.
  */
 export function assemble(shell: string, fragments: readonly Fragment[]): AssemblyResult {
-	// DECODED on both sides: BigPipe keys its `big_pipe_placeholders` attachment by the ESCAPED id
-	// (`&amp;`) while the span attribute decodes to the raw one, so an undecoded map matches nothing
-	// and every hole reads as unfilled
+	// decode both sides: BigPipe keys its attachment by the escaped id (`&amp;`) while the span
+	// attribute decodes to the raw one, so an undecoded map matches nothing
 	const byId = new Map(fragments.map((f) => [decodeEntities(f.id), f.html]));
 	const filled: string[] = [];
 	const unfilled: string[] = [];
@@ -136,9 +117,8 @@ export function assemble(shell: string, fragments: readonly Fragment[]): Assembl
 /**
  * The five entities Drupal's `Html::escape()` produces, reversed.
  *
- * A placeholder id is an escaped callback signature and routinely contains `&quot;` and `&amp;`, so
- * comparing the raw attribute against an unescaped id never matches and every hole reads as
- * unfilled.
+ * A placeholder id is an escaped callback signature (`&quot;`, `&amp;`), so comparing the raw
+ * attribute against an unescaped id never matches.
  */
 export function decodeEntities(value: string): string {
 	return value
@@ -149,6 +129,7 @@ export function decodeEntities(value: string): string {
 		.replace(/&amp;/g, '&');
 }
 
+/** whether a request may be assembled, with the reason when it may not */
 export type ShellDecision = {
 	/** whether the edge may assemble rather than falling through to a full render */
 	assemble: boolean;
@@ -156,18 +137,13 @@ export type ShellDecision = {
 };
 
 /**
- * Whether THIS request may be answered by assembly.
- *
- * Separate from {@link shellSafety}, which is about the stored artifact. This is about the request:
- * a shell is only usable for a visitor whose personalisation is confined to the holes it has.
- *
- * A non-GET never assembles. A submission's response is per-submitter and must not come from any
- * shared artifact, which is the same rule `cfw_page` already follows.
+ * Whether this request may be answered by assembly (the request, where {@link shellSafety} judges
+ * the stored artifact). A non-GET never assembles: a submission's response is per-submitter.
  */
 export function shellDecision(input: {
 	method: string;
 	authenticated: boolean;
-	shell: ShellSafety | null;
+	shell?: ShellSafety;
 	fragmentsAvailable: boolean;
 }): ShellDecision {
 	if (input.method !== 'GET' && input.method !== 'HEAD') {
@@ -186,30 +162,27 @@ export function shellDecision(input: {
 }
 
 /**
- * A value the stored shell must not carry, and where it was found.
+ * A value the stored shell must not carry.
  *
- * `nonce` is not identity -- views build `js-view-dom-id-<hash>` from `mt_rand()`, so it varies per
- * RENDER rather than per person. It is slotted anyway because the safety property below is byte
- * equality, and a nonce breaks that without meaning anything.
+ * `nonce` is not identity (views build `js-view-dom-id-<hash>` from `mt_rand()`, per render); it is
+ * slotted because the safety property is byte equality, which a nonce breaks.
  */
 export type SlotKind = 'uid' | 'permissions-hash' | 'csrf' | 'nonce';
 
+/** one extracted value: the slot name left in the shell, its kind and the harvested value */
 export type IdentitySlot = { name: string; kind: SlotKind; value: string };
 
 /**
- * The patterns measured to vary between two DIFFERENT users of the SAME role, on a rendered front
- * page, outside every BigPipe hole.
- *
- * Enumerated rather than guessed -- `tests/integration/shell-normalise.spec.ts` diffs alice against
- * bob and these four classes are the entire difference. `permissionsHash` is in the list even
- * though it did NOT vary: it varies by ROLE, so slotting it is what makes a shell harvested for one
- * role set detectably wrong for another.
+ * The patterns measured to vary between two users of the same role on a front page, outside every
+ * hole (`tests/unit/ops/shell-assembly.spec.ts` diffs two users; these four classes are the
+ * whole difference). `permissionsHash` varies by role, not user; slotting it makes a shell
+ * harvested for one role set detectably wrong for another.
  */
 const SLOT_PATTERNS: ReadonlyArray<{ kind: SlotKind; re: RegExp; group: number }> = [
 	{ kind: 'uid', re: /("uid":")(\d+)(")/g, group: 2 },
 	{ kind: 'permissions-hash', re: /("permissionsHash":")([0-9a-f]{64})(")/g, group: 2 },
-	// the slash before `logout` is NOT anchored, because BigPipe's appended scripts carry the same
-	// href JSON-escaped as `\/user\/logout?token=` and an anchored pattern misses every one of them
+	// the slash before `logout` is not anchored: BigPipe's scripts carry the href JSON-escaped
+	// (`\/user\/logout?token=`)
 	{ kind: 'csrf', re: /(logout\?token=)([A-Za-z0-9_-]{16,})/g, group: 2 },
 	{ kind: 'csrf', re: /(data-contextual-token=(?:\\u0022|\\?"))([A-Za-z0-9_-]{16,})/g, group: 2 },
 	{ kind: 'nonce', re: /(js-view-dom-id-)([0-9a-f]{16,})/g, group: 2 }
@@ -218,22 +191,17 @@ const SLOT_PATTERNS: ReadonlyArray<{ kind: SlotKind; re: RegExp; group: number }
 /** what a slot looks like in the stored shell; JSON-safe, URL-safe and attribute-safe at once */
 export const SLOT_PREFIX = 'cfw-slot-';
 
+/** the outcome of {@link normaliseShell}: the slotted shell and its slots, or a refusal reason */
 export type NormaliseResult =
 	{ ok: true; shell: string; slots: IdentitySlot[] } | { ok: false; reason: string };
 
 /**
  * Replaces every measured per-person value in a rendered page with a named slot.
  *
- * ## The safety property is byte equality, not this pattern list
- *
- * A list of markers is a guess about what varies, and a guess is not something to build against.
- * The check that actually holds is differential: normalise the same page rendered for two different
- * members of a role set, and REQUIRE the results to be byte-identical. Anything that varies by
- * person and is not in the list above makes them differ, so the harvest refuses instead of storing
- * a shell that leaks. {@link normalisedShellsAgree} is that check, and the harvest calls it.
- *
- * So this function may be incomplete without being unsafe. Adding a pattern turns a refusal into a
- * shareable shell; omitting one costs a shell, never a disclosure.
+ * The safety property is byte equality, not this pattern list: the harvest normalises the same
+ * page for two members of a role set and refuses unless the results are identical
+ * ({@link normalisedShellsAgree}). So the list may be incomplete without being unsafe; omitting a
+ * pattern costs a shell, never a disclosure.
  */
 export function normaliseShell(html: string): NormaliseResult {
 	const placeholders = placeholderIds(html);
@@ -255,10 +223,9 @@ export function normaliseShell(html: string): NormaliseResult {
 }
 
 /**
- * Whether two normalised shells may be stored as ONE shared artifact.
+ * Whether two normalised shells may be stored as one shared artifact.
  *
- * Byte equality after normalisation is the whole authorisation. The slot VALUES are expected to
- * differ -- that is what a slot is - so only the shells are compared.
+ * Byte equality after normalisation is the whole authorisation; slot values are expected to differ.
  */
 export function normalisedShellsAgree(a: string, b: string): { agree: boolean; reason: string } {
 	const left = normaliseShell(a);
@@ -267,8 +234,7 @@ export function normalisedShellsAgree(a: string, b: string): { agree: boolean; r
 	if (!right.ok) return { agree: false, reason: `right: ${right.reason}` };
 	if (left.shell === right.shell) return { agree: true, reason: '' };
 
-	// the first divergent 80 characters, which is what makes a refusal actionable rather than a bare
-	// false; a whole-page diff is unreadable at 27 KB
+	// the first divergent 80 characters make a refusal actionable (a whole-page diff is 27 KB)
 	let at = 0;
 	while (at < left.shell.length && left.shell[at] === right.shell[at]) at++;
 	return {
@@ -277,7 +243,7 @@ export function normalisedShellsAgree(a: string, b: string): { agree: boolean; r
 	};
 }
 
-/** the per-session values a fragment render reports, which is the only place they can come from */
+/** the per-session values a fragment render reports, the only place they can come from */
 export type Identity = {
 	uid?: string;
 	permissionsHash?: string;
@@ -287,16 +253,10 @@ export type Identity = {
 /**
  * Reads the role set out of a PHP reply, sorted, or an empty list.
  *
- * **A SHELL RESPONSE CARRIED NO ROLES AND THAT STARVED THE COMPILED-PLAN TIER.** The edge plan
- * compiles from three agreeing samples of `x-cfw-roles`, and `roleSeen` in the front worker is
- * keyed by COOKIE rather than by path -- so one path answered `ASSEMBLED` was enough to make the
- * whole session read `skip:roles-unknown` and never compile a plan for anything. `ASSEMBLED` still
- * costs a Durable Object hop and a real fragment render; `PLAN` costs neither, so the cheaper tier
- * was being locked out by the more expensive one.
- *
- * The render already computes this, so carrying it out is free. Anything not a list of strings
- * yields nothing rather than a guess: a partial role set would compile a plan for the wrong
- * audience, which is strictly worse than compiling none.
+ * A shell response must carry its roles: the edge plan compiles from three agreeing samples of
+ * `x-cfw-roles` keyed by cookie, so one `ASSEMBLED` path without them made the whole session read
+ * `skip:roles-unknown` and never compile a plan. Anything not a list of strings yields nothing,
+ * since a partial role set would compile a plan for the wrong audience.
  */
 export function rolesOf(reply: Record<string, unknown> | null | undefined): string[] {
 	const raw = reply?.['roles'];
@@ -308,10 +268,8 @@ export function rolesOf(reply: Record<string, unknown> | null | undefined): stri
 /**
  * Puts one visitor's own values back into the slots.
  *
- * REFUSES ON A PERMISSIONS-HASH MISMATCH, which is the check that keeps a role-keyed shell inside
- * its role set. The hash is derived from the account's permissions, so a visitor whose hash differs
- * from the one harvested is entitled to different markup -- filling the slot anyway would hand them
- * a shell built for somebody else's permissions.
+ * Refuses on a permissions-hash mismatch, which keeps a role-keyed shell inside its role set: a
+ * visitor whose hash differs is entitled to different markup.
  */
 export function fillIdentity(
 	shell: string,
@@ -331,7 +289,7 @@ export function fillIdentity(
 			}
 			replacement = slot.value;
 		} else if (slot.kind === 'csrf') replacement = identity.csrf?.['user/logout'];
-		// a nonce is per-render and belongs to nobody, so the harvested one is as good as any
+		// a nonce is per-render and belongs to nobody, so the harvested one will do
 		else replacement = slot.value;
 
 		if (replacement === undefined) {

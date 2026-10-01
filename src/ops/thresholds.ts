@@ -1,29 +1,13 @@
-import { isPaid, type PlanEnv } from './plan.js';
-
 /**
- * Every meter a site can run out of, what it costs, and HOW IT FAILS.
+ * Every meter a site can run out of, what it costs, and how it fails (a bill or an outage).
  *
- * The failure mode is a first-class field. A limit that bills you is an invoice; a limit that
- * stops working is an outage. This project has both, and they were being read the same way -- so the
- * one that matters most got the least attention:
- *
- * **Cloudflare Images allows 5,000 unique transformations per MONTH on free, and it fails as a HARD
- * CAP rather than as a bill.** `CfwImageToolkit` defers every manipulation to a `/cdn-cgi/image/`
- * URL, so an image style IS a transformation. Ten styles over 2,000 images is 20,000 uniques -- 4x
- * over -- and nothing in the system says so. A real site stops transforming images partway through a
- * month, with no warning and no error anywhere a site owner would look. Thumbnails simply stop
- * appearing.
- *
- * It is also the only meter here that is MONTHLY. Every other one resets at midnight UTC, so a bad
- * day is a bad day; this one, once spent, is spent until the first of the month.
- *
- * A UNIQUE IS (source image x parameter set), which is what makes the multiplication the danger. Two
- * styles over the same image are two uniques. Re-requesting the same style over the same image is
- * not, so the meter tracks the site's CONTENT, not its traffic -- which is why traffic-based
- * intuition gets this wrong in both directions.
+ * Image transformations (5,000 uniques per month on free) are the only monthly meter and a hard cap
+ * with no warning; a unique is (source image x style), so it tracks content, not traffic.
+ * @module
  */
+import { isPaid, type PlanEnv } from './plan';
 
-/** how a meter behaves when it runs out; the field that was missing */
+/** how a meter behaves when it runs out */
 export type FailureMode =
 	/** stops working until the period resets; no bill, no error a site owner sees */
 	| 'hard-cap'
@@ -35,6 +19,7 @@ export type FailureMode =
 /** the window a meter resets on */
 export type MeterPeriod = 'day' | 'month' | 'invocation';
 
+/** one meter: its allowances, how it fails and what spends it */
 export type Threshold = {
 	/** stable id, safe to key a UI row on */
 	id: string;
@@ -49,22 +34,11 @@ export type Threshold = {
 	spentBy: string;
 	/** why it matters, or what it broke */
 	note: string;
-	/**
-	 * Set when this site STRUCTURALLY cannot count the meter, with the reason.
-	 *
-	 * Distinct from "not wired yet". A meter nobody has got to invites someone to wire it; a meter
-	 * that cannot be counted here invites them to produce a confident wrong number instead of
-	 * finding out why. Naming the reason is what stops that.
-	 */
+	/** the reason, when this site structurally cannot count the meter (not "not wired yet") */
 	unmeasurable?: string;
 };
 
-/**
- * The meters, in the order a site owner should read them.
- *
- * Ordered by how badly the failure surprises you, not by size: the monthly hard cap first, then the
- * two daily ceilings the whole architecture is scored against, then the rest.
- */
+/** the meters, ordered by how badly the failure surprises (monthly cap first, then daily) */
 export const THRESHOLDS: readonly Threshold[] = [
 	{
 		id: 'image-transforms',
@@ -132,7 +106,7 @@ export const THRESHOLDS: readonly Threshold[] = [
 ] as const;
 
 /** the allowance for a plan, or null when that plan does not meter it */
-export function limitFor(threshold: Threshold, env?: PlanEnv | null): number | null {
+export function limitFor(threshold: Threshold, env?: PlanEnv): number | null {
 	return isPaid(env) ? threshold.paid : threshold.free;
 }
 
@@ -144,8 +118,10 @@ export function hardCaps(): readonly Threshold[] {
 /** how close to a limit counts as worth saying out loud */
 export const WARN_FRACTION = 0.8;
 
+/** where a reading sits against its limit; `unknown` means nothing measures it */
 export type MeterStatus = 'ok' | 'warn' | 'over' | 'unmetered' | 'unknown';
 
+/** one scored meter, with a message ready to show */
 export type MeterReading = {
 	threshold: Threshold;
 	limit: number | null;
@@ -158,13 +134,9 @@ export type MeterReading = {
 /**
  * Scores one meter against its limit.
  *
- * @param used null when nothing measures it yet, which is NOT the same as zero
+ * @param used null when nothing measures it yet, which is not the same as zero
  */
-export function readMeter(
-	threshold: Threshold,
-	used: number | null,
-	env?: PlanEnv | null
-): MeterReading {
+export function readMeter(threshold: Threshold, used: number | null, env?: PlanEnv): MeterReading {
 	const limit = limitFor(threshold, env);
 	if (limit === null) {
 		return {
@@ -177,12 +149,7 @@ export function readMeter(
 		};
 	}
 	if (used === null) {
-		// "nothing counts this yet" and "this is at zero" lead to different actions, and collapsing
-		// them is how an unmeasured meter reads as a healthy one.
-		//
-		// A THIRD case matters as much: a meter this site CANNOT count, however much work is done.
-		// Reporting that as "not yet" invites someone to go and wire it, and they will produce a
-		// confident wrong number instead of finding out it is structural.
+		// unmeasured is not zero (it would read as healthy); `unmeasurable` marks a structural gap
 		return {
 			threshold,
 			limit,
@@ -212,6 +179,7 @@ export function readMeter(
 
 // #region the image-transform projection, which is the one a site can compute BEFORE it bites
 
+/** the inputs to an image-transform projection */
 export type ImagePlan = {
 	/** distinct source images the site will ask Cloudflare to transform */
 	images: number;
@@ -221,6 +189,7 @@ export type ImagePlan = {
 	alreadyUsed?: number;
 };
 
+/** the projected monthly uniques against the cap, with ways to fit */
 export type ImageProjection = {
 	uniques: number;
 	limit: number | null;
@@ -237,14 +206,8 @@ export type ImageProjection = {
 	remedies: string[];
 };
 
-/**
- * Projects a site's image-style configuration against the monthly cap, BEFORE it is reached.
- *
- * This is what the module is for: the meter is a function of the site's CONTENT and
- * CONFIGURATION, both of which are known in advance, so the answer does not have to wait for the
- * failure. Nothing else in the system multiplies styles by images and compares.
- */
-export function projectImageTransforms(plan: ImagePlan, env?: PlanEnv | null): ImageProjection {
+/** projects images x styles against the monthly cap before the cap is reached */
+export function projectImageTransforms(plan: ImagePlan, env?: PlanEnv): ImageProjection {
 	const threshold = THRESHOLDS.find((t) => t.id === 'image-transforms') as Threshold;
 	const limit = limitFor(threshold, env);
 	const images = Math.max(0, Math.floor(plan.images));
@@ -318,7 +281,7 @@ export type ThresholdEnv = PlanEnv;
 /** a full report, for a UI or a diagnostic route */
 export function thresholdReport(
 	used: Partial<Record<string, number>> = {},
-	env?: ThresholdEnv | null
+	env?: ThresholdEnv
 ): { plan: 'free' | 'paid'; readings: MeterReading[]; hardCapCount: number } {
 	return {
 		plan: isPaid(env) ? 'paid' : 'free',

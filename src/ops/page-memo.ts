@@ -1,35 +1,12 @@
 /**
- * Anonymous pages held in the isolate that is already answering the request.
+ * Anonymous pages held in the isolate that is already answering the request, so a hit needs no
+ * I/O (a `caches.default` read is nearly all of an `anon-cached` request's `x-worker-ms`).
  *
- * ## Why this tier exists
- *
- * `anon-cached` is 0.82 of the traffic weight and is answered by `caches.default`, which is the
- * cheapest tier that leaves the isolate and is still an I/O. Measured on a deployed free worker,
- * 2026-09-10: the whole request costs **0.70 ms of `cpuTime` at p50** and **7.9-14.0 ms of
- * `x-worker-ms`**, so an order of magnitude of the profile that decides the verdict is spent waiting
- * for a read whose answer this isolate has usually just seen. Against a localhost nginx serving the
- * same page in 2-3 ms, that read is the entire gap.
- *
- * The authenticated side already has this: {@link lookupEdgePlan} answers from isolate memory and
- * reports `mem`. The anonymous side had no equivalent and is 27x the weight.
- *
- * ## Why serving one is safe
- *
- * The key is `pageKey()`, unchanged -- origin, site, GENERATION and path. So this adds no staleness
- * that the tier below it does not already have: a bump moves the generation, a new generation is a
- * new key, and an isolate learns the generation from `genMemo` within `GEN_BUCKET_MS`. An entry for
- * a superseded generation is unreachable rather than stale, exactly as it is in `caches.default`.
- *
- * What it must never hold is a personalised page, and it cannot: the only caller is the branch
- * guarded by `edgeWanted`, which is false for a session-carrying request, and the value stored is a
- * body `caches.default` had already accepted -- so `putPage()`'s refusals have run.
- *
- * ## What bounds it
- *
- * Bytes and entries, with a clear rather than an LRU for the reason `genMemo` and the plan store use
- * one: the working set is bounded by the traffic one isolate sees, and eviction accounting costs
- * more than a refill. The TTL mirrors the `max-age` the edge entry carries, so nothing outlives the
- * copy it was taken from.
+ * Keyed by `pageKey()` (origin, site, generation, path), so a bump makes an entry unreachable
+ * rather than stale. It never holds a personalised page: the only caller is guarded by
+ * `edgeWanted`, and the body was already accepted by `caches.default`. Bounded by bytes and entries
+ * with a clear, not an LRU; the TTL mirrors the edge entry's `max-age`.
+ * @module
  */
 
 /** how long an entry serves, in ms; the `max-age` the edge tier stores a page under */
@@ -41,25 +18,19 @@ export const PAGE_MEMO_ENTRIES = 256;
 /** and the ceiling on what they hold, against a 128 MB isolate */
 export const PAGE_MEMO_BYTES = 8_388_608;
 
+/** a stored page */
 export type MemoPage = {
 	body: Uint8Array;
 	status: number;
 	contentType: string;
-	/** every `x-cfw-*` header the stored response carried, so a measurement reads the same fields */
+	/** every `x-cfw-*` header the stored response carried (so a measurement reads the same) */
 	headers: [string, string][];
 };
 
 /**
- * What a HIT hands back: the page plus the response headers already assembled.
- *
- * THE HIT PATH DID THE ASSEMBLY, and it is the path that runs on every request. It spread
- * `Object.fromEntries(held.headers)` into a fresh literal and then set five more keys, so a tier
- * whose whole purpose is "no I/O at all" was materialising an array into an object and copying it
- * on every hit. Built once here, at store time, which happens once per isolate per page.
- *
- * A `Headers` instance rather than a plain object because `new Response` accepts it directly and
- * does not re-walk a literal, and because the caller must not be able to mutate what the memo holds
- * for the next request -- it is handed a clone.
+ * What a hit hands back: the page plus response headers assembled once at store time (the hit
+ * path runs on every request). A `Headers` instance that callers receive as a clone, so they cannot
+ * mutate what the next request sees.
  */
 type Entry = MemoPage & { at: number; ready: Headers };
 
@@ -72,41 +43,39 @@ export function resetPageMemo(): void {
 	heldBytes = 0;
 }
 
+/** how many entries and bytes this isolate holds */
 export function pageMemoStats(): { entries: number; bytes: number } {
 	return { entries: store.size, bytes: heldBytes };
 }
 
-/** the page under this key, or null when there is none or it has aged out */
-export function lookupPageMemo(key: string, nowMs: number = Date.now()): MemoPage | null {
+/** the page under this key, or undefined when there is none or it has aged out */
+export function lookupPageMemo(key: string, nowMs: number = Date.now()): MemoPage | undefined {
 	const entry = store.get(key);
-	if (!entry) return null;
+	if (!entry) return undefined;
 	if (nowMs - entry.at >= PAGE_MEMO_TTL_MS) {
 		heldBytes -= entry.body.byteLength;
 		store.delete(key);
-		return null;
+		return undefined;
 	}
 	return entry;
 }
 
 /**
- * The response headers for a hit, ready to use, or null when there is no live entry.
+ * The response headers for a hit, ready to use, or undefined when there is no live entry.
  *
- * Separate from {@link lookupPageMemo} so the TTL and the eviction stay in one place and this
- * cannot answer for an entry that one would have dropped.
+ * Separate from {@link lookupPageMemo} so it cannot answer for an entry that one would drop.
  */
-export function pageMemoHeaders(key: string, nowMs: number = Date.now()): Headers | null {
+export function pageMemoHeaders(key: string, nowMs: number = Date.now()): Headers | undefined {
 	const entry = store.get(key);
-	if (!entry || nowMs - entry.at >= PAGE_MEMO_TTL_MS) return null;
-	// a CLONE: the caller sets `x-worker-ms` on it, and the stored copy must not carry one request's
-	// timing into the next request's response
+	if (!entry || nowMs - entry.at >= PAGE_MEMO_TTL_MS) return undefined;
+	// a clone, so one request's `x-worker-ms` never reaches the next response
 	return new Headers(entry.ready);
 }
 
 /**
  * Holds a page for this isolate.
  *
- * A body larger than the whole budget is REFUSED rather than stored and immediately cleared, which
- * would empty the memo for every other page on the site.
+ * A body larger than the whole budget is refused (storing it would clear every other page).
  */
 export function storePageMemo(key: string, page: MemoPage, nowMs: number = Date.now()): void {
 	if (page.body.byteLength > PAGE_MEMO_BYTES) return;

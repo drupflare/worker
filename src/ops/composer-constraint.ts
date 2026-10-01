@@ -1,10 +1,10 @@
 /**
- * The subset of Composer version constraints this runtime can decide, and an explicit refusal for the
- * rest.
+ * The subset of Composer version constraints this runtime can decide, and an explicit refusal for
+ * the rest.
  *
- * Supported: exact, `^`, `~`, `>=` `>` `<=` `<` `!=` `=`, wildcards (`1.2.*`, `*`), AND (space or
- * comma), OR (`||`). Anything else, including `as` aliases, `dev-` branches and inline stability flags,
- * is `unknown`.
+ * Supported: exact, `^`, `~`, `>=` `>` `<=` `<` `!=` `=`, wildcards, AND (space or comma), OR
+ * (`||`). Anything else (`as` aliases, `dev-` branches, inline stability flags) is `unknown`.
+ * @module
  */
 
 /** three-valued: `unknown` must not collapse into either boolean */
@@ -19,26 +19,24 @@ export type ParsedVersion = {
 /**
  * Parses a Composer version into numeric segments plus a trailing stability string.
  *
- * `v` prefixes are stripped because Composer treats `v1.2.3` and `1.2.3` as the same version, and a
- * lock file mixes both. A `dev-` branch has no numeric ordering at all, so it parses to no parts and
- * every comparison against it is `unknown` rather than false.
+ * `v` prefixes are stripped (a lock file mixes both spellings). A `dev-` branch has no ordering, so
+ * it parses to nothing and comparisons against it are `unknown`, not false.
  */
-export function parseVersion(raw: string): ParsedVersion | null {
+export function parseVersion(raw: string): ParsedVersion | undefined {
 	const trimmed = String(raw ?? '').trim();
-	if (trimmed === '') return null;
-	if (trimmed.startsWith('dev-') || trimmed.endsWith('-dev')) return null;
+	if (trimmed === '') return undefined;
+	if (trimmed.startsWith('dev-') || trimmed.endsWith('-dev')) return undefined;
 	const body = trimmed.replace(/^v/i, '');
 	const match = /^(\d+(?:\.\d+)*)(.*)$/.exec(body);
-	if (!match) return null;
-	// a suffix containing whitespace means two tokens were glued together, not a stability flag:
-	// `1.0 dev-weird` used to parse as 1.0 with stability " dev-weird" and compare as satisfied
-	if (/\s/.test(match[2] ?? '')) return null;
+	if (!match) return undefined;
+	// whitespace in the suffix means two glued tokens, not a stability flag (`1.0 dev-weird`)
+	if (/\s/.test(match[2] ?? '')) return undefined;
 	const parts = (match[1] as string).split('.').map((n) => Number(n));
-	if (parts.some((n) => !Number.isFinite(n))) return null;
+	if (parts.some((n) => !Number.isFinite(n))) return undefined;
 	return { parts, stability: (match[2] ?? '').toLowerCase() };
 }
 
-/** rank of a stability suffix; a release outranks every pre-release, which is Composer's order */
+/** rank of a stability suffix (a release outranks every pre-release, Composer's order) */
 function stabilityRank(stability: string): number {
 	if (stability === '') return 4;
 	if (stability.includes('rc')) return 3;
@@ -64,7 +62,7 @@ export function compareVersions(a: ParsedVersion, b: ParsedVersion): number {
 	return 0;
 }
 
-/** the exclusive upper bound `^` implies: bump the left-most NON-ZERO segment */
+/** the exclusive upper bound `^` implies: bump the left-most non-zero segment */
 function caretCeiling(v: ParsedVersion): number[] {
 	const parts = [...v.parts];
 	const at = parts.findIndex((n) => n > 0);
@@ -74,12 +72,12 @@ function caretCeiling(v: ParsedVersion): number[] {
 		parts[last] = (parts[last] ?? 0) + 1;
 		return parts;
 	}
-	// this is where npm's semver and Composer agree for x>=1 and diverge for 0.x; Composer pins the
-	// left-most non-zero digit, so ^0.3 allows <0.4 and NOT <1.0
+	// Composer pins the left-most non-zero digit (npm agrees for x>=1, diverges for 0.x), so ^0.3
+	// allows <0.4 and not <1.0
 	return parts.slice(0, at + 1).map((n, i) => (i === at ? n + 1 : n));
 }
 
-/** the exclusive upper bound `~` implies: bump the LAST stated segment, dropping one level */
+/** the exclusive upper bound `~` implies: bump the last stated segment, dropping one level */
 function tildeCeiling(v: ParsedVersion): number[] {
 	const parts = [...v.parts];
 	if (parts.length === 1) {
@@ -144,9 +142,8 @@ function satisfiesClause(version: ParsedVersion, clause: string): Satisfaction {
 /**
  * Whether `version` satisfies a Composer `constraint`.
  *
- * OR beats AND in precedence, matching Composer. An `unknown` anywhere in a satisfied AND group makes
- * the whole group `unknown` rather than `yes`, because the unjudged clause could have excluded it -- the
- * conservative direction is the one that asks a human.
+ * OR beats AND in precedence, matching Composer. An `unknown` clause makes its AND group
+ * `unknown` (it could have excluded the version; the conservative answer asks a human).
  */
 export function satisfies(rawVersion: string, constraint: string): Satisfaction {
 	const version = parseVersion(rawVersion);
@@ -156,16 +153,14 @@ export function satisfies(rawVersion: string, constraint: string): Satisfaction 
 
 	let sawUnknown = false;
 	for (const group of text.split(/\|\|?/)) {
-		// PER GROUP, not over the whole string: an `as` alias in one OR branch must not stop the
-		// other branch from answering. A global test made `^11.3 || dev-main as 9` unjudgeable.
+		// per group: an `as` alias in one OR branch must not stop the other from answering
 		if (/\bas\b|@(dev|alpha|beta|rc|stable)/i.test(group)) {
 			sawUnknown = true;
 			continue;
 		}
 		let groupResult: Satisfaction = 'yes';
-		// AND separators are commas and whitespace, but an operator may be separated from its
-		// version by a space -- `>= 1.0 < 2.0` is two clauses, not four tokens. So split on every
-		// separator and then re-join a bare operator with whatever follows it.
+		// split on every separator, then re-join a bare operator with what follows it
+		// (`>= 1.0 < 2.0` is two clauses)
 		const tokens = group
 			.split(/[,\s]+/)
 			.map((t) => t.trim())

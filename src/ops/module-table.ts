@@ -1,102 +1,55 @@
-import { KNOWN_MODULE_CAPABILITIES, SHIPPED_CAPABILITIES, tierFor } from './catalog.js';
+/**
+ * The module support table, emitted from the classifier rather than hand-written.
+ *
+ * `tests/node/module-table.spec.ts` compares these rows against README.md's three lists in both
+ * directions. Three states, and only `verified` is a support claim: nothing reaches it except a
+ * gated enable-and-assert run, and no path here promotes a module on analysis alone.
+ * @module
+ */
+import { KNOWN_MODULE_CAPABILITIES, SHIPPED_CAPABILITIES, tierFor } from './catalog';
 import {
 	GENERATED_CAPABILITY_EVIDENCE,
 	GENERATED_SHIPPING_CONTRIB,
 	GENERATED_VERIFIED
-} from './generated/modules.js';
-import { MODULE_TIER_NOTES } from './module-tiers.js';
+} from './generated/modules';
+import { MODULE_TIER_NOTES } from './module-tiers';
 
 /**
- * The module support table, EMITTED from the classifier rather than hand-written.
+ * A module's support state.
  *
- * A hand-maintained README table goes stale the first time a tier moves, and it goes stale silently
- * because nothing compares it to anything. `tests/node/module-table.spec.ts` compares these rows
- * against README.md's three lists in both directions -- the same discipline as the driver-pack
- * byte-for-byte check.
- *
- * **THAT SENTENCE WAS FALSE FOR AS LONG AS IT HAD BEEN WRITTEN**, which is the reason it is worth
- * pointing at. It claimed the spec "fails when README.md disagrees"; the spec compared this map
- * against the SPEC FILES, so a `verified` row needed a run behind it and the published table needed
- * nothing. Three rows were edited by hand on the strength of the guard described here. The
- * comparison exists now.
- *
- * **THREE STATES, AND ONLY ONE OF THEM IS A SUPPORT CLAIM.**
- *
- *   - `verified`  the gate enabled it against a real site and asserted it FUNCTIONS. Not that the
- *                 installer returned ok; that a thing the module does actually happened.
- *   - `untested`  nobody has enabled it here. The capability analysis says it should work, which is
- *                 an inference about the runtime and not an observation about the module.
- *   - `blocked`   cannot work, with the mechanism and what would lift it.
- *
- * **`supported` WAS A STATE HERE AND IT WAS DISSOLVED** (2026-08-18, Gregory's call). It meant
- * "the capability this module needs was measured WITHOUT the module", which is a reasoned claim and
- * reads to anybody else as a promise. Renaming it `untested` is the whole fix: the row still carries
- * the same evidence, and it no longer claims something no test has shown.
- *
- * The rule that replaces it: **nothing reaches `verified` except through a gated enable-and-assert
- * run.** There is no path in this file that promotes a module on analysis alone, and adding one
- * would put the old problem back under a new name.
+ * - `verified`: the gate enabled it on a real site and asserted something it does happened
+ * - `untested`: never enabled here; the capability analysis is an inference, not an observation
+ * - `blocked`: cannot work, with the mechanism and what would lift it
  */
 export type SupportState = 'verified' | 'untested' | 'blocked';
 
-/**
- * The same three, as a value, so a test can pin the VOCABULARY rather than today's census.
- *
- * The distinction earned its own export: the spec used to assert the exact set of states in use,
- * which passed while every row happened to be `verified` or `blocked` and then failed the moment a
- * module was honestly reclassified to `untested`.
- */
+/** the same three as a value, so a test can pin the vocabulary rather than today's census */
 export const MODULE_STATES: readonly SupportState[] = ['verified', 'untested', 'blocked'];
 
 /**
- * The contrib modules the SHIPPING pack carries, which is four and has always been four.
- *
- * `scripts/pack-drupal.ts` puts `modules/contrib` behind `PACK_CONTRIB=1` and says why in its own
- * comment: the other modules under `drupal-src/modules/contrib` are a QA fixture rather than
- * product. So a `verified` row outside this list was established against a fixture build, and
- * re-running the gate against the shipping artifact SKIPS it rather than re-establishing it.
- *
- * Measured from `assets/drupal-pf/core.pf.json` rather than believed --
- * `tests/node/module-table.spec.ts` reads the pack index and fails if this list and the artifact
- * disagree in either direction.
+ * The contrib modules the shipping pack carries; the rest of `modules/contrib` is a QA fixture
+ * (`PACK_CONTRIB=1` in `scripts/pack-drupal.ts`).
+ * A `verified` row outside this list was established against a fixture build. The spec reads
+ * `assets/drupal-pf/core.pf.json` and fails if this list and the artifact disagree.
  */
 export const SHIPPING_PACK_CONTRIB: readonly string[] = GENERATED_SHIPPING_CONTRIB;
 
-/**
- * The clause every fixture-verified row carries, so the reader is not left to infer it.
- *
- * One string rather than twelve copies: the distinction is a property of the pack, so a row gains
- * or loses it by moving in or out of {@link SHIPPING_PACK_CONTRIB}, never by someone editing prose.
- */
+/** the clause every fixture-verified row carries; a row gains it by leaving the shipping pack */
 export const FIXTURE_CLAUSE =
 	'. Required as a dev dependency and verified against the test build rather than shipped, so a ' +
 	'site does not carry it unless it asks for it';
 
 /**
- * Modules whose BEHAVIOUR the gate has asserted, with what was asserted.
- *
- * Under `wrangler dev` an enable killed the host process, so no follow-up request could be made and
- * nothing could be verified. Re-run under `@cloudflare/vitest-pool-workers` that limit does not
- * exist: an enable survives, a follow-up request answers, and TWO enables in one object survive --
- * the exact case that killed wrangler dev hardest. The failure was miniflare's proxy controller, a
- * component that only exists locally, and suspecting the instrument first was right.
- *
- * What that left was a configuration gap rather than a runtime one, and **the gap was closed by
- * supplying the configuration rather than by waiting for it.** This block used to record `pathauto`
- * as inert (no `pathauto.pattern.*` ships, so a node save produces no alias) and `token` as
- * unverifiable for the same reason. A pattern is a config entity a SITE OWNER creates, so the test
- * creates one; both are now verified against an alias the run generated.
- *
- * The distinction worth keeping: absent CONFIGURATION is a fixture gap a test can fill, absent CODE
- * is not. Twelve rows here are in the second class -- see {@link SHIPPING_PACK_CONTRIB}.
+ * Modules whose behaviour the gate has asserted, with what was asserted.
+ * Absent configuration is a fixture gap a test can fill (a `pathauto` pattern is a config entity
+ * the test creates); absent code is not.
  */
 export const VERIFIED_BEHAVIOURS: Readonly<Record<string, string>> = GENERATED_VERIFIED;
 
-/**
- * Modules whose CAPABILITY the gate exercised end to end, while the module itself is absent.
- */
+/** modules whose capability the gate exercised end to end while the module itself is absent */
 export const CAPABILITY_EVIDENCE: Readonly<Record<string, string>> = GENERATED_CAPABILITY_EVIDENCE;
 
+/** one row of the support table */
 export interface TableRow {
 	/** composer name */
 	name: string;
@@ -108,11 +61,8 @@ export interface TableRow {
 }
 
 /**
- * Words a machine name spells lowercase and a reader does not.
- *
- * Word-by-word rather than whole-name, so `jquery_ui_datepicker` and `jquery_ui` both read right
- * from one entry each. A machine name is snake_case by Drupal convention, and capitalising each
- * part gave `Uswds Base`, `Xmlsitemap` and `Jquery Ui` -- correct by the rule and wrong on the page.
+ * Words a machine name spells lowercase and a reader does not, matched per snake_case part so one
+ * entry fixes `jquery_ui` and `jquery_ui_datepicker` alike (plain capitalising gives `Jquery Ui`).
  */
 const WORD_CASING: Readonly<Record<string, string>> = {
 	api: 'API',
@@ -144,7 +94,7 @@ const WORD_CASING: Readonly<Record<string, string>> = {
 	xmlsitemap: 'XMLSitemap'
 };
 
-/** the label a reader recognises, derived rather than stored twice */
+/** the label a reader recognises, derived from the composer name */
 export function labelFor(name: string): string {
 	const machine = name.split('/')[1] ?? name;
 	return machine
@@ -155,10 +105,8 @@ export function labelFor(name: string): string {
 
 /**
  * Every classified module as a row.
- *
- * `blocked` comes from the classifier, never from this file, so a capability change moves the table
- * without anyone editing it. `verified` is the only state that needs evidence recorded by hand,
- * because only a test run can establish it.
+ * `blocked` comes from the classifier, so a capability change moves the table; only `verified`
+ * needs hand-recorded evidence.
  */
 export function moduleTable(
 	capabilities = SHIPPED_CAPABILITIES,
@@ -178,8 +126,7 @@ export function moduleTable(
 
 		if (name in verified) {
 			state = 'verified';
-			// the fixture clause is appended rather than written into each entry, so a row gains or
-			// loses it by moving in or out of the shipping pack
+			// the fixture clause is appended, not stored per entry
 			evidence =
 				(verified[name] as string) +
 				(SHIPPING_PACK_CONTRIB.includes(name) ? '' : FIXTURE_CLAUSE);
@@ -202,7 +149,7 @@ export function moduleTable(
 	return rows;
 }
 
-/** `blocked` rows carry the lift, because a refusal without a route out is a shrug */
-export function liftFor(name: string): string | null {
-	return MODULE_TIER_NOTES[name]?.lift ?? null;
+/** what would lift a `blocked` row, if recorded */
+export function liftFor(name: string): string | undefined {
+	return MODULE_TIER_NOTES[name]?.lift;
 }

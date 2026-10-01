@@ -1,3 +1,9 @@
+/**
+ * Reconciles a provisioned site with today's pack (which delivers only at provisioning). A
+ * `verdict` asks about the end state before and after the apply; config goes through Drupal
+ * (`php()`), never SQL, as `cache_config` keeps a copy. Applied steps drop the heap image.
+ * @module
+ */
 import {
 	reconcileClockPhp,
 	reconcileConfigPhp,
@@ -6,54 +12,20 @@ import {
 	reconcileRouterPhp,
 	reconcileToolkitPhp,
 	reconcileUninstallPhp
-} from '../drupal/reconcile-php.js';
-import { DRIVER_DIGEST, DRIVER_ROUTE_PERMISSIONS, DRIVER_ROUTES } from './driver-digest.js';
-import { UNREAD_NODE_INDEXES } from './node-indexes.js';
-import { base64Bytes, packedContainerFor, type PackedContainer } from './packed-container.js';
+} from '../drupal/reconcile-php';
+import { firstRow } from '../util/sql';
+import { DRIVER_DIGEST, DRIVER_ROUTE_PERMISSIONS, DRIVER_ROUTES } from './driver-digest';
+import { UNREAD_NODE_INDEXES } from './node-indexes';
+import { base64Bytes, packedContainerFor, type PackedContainer } from './packed-container';
 
 /**
- * The `cfw_meta` key recording which driver pack a site's compiled container was built against.
- *
- * Named here rather than written as a literal at each use, because provisioning stamps it too, with
- * the digest the packed container was BAKED with (`container-digest.ts`). A fresh site whose pack
- * was baked against the shipping driver is current and must not be made to prove it by throwing
- * the row away; one baked earlier reads as owed, which is what makes a newer hook visible.
+ * The `cfw_meta` key naming the driver pack a site's container was built against; provisioning
+ * stamps the digest the container was baked with, so a stale bake reads as owed.
  */
 export const DRIVER_DIGEST_KEY = 'driver_digest';
 
 /** set by the digest step on an update, and read once by its `php()` to warm discovery */
 export const DISCOVERY_WARM_KEY = 'discovery_warm_owed';
-
-/**
- * Reconciling an ALREADY-PROVISIONED site with the pack that ships today.
- *
- * The pack is the delivery mechanism and it delivers only at provisioning. Every fix that lands
- * inside it reaches new sites and no existing one, so a host that cannot deliver an update is worse
- * than a VPS at the one thing this project's pitch names. This is the delivery path for the fixes
- * the pack cannot carry backwards.
- *
- * ## Each step is an OBSERVATION, not a script
- *
- * A step's {@link ReconcileStep.verdict} is a cheap SQL question about the site's END STATE, and it
- * is asked twice: once to decide whether to run, and again afterwards to decide whether running
- * worked. So "the reconciliation ran" is never the success condition; two of this project's
- * Outstanding Bugs closed on exactly that assertion and neither site converged. A site provisioned
- * after a fix answers `satisfied` the first time and is marked done without doing any work.
- *
- * ## A config write goes through Drupal, and that is a correctness requirement
- *
- * `system.performance:cache.page.max_age` was fixed correctly in the `config` table and stayed inert
- * because `cache_config` held its own serialized copy of the same object, and Drupal reads the bin
- * first. Any step that changes configuration or state therefore runs {@link ReconcileStep.php}
- * rather than SQL: `ConfigFactory::getEditable()->save()` already names every cached copy it
- * invalidates, and a host re-implementing that list would be re-deriving it wrongly.
- *
- * ## Every applied step drops the heap image
- *
- * Unconditionally, rather than per step. A restored kernel predates whatever the step just changed,
- * which is the shape of BUG 1, and the alternative is a flag each new step's author has to get
- * right. One re-image is cheaper than that class of defect.
- */
 
 /** the reads and writes this module needs, narrowed so it stays drivable over a fake */
 export interface ReconcileSql {
@@ -62,32 +34,27 @@ export interface ReconcileSql {
 
 /** what a step may ask the host for beyond plain SQL */
 export interface ReconcileHost {
-	/** the ms timestamp the site was claimed, or null when it never has been */
-	claimedAtMs(): number | null;
+	/** the ms timestamp the site was claimed, or undefined when it never has been */
+	claimedAtMs(): number | undefined;
 	/** reads a `cfw_meta` value */
 	meta(key: string): string | null;
 	/**
-	 * writes a `cfw_meta` value.
-	 *
-	 * A step whose end state IS a recorded marker has to write it inside its own apply, because the
-	 * verdict runs immediately afterwards and would otherwise read the old value and call the step
-	 * failed on the run that succeeded.
+	 * Writes a `cfw_meta` value; a marker step writes it inside its apply, or the verdict that
+	 * follows reads the old value and files a successful run as failed.
 	 */
 	setMeta(key: string, value: string): void;
 	/**
-	 * the site's canonical `scheme://host[:port]`.
-	 *
-	 * A PHP step boots a kernel, and `Request::create()` builds its own server bag rather than reading
-	 * `$_SERVER`, so the URI it is handed is the only thing that sets the host. Booted against
-	 * localhost, anything Drupal builds an absolute URL for during the write points at the wrong site.
+	 * The site's canonical `scheme://host[:port]`; `Request::create()` ignores `$_SERVER`, so this
+	 * URI alone sets the host Drupal builds absolute URLs against in a PHP step.
 	 */
 	origin(): string;
 	/** the pack's compiled container, when the host has loaded it */
-	packedContainer?(): PackedContainer | null;
+	packedContainer?(): PackedContainer | undefined;
 	/** {@link extensionFingerprint} of the site's own `core.extension` */
 	modules?(): string;
 }
 
+/** a step's answer to whether the site's end state matches */
 export type StepVerdict =
 	/** the site's end state already matches; nothing to do */
 	| { state: 'satisfied' }
@@ -96,14 +63,11 @@ export type StepVerdict =
 	/** cannot be decided yet, and waiting is correct rather than a failure */
 	| { state: 'deferred'; detail: string };
 
+/** one declared reconciliation: an end-state observation plus the fix that reaches it */
 export interface ReconcileStep {
 	/**
-	 * Whether this step's answer can change after it has once been satisfied.
-	 *
-	 * Most steps fix a defect the pack could not carry backwards: once applied they are done, and
-	 * re-asking costs a query per firing forever. A step keyed on something that MOVES -- the driver
-	 * digest, the routes a pack declares -- is the opposite, and retiring one silently strands every
-	 * site that reconciled against an older pack.
+	 * Whether the answer can change after the step was satisfied (the driver digest, the pack's
+	 * routes). Retiring such a step strands every site reconciled against an older pack.
 	 */
 	recurring?: boolean;
 	/** stable forever; it is what a site records as done */
@@ -115,77 +79,66 @@ export interface ReconcileStep {
 	verdict(sql: ReconcileSql, host: ReconcileHost): StepVerdict;
 	/** a SQL-only fix; use only where no cached copy of the value can exist */
 	sql?(sql: ReconcileSql, host: ReconcileHost): void;
-	/** a PHP fragment printing a JSON object, for anything Drupal owns a cache of; null boots nothing */
-	php?(host: ReconcileHost): string | null;
+	/** a PHP fragment printing a JSON object, for anything Drupal caches; undefined boots none */
+	php?(host: ReconcileHost): string | undefined;
 	/**
-	 * Whether the interpreter must be replaced once the step lands.
-	 *
-	 * Only a step that changes what a kernel boots from needs it. A step that ran through Drupal's own
-	 * writers left the resident interpreter consistent with what it wrote, and dropping it anyway put a
-	 * second interpreter beside an uncollected one on the next boot, which resets the object.
+	 * Whether the interpreter must be replaced once the step lands; only a step that changes what a
+	 * kernel boots from needs it (dropping one beside an uncollected heap resets the object).
 	 */
 	freshKernel?: boolean;
 }
 
 /**
- * A row of `watchdog` that predates the site itself came out of the bake.
- *
- * The comparison is against the CLAIM rather than a fixed date, so the step cannot delete a real log
- * entry: every row this site produced is newer than the moment it became a site. An unclaimed site
- * has no such moment, which is why the step defers rather than guessing.
+ * Counts `watchdog` rows that predate the claim, which came out of the bake. Compared against the
+ * claim, not a date, so no real entry is deleted; an unclaimed site defers.
  */
 const BAKE_WATCHDOG = `SELECT COUNT(*) AS n FROM watchdog WHERE timestamp < ?`;
 
-function count(sql: ReconcileSql, query: string, ...bindings: unknown[]): number | null {
+/** the first column of the first row as a number, or undefined when the table is missing */
+function count(sql: ReconcileSql, query: string, ...bindings: unknown[]): number | undefined {
 	try {
-		const row = sql.exec(query, ...bindings).toArray()[0];
+		const row = firstRow(sql.exec(query, ...bindings));
 		return row === undefined ? 0 : Number(Object.values(row)[0] ?? 0);
 	} catch {
 		// a table the pack does not carry is not a failure; the step is simply not owed
-		return null;
+		return undefined;
 	}
 }
 
-/** a `serialize()`d integer, and null for anything else including a numeric string */
-export function serialisedInt(value: string): number | null {
+/** a `serialize()`d integer, and undefined for anything else including a numeric string */
+export function serialisedInt(value: string): number | undefined {
 	const m = /^i:(-?\d+);$/.exec(value.trim());
-	return m ? Number(m[1]) : null;
+	return m ? Number(m[1]) : undefined;
 }
 
-/**
- * A column value as text.
- *
- * `config.data` is declared BLOB, so the platform hands it back as bytes; a reader that accepted only
- * `string` answered null on every real pack and the step deferred forever while looking correct on a
- * fixture that had written the column as TEXT.
- */
-function columnText(value: unknown): string | null {
+/** a column value as text; `config.data` is a BLOB, so the platform returns bytes, not a string */
+function columnText(value: unknown): string | undefined {
 	if (typeof value === 'string') return value;
 	if (value instanceof Uint8Array) return new TextDecoder().decode(value);
 	if (value instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(value));
-	return null;
+	return undefined;
 }
 
 /** unserialises just enough of a PHP `a:N:{...}` blob to read one integer at a known path */
-function phpInt(blob: string, path: readonly string[]): number | null {
+function phpInt(blob: string, path: readonly string[]): number | undefined {
 	let rest = blob;
 	for (const key of path) {
 		const at = rest.indexOf(`s:${key.length}:"${key}";`);
-		if (at < 0) return null;
+		if (at < 0) return undefined;
 		rest = rest.slice(at + `s:${key.length}:"${key}";`.length);
 	}
 	const m = /^i:(-?\d+);/.exec(rest);
-	return m ? Number(m[1]) : null;
+	return m ? Number(m[1]) : undefined;
 }
 
 /** the two copies of one config object: the row Drupal writes and the bin it reads first */
-export function configMaxAge(sql: ReconcileSql): { config: number | null; cached: number | null } {
-	const read = (query: string, name: string): number | null => {
+export function configMaxAge(sql: ReconcileSql): { config?: number; cached?: number } {
+	const read = (query: string, name: string): number | undefined => {
 		try {
-			const data = columnText(sql.exec(query, name).toArray()[0]?.data);
-			return data === null ? null : phpInt(data, ['cache', 'page', 'max_age']);
+			const data = columnText(firstRow(sql.exec(query, name))?.data);
+			return data === undefined ? undefined : phpInt(data, ['cache', 'page', 'max_age']);
 		} catch {
-			return null;
+			return undefined;
 		}
 	};
 	return {
@@ -205,13 +158,13 @@ export const RETIRED_PERMISSIONS: Readonly<Record<string, string>> = {
 	'administer drupflare code': 'administer drupflare owner'
 };
 
-/** the roles whose stored config still names a retired permission, or null when unreadable */
-export function rolesHoldingRetired(sql: ReconcileSql): string[] | null {
+/** the roles whose stored config still names a retired permission, or undefined when unreadable */
+export function rolesHoldingRetired(sql: ReconcileSql): string[] | undefined {
 	let rows: Record<string, unknown>[];
 	try {
 		rows = sql.exec("SELECT name, data FROM config WHERE name LIKE 'user.role.%'").toArray();
 	} catch {
-		return null;
+		return undefined;
 	}
 	// the serialized form carries the length, so `administer drupflare` cannot match a longer name
 	const needles = Object.keys(RETIRED_PERMISSIONS).map((p) => `s:${p.length}:"${p}";`);
@@ -220,24 +173,20 @@ export function rolesHoldingRetired(sql: ReconcileSql): string[] | null {
 		.map((r) => String(r.name).slice('user.role.'.length));
 }
 
-/**
- * The packed routes whose stored row does not require the permission the pack declares.
- *
- * `router.route` is a serialized `Route`, so the requirement is matched in its serialized form.
- */
+/** the packed routes whose stored row lacks the declared permission (matched in serialized form) */
 export function staleRoutePermissions(sql: ReconcileSql): string[] {
 	const stale: string[] = [];
 	for (const [name, permission] of Object.entries(DRIVER_ROUTE_PERMISSIONS)) {
-		let text: string | null = null;
+		let text: string | undefined;
 		try {
 			text = columnText(
-				sql.exec('SELECT route FROM router WHERE name = ?', name).toArray()[0]?.route
+				firstRow(sql.exec('SELECT route FROM router WHERE name = ?', name))?.route
 			);
 		} catch {
-			text = null;
+			text = undefined;
 		}
 		const wanted = `s:11:"_permission";s:${permission.length}:"${permission}";`;
-		if (text !== null && !text.includes(wanted)) stale.push(name);
+		if (text !== undefined && !text.includes(wanted)) stale.push(name);
 	}
 	return stale;
 }
@@ -249,42 +198,39 @@ export const REPLACED_MODULES = [
 	'mongodb_watchdog'
 ] as const;
 
-/** the enabled module names in `core.extension`, or null when the row cannot be read */
-export function enabledModules(sql: ReconcileSql): string[] | null {
-	let data: string | null;
+/** the enabled module names in `core.extension`, or undefined when the row cannot be read */
+export function enabledModules(sql: ReconcileSql): string[] | undefined {
+	let data: string | undefined;
 	try {
 		data = columnText(
-			sql.exec('SELECT data FROM config WHERE name = ?', 'core.extension').toArray()[0]?.data
+			firstRow(sql.exec('SELECT data FROM config WHERE name = ?', 'core.extension'))?.data
 		);
 	} catch {
-		return null;
+		return undefined;
 	}
-	if (data === null) return null;
+	if (data === undefined) return undefined;
 	const start = data.indexOf('s:6:"module";');
-	if (start < 0) return null;
+	if (start < 0) return undefined;
 	const end = data.indexOf('s:5:"theme";', start);
 	const list = data.slice(start, end < 0 ? undefined : end);
 	return [...list.matchAll(/s:\d+:"([a-z0-9_]+)";i:/g)].map((m) => m[1] as string);
 }
 
-/** the toolkit `system.image` names, or null when the row cannot be read */
-export function imageToolkit(sql: ReconcileSql): string | null {
+/** the toolkit `system.image` names, or undefined when the row cannot be read */
+export function imageToolkit(sql: ReconcileSql): string | undefined {
 	try {
 		const data = columnText(
-			sql.exec('SELECT data FROM config WHERE name = ?', 'system.image').toArray()[0]?.data
+			firstRow(sql.exec('SELECT data FROM config WHERE name = ?', 'system.image'))?.data
 		);
-		return data === null ? null : (/s:7:"toolkit";s:\d+:"([^"]*)";/.exec(data)?.[1] ?? null);
+		return data === undefined ? undefined : /s:7:"toolkit";s:\d+:"([^"]*)";/.exec(data)?.[1];
 	} catch {
-		return null;
+		return undefined;
 	}
 }
 
 /**
- * The declarative list. Order is the order they run in; `since` is what makes the version monotonic.
- *
- * Adding a step is the whole delivery mechanism, so the bar for one is a fix that a site provisioned
- * yesterday cannot otherwise receive. Removing one is safe: a site records ids it has applied and an
- * id nobody declares any more is simply never asked for again.
+ * The declarative list, in run order; `since` keeps the version monotonic. Add one only for a fix
+ * an existing site cannot otherwise receive; removing one is safe (undeclared ids are never asked).
  */
 export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 	{
@@ -294,11 +240,14 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 			'page cache max_age, without which every render is no-store and cfw_page stays empty',
 		verdict(sql) {
 			const { config, cached } = configMaxAge(sql);
-			if (config === null) return { state: 'deferred', detail: 'no system.performance row' };
-			if (config > 0 && (cached === null || cached === config)) return { state: 'satisfied' };
+			if (config === undefined)
+				return { state: 'deferred', detail: 'no system.performance row' };
+			if (config > 0 && (cached === undefined || cached === config)) {
+				return { state: 'satisfied' };
+			}
 			return {
 				state: 'owed',
-				detail: `config ${config}, cache_config ${cached === null ? 'absent' : cached}`
+				detail: `config ${config}, cache_config ${cached === undefined ? 'absent' : cached}`
 			};
 		},
 		php: (host) => reconcileConfigPhp(SHIPPED_PAGE_MAX_AGE, host.origin())
@@ -310,7 +259,7 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 			"the bake's install_time and cron_last, which the status report reads as this site's",
 		verdict(sql, host) {
 			const claimed = host.claimedAtMs();
-			if (claimed === null) {
+			if (claimed === undefined) {
 				return {
 					state: 'deferred',
 					detail: 'never claimed, so there is no real birthday yet'
@@ -328,8 +277,7 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 			} catch {
 				return { state: 'deferred', detail: 'no key_value table' };
 			}
-			// the value is a serialize()d int, so it is parsed here rather than cast in SQL: a
-			// REPLACE-based cast reads `s:4:"1234"` as a number too and would call a string satisfied
+			// parsed here, not cast in SQL: a `REPLACE` cast reads `s:4:"1234"` as a number too
 			const stale = rows.filter(
 				(r) => (serialisedInt(columnText(r.value) ?? '') ?? 0) < seconds
 			);
@@ -350,20 +298,19 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 			"the bake's own log rows, which open a new site with weeks of somebody else's history",
 		verdict(sql, host) {
 			const claimed = host.claimedAtMs();
-			if (claimed === null) {
+			if (claimed === undefined) {
 				return {
 					state: 'deferred',
 					detail: 'never claimed, so no row can be shown to be foreign'
 				};
 			}
 			const stale = count(sql, BAKE_WATCHDOG, Math.floor(claimed / 1000));
-			if (stale === null) return { state: 'satisfied' };
+			if (stale === undefined) return { state: 'satisfied' };
 			return stale === 0
 				? { state: 'satisfied' }
 				: { state: 'owed', detail: `${stale} log rows predate the claim` };
 		},
-		// SQL rather than PHP: `watchdog` is a plain table with no cached copy anywhere, and the
-		// alternative is booting the interpreter to run one DELETE
+		// sql, not php: `watchdog` has no cached copy and a boot would run one DELETE
 		sql(sql, host) {
 			sql.exec(
 				'DELETE FROM watchdog WHERE timestamp < ?',
@@ -380,27 +327,21 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 		describe:
 			'a compiled container and discovery cache that predate the driver pack, so a newer hook class or tab is invisible',
 		/**
-		 * The general close for the baked-hook problem.
-		 *
-		 * `DrupalKernel::getContainerCacheKey()` is built from composer's `VERSIONS_HASH`, the PHP
-		 * version and the OS. None of those moves when `assets/driver.json` changes, so a `#[Hook]`
-		 * class added to a sibling module after the bake compiles into nothing: `hasImplementations()`
-		 * answers false while the class loads fine, which is why `DeferredCron` has never run
-		 * anywhere. Dropping the row makes the next boot rebuild and discover.
+		 * Closes the hook-added-after-the-bake gap: the container key (`VERSIONS_HASH`, PHP, OS)
+		 * does not move with `assets/driver.json`, so a new `#[Hook]` compiles into nothing.
 		 */
 		verdict(sql, host) {
 			if (host.meta(DRIVER_DIGEST_KEY) === DRIVER_DIGEST) return { state: 'satisfied' };
 			const rows = count(sql, 'SELECT COUNT(*) AS n FROM cache_container');
-			if (rows === null) return { state: 'deferred', detail: 'no cache_container table' };
+			if (rows === undefined)
+				return { state: 'deferred', detail: 'no cache_container table' };
 			return { state: 'owed', detail: `driver digest moved; ${rows} container rows to drop` };
 		},
 		sql(sql, host) {
 			sql.exec('DELETE FROM cache_container');
-			// the pack's row when it was baked against this driver and for this site's modules, so
-			// the next boot reads a container instead of compiling one inside a render; a site with
-			// another module set, or a stale bake, still rebuilds its own
+			// the pack's row when baked for this driver and module set, else the site rebuilds
 			const rows = packedContainerFor(
-				host.packedContainer?.() ?? null,
+				host.packedContainer?.(),
 				DRIVER_DIGEST,
 				host.modules?.() ?? ''
 			);
@@ -416,33 +357,19 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 					row.checksum
 				);
 			}
-			// AND THE DISCOVERY CACHE, which is where a LOCAL TASK lives. A tab declared in a
-			// links.task.yml file is a discovery-cached plugin definition, so a pack can deliver the
-			// route, the route can resolve, and the tab leading to it stays absent -- which is what
-			// the modules page showed after the Code Delivery route landed.
-			//
-			// It belongs HERE rather than in the router step, and putting it there first was the
-			// mistake. That step's verdict counts ROUTES; once the routes land it reads satisfied and
-			// never runs again, so a site whose routes arrived before the tabs is stuck forever. This
-			// step is keyed on the driver digest, so it fires whenever the packed modules change at
-			// all, which is exactly the condition under which discovery has to run again.
+			// discovery holds tabs, so a delivered route can lack one (the router step stops once
+			// routes land)
 			sql.exec('DELETE FROM cache_discovery');
-			// an UPDATE rather than a fresh site: only a site that recorded an older digest warms
+			// only a site that recorded an older digest (an update) warms
 			host.setMeta(DISCOVERY_WARM_KEY, host.meta(DRIVER_DIGEST_KEY) ? '1' : '');
 			host.setMeta(DRIVER_DIGEST_KEY, DRIVER_DIGEST);
 		},
 		/**
-		 * Rebuilds discovery in this invocation, on an update only, so no render has to.
-		 *
-		 * A render that rebuilt the emptied discovery bin inside the first cold alarm after an update
-		 * was reset for the isolate's memory with a visitor waiting (2 of 2 deployed updates,
-		 * 2026-09-25), and a simulation that moved only the digest did not reproduce it. Splitting the
-		 * rebuild into this invocation, which drops its interpreter at the end, keeps any single
-		 * invocation to one of the two. A fresh site reads null and boots nothing: a `php()` on this
-		 * step that booted on every fresh site was tried once and broke the boot-free migration chain.
+		 * Rebuilds discovery on an update only, so no render has to (one did and was reset for
+		 * memory). A fresh site boots nothing: booting there broke the boot-free migration chain.
 		 */
 		php(host) {
-			if (host.meta(DISCOVERY_WARM_KEY) !== '1') return null;
+			if (host.meta(DISCOVERY_WARM_KEY) !== '1') return undefined;
 			host.setMeta(DISCOVERY_WARM_KEY, '');
 			return reconcileDiscoveryPhp(host.origin());
 		}
@@ -450,48 +377,31 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 	{
 		id: 'router-driver-routes',
 		since: 3,
-		// `DRIVER_ROUTES` grows whenever a sibling module declares a route, so this must stay askable
+		// `DRIVER_ROUTES` grows with every sibling route, so this must stay askable
 		recurring: true,
 		describe: "a route table that predates the driver pack, so a module's own paths are 404",
 		/**
-		 * The other half of the baked-container problem, and it was live on every site.
-		 *
-		 * Measured 2026-09-09 by rebuilding the pack database with `install-site-db.php` and diffing
-		 * it against the shipped one: the rebuild carries four `drupflare.*` routes and three menu
-		 * links, and the shipped pack carries NONE of the seven while listing `drupflare` in
-		 * `core.extension`. So the Drupflare admin section, Runtime Status and the Operations
-		 * Terminal have answered 404 everywhere.
-		 *
-		 * The step above cannot reach it. `cache_container` is a cache and dropping it makes the next
-		 * boot rediscover hooks; `router` is a TABLE that only `RouteBuilder` writes.
-		 *
-		 * A REAL END-STATE QUESTION rather than a recorded marker, and the ordering is why. `sql()`
-		 * runs before `php()`, so a step that stamped a meta key in `sql()` would stamp it even when
-		 * the rebuild threw, and the verdict afterwards would read the marker and file the failure as
-		 * a success. Asking the router which of the pack's own routes it holds cannot lie that way.
-		 *
-		 * `DRIVER_ROUTES` is generated from the pack's own `*.routing.yml` files by
-		 * `bun run assets:driver`, so it cannot drift from what shipped beside it.
+		 * Asks `router` (only `RouteBuilder` writes it) which pack routes it holds, not a marker:
+		 * `sql()` runs before `php()`, so a marker would stamp even when the rebuild threw.
 		 */
 		verdict(sql) {
 			if (DRIVER_ROUTES.length === 0) return { state: 'satisfied' };
 			const rows = count(sql, 'SELECT COUNT(*) AS n FROM router');
-			if (rows === null) return { state: 'deferred', detail: 'no router table' };
+			if (rows === undefined) return { state: 'deferred', detail: 'no router table' };
 			const placeholders = DRIVER_ROUTES.map(() => '?').join(', ');
 			const have = count(
 				sql,
 				`SELECT COUNT(*) AS n FROM router WHERE name IN (${placeholders})`,
 				...DRIVER_ROUTES
 			);
-			if (have === null) return { state: 'deferred', detail: 'router not readable' };
+			if (have === undefined) return { state: 'deferred', detail: 'router not readable' };
 			if (have < DRIVER_ROUTES.length) {
 				return {
 					state: 'owed',
 					detail: `${have} of ${DRIVER_ROUTES.length} driver routes present in ${rows} rows`
 				};
 			}
-			// a row keeps the requirement it was built with, so a renamed permission is invisible
-			// to the name count above and every existing site would demand the old one
+			// a row keeps its built requirement, so a renamed permission passes the count
 			const stale = staleRoutePermissions(sql);
 			return stale.length === 0
 				? { state: 'satisfied' }
@@ -507,11 +417,11 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 		describe:
 			'the five drupflare permissions folded into three, and the owner role uid 1 is given at claim',
 		verdict(sql, host) {
-			if (host.claimedAtMs() === null) {
+			if (host.claimedAtMs() === undefined) {
 				return { state: 'deferred', detail: 'never claimed, so there is no owner yet' };
 			}
 			const retired = rolesHoldingRetired(sql);
-			if (retired === null) return { state: 'deferred', detail: 'no config table' };
+			if (retired === undefined) return { state: 'deferred', detail: 'no config table' };
 			const role = count(
 				sql,
 				'SELECT COUNT(*) AS n FROM config WHERE name = ?',
@@ -546,14 +456,13 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 				`SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name IN (${placeholders})`,
 				...UNREAD_NODE_INDEXES
 			);
-			if (present === null)
+			if (present === undefined)
 				return { state: 'deferred', detail: 'sqlite_master not readable' };
 			return present === 0
 				? { state: 'satisfied' }
 				: { state: 'owed', detail: `${present} unread node indexes present` };
 		},
-		// SQL rather than PHP: an index has no cached copy anywhere, and Drupal's own
-		// `Schema::dropIndex()` checks for one before dropping, so a later schema update is unharmed
+		// sql, not php: an index has no cached copy and `Schema::dropIndex()` checks first
 		sql(sql) {
 			for (const index of UNREAD_NODE_INDEXES) sql.exec(`DROP INDEX IF EXISTS ${index}`);
 		}
@@ -565,10 +474,12 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 			'the image toolkit, which a migrated site brings as gd or imagemagick and neither runs here',
 		verdict(sql, host) {
 			// the claim selects the toolkit on a fresh site, so only a claimed site can owe it
-			if (host.claimedAtMs() === null) return { state: 'deferred', detail: 'never claimed' };
+			if (host.claimedAtMs() === undefined) {
+				return { state: 'deferred', detail: 'never claimed' };
+			}
 			const modules = enabledModules(sql);
 			const toolkit = imageToolkit(sql);
-			if (modules === null || toolkit === null) {
+			if (modules === undefined || toolkit === undefined) {
 				return { state: 'deferred', detail: 'no core.extension or system.image row' };
 			}
 			// the toolkit plugin ships in drupflare, so a site without it has nothing to point at
@@ -581,11 +492,10 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 		php: (host) => reconcileToolkitPhp(host.origin())
 	}
 ];
+
 /**
- * Uninstalls the modules in {@link REPLACED_MODULES} on a claimed site.
- *
- * Not in {@link RECONCILE_STEPS}: removing a module an operator enabled is a product decision that
- * has not been made, so the step exists and is tested but nothing runs it.
+ * Uninstalls the modules in {@link REPLACED_MODULES} on a claimed site. Kept out of
+ * {@link RECONCILE_STEPS}: removing a module an operator enabled is an undecided product choice.
  */
 export const REPLACED_MODULES_STEP: ReconcileStep = {
 	id: 'replaced-modules',
@@ -594,7 +504,7 @@ export const REPLACED_MODULES_STEP: ReconcileStep = {
 		'modules whose job the runtime does another way: composer updaters and the MongoDB logger',
 	verdict(sql) {
 		const modules = enabledModules(sql);
-		if (modules === null) return { state: 'deferred', detail: 'no core.extension row' };
+		if (modules === undefined) return { state: 'deferred', detail: 'no core.extension row' };
 		const present = REPLACED_MODULES.filter((m) => modules.includes(m));
 		return present.length === 0
 			? { state: 'satisfied' }
@@ -612,6 +522,7 @@ export interface StepFailure {
 	reason: string;
 }
 
+/** what a site records: the version reached, applied step ids and failed steps */
 export interface ReconcileState {
 	/** the highest version this site has fully reached */
 	version: number;
@@ -621,6 +532,7 @@ export interface ReconcileState {
 	failed: Record<string, StepFailure>;
 }
 
+/** the state of a site that has reconciled nothing */
 export const CLEAN_RECONCILE: ReconcileState = { version: 0, applied: [], failed: {} };
 
 /** defaults to clean on anything unexpected, so a corrupt row re-reconciles rather than skipping */
@@ -648,41 +560,25 @@ export function parseReconcileState(raw: string | null | undefined): ReconcileSt
 	}
 }
 
+/** the JSON stored in `cfw_meta` */
 export function serialiseReconcileState(state: ReconcileState): string {
 	return JSON.stringify(state);
 }
 
 /**
- * Whether this site is already at the shipping version, answered without touching the site.
- *
- * The steady-state cost of reconciliation is this comparison and the one `cfw_meta` read that feeds
- * it. A site at the current version asks no SQL question of any step.
+ * Whether this site is already at the shipping version, answered without touching the site; the
+ * steady state is this comparison and the one `cfw_meta` read that feeds it.
  */
 export function reconciled(state: ReconcileState, recordedDriverDigest?: string | null): boolean {
-	// THE DRIVER PACK MOVES WITHOUT `PACK_VERSION` MOVING, and that is what made every fix above
-	// this line unreachable. `PACK_VERSION` is bumped by hand when a STEP is added; the packed
-	// modules change on every sibling release. A site stamped at the current version short-circuited
-	// here and no step's verdict was ever asked again -- so a route a newer pack declares stayed 404
-	// on it forever, and the reconciliation designed to deliver exactly that never looked.
-	//
-	// One string compare against a value the caller already holds, so the steady state still asks no
-	// SQL question of any step; it is the same `cfw_meta` read that feeds `state`.
+	// the driver pack moves without `PACK_VERSION` (bumped by hand per step), so compare the digest
+	// too or a current-version site never asks a verdict again
 	if (recordedDriverDigest !== undefined && recordedDriverDigest !== DRIVER_DIGEST) return false;
 	return state.version >= PACK_VERSION && Object.keys(state.failed).length === 0;
 }
 
 /**
- * Whether any RECURRING step still owes this site work, whatever the version says.
- *
- * `reconciled()` is a two-integer comparison and deliberately asks no step anything, which is right
- * for a chain of one-shot migrations. It is wrong for the recurring pair, and a fresh site is the
- * case that proves it: provisioning stamps the driver digest because the packed modules and the
- * packed container come from one build, so both the version and the digest say "current" -- while
- * the ROUTER inside the packed database was baked from whatever module set existed when that
- * database was built. The two disagree and nothing was allowed to notice.
- *
- * Only recurring steps are asked, so the steady-state cost is their verdicts alone: one `SELECT
- * COUNT` over `router` and one meta compare. A one-shot step that has been applied stays untouched.
+ * Whether any recurring step still owes work, whatever the version says (a fresh site reads
+ * current while its packed `router` predates the module set). Only recurring steps are asked.
  */
 export function recurringWork(
 	state: ReconcileState,
@@ -701,6 +597,7 @@ export function recurringWork(
 /** how many attempts a step gets before it stops being retried on every firing */
 export const STEP_ATTEMPT_LIMIT = 3;
 
+/** the next action `planReconcile()` chose */
 export type PlannedStep =
 	| { action: 'run'; step: ReconcileStep; detail: string }
 	| { action: 'mark'; step: ReconcileStep; reason: 'satisfied' }
@@ -708,10 +605,8 @@ export type PlannedStep =
 	| { action: 'done'; version: number };
 
 /**
- * The next thing to do, one step at a time so the chain is sliceable and resumable.
- *
- * `mark` is separated from `run` because it costs nothing: a site provisioned after a fix converges
- * through a series of marks with no interpreter boot and no writes beyond the one state row.
+ * The next thing to do, one step at a time so the chain is sliceable and resumable. `mark` is
+ * separate from `run` because it costs nothing: a fresh site converges by marks, with no boot.
  */
 export function planReconcile(
 	state: ReconcileState,
@@ -720,28 +615,19 @@ export function planReconcile(
 	steps: readonly ReconcileStep[] = RECONCILE_STEPS
 ): PlannedStep {
 	const applied = new Set(state.applied);
-	// A DEFERRED STEP MUST NOT BLOCK THE ONES AFTER IT. `bake-clock` defers until the site is claimed,
-	// which on a site nobody claims is forever, so returning on the first deferral would leave every
-	// later step permanently unreached. The first deferral is remembered and reported only when
-	// nothing else has work
-	let waiting: { step: ReconcileStep; reason: string } | null = null;
+	// a deferred step must not block later ones (`bake-clock` defers forever on an unclaimed site);
+	// the first deferral is reported only when nothing else has work
+	let waiting: { step: ReconcileStep; reason: string } | undefined;
 	for (const step of steps) {
-		// A RECURRING STEP IS NEVER RETIRED, and treating one as a one-shot migration is what made
-		// a pack change unreachable on every already-reconciled site. Most steps here fix a defect
-		// once and are done; `container-driver-digest` and `router-driver-routes` answer a question
-		// whose ANSWER MOVES -- the packed modules change on every release, and their verdicts are
-		// written to compare against the digest that ships today. Marking them applied short-circuits
-		// the verdict before it can ever notice, so a site that reconciled against an older pack
-		// skipped both forever: the routes a new pack adds were 404 on it and nothing said why.
+		// a recurring step is never retired: its answer moves with the pack, and marking it applied
+		// would skip its verdict on every site reconciled against an older pack
 		const settled = applied.has(step.id);
 		if (settled && !step.recurring) continue;
-		// a step that has spent its attempts stops owning the chain; it stays visible as `failed` on
-		// the status report rather than being retried on every firing forever
+		// a step that spent its attempts stops owning the chain; it stays visible as `failed`
 		if ((state.failed[step.id]?.attempts ?? 0) >= STEP_ATTEMPT_LIMIT) continue;
 		const verdict = step.verdict(sql, host);
 		if (verdict.state === 'satisfied') {
-			// already recorded, so there is nothing to write and the chain must move on rather than
-			// re-marking it on every pass and never reporting `done`
+			// already recorded: move on, or `done` is never reported
 			if (settled) continue;
 			return { action: 'mark', step, reason: 'satisfied' };
 		}
@@ -752,18 +638,14 @@ export function planReconcile(
 		return { action: 'run', step, detail: verdict.detail };
 	}
 	if (waiting) return { action: 'wait', step: waiting.step, reason: waiting.reason };
-	// THE VERSION IS WHAT WAS REACHED, NOT WHAT SHIPS. There is nothing left to try once a failed step
-	// has spent its attempts, and reporting `PACK_VERSION` there would tell a rollout the site is
-	// patched while the fix it is waiting on never landed
+	// the version reached, not `PACK_VERSION`: a rollout must not read a site as patched while a
+	// failed step's fix never landed
 	return { action: 'done', version: versionReached(state.applied, steps) };
 }
 
 /**
- * Folds an applied step into the state.
- *
- * A step that ran and left the site still owing it is recorded as failed rather than applied, with
- * its attempt count, so a permanently broken step cannot own the alarm chain and cannot silently
- * report success either.
+ * Folds an applied step into the state; one that left the site still owing it is recorded as
+ * failed with its attempt count, so it can neither own the alarm chain nor report success.
  */
 export function recordStep(
 	state: ReconcileState,
@@ -788,11 +670,8 @@ export function recordStep(
 }
 
 /**
- * The highest version every step of which this site has applied.
- *
- * Monotonic by construction: it is the largest `since` such that no step at or below it is still
- * outstanding, so a version can never be claimed while one of its steps is owed. A step deleted from
- * the list stops being asked for, which is what makes removing one safe.
+ * The highest version every step of which this site has applied: the largest `since` with no step
+ * at or below it outstanding, so a version is never claimed while one of its steps is owed.
  */
 export function versionReached(
 	applied: readonly string[],
@@ -842,6 +721,7 @@ export function reconcileReport(
 	};
 }
 
+/** the identifying fields of a step, for the status report */
 function pick(step: ReconcileStep): { id: string; since: number; describe: string } {
 	return { id: step.id, since: step.since, describe: step.describe };
 }

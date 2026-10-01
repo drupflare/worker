@@ -1,26 +1,12 @@
 /**
  * Per-site secrets, minted in the Durable Object and never in the shipped payload.
  *
- * Workers assets are served PUBLICLY, and `.assetsignore` un-ignores the packs, so anything
- * secret that ships in `assets/` is fetchable at a guessable URL by anyone -- and identical on
- * every site deployed from that payload. Three secrets were in there:
+ * Assets are public and identical on every site, so a secret in `assets/` is everyone's. Only the
+ * hash salt needs minting here: Drupal regenerates the private key itself, while
+ * `Settings::getHashSalt()` throws on an empty salt and only the installer (which never runs here)
+ * makes one. The salt signs login links and form tokens.
  *
- * | secret               | where it shipped              | fix                                  |
- * | -------------------- | ----------------------------- | ------------------------------------ |
- * | `hash_salt`          | `drupal-pf/core.pf.bin`       | minted here, appended to settings.php |
- * | `system.private_key` | `drupal-sql/0052.json`        | removed; Drupal regenerates it        |
- * | admin bcrypt hash    | `drupal-sql/0064.json`        | blanked; `/firstrun` sets a real one  |
- *
- * Only the salt needs this module. Drupal already self-heals the private key --
- * `PrivateKey::get()` calls `create()` and `set()` when state has none -- and a password has to
- * come from the operator. A salt has no such mechanism: `Settings::getHashSalt()` throws when it
- * is empty and nothing generates one outside the installer, which never runs here.
- *
- * The salt is what signs one-time login links, form tokens and `Crypt::hmacBase64`, so sharing it
- * across sites lets anyone holding the payload mint a valid password-reset URL for any of them.
- *
- * @see src/site-do.ts, which appends {@link hashSaltAssignment} to settings.php at boot
- * @see scripts/scrub-pack-secrets.ts, which removes the shipped salt from the pack
+ * @module
  */
 
 /** a secret store; the Durable Object satisfies this with `metaGet`/`metaSet` */
@@ -36,23 +22,15 @@ export const HASH_SALT_KEY = 'hash_salt';
 export const OWNER_TOKEN_KEY = 'owner_token';
 
 /**
- * Bytes of entropy behind a salt, matching `Crypt::randomBytesBase64(55)`.
- *
- * 55 bytes is what Drupal's own installer uses, and it encodes to the 74 characters the shipped
- * `system.private_key` row carried -- so a value minted here is indistinguishable in form from one
- * Drupal would have made itself.
+ * Bytes of entropy behind a salt; Drupal's installer calls `Crypt::randomBytesBase64(55)`, which
+ * encodes to 74 characters.
  */
 export const SALT_BYTES = 55;
 
 /** base64url, the alphabet Drupal's `Crypt::randomBytesBase64()` produces */
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
-/**
- * Mints a secret in Drupal's own encoding.
- *
- * `crypto.getRandomValues` rather than `Math.random()`: this is the value that signs password-reset
- * links, so a predictable one is the same defect as a shared one.
- */
+/** mints a secret in Drupal's encoding from `crypto.getRandomValues` (it signs reset links) */
 export function randomKeyBase64(bytes: number = SALT_BYTES): string {
 	const raw = new Uint8Array(bytes);
 	crypto.getRandomValues(raw);
@@ -62,11 +40,8 @@ export function randomKeyBase64(bytes: number = SALT_BYTES): string {
 }
 
 /**
- * Reads this site's hash salt, minting and persisting one the first time.
- *
- * Idempotent by construction: a second call returns the stored value, so a remount keeps every
- * session and every unexpired one-time login link valid. That is the whole reason it is persisted
- * rather than derived per boot.
+ * Reads this site's hash salt, minting and persisting one the first time (persisted so a
+ * remount keeps sessions and login links valid).
  *
  * @param mint - injected so a test can assert the stored value rather than that one exists
  */
@@ -80,12 +55,8 @@ export function ensureHashSalt(store: SecretStore, mint: () => string = randomKe
 }
 
 /**
- * Refuses a salt that could break out of the PHP string literal it is about to become.
- *
- * {@link hashSaltAssignment} builds source code, so an unchecked value is an injection into
- * settings.php. The mint only ever produces base64url, which makes this cheap -- but a stored value
- * arrives from the database, and "it can only be what we wrote" is exactly the assumption worth
- * refusing to make about a file that gets executed.
+ * Refuses a salt that could break out of the PHP string literal it becomes; a stored value comes
+ * back from the database, so it is checked before it reaches settings.php.
  */
 export function assertSalt(salt: string): void {
 	if (!BASE64URL.test(salt)) {
@@ -94,10 +65,8 @@ export function assertSalt(salt: string): void {
 }
 
 /**
- * The settings.php line that points a site at its own salt.
- *
- * Appended AFTER the shipped assignment, and a later assignment wins, so this overrides whatever
- * the pack carried even on a pack that still carries one.
+ * The settings.php line that points a site at its own salt. Appended after the shipped
+ * assignment, so it wins over any salt the pack still carries.
  */
 export function hashSaltAssignment(salt: string): string {
 	assertSalt(salt);
@@ -105,25 +74,16 @@ export function hashSaltAssignment(salt: string): string {
 }
 
 /**
- * The PHP-serialized form of a `key_value` state value.
- *
- * Exported for the test that proves a minted key is byte-shaped like the row that used to ship,
- * so removing that row cannot be mistaken for changing the format Drupal reads.
+ * The PHP-serialized form of a `key_value` state value; exported for the test that pins a minted
+ * key to the shape of the row Drupal reads.
  */
 export function stateSerialized(value: string): string {
 	return `s:${value.length}:"${value}";`;
 }
 
 /**
- * Reads this site's owner token, minting one the first time.
- *
- * WHY A SECOND SECRET RATHER THAN REUSING `PW_DIAGNOSTICS`. Getting your data out required
- * `PW_DIAGNOSTICS=1`, and that flag is one boolean over a set that also contains `/sql` (arbitrary
- * SQL against the site database), `/restore` (a whole-database overwrite) and `/php`. So the
- * supported way to leave was to expose a remote shell to the internet first. Export is an OWNER
- * operation, not a diagnostic, and it needs a credential rather than a mode.
- *
- * Same mint and same storage as {@link ensureHashSalt}: per site, persisted, never in the payload.
+ * Reads this site's owner token, minting it like {@link ensureHashSalt}. A separate credential
+ * because `PW_DIAGNOSTICS` also opens `/sql`, `/restore` and `/php`.
  */
 export function ensureOwnerToken(store: SecretStore, mint: () => string = randomKeyBase64): string {
 	const existing = store.get(OWNER_TOKEN_KEY);
@@ -135,11 +95,8 @@ export function ensureOwnerToken(store: SecretStore, mint: () => string = random
 }
 
 /**
- * Compares a presented token against the stored one in constant time.
- *
- * A `===` on a secret leaks its prefix through timing, and this one guards a whole-database dump.
- * The length check is NOT an early return on mismatch -- it folds the lengths into the
- * same accumulator so a wrong-length guess costs the same as a wrong-value one.
+ * Compares a presented token against the stored one in constant time; the lengths fold into the
+ * accumulator so a wrong-length guess costs the same as a wrong value.
  */
 export function tokenMatches(presented: string | null | undefined, stored: string | null): boolean {
 	if (!stored) return false;
@@ -147,27 +104,24 @@ export function tokenMatches(presented: string | null | undefined, stored: strin
 	let diff = a.length ^ stored.length;
 	const width = Math.max(a.length, stored.length);
 	for (let i = 0; i < width; i++) {
-		// charCodeAt past the end is NaN and `NaN | 0` is 0, so a short guess costs a full pass
-		// rather than branching out of the loop early
+		// past the end charCodeAt is NaN and `NaN | 0` is 0, so a short guess costs a full pass
 		diff |= (a.charCodeAt(i) | 0) ^ (stored.charCodeAt(i) | 0);
 	}
 	return diff === 0;
 }
 
-/** the `Authorization` value an owner request carries */
 /**
- * A usable point-in-time recovery bookmark.
- *
- * An all-zero one is what a back end with no change log answers instead of throwing, so it has to
- * be refused by VALUE; a feature-detect on the method passes there.
+ * A usable point-in-time recovery bookmark, checked by value: a back end with no change log
+ * answers all zeros instead of throwing.
  */
 export function isBookmark(value: string | null | undefined): boolean {
 	if (typeof value !== 'string') return false;
 	return /^[0-9a-f-]{16,}$/i.test(value) && /[1-9a-f]/i.test(value);
 }
 
-export function bearerToken(header: string | null): string | null {
-	if (!header) return null;
+/** the bearer token out of the `Authorization` value an owner request carries */
+export function bearerToken(header: string | null): string | undefined {
+	if (!header) return undefined;
 	const match = /^Bearer\s+(.+)$/i.exec(header.trim());
-	return match?.[1]?.trim() ?? null;
+	return match?.[1]?.trim();
 }

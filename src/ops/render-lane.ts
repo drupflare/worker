@@ -1,15 +1,14 @@
 /**
  * Image derivatives rendered ahead of the first view, on Durable Objects of their own.
  *
- * A rendering lane is not a replica lane: it holds no Drupal state, never catches up and serves no
- * request. It takes a source image and a transform and answers the bytes, so every configured style
- * of one upload can render at once. Measured on a deployed pool of four with a 261,638-byte JPEG and
- * the four shipped styles: 342 ms p50 against 497 ms on one lane (n=8), output byte-identical. The
- * widest style bounds the job, which is why four styles do not reach four times.
+ * A rendering lane is not a replica lane: no Drupal state, no catch-up, no requests; it takes a
+ * source and a transform and answers bytes. On a pool of four, a 261,638-byte source and the four
+ * shipped styles: 342 ms p50 against 497 ms on one lane (n=8); the widest style bounds the job.
+ * @module
  */
 import { defineLane, LanePool, type LaneResult } from '@drupflare/burrow/parallel';
 import wasm3 from '@drupflare/burrow/vendor/wasm3.wasm';
-import { runImageTransform, type Transform } from './image-runtime.js';
+import { runImageTransform, type Transform } from './image-runtime';
 
 /** the binding name the coordinator object reaches the lanes by */
 export const RENDER_LANES_BINDING = 'RENDER_LANES';
@@ -33,6 +32,7 @@ export function unframeDerive(input: Uint8Array): { transform: Transform; source
 	return { transform, source: input.subarray(4 + size) };
 }
 
+/** the lane class: its `derive` task transforms one framed source and returns the bytes */
 export const RenderLane = defineLane({
 	interpreter: wasm3,
 	tasks: {
@@ -68,7 +68,7 @@ export function laneTransport(ns: DurableObjectNamespace, size = 4): DeriveTrans
 /** whether uploads render their styles ahead of the first view; on wherever the binding is */
 export function eagerDerivativesEnabled(env?: {
 	RENDER_LANES?: unknown;
-	EAGER_DERIVATIVES?: string | null;
+	EAGER_DERIVATIVES?: string;
 }): boolean {
 	if (!env?.RENDER_LANES) return false;
 	return String(env.EAGER_DERIVATIVES ?? '1') !== '0';

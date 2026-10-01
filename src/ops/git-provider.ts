@@ -1,18 +1,19 @@
 /**
  * Git hosting providers, reduced to the six operations a site needs.
  *
- * **THE WRITE-BACK IS A COMMIT STATUS, NOT A CHECK RUN.** Measured 2026-08-24 with a
- * repository-scoped fine-grained PAT: `POST /repos/{o}/{r}/check-runs` answers 403
- * `Resource not accessible by personal access token`, while `POST /repos/{o}/{r}/statuses/{sha}`
- * answers 201. Checks are GitHub-App-only, GitLab and Bitbucket have no equivalent at all, and
- * registering an App is the same ask as registering an OAuth app. A status is a state, a context, a
- * description and a target URL on all three.
+ * The write-back is a commit status, not a check run: a fine-grained PAT gets 403 on
+ * `POST /repos/{o}/{r}/check-runs` and 201 on `/statuses/{sha}` (measured 2026-08-24), and checks
+ * are GitHub-App-only with no GitLab or Bitbucket equivalent.
+ * @module
  */
+import { bytesToHex } from '../util/hex';
 
 // #region providers
 
+/** the git hosts a remote may name; `generic` is a plain git remote with no API */
 export type ProviderId = 'github' | 'gitlab' | 'bitbucket' | 'gitea' | 'generic';
 
+/** every provider id */
 export const PROVIDERS: readonly ProviderId[] = [
 	'github',
 	'gitlab',
@@ -24,6 +25,7 @@ export const PROVIDERS: readonly ProviderId[] = [
 /** providers with an API beyond the git protocol itself */
 export const API_PROVIDERS: readonly ProviderId[] = ['github', 'gitlab', 'bitbucket', 'gitea'];
 
+/** whether the provider has an API beyond the git protocol */
 export function hasApi(provider: ProviderId): boolean {
 	return (API_PROVIDERS as readonly string[]).includes(provider);
 }
@@ -37,9 +39,9 @@ export interface Remote {
 	branch: string;
 	/** the API host, so a self-hosted GitLab or Gitea works */
 	host?: string;
-	/** Bitbucket's REST API authenticates as Basic with the Atlassian account email as the username */
+	/** Bitbucket's API takes Basic auth with the Atlassian account email as username */
 	email?: string;
-	/** Bitbucket's GIT endpoint wants the Bitbucket username instead, and it is case sensitive */
+	/** Bitbucket's git endpoint wants the (case sensitive) Bitbucket username instead */
 	username?: string;
 	/** an explicit clone URL, for a host whose git origin is not derivable from its API base */
 	clone?: string;
@@ -62,6 +64,7 @@ const DEFAULT_HOST: Record<ProviderId, string> = {
 	generic: ''
 };
 
+/** the API base URL for a remote, without a trailing slash */
 export function apiBase(remote: Remote): string {
 	return (remote.host ?? DEFAULT_HOST[remote.provider]).replace(/\/+$/, '');
 }
@@ -94,12 +97,7 @@ export function projectPath(repo: string): string {
 	return encodeURIComponent(repo.replace(/^\/+|\/+$/g, ''));
 }
 
-/**
- * The auth headers one provider wants.
- *
- * Bitbucket has no PAT: an Atlassian API token is Basic with the account email as the username, so
- * its settings row needs a field the other two do not.
- */
+/** the auth headers one provider wants (Bitbucket is Basic with the email as username) */
 export function authHeaders(remote: Remote, cred: Credential): Record<string, string> {
 	if (cred.token === '') return {};
 	if (remote.provider === 'github') {
@@ -128,42 +126,41 @@ export function authHeaders(remote: Remote, cred: Credential): Record<string, st
 
 // #region reading repository state
 
+/** a URL to fetch and how to pick one value out of its JSON body */
 export interface RepoRef {
 	url: string;
 	/** where the head sha lives in the JSON the URL returns */
-	pick: (body: unknown) => string | null;
+	pick: (body: unknown) => string | undefined;
 }
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
 const obj = (v: unknown): Record<string, unknown> =>
 	v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : {};
 
-/**
- * The repository's own default branch, for the setup form.
- *
- * Only reached when a remote advertises no `symref=HEAD:` capability; the ref advertisement answers
- * this for free on every host that does, which is why there is no API call for a branch head.
- */
+/** the repository's default branch, for the setup form (used only without `symref=HEAD:`) */
 export function defaultBranchRequest(remote: Remote): RepoRef {
 	const base = apiBase(remote);
 	if (remote.provider === 'github') {
-		return { url: `${base}/repos/${remote.repo}`, pick: (b) => str(obj(b).default_branch) };
+		return {
+			url: `${base}/repos/${remote.repo}`,
+			pick: (b) => str(obj(b).default_branch) ?? undefined
+		};
 	}
 	if (remote.provider === 'gitea') {
 		return {
 			url: `${base}/api/v1/repos/${remote.repo}`,
-			pick: (b) => str(obj(b).default_branch)
+			pick: (b) => str(obj(b).default_branch) ?? undefined
 		};
 	}
 	if (remote.provider === 'gitlab') {
 		return {
 			url: `${base}/api/v4/projects/${projectPath(remote.repo)}`,
-			pick: (b) => str(obj(b).default_branch)
+			pick: (b) => str(obj(b).default_branch) ?? undefined
 		};
 	}
 	return {
 		url: `${base}/2.0/repositories/${remote.repo}`,
-		pick: (b) => str(obj(obj(b).mainbranch).name)
+		pick: (b) => str(obj(obj(b).mainbranch).name) ?? undefined
 	};
 }
 
@@ -171,6 +168,7 @@ export function defaultBranchRequest(remote: Remote): RepoRef {
 
 // #region pull and merge requests
 
+/** an open pull or merge request, normalised across providers */
 export interface PullRequest {
 	id: string;
 	title: string;
@@ -185,12 +183,7 @@ export interface PullRequest {
 
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 
-/**
- * Open pull or merge requests.
- *
- * `generic` has no API, and does not need one: `requestRefs()` reads `refs/pull/N/head` and
- * `refs/merge-requests/N/head` straight out of the ref advertisement.
- */
+/** open pull or merge requests (`generic` uses `requestRefs()` on the ref advertisement instead) */
 export function pullsRequest(remote: Remote): { url: string; pick: (b: unknown) => PullRequest[] } {
 	const base = apiBase(remote);
 	if (remote.provider === 'gitlab') {
@@ -264,7 +257,6 @@ export function pullsRequest(remote: Remote): { url: string; pick: (b: unknown) 
 /** the vocabulary every provider shares, before each one's own spelling */
 export type BuildState = 'pending' | 'running' | 'success' | 'failed';
 
-/** Gitea reuses GitHub's vocabulary but spells a failure `failure` and an error `error` */
 const GITEA_STATE: Record<BuildState, string> = {
 	pending: 'pending',
 	running: 'pending',
@@ -291,17 +283,13 @@ const BITBUCKET_STATE: Record<BuildState, string> = {
 	failed: 'FAILED'
 };
 
+/** a ready-to-send commit status request */
 export interface StatusPost {
 	url: string;
 	body: Record<string, unknown>;
 }
 
-/**
- * One commit status, in the provider's own spelling.
- *
- * GitLab caps `description` and `target_url` at 255 characters and rejects a longer one, so both are
- * clipped here rather than at the call site.
- */
+/** one commit status in the provider's spelling; text clips at 255 (GitLab rejects longer) */
 export function statusRequest(
 	remote: Remote,
 	sha: string,
@@ -309,9 +297,9 @@ export function statusRequest(
 	description: string,
 	targetUrl: string,
 	context = 'drupflare'
-): StatusPost | null {
-	// a plain git remote has nowhere to put one; the caller reports that rather than guessing a URL
-	if (remote.provider === 'generic') return null;
+): StatusPost | undefined {
+	// a plain git remote has nowhere to put one
+	if (remote.provider === 'generic') return undefined;
 	const base = apiBase(remote);
 	const desc = description.slice(0, 255);
 	const target = targetUrl.slice(0, 255);
@@ -365,22 +353,24 @@ export function statusRequest(
 
 // #region webhooks
 
+/** a ready-to-send webhook registration request */
 export interface HookPost {
 	url: string;
 	body: Record<string, unknown>;
 }
 
+/** the request that registers a webhook, or undefined for a provider with no API */
 export function createHookRequest(
 	remote: Remote,
 	deliverTo: string,
 	secret: string
-): HookPost | null {
-	if (remote.provider === 'generic') return null;
+): HookPost | undefined {
+	if (remote.provider === 'generic') return undefined;
 	const base = apiBase(remote);
 	if (remote.provider === 'gitea') {
 		return {
 			url: `${base}/api/v1/repos/${remote.repo}/hooks`,
-			// `type: 'gitea'` still signs with X-Hub-Signature-256, which is why it verifies as GitHub does
+			// `type: 'gitea'` still signs with X-Hub-Signature-256, so it verifies as GitHub does
 			body: {
 				type: 'gitea',
 				active: true,
@@ -435,9 +425,6 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
 	return diff === 0;
 }
 
-const HEX = (bytes: ArrayBuffer): string =>
-	[...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, '0')).join('');
-
 async function hmac(
 	secret: string,
 	message: string,
@@ -456,6 +443,7 @@ async function hmac(
 /** how a delivery was authenticated, so a site can tell a signature from a shared secret */
 export type HookProof = 'hmac-sha256' | 'hmac-sha1' | 'shared-secret' | 'none';
 
+/** the result of verifying one delivery */
 export interface HookVerdict {
 	ok: boolean;
 	proof: HookProof;
@@ -465,10 +453,9 @@ export interface HookVerdict {
 /**
  * Verifies one delivery.
  *
- * **GitLab cannot be HMAC-verified on most installs.** `webhook-signature` needs 19.0 with the
- * `webhook_signing_token` flag; everything older sends the secret in `X-Gitlab-Token` as plaintext.
- * Both are accepted and the verdict records which one answered, because "verified" means different
- * things and a site should be able to see that.
+ * GitLab is rarely HMAC-verifiable: `webhook-signature` needs 19.0 with the `webhook_signing_token`
+ * flag, and older installs send the secret plaintext in `X-Gitlab-Token`. Both are accepted and
+ * the verdict records which one answered.
  */
 export async function verifyHook(
 	provider: ProviderId,
@@ -478,11 +465,11 @@ export async function verifyHook(
 ): Promise<HookVerdict> {
 	if (secret === '') return { ok: false, proof: 'none', reason: 'no secret is configured' };
 
-	// Gitea and Forgejo sign exactly as GitHub does, and a plain remote is only accepted if it can
+	// Gitea and Forgejo sign as GitHub does; a plain remote is accepted only if it can
 	if (provider === 'github' || provider === 'gitea' || provider === 'generic') {
 		const sent = headers.get('x-hub-signature-256');
 		if (sent !== null) {
-			const want = `sha256=${HEX(await hmac(secret, body, 'SHA-256'))}`;
+			const want = `sha256=${bytesToHex(await hmac(secret, body, 'SHA-256'))}`;
 			return timingSafeEqual(encoder.encode(sent), encoder.encode(want))
 				? { ok: true, proof: 'hmac-sha256' }
 				: { ok: false, proof: 'hmac-sha256', reason: 'signature did not match' };
@@ -493,10 +480,10 @@ export async function verifyHook(
 	if (provider === 'bitbucket') {
 		const sent = headers.get('x-hub-signature');
 		if (sent === null) return { ok: false, proof: 'none', reason: 'no X-Hub-Signature' };
-		// the docs say sha256 today and that it may change, so the method is read rather than assumed
+		// the docs say sha256 but may change, so read the method
 		const [method = '', value = ''] = sent.split('=');
 		const hash = method === 'sha1' ? 'SHA-1' : 'SHA-256';
-		const want = HEX(await hmac(secret, body, hash));
+		const want = bytesToHex(await hmac(secret, body, hash));
 		return timingSafeEqual(encoder.encode(value), encoder.encode(want))
 			? { ok: true, proof: method === 'sha1' ? 'hmac-sha1' : 'hmac-sha256' }
 			: { ok: false, proof: 'hmac-sha256', reason: 'signature did not match' };
@@ -530,6 +517,7 @@ export async function verifyHook(
 
 // #region reading a delivery
 
+/** a branch push; `before` and `after` are commit shas, null when the payload omits them */
 export interface PushEvent {
 	kind: 'push';
 	branch: string;
@@ -538,6 +526,7 @@ export interface PushEvent {
 	deleted: boolean;
 }
 
+/** a pull or merge request event with its head sha */
 export interface PullEvent {
 	kind: 'pull';
 	branch: string;
@@ -545,16 +534,12 @@ export interface PullEvent {
 	action: string;
 }
 
+/** a parsed delivery; anything that is not a push or pull request is `other` */
 export type HookEvent = PushEvent | PullEvent | { kind: 'other'; action: string };
 
 const bare = (ref: string): string => ref.replace(/^refs\/heads\//, '');
 
-/**
- * Reads the branch and shas out of one delivery.
- *
- * Bitbucket differs in shape rather than in naming: it batches every changed ref into
- * `push.changes[]`, and `new` is null on a branch delete.
- */
+/** reads the branch and shas out of one delivery (Bitbucket batches refs in `push.changes[]`) */
 export function readHookEvent(provider: ProviderId, headers: Headers, payload: unknown): HookEvent {
 	const body = obj(payload);
 
@@ -611,7 +596,7 @@ export function readHookEvent(provider: ProviderId, headers: Headers, payload: u
 		return { kind: 'other', action: event };
 	}
 
-	// GitHub, Gitea and a plain remote all send GitHub's payload shape; only the header name differs
+	// GitHub, Gitea and a plain remote share a payload shape; only the header name differs
 	const event =
 		headers.get('x-github-event') ??
 		headers.get('x-gitea-event') ??
@@ -644,35 +629,30 @@ export function remoteId(provider: ProviderId, repo: string, branch: string): st
 	return `${provider}:${repo}@${branch}`.replace(/[^A-Za-z0-9:@/._-]/g, '-');
 }
 
-/**
- * Parses what an operator pastes into the one field the form offers.
- *
- * A browse URL, a clone URL and `owner/repo` all name the same thing, and requiring one of them is
- * the kind of ceremony that makes a setup page feel hostile.
- */
+/** parses what an operator pastes: a browse URL, a clone URL or `owner/repo` */
 export function parseRemote(
 	input: string,
 	provider: ProviderId
-): { repo: string; host?: string } | null {
+): { repo: string; host?: string } | undefined {
 	const trimmed = input
 		.trim()
 		.replace(/\.git$/, '')
 		.replace(/\/+$/, '');
-	if (trimmed === '') return null;
+	if (trimmed === '') return undefined;
 
 	// `owner/repo` names nothing without a host on a provider that has no default one
 	if (/^[\w.-]+(\/[\w.-]+)+$/.test(trimmed) && !trimmed.includes('://')) {
-		return DEFAULT_HOST[provider] === '' ? null : { repo: trimmed };
+		return DEFAULT_HOST[provider] === '' ? undefined : { repo: trimmed };
 	}
 
 	let url: URL;
 	try {
 		url = new URL(trimmed.replace(/^git@([^:]+):/, 'https://$1/'));
 	} catch {
-		return null;
+		return undefined;
 	}
 	const repo = url.pathname.replace(/^\/+/, '');
-	if (repo === '') return null;
+	if (repo === '') return undefined;
 
 	const origin = `${url.protocol}//${url.host}`;
 	if (provider === 'gitea' || provider === 'generic') return { repo, host: origin };

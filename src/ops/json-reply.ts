@@ -2,10 +2,8 @@
 const CANDIDATES = 20;
 
 /**
- * The JSON object a PHP fragment printed, when notices came out ahead of it.
- *
- * A deprecation such as `{closure}` carries a brace of its own, so the first `{` in the output is not
- * always where the reply starts; each one is tried in turn until the rest of the output parses.
+ * The JSON object a PHP fragment printed after any notices. A deprecation such as `{closure}`
+ * carries a brace, so each `{` is tried in turn until the rest parses.
  */
 export function parseJsonReply(raw: string): Record<string, unknown> {
 	let start = raw.indexOf('{');

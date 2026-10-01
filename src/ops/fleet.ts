@@ -1,14 +1,10 @@
 /**
  * The fleet inventory: which sites exist, and what each one is running.
  *
- * WITHOUT IT, time-to-patch is not merely slow, it is UNMEASURABLE. "Every site is patched" is a
- * claim about a set nobody can enumerate, and a staged rollout at 10% has no denominator.
- *
- * THE WRITE BUDGET IS THE WHOLE DESIGN CONSTRAINT. D1 allows 100,000 rows written per day on free,
- * the same order as the Durable Object ceiling this project already treats as binding, so a report
- * per alarm would spend a fleet-wide meter to record that nothing changed. {@link shouldReport}
- * writes only when a site's IDENTITY moved or its last report went stale, which makes the steady
- * state one row per site per day.
+ * Without it "every site is patched" is a claim about a set nobody can enumerate. D1 allows 100,000
+ * rows written per day on free, so {@link shouldReport} writes only when a site's identity moved or
+ * its last report went stale (steady state is one row per site per day).
+ * @module
  */
 
 /** the minimal D1 surface, so the inventory is drivable over a stand-in */
@@ -24,9 +20,8 @@ export type FleetDb = {
 /**
  * Adds a column to a table that may predate it, without an unguarded `ALTER`.
  *
- * A caught-and-ignored `ALTER TABLE` still dirties `sqlite_master` on every call, and doing that on
- * the serve path took two of three runs into `migrate: starting`. The cost is attempting the
- * statement, not the exception, so the check comes first.
+ * A caught-and-ignored `ALTER TABLE` still dirties `sqlite_master` on every call (on the serve path
+ * it sent two of three runs into `migrate: starting`), so the check comes first.
  */
 async function addColumnIfMissing(
 	db: FleetDb,
@@ -57,27 +52,22 @@ export type FleetRow = {
 	/**
 	 * how far this site has reconciled with the pack that ships today.
 	 *
-	 * The pack generation says which pack the site was PROVISIONED from; this says which fixes have
-	 * since reached it. Without it "every site is patched" is a claim about a set the inventory
-	 * cannot distinguish, because the pack generation of an old site never moves.
+	 * The pack generation names the pack it was provisioned from and never moves; this says which
+	 * fixes have since reached it.
 	 */
 	reconcileVersion: number;
 	/**
 	 * Which shape this row was written in.
 	 *
-	 * THE FIELD THAT MAKES THE SCHEMA EVOLVABLE RATHER THAN REPLACEABLE, which is the whole reason
-	 * the inventory was promoted ahead of the control plane: a schema designed against a consumer
-	 * that does not exist yet is one that gets replaced, and a consumer reading rows written by
-	 * three different Worker versions has no way to tell which fields it can trust without this.
-	 * A reader compares it; it does not parse it.
+	 * A consumer reading rows from several Worker versions uses it to tell which fields it can
+	 * trust; a reader compares it and does not parse it.
 	 */
 	schemaVersion: number;
 	/**
 	 * Which CMS this site runs.
 	 *
-	 * One value today and the column exists anyway. Adding it after a second CMS ships means a
-	 * migration on every live site, which is the stated reason the site-kind record was promoted
-	 * out of v1.1: the cost is a column now against a fleet-wide migration later.
+	 * One value today; the column exists because adding it after a second CMS ships would mean a
+	 * migration on every live site.
 	 */
 	cms: string;
 	/** managed on a Cloudflare account, or self-hosted on the operator's own workerd */
@@ -85,15 +75,13 @@ export type FleetRow = {
 	/**
 	 * What the site's own supervisor thinks of it.
 	 *
-	 * Here rather than only on the object, because the question a control plane asks first is "which
-	 * sites are unwell" and answering it by asking every object is one Durable Object request per
-	 * site per refresh. A site that cannot report is `stale`, which is a different answer from
-	 * `degraded` and must not be folded into it.
+	 * Kept here so "which sites are unwell" costs no Durable Object request per site. A site that
+	 * cannot report is `stale`, which is a different answer from `degraded`.
 	 */
 	health: 'ok' | 'degraded' | 'quarantined';
 };
 
-/** the shape {@link FleetRow} is written in today; bump it when a field's MEANING changes */
+/** the shape {@link FleetRow} is written in today; bump it when a field's meaning changes */
 export const FLEET_SCHEMA_VERSION = 2;
 
 /** an unknown value reads as `ok` rather than throwing; an inventory must not fail on a new word */
@@ -105,6 +93,7 @@ function readHealth(value: unknown): FleetRow['health'] {
 /** how long a site may go unreported before it reports again even with nothing changed */
 export const FLEET_HEARTBEAT_MS = 24 * 60 * 60 * 1000;
 
+/** the `cfw_fleet` table definition */
 export const FLEET_DDL = `CREATE TABLE IF NOT EXISTS cfw_fleet (
   site TEXT PRIMARY KEY,
   pack_generation TEXT NOT NULL,
@@ -122,20 +111,22 @@ export const FLEET_DDL = `CREATE TABLE IF NOT EXISTS cfw_fleet (
 /**
  * Whether a site should write its row.
  *
- * Pure, so the decision is testable without a database -- which matters because this predicate is
- * the entire write budget. An identity change reports immediately: a site that just replayed a new
- * pack is exactly the row a rollout is watching for.
+ * Pure, so the decision (the whole write budget) is testable without a database. An identity change
+ * reports immediately, since a site that just replayed a new pack is what a rollout watches for.
  */
-export function shouldReport(previous: FleetRow | null, current: FleetRow, nowMs: number): boolean {
-	if (previous === null) return true;
+export function shouldReport(
+	previous: FleetRow | undefined,
+	current: FleetRow,
+	nowMs: number
+): boolean {
+	if (previous === undefined) return true;
 	if (
 		previous.packGeneration !== current.packGeneration ||
 		previous.coreVersion !== current.coreVersion ||
 		previous.workerVersion !== current.workerVersion ||
 		previous.plan !== current.plan ||
 		previous.reconcileVersion !== current.reconcileVersion ||
-		// every identity field, or a site that changed one of them waits out the heartbeat before
-		// the inventory knows. `health` is the one a control plane is watching in real time
+		// every identity field, or a changed one waits out the heartbeat (`health` is watched live)
 		previous.schemaVersion !== current.schemaVersion ||
 		previous.cms !== current.cms ||
 		previous.tier !== current.tier ||
@@ -150,8 +141,7 @@ export function shouldReport(previous: FleetRow | null, current: FleetRow, nowMs
 export async function ensureFleetTable(db: FleetDb): Promise<void> {
 	await db.prepare(FLEET_DDL).bind().run();
 	await addColumnIfMissing(db, 'cfw_fleet', 'reconcile_version', 'INTEGER NOT NULL DEFAULT 0');
-	// the defaults are what an already-written row means: it was reported by a Worker that knew
-	// only schema 1, which ran one CMS on a Cloudflare account and had no health to report
+	// the defaults describe an already-written row: schema 1, one CMS, managed, no health
 	await addColumnIfMissing(db, 'cfw_fleet', 'schema_version', 'INTEGER NOT NULL DEFAULT 1');
 	await addColumnIfMissing(db, 'cfw_fleet', 'cms', "TEXT NOT NULL DEFAULT 'drupal'");
 	await addColumnIfMissing(db, 'cfw_fleet', 'tier', "TEXT NOT NULL DEFAULT 'managed'");
@@ -217,11 +207,12 @@ export async function listSites(db: FleetDb): Promise<FleetRow[]> {
 	}));
 }
 
+/** which sites the cron should warm, where the list came from, and what was left out */
 export type WarmTargets = {
 	/** the sites the cron should open a window on */
 	sites: string[];
 	source: 'fleet' | 'configured' | 'none';
-	/** configured names no site has ever reported; driving one CREATES an empty object */
+	/** configured names no site has ever reported; driving one creates an empty object */
 	unknown: string[];
 	/** reported once but not within the heartbeat, so warming them spends the meter on a guess */
 	stale: string[];
@@ -230,21 +221,20 @@ export type WarmTargets = {
 /**
  * Which sites the cron warm window should drive.
  *
- * `idFromName()` CREATES the object it names, so a cron pointed at an unused name provisions a
- * phantom and reports success -- which is what `WINDOW_SITES` defaulting to `'default'` did. A
- * configured list is a FILTER only; a name the fleet has never seen comes back under `unknown`.
+ * `idFromName()` creates the object it names, so a cron pointed at an unused name provisions a
+ * phantom and reports success. A configured list is a filter only; a name the fleet has never seen
+ * comes back under `unknown`.
  *
- * @param fleet every reported row, or `null` when there is no D1 binding to read
+ * @param fleet every reported row, or `undefined` when there is no D1 binding to read
  */
 export function warmTargets(
-	fleet: readonly FleetRow[] | null,
+	fleet: readonly FleetRow[] | undefined,
 	configured: readonly string[],
 	nowMs: number,
 	staleMs: number = FLEET_HEARTBEAT_MS
 ): WarmTargets {
-	// no inventory to check against, so the configured list is all there is and is taken on trust.
-	// An empty one drives NOTHING; there is no safe name to guess.
-	if (fleet === null) {
+	// no inventory to check against: trust the configured list (empty drives nothing)
+	if (fleet === undefined) {
 		return {
 			sites: [...configured],
 			source: configured.length ? 'configured' : 'none',
@@ -276,6 +266,7 @@ export function warmTargets(
 /** one version and how much of the fleet is on it */
 export type VersionShare = { version: string; sites: number; fraction: number };
 
+/** the rollups a control plane opens with, plus the names of stale and unhealthy sites */
 export type FleetSummary = {
 	sites: number;
 	byPackGeneration: VersionShare[];
@@ -283,12 +274,10 @@ export type FleetSummary = {
 	/** sites whose last report is older than the heartbeat, so their state is not current */
 	stale: string[];
 	/**
-	 * The rollups the control plane opens with, rather than ones it derives from every row.
+	 * Rollups so the control plane need not derive them from every row.
 	 *
-	 * `byHealth` answers "which sites are unwell" without one Durable Object request per site, and
-	 * `bySchemaVersion` answers "can I trust the fields I am about to read" -- a fleet mid-rollout
-	 * carries rows from two Worker versions and a consumer that assumes one shape reads the other
-	 * one's defaults as data.
+	 * `bySchemaVersion` says whether the fields about to be read can be trusted: a consumer that
+	 * assumes one shape mid-rollout reads the other version's defaults as data.
 	 */
 	byHealth: VersionShare[];
 	bySchemaVersion: VersionShare[];
@@ -301,9 +290,8 @@ export type FleetSummary = {
 /**
  * What a rollout needs to know before it starts and to know when it is finished.
  *
- * `stale` is reported separately rather than folded into the version counts, because a site that
- * has not checked in is NOT evidence that it is on the old version -- it is evidence of nothing,
- * and counting it either way would make "100% patched" a claim about sites nobody has heard from.
+ * `stale` is kept out of the version counts: a site that has not checked in is no evidence it is on
+ * the old version, and counting it would make "100% patched" a claim about silent sites.
  */
 export function fleetSummary(rows: FleetRow[], nowMs: number): FleetSummary {
 	const total = rows.length;
@@ -330,9 +318,7 @@ export function fleetSummary(rows: FleetRow[], nowMs: number): FleetSummary {
 			.filter((r) => nowMs - r.lastSeenMs >= FLEET_HEARTBEAT_MS)
 			.map((r) => r.site)
 			.sort(),
-		// STALE IS NOT UNHEALTHY and the two lists stay apart for the reason `stale` already gives:
-		// a site nobody has heard from is evidence of nothing, and folding it in would make "the
-		// fleet is healthy" a claim about sites that never answered
+		// stale is not unhealthy; a silent site is no evidence either way
 		unhealthy: rows
 			.filter((r) => r.health !== 'ok')
 			.map((r) => r.site)
@@ -343,8 +329,7 @@ export function fleetSummary(rows: FleetRow[], nowMs: number): FleetSummary {
 /**
  * How far a rollout has got, as a fraction of the sites that have reported.
  *
- * @returns `null` when nothing has reported, rather than 0 -- "no sites are patched" and "there are
- *   no sites" are different answers and only one of them means something is wrong.
+ * @returns `null` when nothing has reported, since "no sites are patched" differs from "no sites"
  */
 export function rolloutProgress(
 	rows: FleetRow[],

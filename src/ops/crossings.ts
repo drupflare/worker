@@ -1,47 +1,28 @@
 /**
  * Counts PHP-to-host crossings, per capability.
  *
- * WHY IT EXISTS: the docs say an RPC method call on a Durable Object stub is its own RPC session
- * and is BILLED AS A DO REQUEST. This project reaches the object through `stub.fetch()`, so one
- * request is one billed request today -- but the PHP-to-host bridge INSIDE the object is a
- * different surface, and nobody had counted it. That number has to exist before any RPC migration,
- * or the migration silently converts a free inner call into a charged request.
- *
- * WHAT A CROSSING IS AND IS NOT. A `cfw*` call is a wasm import resolving to a JavaScript function
- * in the same isolate. It costs CPU and it is NOT a DO request. So this instrument prices a
- * REFACTOR RISK, not a live meter, and anything it reports should be read that way until a build
- * actually moves a capability onto RPC.
- *
- * Wrapping rather than editing each installer, for the reason `countingSql()` gives about the
- * storage handle: an instrument attached to one capability measures that capability, and the
- * question is about the surface. Wrapping the whole surface once means a capability added later is
- * counted without anybody remembering to.
+ * A `cfw*` call is a wasm import resolving to JavaScript in the same isolate: it costs CPU and is
+ * not a DO request (an RPC method call on a stub is billed as one). So this prices the risk of an
+ * RPC migration, not a live meter. It wraps the whole surface once, so a later capability is
+ * counted without anyone remembering to.
+ * @module
  */
-
-import { recordCrossing, type CensusCall } from './statement-census.js';
+import { recordCrossing, type CensusCall } from './statement-census';
 
 /** what the tally hands back: total crossings and the per-capability split */
 export type CrossingTally = {
 	total: number;
 	byName: Record<string, number>;
-	/**
-	 * per-statement detail, appended only when a caller has armed it with an array.
-	 *
-	 * Off by default and not a route: a cold fill crosses 233 times and each record
-	 * decodes both sides of the payload, so leaving it on would put a diagnostic's allocation on
-	 * every render. `tests/integration/statement-census.spec.ts` is what arms it.
-	 */
+	/** per-statement detail, appended only when a caller arms it with an array (costly) */
 	calls?: CensusCall[];
 	/**
-	 * string bytes crossing the bridge since the last reset, and the largest single argument and reply.
-	 *
-	 * Cheap enough to leave on: a length read per call. The host resets it at the start of a request
-	 * or alarm and reads it at the end, which is what names the request that moved a large string.
+	 * string bytes crossing the bridge since the last reset, plus the largest argument and reply.
+	 * The host resets it per request or alarm, which names the request that moved a large string.
 	 */
 	bytes?: { in: number; out: number; maxIn: number; maxOut: number; maxName: string };
 };
 
-/** an empty tally; NOT named `emptyTally`, which `write-tally.ts` already exports */
+/** an empty tally (not `emptyTally`, which `write-tally.ts` already exports) */
 export function emptyCrossings(): CrossingTally {
 	return { total: 0, byName: {} };
 }
@@ -49,11 +30,8 @@ export function emptyCrossings(): CrossingTally {
 /**
  * Every capability name the host installs on the PHP module.
  *
- * A LIST RATHER THAN A PREFIX SCAN, and the difference is load-bearing: `cfwCanSuspend` is a
- * BOOLEAN the service provider probes, not a function, and wrapping it would hand PHP a callable
- * where it expects a flag -- which reads true and silently installs a handler that cannot work.
- * `wrapCrossings()` skips non-functions anyway; the list is what makes a new capability show up in
- * the reachability check rather than being counted by accident.
+ * A list, not a prefix scan: `cfwCanSuspend` is a boolean the service provider probes, and wrapping
+ * it would hand PHP a callable where it expects a flag (reads true, installs a dead handler).
  */
 export const CROSSING_NAMES = [
 	'cfwSqlExec',
@@ -74,8 +52,7 @@ export const CROSSING_NAMES = [
 	'cfwFileStat',
 	'cfwFilePublicBase',
 	'cfwFileRename',
-	// both were installed on the module and absent here, which is the drift this list exists to
-	// prevent: the census under-reported the bridge by two capabilities, and both of them mutate
+	// both mutate, and the census under-counted the bridge while they were missing here
 	'cfwOidcClaims',
 	'cfwTcp',
 	// the runtime levers, read and written from Drupal's own settings form
@@ -84,22 +61,18 @@ export const CROSSING_NAMES = [
 	'cfwModules'
 ] as const;
 
+/** one capability name from {@link CROSSING_NAMES} */
 export type CrossingName = (typeof CROSSING_NAMES)[number];
 
 /**
  * Wraps every installed capability so each call increments the tally.
  *
- * Installed AFTER every capability, because a wrapper applied first is overwritten by the
- * installer that runs after it -- silently, and the tally then reads 0 for a capability that is
- * being called constantly. That failure mode is the reason this returns the names it actually
- * wrapped rather than assuming.
+ * Install after every capability: a wrapper applied first is overwritten by a later installer and
+ * the tally silently reads 0.
  *
- * @param binary
- *   The instantiated PHP module.
- * @param tally
- *   Mutated in place, so a caller can read it after a run without re-fetching it.
- *
- * @returns the names that were present and wrapped.
+ * @param binary the instantiated PHP module
+ * @param tally mutated in place
+ * @returns the names that were present and wrapped
  */
 export function wrapCrossings(
 	binary: Record<string, unknown>,
@@ -149,13 +122,11 @@ export function snapshotCrossings(tally: CrossingTally): CrossingTally {
 }
 
 /**
- * Which capabilities a batching change could coalesce, and which it could not.
+ * Which capabilities a batching change could coalesce.
  *
- * A capability is BATCHABLE when its calls are independent of each other's replies within one
- * render -- the caller can issue N and read N answers afterwards. It is SERIAL when the next call's
- * arguments depend on the previous reply, which is what makes `cfwSqlExec` unbatchable in general:
- * Drupal reads a row and decides what to ask next from it. `cfwSqlTxn` already IS the batched form
- * of `cfwSqlExec`, which is the precedent this classification follows.
+ * Batchable means calls within a render do not depend on each other's replies; serial means the
+ * next call's arguments come from the previous reply (`cfwSqlExec`; `cfwSqlTxn` is already its
+ * batched form).
  */
 export const BATCHABLE: Record<CrossingName, boolean> = {
 	// the write path already batches through `cfwSqlTxn`; reads are read-decide-read
@@ -210,32 +181,14 @@ export function batchableShare(tally: CrossingTally): {
 }
 
 /**
- * What an RPC migration would cost, in DO requests per fill. **MEASURED ON A DEPLOYED WORKER.**
+ * What an RPC migration would cost, in DO requests per fill.
  *
- * This was asserted, then withdrawn as an unestablished inference, then settled properly. The
- * experiment: a throwaway worker with a Durable Object exposing an RPC method, a `fetch()`, and a
- * loop that does the same work INSIDE one invocation. Each arm driven a distinct number of times
- * against a fresh object, then read from `durableObjectsInvocationsAdaptiveGroups`, which is the
- * billing-facing dataset:
+ * Measured on a deployed worker: an RPC method and a `stub.fetch()` each billed one request per
+ * call (7 and 11), while 13 operations inside one invocation billed 1, so today's bridge is free
+ * and a crossing moved onto RPC would bill one-for-one.
  *
- * | arm                                  | driven | requests billed |
- * | ------------------------------------ | -----: | --------------: |
- * | `stub.ping()`, an RPC method         |      7 |           **7** |
- * | `stub.fetch()`                       |     11 |          **11** |
- * | N loops inside ONE invocation        |     13 |           **1** |
- *
- * Confirmed at n=25 on a first run, where both boundary arms billed 25.
- *
- * **The third row is the one that matters and it is why today's bridge is free.** `Host::call()` is
- * a wasm import resolving to JavaScript inside the already-running object, on the far side of a
- * boundary the `stub.fetch()` already crossed -- the same shape as the `inner` arm, which billed
- * one request for thirteen operations. The first row is why the guard is real: a crossing
- * re-expressed as an RPC method on a stub would be billed one-for-one.
- *
- * @param crossingsPerFill
- *   Measured; `tests/integration/crossings.spec.ts` produces it.
- * @param baseDoRequestsPerFill
- *   What a fill costs today, from `COST_PER_VIEW.missAndFill.do` in the envelope model.
+ * @param crossingsPerFill measured; `tests/integration/crossings.spec.ts` produces it
+ * @param baseDoRequestsPerFill what a fill costs today, from `COST_PER_VIEW.missAndFill.do`
  */
 export function rpcMigrationCost(
 	crossingsPerFill: number,
@@ -246,8 +199,7 @@ export function rpcMigrationCost(
 		today: baseDoRequestsPerFill,
 		overRpc,
 		factor: overRpc / baseDoRequestsPerFill,
-		// the one-for-one billing this multiplies by is a deployed measurement, not a reading of
-		// the docs; see the table above
+		// the one-for-one billing is a deployed measurement, not a reading of the docs
 		measured: true
 	};
 }

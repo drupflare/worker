@@ -1,28 +1,15 @@
 /**
  * The numeric defaults that differ between the free and paid plans, in one place.
  *
- * Before this, `PLAN=paid` reached exactly two decisions -- the migration slicer
- * (`chunksPerInvocation`) and the prefill default -- while five others were flat constants chosen
- * for a 10 ms cap. So a paid site paid for headroom and then behaved like a free one: batches of
- * five, a 2 s inline budget, and a 503 to the first visitor of every cold URL.
- *
- * WHAT PAID ACTUALLY BUYS is a bigger per-invocation CPU budget (30 s against 10 ms) and a longer
- * wall clock, so every knob here is either "how much work fits in one invocation" or "how long a
- * visitor may wait". Nothing here touches the meters that bind the FREE ceiling -- rows written and
- * request counts are the same on both plans, and a paid profile that wrote more rows per fill would
- * be spending the wrong resource.
- *
- * THE ONE THAT MATTERS is {@link PlanProfile.bootInline}. A cold object refuses to render inline
- * because `!this.php`, never because of a budget -- raising `RENDER_BUDGET_MS` from 2,000 to 25,000
- * did not move it, because the estimate is only consulted once an interpreter exists. So on free the
- * first visitor to a cold URL gets a 503 no matter what the budget says, and the fix is not a bigger
- * number but permission to boot. That boot is ~1.4 s, which is why it stays off on free.
- *
- * Every field is an override target: {@link resolvePlanNumber} takes the explicit env value first,
- * so an operator can run a paid profile on free or the reverse without editing code.
+ * Every knob is how much work fits in one invocation or how long a visitor may wait; none touches
+ * the meters that bind the free ceiling (rows written and request counts match on both plans).
+ * The one that changes an outcome is {@link PlanProfile.bootInline}: a cold object refuses to
+ * render inline because `!this.php`, never because of a budget. Every field is an override
+ * target: {@link resolvePlanNumber} takes the explicit env value first.
+ * @module
  */
-
-import { isPaid, type PlanEnv } from './plan.js';
+import { leverInt } from '../util/lever';
+import { isPaid, type PlanEnv } from './plan';
 
 /** the per-plan defaults; every field is a per-invocation budget or a visitor-patience bound */
 export type PlanProfile = {
@@ -32,43 +19,20 @@ export type PlanProfile = {
 	httpDrainLimit: number;
 	/** files one alarm firing may push to R2 */
 	mirrorLimit: number;
-	/** wall-clock ms a MISS may spend rendering before handing the path to the alarm chain */
+	/** wall-clock ms a miss may spend rendering before handing the path to the alarm chain */
 	inlineBudgetMs: number;
-	/**
-	 * whether a MISS on a COLD object may boot the interpreter and render, rather than 503.
-	 *
-	 * The difference between "the first visitor waits" and "the first visitor is turned away", and
-	 * the only knob here that changes an outcome rather than a rate.
-	 */
+	/** whether a miss on a cold object may boot the interpreter and render, rather than 503 */
 	bootInline: boolean;
 };
 
 /**
- * Free: sized for a 10 ms per-invocation cap.
+ * Free: a batch of 5 is what the measured constants fit.
  *
- * These are the measured constants the project ran on. A batch of 5 is what fits.
- *
- * **`bootInline` WAS FALSE AND THE REASON EXPIRED.** It was set against a 10 ms per-invocation cap
- * that a cold boot obviously cannot fit, and against an implicit alternative of "the chain fills it
- * shortly". Both halves are now measured and both are wrong:
- *
- * - **The cap does not fail an object invocation.** A single invocation reading 1,882 ms of
- *   `cpuTime` completed on a deployed FREE worker, and a boot runs in the object. (A Worker handler
- *   running ~1.6 s burns back to back was cut to 10 ms, which is why this is scoped to the object.)
- * - **The alternative is not a short wait.** Time-to-served for an anonymous miss on a cold object,
- *   deployed: **19,004 ms, and only 4 of 8 paths served at all.** A cold boot plus render is ~3.8 s.
- *   Refusing to boot does not save the visitor anything; it costs them 15 seconds and often the
- *   page.
- *
- * So the refusal was comparing a cold boot against a fast chain that does not exist. `inlineBudgetMs`
- * moves with it for the same reason -- it bounds the VISITOR'S PATIENCE rather than a billed
- * resource (wall time is not charged against the CPU budget: 4 ms of Worker CPU against 827 ms of
- * wall, measured), and 2 s of patience is the wrong bound when the alternative is 19 s of waiting.
- *
- * What still protects the object: `estimateRenderMs()` against this budget, the herd collapse (N
- * concurrent identical misses cost ONE render), the daily row and request meters, and
- * `degraded.render` which answers 503 rather than rendering once the quota is spent. Cold encounters
- * are **0.13% of all visitor requests**, so this path is rare by construction.
+ * `bootInline` is true: the 10 ms cap does not fail an object invocation (1,882 ms `cpuTime`
+ * completed on a deployed free worker), and refusing a cold boot is not a short wait (deployed
+ * time-to-served for a cold miss was 19,004 ms, only 4 of 8 paths served; boot plus render is
+ * ~3.8 s). `inlineBudgetMs` bounds visitor patience, not a billed resource. The object stays
+ * protected by `estimateRenderMs()`, herd collapse, the daily meters and `degraded.render`.
  */
 export const FREE_PROFILE: PlanProfile = {
 	fillBatchSize: 5,
@@ -79,40 +43,15 @@ export const FREE_PROFILE: PlanProfile = {
 };
 
 /**
- * Paid: sized for a 30 s per-invocation CPU budget, and bounded by HIT LATENCY rather than by it.
+ * Paid: bounded by hit latency, not the 30 s CPU budget.
  *
- * THE BATCH IS SMALL, and the first version of this file got it wrong. A Durable Object
- * is single-threaded and `php._run()` is synchronous, so a fill occupies the object for its whole
- * duration and a queued cache HIT cannot be answered by EITHER lane while it runs. Measured on a
- * deployed worker at `fillBatchSize: 25`: alarms cost 4,337-5,832 ms of cpuTime (n=6) and every
- * `/__serve` racing them waited 5.0-6.8 s of wall (n=5). Nothing bounded it: a wall-clock guard
- * cannot, because the clock does not advance across a synchronous `php._run()`. It simply made paid
- * visitors wait seconds on an object that was filling.
- *
- * Throughput does not pay for that, because the alarm RE-ARMS IMMEDIATELY while the queue is
- * non-empty: measured, consecutive firings 130-160 ms apart. So on paid, where DO requests are not
- * the binding meter, many short alarms deliver the same fills per second as one long one and bound
- * the worst HIT wait instead. At a measured 81 ms median per warm render (n=7, 67-107, uncontended),
- * 8 fills is roughly 650 ms of occupancy against 4.5 s.
- *
- * Subrequests are the reason the drain limits stay small-ish: an invocation gets 1,000 on paid
- * against 50 on free, but a fill in the same firing has already spent several, and each mirror put
- * carries a whole file through memory.
- *
- * **BATCHING DOES AMORTISE REAL COST, AND THAT IS NOT WHAT BOUNDS THIS NUMBER.** Measured
- * 2026-09-14 on a deployed free worker, n=5 per k, interleaved, every batch verified to drain
- * exactly k in one invocation: per-page wall falls 109 ms at k=1 to 82 at k=5, 50 at k=10 and
- * **42.9 at k=20**, a 2.54x saving with the curve still descending. Round-trip wall rather than
- * `cpuTime`, because the tag rides the front-worker request and the observability record is the
- * OBJECT's invocation, which carries no query -- the network term is near constant across the four
- * arms, so the relation holds even though the absolutes carry it.
- *
- * It does not move either number above, and saying why is the point of recording it. That run drove
- * an otherwise idle object, so it measured THROUGHPUT and the two constraints here are HIT LATENCY
- * during a fill and the 128 MiB isolate -- a fill batch is N workloads inside ONE invocation, which
- * is what reset four freshly provisioned sites at 25. A throughput figure cannot overrule a latency
- * or a memory bound. What it does establish is that the cost is genuinely amortisable, so a future
- * topology where a fill does not occupy the serving object has a measured reason to revisit this.
+ * The batch is small because `php._run()` is synchronous: a fill occupies the single-threaded
+ * object and queued hits wait. At `fillBatchSize: 25` alarms cost 4,337-5,832 ms of cpuTime (n=6)
+ * and racing `/__serve` calls waited 5.0-6.8 s (n=5); a wall-clock guard cannot bound it (frozen
+ * clock). The alarm re-arms 130-160 ms apart, so short batches match long ones' throughput; 8
+ * fills at ~81 ms is ~650 ms of occupancy. Drain limits stay small for subrequests and memory.
+ * Batching does amortise (per-page wall 109 ms at k=1 to 42.9 at k=20, deployed free, n=5), but
+ * that is throughput on an idle object; the bounds are hit latency and the 128 MiB isolate.
  */
 export const PAID_PROFILE: PlanProfile = {
 	fillBatchSize: 8,
@@ -122,8 +61,8 @@ export const PAID_PROFILE: PlanProfile = {
 	bootInline: true
 };
 
-/** @returns the profile for this environment; free for anything unrecognised, as `isPaid()` decides */
-export function planProfile(env?: PlanEnv | null): PlanProfile {
+/** @returns the profile for this environment (free unless `isPaid()` says otherwise) */
+export function planProfile(env?: PlanEnv): PlanProfile {
 	return isPaid(env) ? PAID_PROFILE : FREE_PROFILE;
 }
 
@@ -132,21 +71,16 @@ export function planProfile(env?: PlanEnv | null): PlanProfile {
  *
  * @param raw the environment value, which arrives from wrangler as a string
  * @param field which profile field supplies the default
- * @param max a hard cap applied to BOTH the override and the profile, because these bound a single
- *   invocation and an operator typo must not be able to hang the object
+ * @param max a hard cap on both override and profile (an operator typo must not hang the object)
  */
 export function resolvePlanNumber(
 	raw: string | number | null | undefined,
 	field: 'fillBatchSize' | 'httpDrainLimit' | 'mirrorLimit' | 'inlineBudgetMs',
 	max: number,
-	env?: PlanEnv | null
+	env?: PlanEnv
 ): number {
 	const profile = planProfile(env);
-	const n = Number(raw);
-	// an absent or unparseable value falls through to the profile; 0 is honoured where the caller
-	// allows it, because `RENDER_BUDGET_MS=0` is the documented way to force the always-503 shape
-	if (raw !== null && raw !== undefined && String(raw) !== '' && Number.isFinite(n) && n >= 0) {
-		return Math.min(Math.floor(n), max);
-	}
-	return Math.min(profile[field], max);
+	// absent or unparseable falls through to the profile; 0 is honoured (`RENDER_BUDGET_MS=0`
+	// forces always-503)
+	return Math.min(leverInt(raw) ?? profile[field], max);
 }

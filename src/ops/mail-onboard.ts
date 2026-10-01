@@ -1,40 +1,17 @@
 /**
- * Onboards a sending domain, which is the whole gap between "mail refuses" and "mail works".
+ * Onboards a sending domain: the gap between "mail refuses" and "mail works".
  *
- * `src/ops/mail.ts` picks a transport; every transport then fails the same way if the domain was
- * never onboarded with Cloudflare. That is a DNS and account-state problem rather than a code one,
- * and it is the last manual step in a one-click setup.
- *
- * ## What is automatable, measured against the live API rather than the docs
- *
- * A sending subdomain is **zone-scoped**: `/zones/{zone}/email/sending/subdomains`. The
- * account-scoped path answers `Unable to authenticate request`, so a design that reached for
- * `/accounts/{id}/...` would fail with an error that reads like a bad token.
- *
- * Its records are six: three MX on the return-path host, an SPF TXT beside them, a DKIM TXT at
- * `<selector>._domainkey`, and a DMARC TXT on the apex. `dnsPlan()` diffs them against the zone.
- *
- * ## The one step that stays manual, and why that is fine
- *
- * A destination address is verified by clicking a link Cloudflare emails. That cannot be automated
- * and should not be: it is the proof that whoever is configuring the site controls the inbox.
- * Drupal's own email flow already expects click-to-verify, so it fits the model rather than
- * fighting it.
- *
- * **It can be POLLED, which was an open question and is now answered.** A destination address
- * carries both `status: "verified" | "unverified"` and a `verified` timestamp that is null until it
- * happens -- read off the live account. So the setup page waits and lights up on its own instead of
- * telling the operator to come back.
- *
- * ## Permission
- *
- * This needs **zone DNS write**, far broader than anything else drupflare asks for. It is opt-in and
- * never required by a site that only serves pages, which is why it is a separate surface rather than
- * part of the first-run claim.
+ * A sending subdomain is zone-scoped (`/zones/{zone}/email/sending/subdomains`; the account path
+ * answers `Unable to authenticate request`, which reads like a bad token). Its six records (three
+ * MX, SPF, DKIM, DMARC) are diffed by `dnsPlan()`. Destination verification stays manual (a clicked
+ * link proves inbox control) but can be polled via `status` or the `verified` timestamp. Needs zone
+ * DNS write, so it is an opt-in surface, not part of the first-run claim.
+ * @module
  */
 
 const API = 'https://api.cloudflare.com/client/v4';
 
+/** the `fetch` signature the API calls go through, injectable for tests */
 export type Fetcher = typeof fetch;
 
 /** a DNS record as both the sending API and the zone API describe one */
@@ -49,6 +26,7 @@ export type DnsRecord = {
 /** an existing zone record, which additionally has an id to PATCH */
 export type ZoneRecord = DnsRecord & { id: string };
 
+/** a sending subdomain as the zone API returns it */
 export type SendingSubdomain = {
 	id: string;
 	name: string;
@@ -57,8 +35,10 @@ export type SendingSubdomain = {
 	return_path_domain?: string;
 };
 
+/** a call's value, or the error message an operator can act on */
 export type ApiResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
+/** one authenticated call to the Cloudflare API, with transport and API failures as `ApiResult` */
 async function api<T>(
 	fetcher: Fetcher,
 	token: string,
@@ -85,7 +65,6 @@ async function api<T>(
 		return { ok: false, error: `HTTP ${res.status} with an unreadable body` };
 	}
 	if (body.success !== true) {
-		// the message is what an operator can act on; a bare status is not
 		const first = body.errors?.[0]?.message;
 		return { ok: false, error: first ?? `HTTP ${res.status}` };
 	}
@@ -148,6 +127,7 @@ export async function zoneRecords(
 	return { ok: true, value: out };
 }
 
+/** what `dnsPlan` decided for one required record; `advise` is never written */
 export type RecordAction =
 	| { verb: 'create'; record: DnsRecord }
 	| { verb: 'update'; record: DnsRecord; id: string; from: string }
@@ -155,11 +135,9 @@ export type RecordAction =
 	| { verb: 'keep'; record: DnsRecord };
 
 /**
- * Records drupflare owns outright, by name shape.
- *
- * The five on the return-path host and the DKIM selector exist BECAUSE of this feature, so writing
- * them is unambiguous. `_dmarc` is not one of them: it sits on the apex and states a policy for
- * every mail stream the domain has, most of which drupflare knows nothing about.
+ * Records drupflare owns outright, by name shape: the return-path host and DKIM selector exist
+ * because of this feature. `_dmarc` is not one; it sits on the apex and sets policy for every mail
+ * stream the domain has.
  */
 export function ownedByOnboarding(record: DnsRecord): boolean {
 	return !/^_dmarc\./i.test(record.name);
@@ -168,9 +146,8 @@ export function ownedByOnboarding(record: DnsRecord): boolean {
 /**
  * Normalises a TXT value for comparison.
  *
- * The sending API returns TXT content WRAPPED IN QUOTES and the zone API returns it unwrapped, so a
- * naive string compare rewrites all three TXT records on every run -- which looks idempotent right
- * up until it burns a rate limit and rotates nothing.
+ * The sending API returns TXT content wrapped in quotes and the zone API unwrapped, so a naive
+ * compare rewrites every TXT record on every run (until it hits a rate limit).
  */
 export function normaliseContent(type: string, content: string): string {
 	const trimmed = content.trim();
@@ -184,19 +161,15 @@ export function normaliseContent(type: string, content: string): string {
 const sameSlot = (a: DnsRecord, b: DnsRecord) =>
 	a.type === b.type &&
 	a.name.toLowerCase() === b.name.toLowerCase() &&
-	// MX is a SET: three records share a name and differ by target, so the target is part of the slot
+	// MX is a set: three records share a name, so the target is part of the slot
 	(a.type !== 'MX' || normaliseContent('MX', a.content) === normaliseContent('MX', b.content));
 
 /**
  * What to create, what to update and what already agrees.
  *
- * IDEMPOTENT BY CONSTRUCTION, which the entry called for: a second run over an onboarded zone
- * returns all `keep` and writes nothing. Resumable for the same reason -- a run that died halfway
- * finds its own records on the next pass.
- *
- * An existing record whose content DIFFERS is an update rather than a second create. Creating a
- * second SPF TXT on one name is not a duplicate that gets ignored; it is two SPF records, which is a
- * permerror under RFC 7208 and fails mail delivery for the whole domain.
+ * Idempotent and resumable: a second run over an onboarded zone returns all `keep`, and a run that
+ * died halfway finds its own records. An existing record with different content is an update, not
+ * a second create: two SPF records are a permerror (RFC 7208) and fail delivery for the domain.
  */
 export function dnsPlan(
 	required: readonly DnsRecord[],
@@ -221,7 +194,7 @@ export function dnsPlan(
 	});
 }
 
-/** applies a plan; `keep` costs no request, which is what makes a re-run cheap as well as safe */
+/** applies a plan; `keep` costs no request, so a re-run is cheap as well as safe */
 export async function applyDnsPlan(
 	token: string,
 	zoneId: string,
@@ -239,7 +212,7 @@ export async function applyDnsPlan(
 			continue;
 		}
 		if (action.verb === 'advise') {
-			// NEVER written. Surfaced to the operator with both values and left alone
+			// never written; surfaced to the operator with both values
 			advised++;
 			continue;
 		}
@@ -269,18 +242,13 @@ export async function applyDnsPlan(
 /**
  * Whether a message's From address belongs to the domain this account onboarded for sending.
  *
- * A MISMATCH RESTRICTS DELIVERY RATHER THAN FAILING, which is why nothing noticed. Cloudflare will
- * accept a send from a domain it has no SPF or DKIM for and then deliver it only to verified
- * destination addresses -- so registration mail to a real visitor is accepted by the API and never
- * arrives, and the site's own status says the transport is configured.
+ * A mismatch restricts delivery rather than failing: Cloudflare accepts a send from a domain with
+ * no SPF or DKIM and delivers it only to verified destination addresses, so registration mail is
+ * accepted by the API and never arrives. A subdomain of the sending domain passes.
  *
- * A subdomain of the sending domain passes: onboarding `send.example.com` authorises
- * `bounce.send.example.com`, and refusing that would be stricter than Cloudflare.
- *
- * @param from the effective sender, which is `senderFor()`'s answer rather than `MAIL_FROM`.
- * @param sending the onboarded sending domain, or '' when this site has never onboarded one. Empty
- *   answers ok: a site sending through a third-party relay has no Cloudflare sending domain and
- *   must not be refused for the absence of one.
+ * @param from the effective sender, which is `senderFor()`'s answer rather than `MAIL_FROM`
+ * @param sending the onboarded sending domain, or '' when none; empty answers ok (a third-party
+ *   relay has no Cloudflare sending domain)
  */
 export function senderDomainVerdict(
 	from: string,
@@ -291,8 +259,7 @@ export function senderDomainVerdict(
 		.toLowerCase()
 		.replace(/^\.+|\.+$/g, '');
 	if (want === '') return { ok: true };
-	// `Name <addr@host>` as well as a bare address: `senderFor()` hands over whatever Drupal set as
-	// the site mail, and Drupal's own default carries a display name
+	// accept `Name <addr@host>` as well as a bare address (Drupal's default carries a display name)
 	const raw = String(from ?? '').trim();
 	const angled = raw.match(/<([^>]*)>\s*$/);
 	const address = (angled?.[1] ?? raw).trim();
@@ -319,6 +286,7 @@ export function senderDomainVerdict(
 	};
 }
 
+/** an Email Routing destination address; `status` and `verified` both report verification */
 export type DestinationAddress = {
 	id: string;
 	email: string;
@@ -360,10 +328,8 @@ export function addDestination(
 /**
  * Whether an address is verified.
  *
- * Reads `status` first and falls back to the `verified` timestamp. Both are populated on the live
- * account -- `status: "verified"` alongside `verified: "2025-01-26T05:40:12Z"`, and
- * `status: "unverified"` alongside `verified: null` -- so either alone would do, and using one with
- * the other as a fallback survives whichever they stop sending.
+ * Reads `status` first and falls back to the `verified` timestamp; both are populated on the live
+ * account, so using one as the fallback survives whichever the API stops sending.
  */
 export function isVerified(address: DestinationAddress | undefined): boolean {
 	if (!address) return false;
@@ -374,13 +340,9 @@ export function isVerified(address: DestinationAddress | undefined): boolean {
 /**
  * What the token is actually allowed to do, probed rather than assumed.
  *
- * A SHORT PERMISSION USED TO SURFACE AS THE WRONG STAGE. `listDestinations()` failing was swallowed
- * -- `dests?.ok ? ... : undefined` -- so a token with no Email Routing read produced an undefined
- * destination, which reads exactly like an unverified one, and the flow told the operator to click
- * a link Cloudflare had never sent. The stage has to be able to say "this token cannot see".
- *
- * Each field is the verdict of a real call the flow makes anyway, so probing costs nothing extra
- * and cannot disagree with what the flow then does.
+ * A token that cannot read destinations must not look like an unverified one (the operator would be
+ * told to click a link Cloudflare never sent). Each field is the verdict of a call the flow makes
+ * anyway.
  */
 export type TokenGrants = {
 	/** can list sending subdomains on the zone; null when no zone has been chosen yet */
@@ -391,6 +353,7 @@ export type TokenGrants = {
 	refusal?: string;
 };
 
+/** which step the onboarding flow is waiting on, in order */
 export type OnboardStage =
 	| 'no-token'
 	| 'insufficient-grants'
@@ -400,6 +363,7 @@ export type OnboardStage =
 	| 'awaiting-verification'
 	| 'ready';
 
+/** the stage plus what the operator is waiting on and whether a re-run would change anything */
 export type OnboardState = {
 	stage: OnboardStage;
 	/** what the operator is waiting on, in their words rather than an API's */
@@ -412,12 +376,10 @@ export type OnboardState = {
 };
 
 /**
- * Turns the four observables into one stage, so the surface reports WHICH step it is waiting on.
+ * Turns the four observables into one stage, so the surface reports which step it is waiting on.
  *
- * The entry asked for exactly this rather than a pass/fail: DNS propagation runs to 24 hours, and a
- * flow that answers "failed" during a normal wait is a flow an operator will run again and again.
- * `settled` is the only true/false here, and it means "re-running changes nothing" rather than
- * "finished" -- `awaiting-verification` is settled and not finished.
+ * DNS propagation runs to 24 hours, so a normal wait must not read as failure. `settled` means
+ * "re-running changes nothing", not "finished" (`awaiting-verification` is settled, not finished).
  */
 export function onboardState(input: {
 	zoneId: string | null;
@@ -436,9 +398,8 @@ export function onboardState(input: {
 			settled: false
 		};
 	}
-	// BEFORE every stage below, because each of those is a claim about the ACCOUNT and a token that
-	// cannot read is not evidence about the account. This is the branch that stops a short
-	// permission being reported as "click the link Cloudflare emailed you"
+	// before every stage below: a token that cannot read is no evidence about the account (stops a
+	// short permission reading as "click the link Cloudflare emailed you")
 	const grants = input.grants;
 	if (grants && (grants.zone === false || !grants.destinations)) {
 		const missing = [
@@ -468,8 +429,7 @@ export function onboardState(input: {
 			settled: false
 		};
 	}
-	// an advisory is NOT pending work: nothing here will ever write it, so a flow that waited on one
-	// would sit at needs-dns forever
+	// an advisory is not pending work (nothing writes it), or the flow would stall at needs-dns
 	const advisories = input.plan.filter((a) => a.verb === 'advise');
 	const pending = input.plan.filter((a) => a.verb !== 'keep' && a.verb !== 'advise');
 	if (pending.length > 0) {
@@ -484,7 +444,6 @@ export function onboardState(input: {
 		return {
 			stage: 'awaiting-verification',
 			...(advisories.length > 0 ? { advisories } : {}),
-			// the honest phrasing: nothing here is broken and nothing more can be done from this side
 			waitingOn: 'click the link Cloudflare emailed to the destination address',
 			settled: true
 		};

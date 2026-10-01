@@ -1,6 +1,6 @@
 import { Image, TinyImgModule, mimeFor, transform as tinyTransform } from '@gmitch215/tinyimg';
 import wasm from '@gmitch215/tinyimg/tinyimg.wasm';
-import type { Transform } from './image-transform.js';
+import type { Transform } from './image-transform';
 
 export {
 	IMAGE_ROUTE_PREFIX,
@@ -15,19 +15,15 @@ export {
 	transformPath,
 	type ImageUrlRequest,
 	type Transform
-} from './image-transform.js';
+} from './image-transform';
 
 /**
- * The decoder module, compiled at MODULE SCOPE and instantiated on first use.
+ * The decoder module, compiled at module scope and instantiated on first use.
  *
- * Compiling at module scope is a platform requirement: workerd permits wasm codegen at worker
- * STARTUP and refuses it at request time, so the `.wasm` import (pre-compiled through wrangler's
- * `CompiledWasm` rule) is what stays at module scope. Instantiating it is not codegen, so it waits
- * for the first transform: an instance holds a linear memory (1 MiB at load) in every isolate that
- * imports this module, and a site with no images never needs it.
- *
- * Separate from `image-transform.ts` so that module stays importable by the gate and by the object
- * without pulling a second wasm module into either.
+ * workerd permits wasm codegen at startup and refuses it at request time, so the `.wasm` import
+ * (`CompiledWasm`) stays at module scope; instantiating is not codegen and waits for the first
+ * transform (1 MiB of linear memory per isolate). Separate from `image-transform.ts`, which the
+ * gate and the object import without a second wasm module.
  */
 let tinyimg: TinyImgModule | undefined;
 const engine = (): TinyImgModule => (tinyimg ??= TinyImgModule.load(wasm));
@@ -36,12 +32,9 @@ const engine = (): TinyImgModule => (tinyimg ??= TinyImgModule.load(wasm));
 export const engineLoaded = (): boolean => tinyimg !== undefined;
 
 /**
- * What the shipped engine reports it can encode, answered without instantiating it.
- *
- * Read off the 1.1 build's `features`; the type union in `@gmitch215/tinyimg` lists `heif` too and
- * there is NO feature flag for it, so a format being in that union says nothing about this build
- * encoding it. `image-derivatives.spec.ts` compares this list with a live instance, so a package
- * bump that changes it fails there instead of silently degrading styles.
+ * What the shipped engine can encode, without instantiating it (the 1.1 build's `features`). The
+ * package's type union also lists `heif`, which has no feature flag; `image-derivatives.spec.ts`
+ * compares this list with a live instance.
  */
 const SHIPPED_FEATURES = [
 	'simd',
@@ -57,6 +50,7 @@ const SHIPPED_FEATURES = [
 	'icc'
 ] as const;
 
+/** the features the shipped engine can encode */
 export function engineFeatures(): readonly string[] {
 	return SHIPPED_FEATURES;
 }
@@ -70,9 +64,8 @@ export type TransformResult = { bytes: Uint8Array; contentType: string };
 /**
  * Applies one Drupal image style.
  *
- * `fit` defaults to `cover` and the format to `webp`, which is what
- * {@link normaliseTransform} already assumes -- the two have to agree or the identity in the URL
- * describes a transform the runtime does not perform.
+ * `fit` defaults to `cover` and the format to `webp`, matching {@link normaliseTransform} (the URL
+ * identity must describe the transform performed).
  */
 export async function runImageTransform(
 	source: Uint8Array,
@@ -85,9 +78,7 @@ export async function runImageTransform(
 		fit: (transform.fit ?? 'cover') as never,
 		format: format as never,
 		quality: transform.quality ?? 80,
-		// FAST unless the style asked otherwise. Measured across the four shipped styles, `fancy` is
-		// 2 to 5% smaller for 1 to 10 ms more; on a derivative that is written once and served many
-		// times that trade is worth offering and not worth defaulting to
+		// fast unless the style asks (`fancy` is 2 to 5% smaller for 1 to 10 ms more)
 		...(transform.mode === 'fancy' ? { effort: 'fancy' as never } : {})
 	});
 	return {
@@ -104,6 +95,7 @@ export type ParkImageOp =
 	| { op: 'resize'; width: number; height: number; filter?: 'nearest' | 'bilinear' }
 	| { op: 'rotate'; degrees: number; background?: number };
 
+/** a queued gd handle: its source or canvas, its operations and the output encoding */
 export type ParkImageRequest = {
 	source: string | null;
 	canvas: { width: number; height: number } | null;
@@ -112,7 +104,7 @@ export type ParkImageRequest = {
 	quality: number;
 };
 
-/** pixels a blank canvas may hold; a canvas is raw memory in the decoder before it is a file */
+/** pixels a blank canvas may hold (a canvas is raw decoder memory before it is a file) */
 const CANVAS_MAX_PIXELS = 16_000_000;
 
 /** a black opaque 24-bit BMP, the smallest thing the decoder opens that has no source file */

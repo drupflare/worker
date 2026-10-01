@@ -1,48 +1,21 @@
 /**
  * Which fragment a cache tag reaches, and whether a fragment has changed at all.
  *
- * The `tag -> paths` index answers "which stored pages does this save invalidate". One level down
- * sits the question it cannot: most of a page is unchanged by most saves, and on an authenticated
- * render Drupal has already drawn the boundary -- every auto-placeholdered region is a BigPipe hole
- * with its OWN cacheability, and `Renderer::renderPlaceholder()` keeps that metadata out of the
- * response's.
- *
- * MEASURED ON THE SHIPPING PACK, which is what makes the split worth indexing. An anonymous render
- * of `/` carries 10 cache tags and zero holes; the authenticated harvest of the same path carries
- * **6** tags and 6 holes, and `local_task`, `config:system.menu.main` and `config:system.menu.account`
- * appear only on the fragments. So a menu-item save invalidates every anonymous page on the site and
- * touches no stored shell at all -- and today it drops every shell anyway, because
- * `bumpGeneration()` has nothing finer to consult.
- *
- * ## The anonymous page tier has no seam, and that is structural
- *
- * `cfw_page` stores cookieless GETs, and BigPipe only placeholders a request that has a session:
- * measured again here, a stored `/` row carries **zero** `data-big-pipe-placeholder-id` spans. There
- * is nothing on an anonymous page to address, so this indexes the SHELL tier, which has the holes.
- *
- * ## Nothing here stores a fragment's bytes
- *
- * A fragment is personalised by construction -- that is what a hole is for -- so a content-addressed
- * blob of one would be a store of one visitor's markup addressable by another, which is the
- * disclosure this project has already shipped once. The row carries the ADDRESS and the tag list,
- * never the markup, so the index has no reader to leak to.
- *
- * ## What the address costs, and why the generation is in it anyway
- *
- * The address is `sha256(plan + dependency values + generation)`, and an index pass whose address
- * matches the stored one writes NOTHING. The generation moves on every save, so a save does
- * re-address every fragment -- but re-indexing only happens at a HARVEST, and a harvest only happens
- * when a shell was dropped. What the check removes is the repeat: `verifyShellFor()` re-harvests once
- * per new `(path, role, uid)`, so a site with 50 editors re-indexes the same six fragments 50 times
- * per path. At one row each that is 300 rows for one page; with the address it is 6.
+ * Indexes the shell tier (the BigPipe holes, each with its own cacheability); the anonymous
+ * `cfw_page` tier has no placeholders to address. A fragment's bytes are never stored, since it is
+ * personalised by construction; a row holds the address and tag list only. The address is
+ * `sha256(plan + dependency values + generation)` and an unchanged address writes nothing, which
+ * keeps repeat harvests (one per `(path, role, uid)`) from costing a row per fragment each time.
+ * @module
  */
+import { bytesToHex } from '../util/hex';
 
 /** the reads and writes this module needs, narrowed so it stays drivable over a fake */
 export interface FragmentSql {
 	exec(sql: string, ...bindings: unknown[]): { toArray(): Record<string, unknown>[] };
 }
 
-/** a tag and the invalidation counter Drupal keeps for it; the fragment's dependency VALUES */
+/** a tag and the invalidation counter Drupal keeps for it; the fragment's dependency values */
 export type TagCounts = Record<string, number>;
 
 /** one fragment as a harvest declares it, before it has an address */
@@ -55,6 +28,7 @@ export interface DeclaredFragment {
 	tags: readonly string[];
 }
 
+/** one stored fragment row: where it sits, its content address and its tags */
 export interface IndexedFragment {
 	path: string;
 	id: string;
@@ -62,9 +36,9 @@ export interface IndexedFragment {
 	tags: string[];
 }
 
+/** creates `cfw_fragment` and adds the `tags` column to `cfw_shell` when missing */
 export function ensureFragmentTables(sql: FragmentSql): void {
-	// WITHOUT ROWID because a TEXT primary key in a rowid table gets its own unique index and charges
-	// 2 rows an insert rather than 1, the same reason `cfw_shell_verified` is stored that way
+	// without rowid: a TEXT primary key in a rowid table gets its own index (2 rows an insert)
 	sql.exec(
 		`CREATE TABLE IF NOT EXISTS cfw_fragment (
        path TEXT NOT NULL,
@@ -75,9 +49,8 @@ export function ensureFragmentTables(sql: FragmentSql): void {
        PRIMARY KEY (path, id)
      ) WITHOUT ROWID`
 	);
-	// CHECKED FIRST, NOT ATTEMPTED AND CAUGHT: a failing ALTER dirties `sqlite_master` on every call
-	// the same way a CREATE TABLE does, and that took the serve path into `migrate: starting` on 2 of
-	// 3 runs when `cfw_page.tags` was added
+	// check first, never attempt and catch: a failing `ALTER` dirties `sqlite_master` on every call
+	// and took the serve path into `migrate: starting`
 	const hasTags = sql
 		.exec("SELECT name FROM pragma_table_info('cfw_shell')")
 		.toArray()
@@ -88,9 +61,8 @@ export function ensureFragmentTables(sql: FragmentSql): void {
 /**
  * A stored tag list, or null when the row cannot speak for itself.
  *
- * NULL IS NOT AN EMPTY SET. A shell stored before the column existed has no recorded dependencies,
- * and a purge that skips it serves a visitor content they can see is wrong -- so it answers null and
- * {@link shellVerdict} drops the shell.
+ * Null is not an empty set: a shell stored before the column existed has no recorded dependencies,
+ * so it answers null and {@link shellVerdict} drops it.
  */
 export function readTagList(raw: unknown): string[] | null {
 	if (raw === null || raw === undefined || raw === '') return null;
@@ -106,12 +78,8 @@ export function readTagList(raw: unknown): string[] | null {
 /**
  * The invalidation counters Drupal holds for these tags.
  *
- * Read as one full scan and filtered here rather than through an `IN (...)`, which is what
- * `pathsForTags()` does and for the same two reasons: a Durable Object statement takes at most 100
- * bound parameters, and a page's tag set is not bounded by that.
- *
- * A tag with no row has never been invalidated, so it counts 0 -- a real value rather than a missing
- * one, and the value Drupal's own checksum would use.
+ * One full scan filtered here, not an `IN (...)`: a Durable Object statement takes at most 100
+ * bound parameters. A tag with no row has never been invalidated and counts 0 (as in Drupal).
  */
 export function dependencyValues(sql: FragmentSql, tags: readonly string[]): TagCounts {
 	const out: TagCounts = {};
@@ -134,14 +102,11 @@ export function dependencyValues(sql: FragmentSql, tags: readonly string[]): Tag
 /**
  * The sum of a page's tags' invalidation counters, which is Drupal's own freshness test.
  *
- * `DatabaseCacheTagsChecksum` decides a cache entry is valid by comparing the checksum it stored
- * against this same sum, so a page whose sum has not moved cannot have been invalidated. Stored on
- * the page row at fill time and compared at serve time, it replaces a WRITE per affected page with
- * a READ per served page -- and the free plan allows 5,000,000 rows read a day against 100,000
- * written.
- *
- * Zero for a page with no recorded tags, which is not a usable checksum and is why the caller has
- * to tell that case apart rather than compare against 0.
+ * Drupal's `DatabaseCacheTagsChecksum` compares a stored checksum against this same sum, so a page
+ * whose sum has not moved was not invalidated. Compared at serve time it trades a write per
+ * affected page for a read per served page (free allows 5,000,000 rows read a day against 100,000
+ * written). Zero for a page with no recorded tags, which is not a usable checksum; callers must
+ * tell that case apart.
  */
 export function tagChecksum(sql: FragmentSql, tags: readonly string[]): number {
 	if (tags.length === 0) return 0;
@@ -150,9 +115,6 @@ export function tagChecksum(sql: FragmentSql, tags: readonly string[]): number {
 	for (const tag of tags) sum += Number(counts[String(tag)] ?? 0);
 	return sum;
 }
-
-const HEX = (buf: ArrayBuffer): string =>
-	[...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 
 /** sorted, so a recipe that arrives with its keys in another order is the same fragment */
 function canonical(value: unknown): string {
@@ -167,10 +129,8 @@ function canonical(value: unknown): string {
 /**
  * A fragment's content address: `sha256(plan + dependency values + generation)`.
  *
- * All three, and each answers a different way the fragment can stop being what it was. The plan is
- * what it renders, the dependency values are what it renders FROM -- Drupal's own invalidation
- * counters, the same numbers a cache checksum is built out of -- and the generation is the fence for
- * everything no tag describes, which is why `bumpGeneration()` exists at all.
+ * The plan is what it renders, the dependency values are what it renders from (Drupal's own
+ * invalidation counters), and the generation fences everything no tag describes.
  */
 export async function fragmentAddress(input: {
 	plan: unknown;
@@ -182,7 +142,7 @@ export async function fragmentAddress(input: {
 		.map((tag) => `${tag}=${Number(input.deps[tag] ?? 0)}`)
 		.join(',');
 	const material = `${canonical(input.plan)}\n${deps}\n${String(input.generation)}`;
-	return HEX(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material)));
+	return bytesToHex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material)));
 }
 
 /** every fragment recorded for a path, or for the whole site when no path is given */
@@ -204,9 +164,8 @@ export function storedFragments(sql: FragmentSql, path?: string): IndexedFragmen
 /**
  * Records this page's fragments, writing only the ones whose address moved.
  *
- * A fragment the harvest no longer declares is dropped, for the reason `indexPageTags()` replaces
- * rather than merges: a page whose fragment set SHRANK would otherwise keep answering for a region
- * it no longer has, and a save on that region's tag would keep a shell alive that should have gone.
+ * A fragment the harvest no longer declares is dropped (replace, not merge, as `indexPageTags()`
+ * does), or a shrunken page would keep answering for a region it no longer has.
  */
 export async function indexFragments(
 	sql: FragmentSql,
@@ -237,8 +196,7 @@ export async function indexFragments(
 		addresses[fragment.id] = addr;
 		const stored = held.get(fragment.id);
 		held.delete(fragment.id);
-		// THE WHOLE POINT OF THE ADDRESS. A re-harvest of an unchanged page writes nothing here, and
-		// a re-harvest is what every new visitor to a shelled path costs
+		// an unchanged page writes nothing on re-harvest, which every new visitor to a path costs
 		if (stored?.addr === addr) {
 			unchanged++;
 			continue;
@@ -268,8 +226,8 @@ export async function indexFragments(
 /**
  * The fragments these tags invalidate.
  *
- * The half of `tag -> fragment -> pages` a save asks for first: a menu item moved, so the main menu
- * fragment is stale and the breadcrumb beside it is not.
+ * The first half of `tag -> fragment -> pages`: a moved menu item stales the menu fragment, not
+ * the breadcrumb beside it.
  */
 export function dirtyFragments(sql: FragmentSql, tags: readonly string[]): IndexedFragment[] {
 	if (tags.length === 0) return [];
@@ -282,30 +240,16 @@ export function pagesWithDirtyFragments(sql: FragmentSql, tags: readonly string[
 	return [...new Set(dirtyFragments(sql, tags).map((f) => f.path))].sort();
 }
 
+/** whether a shell is dropped, and why */
 export type ShellVerdict = { drop: boolean; reason: string };
 
 /**
  * Whether a save's tags reach a stored shell's own bytes.
  *
- * REFUSES ON AN UNKNOWN, which is a narrower rule than the one this shipped with. An unrecorded tag
- * set still drops: a shell stored before the column existed cannot speak for itself, and that is a
- * genuine unknown rather than a judgement.
- *
- * **A TAG ON NEITHER THE SHELL NOR A FRAGMENT NO LONGER DROPS, and the old rule made the whole
- * scoped purge inert.** `shellTags` is Drupal's own `cacheTags` for the shell render, taken from the
- * response's cacheability metadata rather than derived here -- the same set Drupal uses to decide
- * whether its own `dynamic_page_cache` entry for that response is still valid. A tag outside it
- * cannot invalidate that response by Drupal's rules, so dropping on one was stricter than Drupal
- * itself.
- *
- * Measured with the old rule wired, on a fresh site: creating two users invalidates `user_list`, the
- * front page's shell records six tags and none of them is `user_list`, and the shell was dropped
- * with `user_list is not accounted for on this page`. Every save carries at least one tag no other
- * page depends on, so the scoped purge behaved like the wholesale purge it replaces.
- *
- * A tag that belongs only to a FRAGMENT does not drop either. The fragment is not stored --
- * `assembleFor()` renders every hole on every request -- so the invalidation reaches it through
- * Drupal's own render cache on the next request, and the shell around it is unaffected.
+ * An unrecorded tag set drops (the shell cannot speak for itself). A tag on neither the shell nor a
+ * fragment does not: `shellTags` is Drupal's own `cacheTags` for the render, so a tag outside it
+ * cannot invalidate it, and dropping on one made the scoped purge behave like the wholesale one.
+ * A tag only on a fragment does not drop either (`assembleFor()` renders every hole per request).
  */
 export function shellVerdict(input: {
 	invalidated: readonly string[];
@@ -334,9 +278,8 @@ export function shellVerdict(input: {
 /**
  * Drops the shells a save reaches and leaves the rest assembling.
  *
- * What it replaces is a wholesale `DELETE FROM cfw_shell` on every invalidation including
- * `cachetags` -- correct when nothing knew what a shell depended on, and the reason assembly stopped
- * at the first content save on every live site.
+ * Replaces a wholesale `DELETE FROM cfw_shell` on every invalidation, which stopped assembly at
+ * the first content save on every site.
  */
 export function purgeShellsForTags(
 	sql: FragmentSql,

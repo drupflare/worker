@@ -1,39 +1,26 @@
-import { tierFor, type RuntimeTier } from './catalog.js';
-import { checkInstallable, type InstallVerdict } from './packagist.js';
-
 /**
  * A compatibility oracle in KV, so the common answer costs no subrequest at all.
  *
- * `packagist.ts` already answers "can this module be installed" in ONE cacheable Packagist fetch.
- * This removes even
- * that for anything CI has pre-checked, which matters for two reasons that are about quotas rather than
- * speed:
+ * It removes the one Packagist fetch for anything CI pre-checked (a subrequest is a real cost on
+ * free), and turns "Packagist is unreachable" from "the feature is down" into "the feature is
+ * stale". KV rather than the bundle: verdicts change when Packagist does, with no deploy.
  *
- *   - a subrequest is a real cost on the free plan, and an install UI that checks a dozen candidates
- *     spends a dozen of them;
- *   - Packagist being unreachable makes the live check answer `unverifiable`, which is correctly not
- *     a yes. An oracle
- *     turns that from "the feature is down" into "the feature is stale", which is a much better failure.
- *
- * KV rather than the bundle. The shipped lock map IS baked (2.4 KB) because it describes the artifact it
- * ships beside and changes only when the artifact does. An oracle is the opposite: its verdicts change
- * when PACKAGIST changes, with no deploy involved, and the bundle has 127,714 B of headroom that PHP 8.4
- * already does not fit inside. So the oracle has to be refreshable without a deploy, which is what KV is.
- *
- * Falls back, never fails closed on a miss. An absent binding or an unknown module goes to the live
- * check. A stale oracle is a correctness risk, so entries carry the core version they were computed
- * against and are ignored when it no longer matches -- a verdict computed against Drupal 11.4.5 says
- * nothing about a site that has moved on.
+ * A miss falls back to the live check, never fails closed. Entries carry the core version they
+ * were computed against and are ignored when it differs.
+ * @module
  */
+import { tierFor, type RuntimeTier } from './catalog';
+import { checkInstallable, type InstallVerdict } from './packagist';
 
 /** the KV surface this reads; narrowed so a test supplies a plain object */
 export type OracleKv = {
 	get(key: string, type: 'text'): Promise<string | null>;
 };
 
+/** the env bindings the oracle reads */
 export type OracleEnv = {
-	/** optional: absent means every check goes live, which is the behaviour without an oracle */
-	ORACLE_KV?: OracleKv | null;
+	/** optional: absent means every check goes live */
+	ORACLE_KV?: OracleKv;
 };
 
 /** one stored verdict, plus what it was computed against */
@@ -47,16 +34,17 @@ export type OracleEntry = {
 	builtAt: string;
 };
 
+/** a verdict plus whether this runtime can run the module */
 export type OracleResult = InstallVerdict & {
-	/** whether this runtime can actually run it, independent of whether composer can resolve it */
+	/** whether this runtime can run it, independent of whether composer can resolve it */
 	tier?: RuntimeTier;
 	/** the mechanism, when the tier is not `works-today` */
 	reason?: string;
-	/** where the answer came from, reported so a caller can tell a cheap answer from a fresh one */
+	/** where the answer came from (a cheap answer or a fresh one) */
 	source: 'oracle' | 'live' | 'oracle-stale';
 };
 
-/** the key a module's verdict lives under; the core version is NOT in the key, so staleness is visible */
+/** the key a module's verdict lives under (no core version in it, so staleness is visible) */
 export function oracleKey(name: string): string {
 	return `oracle:${name}`;
 }
@@ -64,21 +52,20 @@ export function oracleKey(name: string): string {
 /**
  * Reads a verdict from the oracle, or `null` to mean "ask Packagist".
  *
- * A parse failure, a missing binding and a core-version mismatch are all `null`. Never throws: the
- * fallback is a working code path, so an oracle problem must degrade to a slower answer rather than an
- * error.
+ * A parse failure and a missing binding are `undefined`. Never throws: an oracle problem must
+ * degrade to a slower answer.
  */
 export async function readOracle(
-	env: OracleEnv | null | undefined,
+	env: OracleEnv | undefined,
 	name: string,
 	shippedCore: string
-): Promise<{ entry: OracleEntry; stale: boolean } | null> {
-	if (!env?.ORACLE_KV) return null;
+): Promise<{ entry: OracleEntry; stale: boolean } | undefined> {
+	if (!env?.ORACLE_KV) return undefined;
 	try {
 		const raw = await env.ORACLE_KV.get(oracleKey(name), 'text');
-		if (raw === null) return null;
+		if (raw === null) return undefined;
 		const entry = JSON.parse(raw) as Partial<OracleEntry>;
-		if (typeof entry.verdict !== 'string' || typeof entry.core !== 'string') return null;
+		if (typeof entry.verdict !== 'string' || typeof entry.core !== 'string') return undefined;
 		return {
 			entry: {
 				verdict: entry.verdict as InstallVerdict['verdict'],
@@ -91,30 +78,29 @@ export async function readOracle(
 			stale: entry.core !== shippedCore
 		};
 	} catch {
-		return null;
+		return undefined;
 	}
 }
 
 /**
  * The installability answer: oracle first, live check second.
  *
- * A STALE entry is reported and then IGNORED for the decision -- it goes live. Serving a stale verdict
- * as authoritative is how a module gets installed against a core version nobody checked, and a wrong
- * yes is worse than a slow answer.
+ * A stale entry is reported but ignored for the decision (it goes live): a wrong yes is worse
+ * than a slow answer.
  */
 export async function resolveInstallable(
-	env: OracleEnv | null | undefined,
+	env: OracleEnv | undefined,
 	fetcher: (url: string) => Promise<Response>,
 	name: string,
 	installed: Record<string, string>,
 	shippedCore: string,
-	constraint?: string | null,
+	constraint?: string,
 	stability?: string
 ): Promise<OracleResult> {
 	const runtime = tierFor(name);
 
 	// the oracle scores the newest release, so a constrained install is always checked live
-	const hit = constraint ? null : await readOracle(env, name, shippedCore);
+	const hit = constraint ? undefined : await readOracle(env, name, shippedCore);
 	if (hit && !hit.stale) {
 		return {
 			name,

@@ -1,5 +1,5 @@
-import { refusalFor, scoreModule, vectorFor } from './capability-contract.js';
-import { satisfies } from './composer-constraint.js';
+import { refusalFor, scoreModule, vectorFor } from './capability-contract';
+import { satisfies } from './composer-constraint';
 
 /** one catalog entry: a pre-packed module and what it needs */
 export type CatalogEntry = {
@@ -13,15 +13,8 @@ export type CatalogEntry = {
 	/** the PHP constraint this pack declares, when it declares one */
 	php?: string;
 	/**
-	 * Runtime capabilities this module needs at REQUEST time.
-	 *
-	 * A DIFFERENT CLASS FROM `core` AND `php`, which are version constraints answerable by comparing
-	 * two strings. These are capability constraints, and they are what the oracle could not see: a
-	 * module can satisfy every version constraint, install cleanly, and then fail the first time a
-	 * visitor uses it because the runtime cannot do the thing it assumes.
-	 *
-	 * `cron` is softer still: cron runs from the Durable Object alarm with
-	 * `automated_cron.interval = 0`, so a cron-driven module is UNWIRED rather than impossible.
+	 * Request-time capabilities, which `core` and `php` cannot express; `cron` runs from the alarm
+	 * (`automated_cron.interval = 0`), so a cron module is unwired, not impossible.
 	 */
 	needs?: readonly ModuleCapability[];
 	/** other catalog modules this one needs, by composer name */
@@ -30,116 +23,44 @@ export type CatalogEntry = {
 	bytes?: number;
 };
 
-import { MODULE_TIER_NOTES, allKnownCapabilities } from './module-tiers.js';
+import { MODULE_TIER_NOTES, allKnownCapabilities } from './module-tiers';
 
 /**
- * What a module needs of the runtime, beyond a version constraint, hardest last.
- *
- * `deferrable-outbound` is NOT a refusal. Treating every outbound need as a wall classified
- * reCAPTCHA and Stage File Proxy as impossible when both are two-phase problems the queue already
- * solves; only a call whose answer must arrive inside the same render is blocked.
- *
- * **`blocking-outbound` AND `blocking-socket` ARE TWO CAPABILITIES, and they were one until
- * 2026-09-08.** One flag covered "an outbound call that must answer inside one render" for both
- * transports, and the Zend park serves exactly one of them: a trapped `stream_socket_client` /
- * `fwrite` / `fgets` parks and is answered from JS, while `fopen('https://...')` cannot be -- the
- * HTTPS wrapper is userland invoked from the INTERNAL `fopen`, so `park_refused()` counts that frame
- * and declines, correctly, because `fopen`'s C locals cannot survive the `longjmp`.
- *
- * Collapsing them would have said the runtime can do a blocking HTTP call because it can do a
- * blocking socket one. `drupal/redis` needs the socket flavour and `drupal/openid_connect` needs the
- * HTTP flavour, so the difference is the difference between those two modules.
+ * What a module needs beyond a version constraint; `deferrable-outbound` is not a refusal. Blocking
+ * kinds are separate: the park serves sockets directly but not `fopen('https://...')`.
  */
 export type ModuleCapability =
 	'deferrable-outbound' | 'blocking-outbound' | 'blocking-socket' | 'cron';
 
 /**
  * What this runtime can do, so the planner refuses on capability as well as on version.
- *
- * `cron` is true because the alarm exists, but a module needing it still has to be driven from
- * there. The two blocking flags are separate transports; see {@link ModuleCapability}.
+ * The two blocking flags are separate transports; see {@link ModuleCapability}.
  */
 export type RuntimeCapabilities = {
 	/** the queue/drain/cache tier exists, so an outbound call split across invocations works */
 	deferredOutbound: boolean;
 	/** an outbound HTTP call that must answer inside one `php._run()`; no park can serve this */
 	blockingOutbound: boolean;
-	/** a SOCKET exchange that must answer inside one `php._run()`; the Zend park serves this */
+	/** a socket exchange that must answer inside one `php._run()`; the Zend park serves this */
 	blockingSocket: boolean;
 	cron: boolean;
 };
 
 /**
- * The shipping runtime.
- *
- * `deferredOutbound` is TRUE and always has been -- the queue, the alarm drain and the response
- * cache all exist and ship. `blockingSocket` and `blockingOutbound` are both true on a build
- * carrying `ext/cfwpark`, by different routes: a socket call is trapped where it stands, and an HTTP
- * call needs its transport REPLACED, because `fopen` is an internal frame with real work left after
- * its callback and a park under one of those is still refused.
- */
-/**
- * DERIVED FROM THE CAPABILITY CONTRACT rather than written twice.
- *
- * These three booleans used to be literals, and a literal is a claim nothing checks. Every vector in
- * `capability-contract.ts` is EXECUTED against the shipping interpreter by
- * `capability-contract.spec.ts`, so reading them here means a capability that moves moves the tier
- * with it -- and a capability that moves without anyone noticing fails the gate first.
- *
- * `cron` stays a literal, and the reason is worth stating: `async.cron` measures whether the
- * RUNTIME declares cron to PHP, which it does not, while this flag means "the alarm exists and drives
- * Drupal's cron", which it does. Two different questions with two different answers; collapsing them
- * would refuse every cron module on a site where cron demonstrably runs.
+ * True because the alarm exists and drives Drupal's cron; kept a literal because `async.cron` in
+ * `capability-contract.ts` measures whether the runtime declares cron to PHP, which it does not.
  */
 const SHIPPED_CRON = true;
 
 /**
- * A socket exchange answered inside one render: park in this invocation, resume in a LATER one.
- *
- * A LITERAL for the same reason `cron` is one, and the parallel is exact. `socket.park.inline` is
- * executed against the shipping interpreter, and it can only ever measure the SAME-invocation case:
- * a contract probe is one PHP expression, so its run and its resumes all land in one `_run`, and a
- * host able to answer inside one `_run` would not need a park at all. This flag is the
- * cross-invocation case, which is the one a module needs, because the whole point of parking is for
- * JavaScript to await in between.
- *
- * TRUE, measured 2026-09-08 on the long64 build carrying `ext/cfwpark`: PHP opens a socket, writes
- * and reads twice, and receives `+OK|+PONG` from the rig's Redis -- five parks, each answered from
- * JavaScript on a later `_run`. `park-interpreter.spec.ts` is the assertion, and it drives a real
- * server rather than a stub.
- *
- * It was false until two defects in the extension were fixed, and both are worth knowing because
- * each failed SILENTLY: `cfw_park_resume` did not re-arm, so every trip after the first ran the real
- * function down the refusal path; and the safety predicate's floor was a frame belonging to the
- * invocation that started the chain, so on a resume the walk went past the parked chain into reused
- * VM stack memory -- reading first as a refusal, then as `memory access out of bounds`. A resumed
- * chain now relinks its root to the resuming frame, which is what `zend_generator_resume` does.
+ * A socket exchange parks in one invocation and resumes in a later one; a literal because
+ * `socket.park.inline` only measures the same-invocation case.
  */
 const SHIPPED_BLOCKING_SOCKET = true;
 
 /**
- * An outbound HTTP call answered inside the render that asked for it.
- *
- * TRUE as of 2026-09-08, and it was FALSE earlier the same day on a correct measurement of a defect
- * that has since been fixed. `Drupal\drupflare\Http\ParkFetchHandler` is the Guzzle transport on
- * this build and yields through the Zend park; what refused it was one internal frame in Drupal's
- * own dispatch, and the reason that frame existed is worth carrying:
- *
- * **AN UNQUALIFIED CALL INSIDE A NAMESPACE IS RESOLVED AT RUNTIME.** `call_user_func_array` normally
- * leaves no frame at all -- `zend_compile_func_cufa` rewrites it to `ZEND_INIT_USER_CALL` -- but that
- * rewrite needs the compiler to have resolved the name, and inside a namespace an unqualified call
- * compiles to `ZEND_INIT_NS_FCALL_BY_NAME` instead. So the frame is real in every namespaced file,
- * which is all of Drupal, and absent in the global namespace, which is where every harness that read
- * this safe was written. Measured on native 8.5.7 as 3 frames against 2, and on this build through
- * the shipping pack as one internal frame between `FormBuilder::retrieveForm` and its callback.
- *
- * `park_flatten()` in `ext/cfwpark` splices such a frame out of the chain rather than refusing it:
- * the callee is relinked to the trampoline's caller and its `ZEND_CALL_TOP` cleared, so its return
- * takes the path the VM already uses for a nested call. `array_map` and `usort` are still refused,
- * which is the control that makes the change mean anything.
- *
- * The consequence is asserted end to end in `park-oidc.spec.ts`: a real authorization code from the
- * rig Keycloak, exchanged by `drupal/openid_connect`'s own client inside the callback request.
+ * An outbound HTTP call answered inside its render via `ParkFetchHandler`; `park_flatten()` in
+ * `ext/cfwpark` splices out the namespaced `call_user_func_array` frame, `array_map` still refuses.
  */
 const SHIPPED_BLOCKING_HTTP = true;
 
@@ -147,6 +68,10 @@ function vectorSatisfied(id: string): boolean {
 	return vectorFor(id)?.expected ?? false;
 }
 
+/**
+ * The shipping runtime; `deferredOutbound` comes from the capability contract. HTTP replaces its
+ * transport because a park under the internal `fopen` frame is still refused.
+ */
 export const SHIPPED_CAPABILITIES: RuntimeCapabilities = {
 	deferredOutbound: vectorSatisfied('http.outbound.deferred'),
 	blockingOutbound: SHIPPED_BLOCKING_HTTP,
@@ -154,6 +79,7 @@ export const SHIPPED_CAPABILITIES: RuntimeCapabilities = {
 	cron: SHIPPED_CRON
 };
 
+/** the parsed R2 catalog */
 export type Catalog = {
 	builtAt: string;
 	entries: CatalogEntry[];
@@ -162,9 +88,10 @@ export type Catalog = {
 /** what the mount wants for one layer */
 export type LayerSpec = { name: string; r2: string };
 
+/** the result of {@link planInstall} */
 export type InstallPlan = {
 	requested: string;
-	/** every layer to mount, dependencies FIRST so a later layer can override an earlier one */
+	/** every layer to mount, dependencies first so a later layer can override an earlier one */
 	layers: LayerSpec[];
 	/** catalog entries in the same order as `layers` */
 	entries: CatalogEntry[];
@@ -184,9 +111,7 @@ export function parseCatalog(raw: unknown): Catalog {
 	if (!Array.isArray(list)) return { builtAt, entries: [] };
 	const entries: CatalogEntry[] = [];
 	for (const item of list) {
-		// a non-object entry has to be rejected BEFORE any field read: `null` is typeof 'object' and
-		// reading a property off it throws, which would take down a function whose whole contract is
-		// tolerating a bad object read
+		// reject before a field read (`null` is typeof 'object' and throws on read)
 		if (typeof item !== 'object' || item === null) continue;
 		const e = item as Partial<CatalogEntry>;
 		if (typeof e.name !== 'string' || typeof e.r2 !== 'string') continue;
@@ -196,10 +121,8 @@ export function parseCatalog(raw: unknown): Catalog {
 			version: e.version,
 			r2: e.r2,
 			core: e.core,
-			// a non-string is dropped here rather than reaching the planner, matching `bytes`
 			php: typeof e.php === 'string' ? e.php : undefined,
-			// an unrecognised capability is DROPPED rather than carried: a planner that refused on a
-			// name it does not understand would fail closed on a catalog written by a newer build
+			// drop unknown capabilities, or a newer catalog would fail the planner closed
 			needs: Array.isArray(e.needs)
 				? (e.needs.filter(
 						(n: unknown) =>
@@ -218,22 +141,14 @@ export function parseCatalog(raw: unknown): Catalog {
 	return { builtAt, entries };
 }
 
-export function findEntry(catalog: Catalog, name: string): CatalogEntry | null {
-	return catalog.entries.find((e) => e.name === name) ?? null;
+/** the catalog entry for a composer name, if any */
+export function findEntry(catalog: Catalog, name: string): CatalogEntry | undefined {
+	return catalog.entries.find((e) => e.name === name);
 }
 
 /**
- * Builds the install plan for one module: itself plus its catalog dependencies, in mount order.
- *
- * DEPENDENCIES FIRST, and that ordering is load-bearing rather than tidy. `lazy-fs` merges layers BEFORE
- * node creation and a LATER layer overrides an earlier one on the same path, so the requested module has
- * to come last or a dependency could shadow it.
- *
- * Refuses rather than guesses in four cases, because each would otherwise produce a site that mounts and
- * then breaks: a module absent from the catalog, a dependency absent from the catalog, and a pack built
- * against a core version this site does not run. The core check uses the constraint checker in
- * `composer-constraint.ts`, so an
- * unjudgeable constraint is a refusal too -- `unknown` is not a yes.
+ * Plans a module plus its dependencies in mount order (dependencies first: a later `lazy-fs` layer
+ * overrides an earlier one); refuses on any mismatch, and `unknown` is not a yes.
  */
 export function planInstall(
 	catalog: Catalog,
@@ -276,9 +191,7 @@ export function planInstall(
 		);
 	}
 
-	// a module that caps PHP below the running interpreter would otherwise install and then fatal at
-	// the point of use. Zero of the 73 packages in the shipped lock cap PHP today, so this closes a
-	// gap rather than a live bug -- and it matters more now that the shipping interpreter is 8.5
+	// a module capping PHP below the interpreter would install, then fatal at the point of use
 	if (entry.php) {
 		const phpFits = satisfies(runningPhp, entry.php);
 		if (phpFits === 'no') {
@@ -292,9 +205,7 @@ export function planInstall(
 		}
 	}
 
-	// the capability check, which version constraints cannot express. A refusal here names the
-	// mechanism rather than the module, because "recaptcha is unsupported" invites someone to try
-	// the next captcha module and hit the same wall
+	// refusals name the mechanism, not the module, so nobody tries the next captcha
 	for (const need of entry.needs ?? []) {
 		if (need === 'deferrable-outbound' && !capabilities.deferredOutbound) {
 			problems.push(`${name} needs the deferred outbound tier, and this site has none`);
@@ -330,7 +241,7 @@ export function planInstall(
 		}
 	}
 
-	// the requested module goes LAST so nothing it depends on can shadow its files
+	// the requested module goes last so no dependency shadows its files
 	if (!layers.some((l) => l.r2 === entry.r2)) {
 		layers.push({ name: entry.name, r2: entry.r2 });
 		entries.push(entry);
@@ -346,37 +257,31 @@ export function planInstall(
 	};
 }
 
-/** reads the catalog out of R2, or null when there is none */
+/** reads the catalog out of R2, or undefined when there is none */
 export async function loadCatalog(
-	bucket: { get(key: string): Promise<{ text(): Promise<string> } | null> } | null | undefined,
+	bucket: { get(key: string): Promise<{ text(): Promise<string> } | null> } | undefined,
 	key = 'catalog.json'
-): Promise<Catalog | null> {
-	if (!bucket) return null;
+): Promise<Catalog | undefined> {
+	if (!bucket) return undefined;
 	try {
 		const obj = await bucket.get(key);
-		if (!obj) return null;
+		if (!obj) return undefined;
 		return parseCatalog(JSON.parse(await obj.text()));
 	} catch {
-		// an unreadable catalog is "no catalog", not an outage: the install feature is simply absent
-		return null;
+		// an unreadable catalog is "no catalog", not an outage
+		return undefined;
 	}
 }
 
 /**
- * What a module's capability needs mean for THIS runtime.
- *
- * Separate from the install verdict: `installable` answers "can composer resolve it",
- * and that is orthogonal to "will it work here". reCAPTCHA resolves perfectly and needs a tier the
- * shipping runtime does not offer; Honeypot resolves the same way and needs nothing.
+ * What a module's capability needs mean here; separate from `installable`, which only says
+ * composer can resolve it.
  */
 export type RuntimeTier = 'works-today' | 'needs-deferred-tier' | 'refused' | 'unknown';
 
 /**
- * Capability needs for modules that have been CLASSIFIED, keyed by composer name.
- *
- * Data rather than inference. Nothing can read a module's tarball and work out that it POSTs to
- * Google during form validation, so this is a hand-maintained list of what has actually been looked
- * at -- and an absent entry means "not classified", never "safe".
+ * Hand-maintained capability needs by composer name; an absent entry means not classified, never
+ * safe.
  */
 export const KNOWN_MODULE_CAPABILITIES: Readonly<Record<string, readonly ModuleCapability[]>> = {
 	// verification is a POST to Google inside form validation; it does not have to happen inside
@@ -385,18 +290,15 @@ export const KNOWN_MODULE_CAPABILITIES: Readonly<Record<string, readonly ModuleC
 	'drupal/captcha': ['deferrable-outbound'],
 	// fetches a missing file from an upstream site: a cache fill, the easiest deferred case
 	'drupal/stage_file_proxy': ['deferrable-outbound'],
-	// MEASURED 2026-08-23 against solarium 6.4.2: the transport is interceptable ABOVE the adapter,
-	// so this is deferrable rather than refused. `SolariumTransport` in the sibling short-circuits
-	// `PreExecuteRequest`, and search_api_solr hands Drupal's own dispatcher to the client
+	// solarium 6.4.2 is interceptable above the adapter (`SolariumTransport`)
 	'drupal/search_api_solr': ['deferrable-outbound'],
-	// the authorization-code exchange has to answer inside the login response, and there is no
-	// partial answer to render, which is what makes this the refusal the Solr entry used to be
+	// the code exchange must answer inside the login response; there is no partial answer to render
 	'drupal/openid_connect': ['blocking-outbound'],
 	'drupal/scheduler': ['cron'],
 	'drupal/simple_sitemap': ['cron'],
 	'drupal/xmlsitemap': ['cron'],
 	'drupal/search_api': ['cron'],
-	// classified and needing nothing, which is worth recording so it is not confused with unknown
+	// classified and needing nothing (distinct from unknown)
 	'drupal/honeypot': [],
 	'drupal/token': [],
 	'drupal/pathauto': [],
@@ -414,19 +316,13 @@ export const KNOWN_MODULE_CAPABILITIES: Readonly<Record<string, readonly ModuleC
 };
 
 /**
- * Which tier a module lands in, and why.
- *
- * AN UNCLASSIFIED MODULE IS `unknown`, NEVER `works-today`. Absence of knowledge is not evidence of
- * safety, and defaulting to "works" would make the tier a decoration that always agrees with the
- * install verdict -- which is exactly the failure the blank meters had.
+ * Which tier a module lands in; an unclassified one is `unknown`, never `works-today`.
  */
 export function tierFor(
 	name: string,
 	capabilities: RuntimeCapabilities = SHIPPED_CAPABILITIES
 ): { tier: RuntimeTier; reason?: string } {
-	// the working set in `module-tiers.ts` is merged in here rather than consulted separately: a
-	// module classified in one table and not the other returned `unknown`, which reads as "nobody
-	// has looked at it" when somebody had
+	// merge `module-tiers.ts` in, or a module classified in only one table reads as unknown
 	const needs = allKnownCapabilities(KNOWN_MODULE_CAPABILITIES)[name];
 	if (needs === undefined) {
 		return {
@@ -435,10 +331,8 @@ export function tierFor(
 		};
 	}
 
-	// THE CAPABILITY CONTRACT COMES FIRST, because the three coarse values below cannot express most
-	// of what refuses a module. `simple_sitemap` is the case that proved it: classified `cron`,
-	// scored installable, and then refused by its own `hook_requirements()` over a missing
-	// `xmlwriter`. Every vector consulted here is executed against the shipping interpreter
+	// contract first: the coarse needs below cannot express most refusals (`simple_sitemap` is
+	// `cron` yet fails its own `hook_requirements()` over a missing `xmlwriter`)
 	const vectors = MODULE_TIER_NOTES[name]?.vectors;
 	if (vectors && vectors.length > 0) {
 		const verdict = scoreModule(vectors);
@@ -475,8 +369,6 @@ export function tierFor(
 	if (needs.includes('cron')) {
 		return {
 			tier: 'needs-deferred-tier',
-			// cron defaults ON -- `drupalCronEnabled()` returns true for unset, so this used to tell
-			// a reader to set a var they already had. The remaining hazard is the opposite one
 			reason: `${name} does its work on cron, which runs from the Durable Object alarm and is ON by default; with DRUPAL_CRON=0 it installs and silently does nothing`
 		};
 	}

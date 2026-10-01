@@ -1,24 +1,13 @@
-import { DEFAULT_AUTH_ROWS_FRACTION, utcDayKey } from './auth-budget.js';
-import { cronDue } from './cron-drive.js';
-import { REDUCE_AT } from './degrade.js';
-import { staleAllowed } from './page-store.js';
-
 /**
- * The addressable sweep: pre-render the tail on a declared budget instead of billing a visitor for it.
- *
- * Page coverage is demand-driven today. A URL renders when somebody asks, that visitor waits, and
- * nothing knows what fraction of the site is covered or bounds what a crawler can make the site
- * spend. Two renders of one anonymous entity page are byte-identical, so the question is never HOW
- * the tail is produced -- only WHEN it is paid for and who waits.
- *
- * THE SWEEP QUEUES, IT NEVER RENDERS. Everything here writes `cfw_fill_queue` rows and stops; the
- * existing alarm fill batch drains them under the `oversized()` guard it already has. That is what
- * makes the isolate failure structurally impossible rather than bounded by a constant: a sweep adds
- * no workload to any invocation, so it cannot be the batch that crosses 128 MiB.
- *
- * THE GOVERNOR IS THE FEATURE. Three bounds, each against a different failure: a floor it will not
- * start below, a share of the DAY it may spend, and a share of what is LEFT it may take at once.
+ * The addressable sweep: pre-renders the site's tail on a declared budget, not on a visitor.
+ * It only queues `cfw_fill_queue` rows; the alarm fill batch drains them under `oversized()`.
+ * @module
  */
+import { firstRow } from '../util/sql';
+import { DEFAULT_AUTH_ROWS_FRACTION, utcDayKey } from './auth-budget';
+import { cronDue } from './cron-drive';
+import { REDUCE_AT } from './degrade';
+import { staleAllowed } from './page-store';
 
 /** the reads and writes a sweep needs, narrowed so it is drivable over a stand-in */
 export interface SweepSql {
@@ -28,6 +17,7 @@ export interface SweepSql {
 /** where a candidate came from, so a coverage report can say what class is uncovered */
 export type SweepSource = 'router' | 'node' | 'term' | 'user';
 
+/** one URL a sweep may queue */
 export type SweepCandidate = {
 	/** the URL a visitor requests: the alias when one exists, the system path otherwise */
 	path: string;
@@ -41,85 +31,51 @@ export type SweepCandidate = {
 // #region constants, each derived from a measured input
 
 /**
- * Rows one swept page charges the fill chain.
- *
- * `ROWS_PER_FILL.firstEverForPath` in `scripts/measure/free-envelope.ts`, re-measured n=3 with zero
- * spread by `tests/integration/rows-per-fill-audit.spec.ts`. That class is the sweep by definition:
- * a path never routed on this object, on an object whose shared bins are already warm.
- *
- * Copied rather than imported for the reason `auth-budget.ts` copies its two -- `free-envelope.ts`
- * carries an `import.meta.main` block reading `process.argv`, so importing it drags a script into
- * the Worker bundle. `tests/unit/ops/sweep.spec.ts` asserts it against the script's own export.
+ * Rows one swept page charges the fill chain (`ROWS_PER_FILL.firstEverForPath` in the envelope
+ * script). Copied: importing that script drags its `process.argv` block into the bundle.
  */
 export const SWEEP_ROWS_PER_FILL = 14;
 
-/**
- * The two queue rows the audit's arm never charged.
- *
- * It calls `fillOne(path)` directly, so it inserts no `cfw_fill_queue` row and the fill's DELETE
- * matches nothing. A sweep queues instead, so it pays the INSERT and the fill pays the DELETE.
- * Counted rather than assumed away; over-stating a cost is the safe direction for a governor.
- */
+/** the queue insert and delete rows the audit arm never charged (it calls `fillOne()` directly) */
 export const SWEEP_QUEUE_ROWS = 2;
 
+/** rows one swept page costs, fill plus queue */
 export const SWEEP_ROWS_PER_PAGE = SWEEP_ROWS_PER_FILL + SWEEP_QUEUE_ROWS;
 
-/** `FREE_QUOTAS.rowsPerAlarmArm`, measured and pinned by `tests/integration/warm-alarm-cost.spec.ts` */
+/** `FREE_QUOTAS.rowsPerAlarmArm`, measured and pinned by `warm-alarm-cost.spec.ts` */
 export const SWEEP_ROWS_PER_ALARM_ARM = 1;
 
 /**
  * The fraction of either daily meter at which a sweep refuses to start.
- *
- * `REDUCE_AT` rather than a number of its own: that is where the quota ladder already stops cron,
- * the queue, watchdog writes and image regeneration. A sweep is discretionary regeneration, so
- * starting one where its peers have stopped would be the ladder disagreeing with itself.
+ * `REDUCE_AT`, where the quota ladder already stops cron, the queue and image regeneration.
  */
 export const SWEEP_START_FLOOR = REDUCE_AT;
 
 /**
- * What share of the day's rows a sweep may spend.
- *
- * `DEFAULT_AUTH_ROWS_FRACTION`, the one fraction here chosen against a measurement:
- * `free-envelope.ts --visits=3000000 --dynamic=0.01` splits 100,000 rows/day 25/75 and leaves the
- * anonymous side 8.15x headroom over the 1,000 regenerations/day that workload needs. A sweep taking
- * the same 25% leaves 50,000 rows for demand-driven fills, 5,555 at `realRender`'s 9, still 5.5x
- * that need. The spec recomputes both figures rather than quoting them.
+ * What share of the day's rows a sweep may spend: the default 25% split, which leaves demand
+ * fills 5.5x the need at 3,000,000 visits a month (`free-envelope.ts`; the spec recomputes it).
  */
 export const SWEEP_ROWS_FRACTION = DEFAULT_AUTH_ROWS_FRACTION;
 
 /** the same share of the DO-request meter; the two quotas are equal, so one fraction fits both */
 export const SWEEP_DO_FRACTION = DEFAULT_AUTH_ROWS_FRACTION;
 
-/** below this a sweep would never finish a page; the floor exists so a bad var cannot disable it silently */
+/** below this a sweep never finishes a page; keeps a bad var from disabling it silently */
 export const SWEEP_MIN_FRACTION = 0.01;
 
 /**
- * The largest share an operator may declare.
- *
- * At 0.5 the demand-driven anonymous slice is 25,000 rows, 3,125 `realRender` fills against the
- * measured 1,000/day need -- 3.1x. Past that a sweep is competing with visitors for the meter
- * rather than using its slack. It read 2.7x until `realRender` lost the audit harness's own
- * DELETE (9 -> 8); the cap was left where it was, so it is now slightly more conservative.
+ * The largest share an operator may declare; at 0.5 demand fills still get ~3.1x the
+ * 1,000-a-day need, past that a sweep competes with visitors for the meter.
  */
 export const SWEEP_MAX_FRACTION = 0.5;
 
 /**
- * How often a sweep step may run.
- *
- * Derived from the allowance rather than picked. 25% of 100,000 rows at {@link SWEEP_ROWS_PER_PAGE}
- * is 1,562 pages/day, and one step queues at most one fill batch (50 by default), so 32 steps a day
- * spend the whole allowance. 48 steps leaves margin and costs ~480,000 reads/day of enumeration
- * against free's 5,000,000 read quota, under 10%.
+ * How often a sweep step may run: 25% of 100,000 rows is 1,562 pages a day, so 48 steps of one
+ * 50-page batch cover it, at under 10% of free's 5,000,000 daily reads for enumeration.
  */
 export const SWEEP_INTERVAL_MS = 30 * 60 * 1000;
 
-/**
- * Entity rows one enumeration reads per kind.
- *
- * Three days of sweeping at the 1,562 pages/day the row allowance buys, so a walk survives a couple
- * of quiet days without re-reading, and the array stays small inside a 128 MiB isolate. Raising it
- * enumerates more than any day can spend.
- */
+/** entity rows one enumeration reads per kind, about three days of sweeping at 1,562 pages a day */
 export const SWEEP_MAX_PER_KIND = 5_000;
 
 /** the `cfw_meta` key the cursor lives under */
@@ -127,14 +83,7 @@ export const SWEEP_CURSOR_KEY = 'sweep_cursor';
 
 // #endregion
 
-/**
- * Paths a sweep refuses to enumerate, on top of `staleAllowed()`.
- *
- * That list is reused rather than restated: it already denies the pages a visitor ACTS on
- * (`/user/login`, `/user/password`, `/cart`, `/checkout`), which is the same direction a sweep
- * needs. These are the ones it does not carry, because they are about rendering rather than
- * staleness -- an anonymous render of any of them is a 403 or a form nobody can submit.
- */
+/** paths a sweep refuses beyond `staleAllowed()` (anonymous renders are a 403 or a dead form) */
 const SWEEP_DENY_PREFIX = [
 	'/admin',
 	'/user/reset',
@@ -150,16 +99,10 @@ const SWEEP_DENY_PREFIX = [
 /** entity operations, which are authenticated on every site that has not been misconfigured */
 const SWEEP_DENY_SUFFIX = ['/edit', '/delete', '/revisions', '/translations'];
 
-/**
- * Characters that mean this is not a page a sweep may name.
- *
- * `?` and `&` are the pager and facet guard and the reason the enumeration reads the router rather
- * than the site's own links: `?page=2` and `?f[0]=` are the URLs a crawl finds and nobody requests.
- * `{` is an unfilled route placeholder, which would queue a path that cannot route.
- */
+/** characters that mean a path is not nameable: pager and facet queries, unfilled `{` routes */
 const SWEEP_REFUSED_CHARS = /[?#&{}*\\]/;
 
-/** Whether a path is worth queueing and safe to render anonymously. */
+/** whether a path is worth queueing and safe to render anonymously */
 export function isSweepable(path: string): boolean {
 	if (typeof path !== 'string' || !path.startsWith('/')) return false;
 	if (SWEEP_REFUSED_CHARS.test(path)) return false;
@@ -177,6 +120,7 @@ function pathDepth(path: string): number {
 	return path.split('/').filter((s) => s !== '').length;
 }
 
+/** whether `name` exists as a table */
 function hasTable(sql: SweepSql, name: string): boolean {
 	return (
 		sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", name).toArray()
@@ -221,14 +165,8 @@ const ENTITY_KINDS: Array<{
 ];
 
 /**
- * Every URL the site can be asked for, from the `router` table plus the entity tables.
- *
- * NEVER from the site's own links. A link crawl walks the pager and facet space, which is unbounded
- * and is exactly the traffic the page cache should be absorbing rather than the sweep generating.
- *
- * A `path_alias` row wins over the system path, because the alias is the URL a visitor requests and
- * the two are separate `cfw_page` rows -- sweeping `/node/12` warms nothing for a visitor asking for
- * `/about`.
+ * Every URL the site can be asked for, from the router and entity tables, never its links (a
+ * crawl walks the pager space). A `path_alias` wins: alias and system path are separate pages.
  */
 export function enumerateAddressable(
 	sql: SweepSql,
@@ -254,8 +192,7 @@ export function enumerateAddressable(
 	};
 
 	if (hasTable(sql, 'router')) {
-		// filtered in JS rather than by a LIKE: the router is a few hundred rows, and this platform
-		// has a measured ceiling on LIKE patterns that a literal avoids entirely
+		// filtered in JS, not `LIKE` (platform pattern ceiling; the router is a few hundred rows)
 		for (const row of sql.exec('SELECT path FROM router').toArray()) {
 			const path = String(row.path ?? '');
 			if (path === '' || path.includes('{')) continue;
@@ -274,7 +211,7 @@ export function enumerateAddressable(
 			)
 			.toArray();
 		for (const row of rows) {
-			// Drupal stores these clocks in SECONDS; a raw value would read as 1970 beside a ms one
+			// Drupal stores these clocks in seconds
 			add(`${kind.prefix}${Number(row.id)}`, kind.source, Number(row.clock ?? 0) * 1000);
 		}
 	}
@@ -282,18 +219,12 @@ export function enumerateAddressable(
 }
 
 /**
- * Orders candidates by what a PARTIAL sweep should have covered when it stops.
- *
- * Observed views first, then entity recency, then depth. Every sweep is partial, so the ordering is
- * the whole of what makes one worth running: a budget spent on the tail of the tail buys nothing.
- *
- * The counts come from the in-memory map the object already keeps on the fast serve lane, which
- * costs zero rows -- the same source `orderByViews()` uses for the R2 mirror. Losing them on
- * eviction leaves the sweep ordered by recency, which is warm rather than wrong.
+ * Orders candidates by what a partial sweep should have covered: views, then recency, then depth.
+ * Views come from the in-memory map on the fast serve lane (zero rows); losing it leaves recency.
  */
 export function orderCandidates(
 	candidates: readonly SweepCandidate[],
-	hits: ReadonlyMap<string, number> | null
+	hits: ReadonlyMap<string, number> | undefined
 ): SweepCandidate[] {
 	const views = (c: SweepCandidate) => hits?.get(c.path) ?? 0;
 	return [...candidates].sort(
@@ -305,9 +236,10 @@ export function orderCandidates(
 	);
 }
 
-/** what the site already holds, which is both the non-repeat mechanism and the coverage denominator */
+/** the paths the site already holds stored or queued; also the coverage denominator */
 export type SweepCovered = { stored: Set<string>; queued: Set<string> };
 
+/** reads the stored and queued path sets */
 export function readCovered(sql: SweepSql): SweepCovered {
 	const read = (table: string) =>
 		hasTable(sql, table)
@@ -322,15 +254,8 @@ export function readCovered(sql: SweepSql): SweepCovered {
 }
 
 /**
- * What is left to sweep.
- *
- * A stored or queued path is dropped, which is what makes a resumed sweep unable to repeat work
- * whatever the ordering did between firings -- an index into a list that re-sorts would both skip
- * and repeat.
- *
- * `isUnstorable` is the terminating observation. `/user/password` renders in 402 ms and Drupal marks
- * it `private, no-store`, so it never reaches `cfw_page` and a coverage filter alone would re-queue
- * it every interval forever. The object already records that verdict; this reads it.
+ * What is left to sweep (stored and queued paths dropped, so a resume cannot repeat work).
+ * `isUnstorable` terminates retries: a `no-store` page never reaches `cfw_page` and would requeue.
  */
 export function pendingCandidates(
 	ordered: readonly SweepCandidate[],
@@ -342,15 +267,16 @@ export function pendingCandidates(
 	);
 }
 
+/** how much of the addressable space has a stored page */
 export type SweepCoverage = {
 	addressable: number;
 	covered: number;
 	pending: number;
-	/** 1 when there is nothing addressable, because "no pages" is covered rather than uncovered */
+	/** 1 when nothing is addressable (no pages counts as covered) */
 	fraction: number;
 };
 
-/** How much of the addressable space has a stored page. The measurable outcome the sweep exists for. */
+/** the coverage of `candidates` by `stored` pages; the outcome the sweep exists to move */
 export function sweepCoverage(
 	candidates: readonly SweepCandidate[],
 	stored: ReadonlySet<string>
@@ -366,12 +292,8 @@ export function sweepCoverage(
 }
 
 /**
- * What queueing `pages` costs, against both daily meters.
- *
- * Three terms with three clocks. The pages are per page; the `setAlarm` row and the alarm invocation
- * are per FIRING, which is what the batch divides; and the cursor is one row per step whatever the
- * batch is. Folding any of them into a per-page constant makes the figure right only at the batch it
- * was derived at.
+ * What queueing `pages` costs against both daily meters: per page, per firing (the `setAlarm` row
+ * and invocation, divided by the batch) and one cursor row per step. Keep the terms separate.
  */
 export function sweepCost(pages: number, batch: number): { rows: number; doRequests: number } {
 	const n = Math.max(0, Math.floor(pages));
@@ -399,6 +321,7 @@ export type SweepMeters = {
 	doLimit: number;
 };
 
+/** the persisted spend and progress of the sweep */
 export type SweepCursor = {
 	/** the UTC day the spend belongs to; a different one is a fresh budget */
 	day: string;
@@ -412,6 +335,7 @@ export type SweepCursor = {
 	done: boolean;
 };
 
+/** a zeroed cursor for today at `generation` */
 export function freshCursor(nowMs: number, generation = 0): SweepCursor {
 	return {
 		day: utcDayKey(nowMs),
@@ -425,16 +349,13 @@ export function freshCursor(nowMs: number, generation = 0): SweepCursor {
 }
 
 /**
- * Reads the cursor, discarding a record from another UTC day or another generation.
- *
- * The quotas refill at midnight, so carrying yesterday's spend forward would refuse a sweep against
- * a budget that has already been replaced. A generation bump invalidates `done` for the same reason:
- * the addressable space moved.
+ * Reads the cursor, discarding spend from another UTC day (quotas refill at midnight) and `done`
+ * from another generation (the addressable space moved).
  */
 export function readSweepCursor(sql: SweepSql, nowMs: number, generation = 0): SweepCursor {
 	const fresh = freshCursor(nowMs, generation);
 	if (!hasTable(sql, 'cfw_meta')) return fresh;
-	const row = sql.exec('SELECT v FROM cfw_meta WHERE k = ?', SWEEP_CURSOR_KEY).toArray()[0];
+	const row = firstRow(sql.exec('SELECT v FROM cfw_meta WHERE k = ?', SWEEP_CURSOR_KEY));
 	if (!row) return fresh;
 	let held: Partial<SweepCursor>;
 	try {
@@ -455,6 +376,7 @@ export function readSweepCursor(sql: SweepSql, nowMs: number, generation = 0): S
 	};
 }
 
+/** upserts the cursor into `cfw_meta` */
 export function writeSweepCursor(sql: SweepSql, cursor: SweepCursor): void {
 	sql.exec(
 		'INSERT INTO cfw_meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v',
@@ -478,6 +400,7 @@ export type SweepBound =
 	/** everything addressable is stored or queued */
 	| 'covered';
 
+/** the verdict of one `planSweep()` call */
 export type SweepPlan = {
 	ok: boolean;
 	pages: number;
@@ -486,6 +409,7 @@ export type SweepPlan = {
 	reason: string;
 };
 
+/** clamps a declared share into the derived range, or returns `fallback` when unusable */
 function clampFraction(raw: unknown, fallback: number): number {
 	const n = Number(raw);
 	if (!Number.isFinite(n) || n <= 0) return fallback;
@@ -493,21 +417,8 @@ function clampFraction(raw: unknown, fallback: number): number {
 }
 
 /**
- * How many pages this step may queue, and why not more.
- *
- * Three bounds, each against a different failure this project has already shipped:
- *
- * - the FLOOR, against a QA day that wrote 104,451 rows and put a site read-only at 104% of quota
- *   with nothing on any admin page saying so. A sweep will not start where the ladder has already
- *   stopped cron.
- * - the DAILY cap, against the sweep pushing the site to the floor by taking a share of a shrinking
- *   remainder forever. The share of what is left bounds one step; this bounds the day.
- * - the BATCH, so `cfw_fill_queue` never grows past what the next firing drains, which is what the
- *   cron branch's `queueDepth() === 0` yield depends on being true.
- *
- * The isolate limit is absent from that list on purpose: this queues rather than renders, so it adds
- * no workload to any invocation and the existing `oversized()` break in the fill batch is what still
- * bounds memory.
+ * How many pages this step may queue and which bound stopped more: the floor, the daily cap and
+ * the batch (so the queue never outgrows one firing; cron yields on `queueDepth() === 0`).
  */
 export function planSweep(
 	pending: readonly SweepCandidate[],
@@ -548,8 +459,7 @@ export function planSweep(
 		}
 	}
 
-	// the day's share and the step's share of what is LEFT, which are different bounds with
-	// different jobs; `rowsToday` already carries this sweep's own spend, so the second shrinks
+	// the day's share and the step's share of what is left are different bounds
 	const rowsCap =
 		meters.rowsLimit > 0
 			? Math.floor(meters.rowsLimit * rowsFraction) - cursor.rowsSpent
@@ -601,11 +511,8 @@ export function planSweep(
 }
 
 /**
- * Queues paths for the existing fill batch, which is the whole of what a sweep does.
- *
- * `DO NOTHING` on a conflict, so a path already queued keeps the timestamp it was queued under and
- * does not jump the drain order. The count returned is what was offered; the caller has already
- * filtered against the queue, so the two agree unless something raced.
+ * Queues paths for the fill batch; a conflict does nothing so a queued path keeps its drain order.
+ * Returns the count offered, which equals the count queued unless something raced.
  */
 export function enqueueSweep(sql: SweepSql, paths: readonly string[], nowMs: number): number {
 	let queued = 0;
@@ -620,74 +527,51 @@ export function enqueueSweep(sql: SweepSql, paths: readonly string[], nowMs: num
 	return queued;
 }
 
-/** whether the sweep is switched on; see {@link sweepStep} for why the default is off */
+/** the vars that switch the sweep and size its share */
 export type SweepEnv = {
-	SWEEP?: string | null;
-	SWEEP_ROWS_FRACTION?: string | number | null;
+	SWEEP?: string;
+	SWEEP_ROWS_FRACTION?: string | number;
 };
 
 /**
- * ON by default at a fleet-safe share; `SWEEP=0` turns it off.
- *
- * IT WAS OFF, and the reason was a meter rather than caution: the row and DO quotas are
- * ACCOUNT-WIDE while `dailyRows()` counts one object, so the governor cannot see what the rest of
- * the fleet has spent. At 25% of 100,000 rows per site, four sweeping sites saturate the account
- * and each one reads its own meter as healthy. That is a real failure mode and it is not overridden
- * here -- it is priced. An unasked-for sweep takes {@link UNASKED_ROWS_FRACTION} instead of the
- * full share, so the number of sites it takes to saturate the account moves from 4 to 20, and an
- * operator who asks for a sweep still gets the measured 25%.
- *
- * WHY IT IS WORTH DEFAULTING ON. A path nobody has rendered is the `anon-miss` slice, 0.095 of the
- * traffic mix, and it is the one profile a render cannot win: measured deployed, a warm inline
- * render answers in 474 ms against a well-configured VPS's 78 ms, and the wasm penalty alone
- * (3.57x) puts ~278 ms out of reach. **A render cannot be made competitive, so it has to not
- * happen.** A swept path is a HIT at ~1 ms. This is the only lever that changes that profile's
- * outcome rather than its cost.
- *
- * The governor is unchanged and still the thing that bounds it: `sweepStep()` reads `rowsToday`
- * against `rowsLimit` and `doToday` against `doLimit` every step, `sweepDue()` gates on an interval
- * rather than firing per alarm, and a site with nothing uncovered does nothing at all.
- * `src/ops/fleet.ts` remains the inventory that would let the full share be safe by default.
+ * On by default at a fleet-safe share (`SWEEP=0` turns it off): quotas are account-wide but
+ * `dailyRows()` counts one object, so an unasked sweep takes only `UNASKED_ROWS_FRACTION`.
+ * Defaulted on because an unvisited path cannot render competitively (474 ms deployed against a
+ * VPS's 78 ms) and a swept one is a ~1 ms HIT.
  */
-export function sweepEnabled(env?: SweepEnv | null): boolean {
+export function sweepEnabled(env?: SweepEnv): boolean {
 	const raw = env?.SWEEP;
-	if (raw === undefined || raw === null || String(raw) === '') return true;
+	if (raw === undefined || String(raw) === '') return true;
 	return String(raw) !== '0';
 }
 
-/** whether this site's sweep is running on the default rather than on an operator's request */
-export function sweepUnasked(env?: SweepEnv | null): boolean {
+/** whether this site's sweep runs on the default rather than on an operator's request */
+export function sweepUnasked(env?: SweepEnv): boolean {
 	const raw = env?.SWEEP;
-	return raw === undefined || raw === null || String(raw) === '';
+	return raw === undefined || String(raw) === '';
 }
 
 /**
- * The share an UNASKED sweep may spend, against 0.25 for one an operator turned on.
- *
- * 0.05 of 100,000 rows is 5,000 a day, so twenty sweeping sites saturate the account where four did
- * at the full share. At `realRender`'s 9 rows a fill that is ~555 pages a day per site, which
- * covers an ordinary site's addressable set in well under a day and a large one over several --
- * slower than an operator would choose, and safe without an inventory the free plan does not have.
+ * The share an unasked sweep may spend, against 0.25 for one an operator turned on.
+ * 0.05 is ~555 pages a day per site, enough for an ordinary site without a fleet inventory.
  */
 export const UNASKED_ROWS_FRACTION = 0.05;
 
 /**
- * The share of the day this site declares for its sweep, clamped to the range its derivation covers.
- *
- * An explicit `SWEEP_ROWS_FRACTION` always wins. Otherwise a sweep an operator ASKED for takes the
- * measured 25%, and one running on the default takes {@link UNASKED_ROWS_FRACTION} -- see
- * {@link sweepEnabled} for why the two differ.
+ * The day's share this site declares for its sweep, clamped to its derived range.
+ * An explicit `SWEEP_ROWS_FRACTION` wins; otherwise 25% when asked, `UNASKED_ROWS_FRACTION` if not.
  */
-export function sweepRowsFraction(env?: SweepEnv | null): number {
+export function sweepRowsFraction(env?: SweepEnv): number {
 	const fallback = sweepUnasked(env) ? UNASKED_ROWS_FRACTION : SWEEP_ROWS_FRACTION;
 	return clampFraction(env?.SWEEP_ROWS_FRACTION, fallback);
 }
 
+/** what `sweepStep()` reads from the object */
 export type SweepDeps = {
 	sql: SweepSql;
 	meters: SweepMeters;
-	/** the per-path view counts the object keeps in memory; null when it has none yet */
-	hits: ReadonlyMap<string, number> | null;
+	/** the per-path view counts the object keeps in memory; undefined when it has none yet */
+	hits: ReadonlyMap<string, number> | undefined;
 	/** `this.isUnstorable`, so the terminating observation is read rather than re-derived */
 	isUnstorable: (path: string) => boolean;
 	/** `fillBatchSize(env)`; one step queues at most one batch */
@@ -698,6 +582,7 @@ export type SweepDeps = {
 	maxPerKind?: number;
 };
 
+/** what `sweepStep()` did and why */
 export type SweepReport = {
 	ok: boolean;
 	queued: number;
@@ -708,7 +593,7 @@ export type SweepReport = {
 	cursor: SweepCursor;
 };
 
-/** Whether enough time has passed since the last step; `cronDue()`'s never-run rule applies here too. */
+/** whether enough time has passed since the last step; a never-run cursor is always due */
 export function sweepDue(
 	cursor: SweepCursor,
 	nowMs: number,
@@ -720,18 +605,14 @@ export function sweepDue(
 
 /**
  * One sweep step: enumerate, order, govern, queue.
- *
- * Writes the cursor only when it queued something. A refused step that recorded its own refusal
- * would be a counter that mostly counts itself, which is how an idle warming tick came to spend
- * 32.4% of free's row budget.
+ * Writes the cursor only when it queued, so a refusal never spends rows recording itself.
  */
 export function sweepStep(deps: SweepDeps): SweepReport {
 	const cursor = readSweepCursor(deps.sql, deps.nowMs, deps.generation);
 	const covered = readCovered(deps.sql);
 	const empty: SweepCoverage = { addressable: 0, covered: 0, pending: 0, fraction: 1 };
 
-	// yields to a fill backlog for the reason cron does: a visitor waiting on a page outranks a page
-	// nobody has asked for, and the queue is the only evidence of that available here
+	// yields to a fill backlog like cron: a waiting visitor outranks a page nobody asked for
 	if (covered.queued.size > 0) {
 		return {
 			ok: false,

@@ -1,3 +1,8 @@
+/**
+ * Answers parked PHP calls (run, classify, perform, resume until `DONE`) inside one Worker
+ * invocation; the host awaits between `_run()` calls, PHP never does.
+ * @module
+ */
 import {
 	ConnectionError,
 	connect as coreConnect,
@@ -9,36 +14,17 @@ import {
 	selectBackend,
 	type BackendEnv,
 	type BackendSelection
-} from '../db/backend.js';
-import { bytesToBase64 } from '../db/file-store.js';
-import { backendExec } from '../db/pg-exec.js';
-import { runParkImage, type ParkImageRequest } from './image-runtime.js';
-import { outboundGuardEnabled, refuseOutbound } from './outbound-guard.js';
-import { resolveTcpEndpoint, type TcpEndpoint, type TcpEnv } from './tcp.js';
+} from '../db/backend';
+import { bytesToBase64 } from '../db/file-store';
+import { backendExec } from '../db/pg-exec';
+import { binaryToBytes } from '../util/base64';
+import { errorMessage } from '../util/errors';
+import { runParkImage, type ParkImageRequest } from './image-runtime';
+import { outboundGuardEnabled, refuseOutbound } from './outbound-guard';
+import { resolveTcpEndpoint, type TcpEndpoint, type TcpEnv } from './tcp';
 
-/** what the loop needs of the environment: the socket endpoint, plus the SSRF lever a fetch reads */
-export type ParkEnv = TcpEnv & { OUTBOUND_GUARD?: string | null };
-
-/**
- * The loop that answers a parked PHP call, so a synchronous socket read completes inside one render.
- *
- * `src/ops/park.ts` reports whether the interpreter CAN park; this performs the I/O. One iteration is
- * run -> pending -> classify -> perform -> resume, and it repeats until the chain answers `DONE`.
- * Everything happens inside ONE Worker invocation: the host awaits between `_run()` calls, which is
- * legal, while PHP never awaits at all.
- *
- * **THE TOKEN RETURNED BY A TRAPPED OPEN IS MINTED IN PHP, not in JS.** `cfw_park_resume()` copies a
- * zval, and JS cannot construct a PHP resource -- but the resume fragment is PHP the host composes,
- * so it opens a `php://memory` stream and hands THAT back. Predis calls `is_resource()` on the result
- * (`StreamConnection::write`, `::read`), so an integer handle would have failed both, and it would
- * have failed as a connection error rather than as anything naming this file.
- *
- * **A READ-ONLY TOKEN, AND THAT IS THE FAILURE MODE TALKING.** When a park is refused the trap falls
- * through to the REAL function, which would write the RESP command into the token and read nothing
- * back -- a corrupted protocol conversation rather than an error. Opening it `r` makes the
- * fall-through fail at the first write, so a refused park raises `Predis\ConnectionException` at the
- * point it happened instead of somewhere downstream.
- */
+/** what the loop needs of the environment: the socket endpoint plus the SSRF lever fetches read */
+export type ParkEnv = TcpEnv & { OUTBOUND_GUARD?: string };
 
 /** how a park stopped, once the fn and its args are classified */
 export type ParkOp =
@@ -58,20 +44,12 @@ export type ParkOp =
 export type ParkArg =
 	{ res: number } | { b64: string } | { arr: number } | { obj: string } | number | boolean | null;
 
+/** the parked call as read from PHP: the function name and its encoded arguments */
 export type ParkPending = { fn: string; args: ParkArg[] };
 
 /**
- * The functions the socket class traps.
- *
- * `fclose` is deliberately absent. It has no alias and no userland equivalent, so a trapped
- * `fclose` on a handle the host did not mint could not be performed at all -- and leaving it
- * untrapped costs nothing: PHP closes the token, and the socket behind it is closed by
- * {@link ParkSockets.closeAll} when the interpreter is dropped.
- *
- * `fwrite` HAS an alias and that is what makes the fall-through possible: `fputs` is a separate
- * `zend_function` carrying its own copy of the handler pointer, so trapping `fwrite` leaves `fputs`
- * pointing at the original. `fread` and `fgets` have no alias and are rebuilt from
- * `stream_get_contents` instead.
+ * The functions the socket class traps. `fclose` is absent (no alias; {@link ParkSockets.closeAll}
+ * closes sockets), and `fputs` keeps its own handler pointer so a fall-through write works.
  */
 export const PARK_SOCKET_TRAPS: readonly string[] = [
 	'stream_socket_client',
@@ -81,12 +59,8 @@ export const PARK_SOCKET_TRAPS: readonly string[] = [
 ];
 
 /**
- * The functions the fetch class traps.
- *
- * `stream_socket_client` ALONE, and it is a yield point rather than a socket open here: the module's
- * Guzzle handler calls it with a `cfwpark+fetch://` target and the host answers with a whole HTTP
- * response. The read/write family is deliberately absent -- an HTTP exchange needs one round trip,
- * not a byte stream, so arming the rest would divert every file write in a render for nothing.
+ * The fetch class traps `stream_socket_client` alone, as a yield point; the read/write family
+ * would divert every file write in a render for nothing.
  */
 export const PARK_FETCH_TRAPS: readonly string[] = ['stream_socket_client'];
 
@@ -103,39 +77,26 @@ export type ParkFetch = {
 };
 
 /**
- * The scheme that turns the socket trap into a general yield.
- *
- * A trapped `stream_socket_client` normally answers with a stream token; under this scheme it
- * answers with a JSON string instead, and only `Drupal\drupflare\Http\ParkFetchHandler` calls it
- * that way. Written down because the return type genuinely depends on the target, which is the kind
- * of thing that reads as a bug to the next person.
+ * The scheme that turns the socket trap into a general yield: under it a trapped
+ * `stream_socket_client` returns a JSON string, not a stream token (only `ParkFetchHandler`).
  */
 export const PARK_FETCH_SCHEME = 'cfwpark+fetch://';
 
 /**
  * The scheme a parked SQL statement arrives under; must match `CfwSqlClient`'s copy in `rom`.
- *
- * A SECOND SCHEME RATHER THAN A SECOND TRAP, for the reason the fetch one exists: `ext/cfwpark`
- * needs no change to serve either, because both are a userland call to `stream_socket_client` and
- * the descriptor rides in the target string. That is what makes an external database reachable
- * without a phasm rebuild.
+ * A second scheme, not a second trap, so an external database needs no phasm rebuild.
  */
 export const PARK_SQL_SCHEME = 'cfwpark+sql://';
 
 /**
  * The scheme a parked wait arrives under, `cfwpark+sleep://<ms>`; must match `Park::SLEEP_SCHEME`.
- *
- * The clock does not advance across a synchronous `_run()`, so PHP cannot wait by itself: a spin
- * never ends and a return-at-once ignores the caller. The host waits on a timer instead, which
- * bills wall time and no CPU.
+ * The clock is frozen across a synchronous `_run()`, so the host waits on a timer (wall, no CPU).
  */
 export const PARK_SLEEP_SCHEME = 'cfwpark+sleep://';
 
 /**
  * The scheme a queued gd operation set arrives under; must match `Gd::SCHEME` in `drupflare`.
- *
- * The target is base64 of the request JSON and the reply is a JSON string, `{bytes, width, height}`
- * with the bytes in base64, or `{error}`.
+ * The target is base64 of the request JSON; the reply is `{bytes, width, height}` or `{error}`.
  */
 export const PARK_IMAGE_SCHEME = 'cfwpark+image://';
 
@@ -146,26 +107,16 @@ export type SleepBudget = { remainingMs: number };
 export const PARK_IO_TIMEOUT_MS = 10_000;
 
 /**
- * How many trips one parked run may take before the host stops answering it.
- *
- * 400 because the measured figure is 189: a 9-bin render at one multiple-key read per bin took 189
- * parks against the rig's Redis, so a bound near it would refuse a render that was working. It is a
- * backstop for a chain that parks forever, not a budget, which is why it sits above the measurement
- * rather than at it.
+ * How many trips one parked run may take before the host stops answering it: a backstop above
+ * the measured 189 (a 9-bin render against the rig's Redis), not a budget.
  */
 export const PARK_MAX_TRIPS = 400;
 
 const LF = new Uint8Array([10]);
 
 /**
- * Fences the loop's own JSON off from whatever the parked program printed.
- *
- * The two share one output stream: a resume re-enters the chain, so the fragment that carries the
- * host's answer prints its `{"state":...}` into the same buffer the render is writing its page into.
- * Reading the first `{` would take the render's opening brace and reading the last would take the
- * control object only by luck, so each control fragment brackets its JSON and the driver slices it
- * out. `` cannot occur in the program's own output, because a render prints JSON and json_encode
- * escapes every control character.
+ * Fences the loop's own JSON off from program output (a resume prints both to one buffer).
+ * `` cannot occur in program output: `json_encode` escapes every control character.
  */
 export const PARK_MARK = '';
 
@@ -189,7 +140,7 @@ export const PARK_PENDING = [
 /** whether anything is parked at all, so a chain left behind can be found and unwound */
 export const PARK_HELD = '<?php echo "\\x01", json_encode(cfw_park_pending() !== null), "\\x01";';
 
-/** the fragment that starts a parked run; the body is base64 so nothing has to be escaped into PHP */
+/** the fragment that starts a parked run; the body is base64 so nothing needs PHP escaping */
 export function parkRun(code: string): string {
 	return (
 		'<?php $s = cfw_park_run(base64_decode("' +
@@ -199,11 +150,8 @@ export function parkRun(code: string): string {
 }
 
 /**
- * Mints the token a trapped open will return, and reports the resource id the host keys on.
- *
- * Separate from the resume, and it has to be: the resume hands the token back to PHP, which writes
- * to it on the very next trip, so the socket must already be open by then. Minting and resuming in
- * one fragment would leave no point at which the host could dial.
+ * Mints the token a trapped open returns, in PHP: JS cannot build a resource and Predis calls
+ * `is_resource()` on it. Separate from the resume so the host can dial before PHP's next write.
  */
 export const PARK_MINT = [
 	'<?php $r = fopen("php://memory", "r");',
@@ -212,7 +160,10 @@ export const PARK_MINT = [
 	'echo "\\x01", json_encode(["id" => $id]), "\\x01";'
 ].join('\n');
 
-/** resumes the open with the token minted earlier, now that its socket is connected */
+/**
+ * Resumes the open with the token minted earlier. The token is read-only (`r`), so a refused park's
+ * fall-through write fails at once instead of corrupting the protocol conversation.
+ */
 export function parkResumeToken(id: number): string {
 	return (
 		`<?php $s = cfw_park_resume($GLOBALS["CFW_PARK_TOKENS"][${id}]);` +
@@ -236,12 +187,8 @@ export function parkResumeBytes(bytes: Uint8Array): string {
 }
 
 /**
- * Performs the trapped call in PHP, for a handle the host did not mint.
- *
- * Armed traps are global for the duration of a parked run, so a render that writes a file inside one
- * arrives here. Each branch is the untrapped equivalent of the function that parked:
- * `fputs` is the alias, and `stream_get_contents` plus a seek rebuilds `fgets` -- `stream_get_line`
- * cannot, because it strips the delimiter Predis and every line protocol rely on.
+ * Performs the trapped call in PHP for a handle the host did not mint (traps are global during
+ * a parked run). `fgets` is `stream_get_contents` plus a seek: `stream_get_line` strips the LF.
  */
 export const PARK_RESUME_PASSTHROUGH = [
 	'<?php $p = cfw_park_pending();',
@@ -273,13 +220,8 @@ export const PARK_RESUME_PASSTHROUGH = [
 // #region classifying what parked
 
 /**
- * Where a parked call has to be answered.
- *
- * **THE ENDPOINT IS THE OPERATOR'S, and the requested target is never dialled.** `src/ops/tcp.ts`
- * states the reason for the deferred tier and it holds harder here: honouring the host PHP asked for
- * would put arbitrary `host:port` TCP behind any module able to call `stream_socket_client`. The
- * target is checked for shape and the port has to agree with the configured one; the connection goes
- * to `REDIS_URL`.
+ * Where a parked call is answered: the operator's endpoint (`REDIS_URL`), never the requested
+ * target, which would put arbitrary TCP behind any caller. The port must match the configured one.
  */
 export function classifyParkOp(
 	pending: ParkPending,
@@ -291,16 +233,12 @@ export function classifyParkOp(
 
 	if (fn === 'stream_socket_client' || fn === 'fsockopen' || fn === 'pfsockopen') {
 		const target = isB64(first) ? text(first.b64) : '';
-		// the scheme is checked BEFORE the socket parse: a fetch target carries no port and would
-		// otherwise be refused as unparseable
+		// schemes before the socket parse: a fetch target carries no port
 		if (target.startsWith(PARK_FETCH_SCHEME)) {
 			const request = parseParkFetch(target.slice(PARK_FETCH_SCHEME.length));
 			if (!request) return { kind: 'refused', why: 'unreadable fetch descriptor' };
-			// THE SAME LEVER THE REST OF THE OUTBOUND PATH READS. `queueHttp()` and `cfwFetch` both
-			// go through `outboundGuardEnabled()`, and this branch did not -- so `OUTBOUND_GUARD=0`,
-			// which exists for the rig pointing a site at containers on the host, turned off the
-			// guard everywhere except here and a parked fetch to the rig was refused as loopback.
-			const refusal = outboundGuardEnabled(env) ? refuseOutbound(request.url) : null;
+			// same lever as the rest of outbound, or `OUTBOUND_GUARD=0` (the rig) would miss here
+			const refusal = outboundGuardEnabled(env) ? refuseOutbound(request.url) : undefined;
 			if (refusal) return { kind: 'refused', why: `${refusal.reason}: ${refusal.url}` };
 			return { kind: 'fetch', request };
 		}
@@ -319,10 +257,7 @@ export function classifyParkOp(
 			const statement = parseParkSql(target.slice(PARK_SQL_SCHEME.length));
 			if (!statement) return { kind: 'refused', why: 'unreadable sql descriptor' };
 			const selection = selectBackend(env as BackendEnv);
-			// A REFUSED SQL PARK CANNOT DEGRADE, which is the one place this differs from the fetch
-			// scheme. A refused fetch falls back to the deferred transport; there is no local copy
-			// of an external database to fall back to, so the refusal has to be a named error the
-			// driver reports rather than a silent second path
+			// a refused sql park cannot degrade (no local copy), so it is a named error
 			if (!backendNeedsPark(selection)) {
 				return {
 					kind: 'refused',
@@ -366,19 +301,17 @@ export function classifyParkOp(
 }
 
 /**
- * `tcp://host:port` or `host:port`, which is what `stream_socket_client` and `fsockopen` take.
- *
- * Port 25 is refused rather than parsed: Cloudflare blocks it for ordinary Workers, so a park there
- * would wait for an answer that cannot arrive. 465 and 587 are the paths that work.
+ * Parses `tcp://host:port` or `host:port`, as `stream_socket_client` and `fsockopen` take.
+ * Port 25 is refused: Workers block it, so a park there would wait forever.
  */
-export function parseSocketTarget(target: string): { host: string; port: number } | null {
+export function parseSocketTarget(target: string): { host: string; port: number } | undefined {
 	const withoutScheme = target.replace(/^[a-z0-9+.-]+:\/\//i, '');
 	const at = withoutScheme.lastIndexOf(':');
-	if (at <= 0) return null;
+	if (at <= 0) return undefined;
 	const host = withoutScheme.slice(0, at);
 	const port = Number(withoutScheme.slice(at + 1));
-	if (host === '' || !Number.isInteger(port) || port < 1 || port > 65535) return null;
-	if (port === 25) return null;
+	if (host === '' || !Number.isInteger(port) || port < 1 || port > 65535) return undefined;
+	if (port === 25) return undefined;
 	return { host, port };
 }
 
@@ -386,31 +319,32 @@ export function parseSocketTarget(target: string): { host: string; port: number 
 
 // #region the sockets a parked chain holds
 
+/** opens a socket to an endpoint; edgeport's `connect` by default */
 export type ParkConnect = (opts: ConnectOptions) => Promise<CoreSocket>;
 
 type Held = { socket: CoreSocket; eof: boolean };
 
 /**
- * The sockets one interpreter holds, keyed by the resource id of its PHP token.
- *
- * Per OBJECT rather than per invocation, because `pib_run` performs no request shutdown: a Predis
- * connection opened on one request is still in `$GLOBALS` on the next, so its socket has to outlive
- * the invocation that opened it. {@link closeAll} is what the interpreter drop has to call, since a
- * dropped module takes the PHP token with it and leaves the socket with no owner.
+ * The sockets one interpreter holds, by token resource id; per object, as `pib_run` has no
+ * request shutdown. The interpreter drop must call {@link closeAll}.
  */
 export class ParkSockets {
+	/** the held sockets by token resource id */
 	private held = new Map<number, Held>();
 
 	constructor(private connect: ParkConnect = coreConnect) {}
 
+	/** the resource ids of the tokens whose sockets this object holds */
 	get minted(): ReadonlySet<number> {
 		return new Set(this.held.keys());
 	}
 
+	/** how many sockets are held */
 	get size(): number {
 		return this.held.size;
 	}
 
+	/** dials the endpoint and keys the socket by the token's resource id */
 	async open(id: number, endpoint: TcpEndpoint): Promise<void> {
 		const socket = await this.connect({
 			hostname: endpoint.hostname,
@@ -420,6 +354,7 @@ export class ParkSockets {
 		this.held.set(id, { socket, eof: false });
 	}
 
+	/** writes the chunk and returns its length; 0 for an unknown id */
 	async write(id: number, chunk: Uint8Array): Promise<number> {
 		const one = this.held.get(id);
 		if (!one) return 0;
@@ -427,7 +362,7 @@ export class ParkSockets {
 		return chunk.length;
 	}
 
-	/** up to `max` bytes; `readN` is exact, which is what a self-describing reply asks for */
+	/** exactly `max` bytes via `readN`, as a self-describing reply needs; null at EOF */
 	async read(id: number, max: number): Promise<Uint8Array | null> {
 		const one = this.held.get(id);
 		if (!one || one.eof) return null;
@@ -442,7 +377,7 @@ export class ParkSockets {
 		}
 	}
 
-	/** through the LF, terminator included: `readLine` strips it and every line protocol wants it */
+	/** through the LF, terminator included (`readLine` strips it); null at EOF */
 	async line(id: number): Promise<Uint8Array | null> {
 		const one = this.held.get(id);
 		if (!one || one.eof) return null;
@@ -457,6 +392,7 @@ export class ParkSockets {
 		}
 	}
 
+	/** closes every held socket and forgets them */
 	async closeAll(): Promise<void> {
 		const all = [...this.held.values()];
 		this.held.clear();
@@ -477,10 +413,12 @@ export class ParkSockets {
 /** the seam the loop needs of an interpreter, so it can be driven from a test */
 export type ParkBinary = { runText: (code: string) => Promise<string> };
 
+/** one answered park: the call, how it was classified and why it was refused, if so */
 export type ParkTrip = { fn: string; op: ParkOp['kind']; why?: string };
 
+/** the result of one parked run */
 export type ParkRun = {
-	/** `done` -- the chain finished; `refused` -- an op could not be answered; `capped` -- too many */
+	/** `done` finished; `refused` an op could not be answered; `capped` too many trips */
 	state: 'done' | 'refused' | 'capped' | 'absent';
 	trips: ParkTrip[];
 	/** everything the parked program printed, with the loop's own control JSON removed */
@@ -489,17 +427,8 @@ export type ParkRun = {
 };
 
 /**
- * Runs `code` with the socket traps armed, answering every park until the chain finishes.
- *
- * A refusal ends the run rather than retrying it, which is the `/user/password` lesson in a second
- * place: a park nothing can answer needs a terminating observation, not a bound. The bound
- * ({@link PARK_MAX_TRIPS}) is the backstop for a chain that parks forever, and it is high because one
- * Drupal bootstrap over Redis is hundreds of round trips.
- *
- * **A RUN THAT DOES NOT FINISH IS UNWOUND BEFORE RETURNING, and skipping that bricks the object for
- * the rest of its life.** `cfw_park_run` throws when a chain is already parked, so a single refusal
- * left in place would make every later render on this interpreter fail with
- * `cfw: a chain is already parked` -- a permanent fault from a transient one.
+ * Runs `code` with the traps armed, answering every park until the chain finishes. A refusal
+ * ends the run, and a chain left parked is unwound (`cfw_park_run` would throw on later renders).
  */
 export async function drivePark(
 	binary: ParkBinary,
@@ -542,7 +471,7 @@ export async function drivePark(
 			return out;
 		}
 		const pending = parsePending(await binary.runText(PARK_PENDING));
-		if (pending === null) {
+		if (pending === undefined) {
 			const out = give('refused', 'the chain is parked and reports no pending call');
 			await unwind(binary);
 			return out;
@@ -572,6 +501,7 @@ export async function drivePark(
 
 type Collect = (fragment: string) => Promise<unknown>;
 
+/** performs one classified op and resumes the chain with its answer; null when unanswerable */
 async function perform(
 	collect: Collect,
 	sockets: ParkSockets,
@@ -580,8 +510,7 @@ async function perform(
 	budget: SleepBudget
 ): Promise<unknown> {
 	if (op.kind === 'sleep') {
-		// past the allowance the wait is cut short rather than refused: a refusal unwinds the whole
-		// chain, and the render after the sleep still has to run
+		// past the allowance the wait is cut short, not refused (a refusal unwinds the whole chain)
 		const slept = Math.max(0, Math.min(op.ms, budget.remainingMs));
 		if (slept > 0) await new Promise((resolve) => setTimeout(resolve, slept));
 		budget.remainingMs -= slept;
@@ -592,8 +521,7 @@ async function perform(
 		const minted = (await collect(PARK_MINT)) as Record<string, unknown> | null;
 		const id = Number(minted?.['id'] ?? 0);
 		if (!Number.isInteger(id) || id <= 0) return null;
-		// the dial happens BETWEEN the mint and the resume: PHP writes to the token on the next
-		// trip, so a socket opened after the resume would be opened too late
+		// dial between the mint and the resume: PHP writes to the token on its next trip
 		await sockets.open(id, op.endpoint);
 		return await collect(parkResumeToken(id));
 	}
@@ -616,11 +544,8 @@ async function perform(
 }
 
 /**
- * Resumes a chain nobody is going to answer, until nothing is parked.
- *
- * `false` is the value every trapped call returns on failure, so the chain unwinds through its own
- * error handling -- Predis raises a connection exception, Drupal sees a cache miss. There is no
- * abort entry point in the extension and this is why one is not needed.
+ * Resumes a chain nobody will answer with `false` (the failure value of every trapped call) until
+ * nothing is parked, so it unwinds through its own error handling; the extension has no abort.
  */
 async function unwind(binary: ParkBinary): Promise<number> {
 	let resumed = 0;
@@ -638,12 +563,8 @@ async function unwind(binary: ParkBinary): Promise<number> {
 // #endregion
 
 /**
- * One statement against the selected external database, answered as a JSON string.
- *
- * The SAME SHAPE ON BOTH OUTCOMES, which is what lets the driver treat a transport failure like any
- * other SQL error: an exception that reaches Drupal as a database error rather than as a PHP fatal
- * halfway through a render. A thrown error here would unwind the park loop instead, and the chain
- * that is frozen mid-statement would never be resumed.
+ * One statement against the external database, answered in one JSON shape on both outcomes:
+ * a failure becomes a database error in Drupal, where a throw would freeze the chain.
  */
 export async function performSql(
 	statement: ParkSql,
@@ -653,7 +574,7 @@ export async function performSql(
 	const reply = await exec(selection, statement.sql, statement.params).then(
 		(result) => ({ error: '', result }),
 		(e: unknown) => ({
-			error: String((e as { message?: string })?.message ?? e).slice(0, 400),
+			error: errorMessage(e).slice(0, 400),
 			result: null
 		})
 	);
@@ -661,11 +582,8 @@ export async function performSql(
 }
 
 /**
- * One HTTP exchange, answered as a JSON string the module's handler decodes.
- *
- * A REJECTION IS A REPLY, not a throw: the handler turns a non-empty `error` into a Guzzle
- * `RejectedPromise`, which is what a module expects from a transport. Throwing here would end the
- * whole parked run and lose the render with it.
+ * One HTTP exchange, answered as a JSON string the module's handler decodes. A rejection is a
+ * reply (`error` becomes a Guzzle `RejectedPromise`); a throw would lose the whole render.
  */
 export async function performFetch(
 	request: ParkFetch,
@@ -695,13 +613,7 @@ export async function performFetch(
 	}
 }
 
-/** the descriptor a `cfwpark+fetch://` target carries, base64 of JSON */
-/**
- * Applies a queued gd operation set, answered as a JSON string.
- *
- * A failure is a reply, as with a fetch: the module turns `error` into a refused call and the render
- * carries on, where a throw would end the whole parked run.
- */
+/** applies a queued gd operation set, answered as a JSON string (a failure is a reply) */
 export async function performImage(
 	request: ParkImageRequest,
 	run: typeof runParkImage = runParkImage
@@ -716,19 +628,25 @@ export async function performImage(
 	}
 }
 
-/** decodes a `cfwpark+image://` descriptor, or null when it is not a well-formed request */
-export function parseParkImage(packed: string): ParkImageRequest | null {
+/** the JSON object a packed descriptor carries, or undefined when unreadable or not an object */
+function unpackObject(packed: string): object | undefined {
 	let raw: unknown;
 	try {
 		raw = JSON.parse(new TextDecoder().decode(bytes(packed)));
 	} catch {
-		return null;
+		return undefined;
 	}
-	if (raw === null || typeof raw !== 'object') return null;
+	return raw !== null && typeof raw === 'object' ? raw : undefined;
+}
+
+/** decodes a `cfwpark+image://` descriptor, or undefined when it is not a well-formed request */
+export function parseParkImage(packed: string): ParkImageRequest | undefined {
+	const raw = unpackObject(packed);
+	if (raw === undefined) return undefined;
 	const r = raw as Record<string, unknown>;
-	if (!['jpeg', 'png', 'webp', 'gif'].includes(String(r['format']))) return null;
-	if (!Array.isArray(r['ops']) || r['ops'].length > 32) return null;
-	if (typeof r['source'] !== 'string' && r['source'] !== null) return null;
+	if (!['jpeg', 'png', 'webp', 'gif'].includes(String(r['format']))) return undefined;
+	if (!Array.isArray(r['ops']) || r['ops'].length > 32) return undefined;
+	if (typeof r['source'] !== 'string' && r['source'] !== null) return undefined;
 	return {
 		source: r['source'] as string | null,
 		canvas: (r['canvas'] as ParkImageRequest['canvas']) ?? null,
@@ -741,36 +659,22 @@ export function parseParkImage(packed: string): ParkImageRequest | null {
 /** one statement a parked render asked the host to run against an external database */
 export type ParkSql = { sql: string; params: unknown[] };
 
-/**
- * Decodes one, or null when it is not readable.
- *
- * Null rather than a throw, and rather than a partial statement: the caller turns it into a named
- * refusal, and a half-read statement is the one thing that must never reach a database.
- */
-export function parseParkSql(packed: string): ParkSql | null {
-	let raw: unknown;
-	try {
-		raw = JSON.parse(new TextDecoder().decode(bytes(packed)));
-	} catch {
-		return null;
-	}
-	if (raw === null || typeof raw !== 'object') return null;
+/** decodes a `cfwpark+sql://` descriptor; undefined, never a partial statement, when unreadable */
+export function parseParkSql(packed: string): ParkSql | undefined {
+	const raw = unpackObject(packed);
+	if (raw === undefined) return undefined;
 	const sql = (raw as { sql?: unknown }).sql;
-	if (typeof sql !== 'string' || sql === '') return null;
+	if (typeof sql !== 'string' || sql === '') return undefined;
 	const params = (raw as { params?: unknown }).params;
 	return { sql, params: Array.isArray(params) ? params : [] };
 }
 
-export function parseParkFetch(packed: string): ParkFetch | null {
-	let raw: unknown;
-	try {
-		raw = JSON.parse(new TextDecoder().decode(bytes(packed)));
-	} catch {
-		return null;
-	}
-	if (typeof raw !== 'object' || raw === null) return null;
+/** the descriptor a `cfwpark+fetch://` target carries, base64 of JSON */
+export function parseParkFetch(packed: string): ParkFetch | undefined {
+	const raw = unpackObject(packed);
+	if (raw === undefined) return undefined;
 	const one = raw as Record<string, unknown>;
-	if (typeof one['url'] !== 'string' || one['url'] === '') return null;
+	if (typeof one['url'] !== 'string' || one['url'] === '') return undefined;
 	const headers: Record<string, string> = {};
 	const given = one['headers'];
 	if (typeof given === 'object' && given !== null) {
@@ -793,11 +697,8 @@ export function parseParkFetch(packed: string): ParkFetch | null {
 // #region reading what PHP printed
 
 /**
- * Splits one `_run`'s output into what the program printed and the loop's own control value.
- *
- * The control value is the LAST marked span, because a resume prints the render's remaining output
- * after re-entering the chain and the mint prints a span of its own before it. Everything outside
- * the markers is the program's.
+ * Splits one `_run`'s output into the program's text and the loop's control value, the last
+ * marked span (a resume prints the render's remaining output after re-entering the chain).
  */
 export function splitControl(out: string): { program: string; control: unknown } {
 	const parts = out.split(PARK_MARK);
@@ -819,11 +720,12 @@ export function splitControl(out: string): { program: string; control: unknown }
 	return { program: program.join(''), control };
 }
 
-export function parsePending(out: string): ParkPending | null {
+/** reads the pending call out of `PARK_PENDING`'s output, or undefined when nothing is parked */
+export function parsePending(out: string): ParkPending | undefined {
 	const obj = splitControl(out).control;
-	if (typeof obj !== 'object' || obj === null) return null;
+	if (typeof obj !== 'object' || obj === null) return undefined;
 	const one = obj as Record<string, unknown>;
-	if (typeof one['fn'] !== 'string' || !Array.isArray(one['args'])) return null;
+	if (typeof one['fn'] !== 'string' || !Array.isArray(one['args'])) return undefined;
 	return { fn: one['fn'], args: one['args'] as ParkArg[] };
 }
 
@@ -834,10 +736,7 @@ const isB64 = (a: ParkArg | undefined): a is { b64: string } =>
 	typeof a === 'object' && a !== null && typeof (a as { b64?: unknown }).b64 === 'string';
 
 function bytes(b64text: string): Uint8Array {
-	const raw = atob(b64text);
-	const out = new Uint8Array(raw.length);
-	for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-	return out;
+	return binaryToBytes(atob(b64text));
 }
 
 const text = (b64text: string): string => new TextDecoder().decode(bytes(b64text));

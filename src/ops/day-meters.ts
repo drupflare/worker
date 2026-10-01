@@ -1,26 +1,19 @@
 /**
- * The daily counters this object keeps, in one `cfw_meta` row.
+ * The daily counters this object keeps, packed into one `cfw_meta` row.
  *
- * Each of them used to have a key of its own, so a meter flush on a trafficked site wrote FOUR rows
- * -- while the comments beside the calls said the folding cost no row of its own. What the folding
- * saved was the alarm; the rows were never folded at all. Rows written is the meter that binds
- * regeneration, so a counter costing four of them to record a batch of them is the shape
- * `counter-counts-itself` already names once.
- *
- * Packed the way `writeRenderWindow()` packs its two values: one key, one row, a codec either side.
- *
- * `serveTotal` is a LIFETIME total and the other three are per UTC day. It rides in the daily row
- * anyway and carries forward on the first write of a new day, which is what keeps `/serve-stats`
- * reporting the same quantity it always did rather than quietly becoming a daily count.
+ * One key and one row, because rows written is the meter that binds regeneration and a flush of
+ * four separate keys cost four. `serveTotal` is a lifetime total (the rest are per UTC day); it
+ * carries forward on the first write of a new day, so `/serve-stats` keeps its meaning.
+ * @module
  */
-
 import {
 	ZERO_ENCOUNTERS,
 	parseEncounters,
 	serialiseEncounters,
 	type EncounterCounts
-} from './cold-encounter.js';
+} from './cold-encounter';
 
+/** the packed daily counters; see {@link writeDayMeters} for the wire format */
 export type DayMeters = {
 	/** rows written today, against the daily quota */
 	rows: number;
@@ -39,6 +32,7 @@ export type DayMeters = {
 	fetches: number;
 };
 
+/** a day with nothing counted */
 export const ZERO_DAY_METERS: DayMeters = {
 	rows: 0,
 	doRequests: 0,
@@ -53,10 +47,12 @@ export const ZERO_DAY_METERS: DayMeters = {
 /** the prefix a day row is found under, and the one `carriedServeTotal()` scans */
 export const DAY_METERS_PREFIX = 'meters_';
 
+/** the `cfw_meta` key for the UTC day containing `nowMs` */
 export function dayMetersKey(nowMs: number): string {
 	return `${DAY_METERS_PREFIX}${new Date(nowMs).toISOString().slice(0, 10)}`;
 }
 
+/** packs the meters as colon-joined integers; encounters ride in the fourth slot */
 export function writeDayMeters(meters: DayMeters): string {
 	return [
 		Math.max(0, Math.round(meters.rows)),
@@ -71,17 +67,15 @@ export function writeDayMeters(meters: DayMeters): string {
 }
 
 /**
- * Reads one back, or null when there is nothing readable there.
- *
- * Null rather than a zeroed row, because the caller has to tell "this day has no row yet" from "this
- * day counted nothing": the first is what makes it look for the legacy keys and carry the lifetime
- * serve total forward, and the second is a day that genuinely served nothing.
+ * Reads one back, or undefined when nothing readable is there.
+ * Undefined, not zeros: "no row yet" makes the caller look for legacy keys and carry the lifetime
+ * serve total forward, while a zero row is a day that served nothing.
  */
-export function readDayMeters(raw: string | null | undefined): DayMeters | null {
-	if (!raw) return null;
+export function readDayMeters(raw: string | null | undefined): DayMeters | undefined {
+	if (!raw) return undefined;
 	const parts = raw.split(':');
-	// four parts predates `kvWrites` and five the three activity counters; each counted none
-	if (parts.length !== 4 && parts.length !== 5 && parts.length !== 8) return null;
+	// four parts has no `kvWrites` and five lacks the three activity counters (each reads zero)
+	if (parts.length !== 4 && parts.length !== 5 && parts.length !== 8) return undefined;
 	const [rows, doRequests, serveTotal] = parts.slice(0, 3).map((n) => Number(n)) as [
 		number,
 		number,
@@ -94,7 +88,7 @@ export function readDayMeters(raw: string | null | undefined): DayMeters | null 
 		number
 	];
 	const all = [rows, doRequests, serveTotal, kvWrites, renders, alarms, fetches];
-	if (!all.every((n) => Number.isFinite(n) && n >= 0)) return null;
+	if (!all.every((n) => Number.isFinite(n) && n >= 0)) return undefined;
 	return {
 		rows,
 		doRequests,
@@ -108,54 +102,31 @@ export function readDayMeters(raw: string | null | undefined): DayMeters | null 
 }
 
 /**
- * How much of the REMAINING daily row budget one eviction may lose unpersisted.
- *
- * The checkpoint exists for exactly one failure: a Durable Object is evicted whenever Cloudflare
- * likes, and whatever has accumulated in memory since the last write is gone. A live read is not
- * affected -- `dailyRows()` adds the pending counter to the stored one -- so the interval buys
- * nothing except a bound on that loss.
- *
- * A bound stated as a CONSTANT is wrong at both ends of the day. Twenty-five rows is 0.025% of a
- * fresh site's budget and 1% of what is left at 97.5%, and the second is the only reading that can
- * change a decision.
+ * The fraction of the remaining daily row budget one eviction may lose unpersisted.
+ * A fixed bound is wrong at both ends of the day: 25 rows is 0.025% of a fresh budget and 1% of
+ * what is left at 97.5%. Live reads add the pending counter, so this only bounds eviction loss.
  */
 export const METER_LOSS_FRACTION = 0.01;
 
-/**
- * The tightest checkpoint, which is what the two constants this replaces did unconditionally.
- *
- * Kept as the floor rather than tightened, so the change cannot weaken the accounting anywhere: at
- * the ceiling the policy answers 25 rows and 60 s, which is byte for byte the old behaviour.
- */
+/** the tightest checkpoint, 25 rows and 60 s (the old unconditional behaviour, kept as floor) */
 export const METER_FLUSH_ROWS_MIN = 25;
+/** the tightest checkpoint interval, in ms */
 export const METER_FLUSH_MS_MIN = 60_000;
 
-/**
- * The loosest, which is the render window's own 15-minute bucket.
- *
- * Borrowed rather than chosen: `flushRenderWindow()` already answers this question for the arrival
- * rate and caps itself at 96 rows/day, and two checkpoints on the same object should not disagree
- * about how long a gap is acceptable.
- */
+/** the loosest checkpoint interval, the render window's own 15-minute bucket, so the two agree */
 export const METER_FLUSH_MS_MAX = 900_000;
+/** the row trigger that matches {@link METER_FLUSH_MS_MAX} */
 export const METER_FLUSH_ROWS_MAX =
 	METER_FLUSH_ROWS_MIN * (METER_FLUSH_MS_MAX / METER_FLUSH_MS_MIN);
 
 /**
  * When the day meters may next pay for a row, from how much budget is left.
+ * Both triggers state one bound in different units: rows catches a busy object, the interval an
+ * idle one. At the shipping interval this is 1,440 flushes a day against 96, about 1.5% on the
+ * free-plan ceiling.
  *
- * Both triggers state the same bound in different units, so both scale together: the row trigger is
- * what catches a busy object and the interval is what catches an idle one, and a warmed object at
- * one row per 8 s tick reaches neither quickly.
- *
- * At the shipping interval this is 1,440 flushes a day against 96, which is 1,344 rows returned to
- * the meter that binds regeneration. It moves the published free-plan ceiling by about 1.5% and
- * that is the whole of it; the reason to do it is that a counter should not be a measurable share
- * of what it counts.
- *
- * @param rowsToday what the day meter already holds, `dailyRows()`.
- * @param budgetRows the daily cap; `DAILY_ROWS_QUOTA` on free, and the same figure on paid because
- *   a paid site has nothing to protect and fewer writes are strictly cheaper there.
+ * @param rowsToday what the day meter already holds, `dailyRows()`
+ * @param budgetRows the daily cap; the same figure on paid, where fewer writes are cheaper
  */
 export function meterFlushBudget(
 	rowsToday: number,

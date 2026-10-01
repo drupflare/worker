@@ -1,52 +1,33 @@
-import { PARK_FETCH_TRAPS, PARK_SOCKET_TRAPS } from './park-drive.js';
-
 /**
- * Whether this interpreter can park, and which traps are armed.
+ * Whether this interpreter can park (`ext/cfwpark` in phasm) and which traps are armed.
  *
- * The interpreter half is `ext/cfwpark` in phasm: a trapped blocking call freezes its Zend
- * continuation, `longjmp`s out of `pib_run` and returns `PARKED`. `park-drive.ts` is the half that
- * answers one. What the pair buys is `drupal/redis` unmodified -- a cache get has to answer inside
- * the render that asked, which is the one shape the deferred tier cannot serve.
- *
- * **EVERYTHING HERE IS INERT WITHOUT THE EXTENSION, on purpose.** {@link installPark} probes for
- * `cfw_park_run` and answers `absent` on a build that predates it, which keeps the capability a
- * runtime fact rather than a build-time assumption -- the same shape as `hasImplementations()` for a
- * cron hook.
+ * Everything here is inert without the extension: {@link installPark} probes for `cfw_park_run` and
+ * answers `absent` on a build that lacks it. `park-drive.ts` answers a parked call.
+ * @module
  */
+import { PARK_FETCH_TRAPS, PARK_SOCKET_TRAPS } from './park-drive';
 
 /**
  * The trap classes a site may arm.
  *
- * TWO, and the one that is NOT here is worth recording. An `http` class trapping `curl_exec` was
- * written and removed: **the shipping interpreter has no curl at all**, measured 2026-09-08 by
- * booting it and reading the extension list, so `cfw_park_trap('curl_exec')` answers false. The
- * earlier "Guzzle parks at `curl_exec`" reading came from a NATIVE php that has ext-curl, which is
- * the wrong instrument. `curl_exec` also takes a `CurlHandle` rather than a URL, so its pending
- * descriptor would carry an object the host cannot route on.
- *
- * Trapping `fopen` instead cannot work either, and the reason is the safety predicate rather than an
- * omission: `HttpsStreamWrapper` is userland called from the INTERNAL `fopen`, so `park_refused()`
- * counts that frame and declines -- correctly, since `fopen`'s C locals cannot survive the
- * `longjmp`. So the `fetch` class does not trap Guzzle's transport at all. It gives the module's own
- * handler a yield point, and that handler is plain userland, which is what makes the park safe
- * there.
+ * There is no `http` class: the shipping interpreter has no curl, so `cfw_park_trap('curl_exec')`
+ * answers false. Trapping `fopen` cannot work either: `HttpsStreamWrapper` is userland called from
+ * the internal `fopen`, so `park_refused()` declines (its C locals cannot survive the `longjmp`).
+ * The `fetch` class instead gives the module's own userland handler a yield point.
  */
 export const PARK_TRAPS = { socket: PARK_SOCKET_TRAPS, fetch: PARK_FETCH_TRAPS } as const;
 
+/** a key of `PARK_TRAPS` */
 export type ParkClassName = keyof typeof PARK_TRAPS;
 
 /**
- * Whether the park may arm at all, which is an operator switch rather than a capability.
+ * Whether the park may arm at all; an operator switch, on by default.
  *
- * ON BY DEFAULT, and the reason it exists is that arming routes EVERY render through
- * `cfw_park_run` -- a render that calls nothing still pays the wrapper. Measured on the gate
- * interpreter: two ordinary renders report `runs=2 trips=0`, so the tax is paid by 100% of renders
- * while the benefit reaches only the few that call out. `PARK=0` is what turns it off on a site
- * that runs no module needing it, and it is what makes the tax measurable: two deploys of the same
- * tree differing in this one value is the only paired arm available, since the capability flags are
- * literals and the traps are installed per interpreter.
+ * Arming routes every render through `cfw_park_run`, so a render that calls nothing still pays the
+ * wrapper (two ordinary renders report `runs=2 trips=0`). `PARK=0` turns it off for a site with no
+ * module that needs it, and is the only paired arm for measuring that tax.
  */
-export function parkEnabled(env?: { PARK?: unknown } | null): boolean {
+export function parkEnabled(env?: { PARK?: unknown }): boolean {
 	const set = env?.PARK;
 	if (set !== undefined && set !== null && String(set) !== '') return String(set) === '1';
 	return true;
@@ -56,11 +37,10 @@ export function parkEnabled(env?: { PARK?: unknown } | null): boolean {
 export const PARK_PROBE = `<?php echo json_encode(['park' => function_exists('cfw_park_run')]);`;
 
 /**
- * The PHP that arms the traps; returns which names took, so a rename cannot fail silently.
+ * The PHP that arms the traps; it prints the names the engine accepted, not the list it was sent.
  *
- * Reports the names the ENGINE accepted rather than the list it was sent. `cfw_park_trap` answers
- * false for a name that is not an internal function, so a build without one of these arms the rest
- * and says so.
+ * `cfw_park_trap` answers false for a name that is not an internal function, so a rename cannot
+ * fail silently.
  */
 export function parkTrapInstall(classes: ReadonlyArray<ParkClassName>): string {
 	const names = classes.flatMap((c) => [...PARK_TRAPS[c]]);
@@ -75,22 +55,20 @@ export function parkTrapInstall(classes: ReadonlyArray<ParkClassName>): string {
 /**
  * The shape `installPark` needs of a PHP binary, so it can be driven from a test.
  *
- * `runText` rather than `_run`, because **`_run`'s return value is not the output.** php-wasm
- * delivers printed text through an `output` EVENT, so a probe that reads what `_run` returned sees
- * nothing and every build reports `absent` -- including one that carries the extension. That is what
- * driving this against the real interpreter caught, and a mock returning the string directly could
- * not.
+ * It takes `runText` rather than `_run` because `_run`'s return value is not the output: php-wasm
+ * delivers printed text through an `output` event, so reading the return reports `absent` always.
  */
 export type ParkBinary = {
-	/** runs a fragment and answers what it PRINTED */
+	/** runs a fragment and answers what it printed */
 	runText: (code: string) => Promise<string>;
 };
 
+/** the result of `installPark` */
 export type ParkInstall = {
 	/**
-	 * `absent` -- the interpreter cannot park; `ready` -- it can and nothing is diverted;
-	 * `installed` -- traps are live and a drive loop must exist; `failed` -- the extension is there
-	 * and arming did not take.
+	 * `absent`: the interpreter cannot park; `ready`: it can and nothing is diverted; `installed`:
+	 * traps are live and a drive loop must exist; `failed`: the extension is there and arming did
+	 * not take.
 	 */
 	state: 'installed' | 'ready' | 'absent' | 'failed';
 	armed: string[];
@@ -100,13 +78,11 @@ export type ParkInstall = {
 /**
  * Reports whether this interpreter can park, and arms only the classes it is asked for.
  *
- * `absent` is the expected answer on every build that predates `ext/cfwpark`, and it is a state
- * rather than an error: the site serves exactly as it does today.
+ * `absent` is a state, not an error: a build without `ext/cfwpark` serves as before.
  *
- * **ARMS NOTHING BY DEFAULT, and that is a safety property rather than a stub.** An armed trap
- * diverts every call to that name for the duration of a parked run, so arming without a loop behind
- * it would hang the first socket write on the site. The default is therefore `ready`: the extension
- * is present and no call site has been diverted. `drivePark()` is what may ask for a class.
+ * It arms nothing by default (state `ready`), as a safety property: an armed trap diverts every
+ * call to that name, so arming without a drive loop would hang the first socket write.
+ * `drivePark()` is what may ask for a class.
  */
 export async function installPark(
 	binary: ParkBinary,

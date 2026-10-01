@@ -1,29 +1,10 @@
 /**
- * How often a request meets an evicted PHP runtime, which is the metric that replaces "how long is a
- * cold boot".
+ * How often a request meets an evicted PHP runtime (the metric that replaces cold boot cost).
  *
- * A VPS wins the startup comparison by keeping a PHP-FPM process resident, not by booting quickly. A
- * Durable Object can hold its interpreter for as long as it stays resident, so the honest question is
- * not the cost of one cold boot but how often a user-visible request is allowed to encounter one.
- *
- * The measured floor is 1,264 ms of `cpuTime` for an unimaged cold render on a deployed free worker
- * (n=4, 1,113-1,343), taken with warming forced off. That figure is a TAIL RISK rather than a
- * systemic cost, and nothing reported the share of requests exposed to it.
- *
- * ## The denominator is the whole design
- *
- * A cached page never reaches the object at all, so counting cold boots against DO invocations
- * flatters the number, and counting them against every request the front worker sees is the figure a
- * visitor actually experiences. Both are kept, because the two answer different questions: the first
- * scores the thermal policy, the second scores the architecture.
- *
- * ## The front worker's share has to be carried in
- *
- * A plan hit, an isolate memo hit, a `caches.default` hit and a KV page read all return from the
- * front worker, so the object cannot see any of them -- and they are most of the traffic. `absorbed`
- * is that count, reported by the front worker on the next request that hops anyway, which is why
- * `coldOfObject` and `coldOfTraffic` are separate fields rather than one number that means whichever
- * the reader assumes. The field this replaced was called `coldOfAll` and counted neither.
+ * A cold render floors at 1,264 ms of `cpuTime` on a deployed free worker (n=4, 1,113-1,343).
+ * The front worker answers plan, memo, `caches.default` and KV hits itself, so `absorbed` carries
+ * that count in on the next hop.
+ * @module
  */
 
 /** one request's outcome, from the object's point of view */
@@ -35,6 +16,7 @@ export type Encounter =
 	/** needed the interpreter and had to construct one */
 	| 'cold';
 
+/** per-outcome request counts for one object */
 export type EncounterCounts = {
 	noPhp: number;
 	warm: number;
@@ -43,24 +25,16 @@ export type EncounterCounts = {
 	absorbed: number;
 };
 
+/** all-zero counts */
 export const ZERO_ENCOUNTERS: EncounterCounts = { noPhp: 0, warm: 0, cold: 0, absorbed: 0 };
 
 /**
- * What an object's own counters say, plus the three shares worth reporting.
+ * Counters plus three cold shares: `coldOfPhp` (thermal policy), `coldOfObject` (page and plan
+ * tiers inside the object) and `coldOfTraffic` (every request made for the site).
  *
- * `coldOfPhp` scores the THERMAL POLICY: of the requests that needed PHP, how many found none. That
- * is the number a residency change moves. `coldOfObject` scores what the page and plan tiers move
- * INSIDE the object. `coldOfTraffic` is the visitor-facing one, and it is the only one of the three
- * whose denominator is every request made for the site.
- *
- * The three are `null` rather than 0 on an empty denominator. A site that has served nothing has not
- * demonstrated a 0% cold rate, and reporting one would make an unused site look like a well-tuned
- * one -- the same distinction `rolloutProgress()` draws for a fleet nobody has heard from.
- *
- * `coldOfTraffic` is additionally null while `absorbed` is 0, because a site whose front worker has
- * reported nothing has not demonstrated that nothing was absorbed: it is indistinguishable from one
- * running a worker too old to report. An absent reading is visibly absent; a plausible wrong one is
- * not, and this field's whole purpose is that the wrong one reads about 5x too high.
+ * A share is null on an empty denominator, so an unused site does not read as well tuned.
+ * `coldOfTraffic` is also null while `absorbed` is 0: a front worker too old to report looks the
+ * same as one that absorbed nothing, and the wrong figure reads about 5x too high.
  */
 export type EncounterReport = EncounterCounts & {
 	total: number;
@@ -72,6 +46,7 @@ export type EncounterReport = EncounterCounts & {
 	coldOfTraffic: number | null;
 };
 
+/** derives the totals and the three cold shares from one object's counters */
 export function encounterReport(counts: EncounterCounts): EncounterReport {
 	const php = counts.warm + counts.cold;
 	const total = php + counts.noPhp;
@@ -87,25 +62,20 @@ export function encounterReport(counts: EncounterCounts): EncounterReport {
 	};
 }
 
+/** returns the counts with the outcome added */
 export function recordEncounter(counts: EncounterCounts, outcome: Encounter): EncounterCounts {
 	if (outcome === 'cold') return { ...counts, cold: counts.cold + 1 };
 	if (outcome === 'warm') return { ...counts, warm: counts.warm + 1 };
 	return { ...counts, noPhp: counts.noPhp + 1 };
 }
 
-/**
- * Folds in what the front worker says it answered without hopping.
- *
- * Attacker-supplied in the sense that every inbound header is, so the value is clamped and a
- * nonsense one folds in nothing rather than poisoning the denominator. The cap is per report and
- * generous: one isolate cannot absorb more than this between two hops to the same site without the
- * hop it is riding on being long gone.
- */
+/** per-report cap on a claimed absorbed count (the header is client-reachable, so it is clamped) */
 export const ABSORBED_REPORT_MAX = 100_000;
 
 /** what the front worker reports its own absorbed count under */
 export const ABSORBED_HEADER = 'x-cfw-absorbed';
 
+/** adds the front worker's absorbed count; a missing, non-integer or over-cap value adds nothing */
 export function foldAbsorbed(counts: EncounterCounts, raw: string | null): EncounterCounts {
 	if (raw === null) return counts;
 	const n = Number(raw);
@@ -119,13 +89,8 @@ export function serialiseEncounters(counts: EncounterCounts): string {
 }
 
 /**
- * Reads the counters back, defaulting to zero on anything unexpected.
- *
- * A corrupt row loses a day of counting rather than reporting a wrong share, which is the safe
- * direction: an absent reading is visibly absent, and a plausible wrong one is not.
- *
- * Three fields is a row written before `absorbed` existed, and it reads as `absorbed: 0` -- which is
- * exactly what it means, and what makes `coldOfTraffic` null on it rather than wrong.
+ * Reads the counters back; anything unexpected becomes zero (a lost count beats a wrong share).
+ * A three-field row predates `absorbed` and reads as `absorbed: 0`.
  */
 export function parseEncounters(raw: string | null | undefined): EncounterCounts {
 	if (!raw) return { ...ZERO_ENCOUNTERS };
@@ -141,6 +106,7 @@ export function parseEncounters(raw: string | null | undefined): EncounterCounts
 	};
 }
 
+/** sums two sets of counts field by field */
 export function addEncounters(a: EncounterCounts, b: EncounterCounts): EncounterCounts {
 	return {
 		noPhp: a.noPhp + b.noPhp,

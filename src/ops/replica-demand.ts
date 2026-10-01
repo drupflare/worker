@@ -1,13 +1,6 @@
 /**
- * When a site should grow itself a replica lane, and how many.
- *
- * A pool only helps a site whose requests QUEUE. A Durable Object runs one request at a time and a
- * PHP render holds it for the whole render, so contention shows up as requests in flight waiting
- * their turn. That is the signal: peak concurrent in-flight requests on the primary.
- *
- * Raising `REPLICA_COUNT` by hand only tells the ROUTER lanes exist. Nothing created them, so the
- * lanes it routes to hold no data and fence-refuse until somebody drives the provisioning loop. This
- * is the missing half -- the site notices it is contended and starts the copy itself.
+ * Decides when a site grows itself a replica lane; a pool only helps requests that queue.
+ * @module
  */
 
 /** one window's worth of observed contention on the primary */
@@ -15,20 +8,15 @@ export type DemandWindow = {
 	peakInflight: number;
 	at: number;
 	/**
-	 * requests that WAITED for the gate in this window, and how long, when it was observed.
-	 *
-	 * Replicas remove QUEUEING, not service time -- that is the fact the replica work established
-	 * and the fact `peakInflight` is only a proxy for. A site with 100 req/s of cached traffic
-	 * queues nothing and needs no lane; a site with 20 req/s of authenticated renders may need
-	 * several. Optional because a window recorded before this existed is still a window, and
-	 * {@link laneTarget} falls back to the proxy rather than discarding it.
+	 * Requests that waited for the gate in this window.
+	 * Replicas remove queueing, not service time; `peakInflight` is only a proxy, used when absent.
 	 */
 	queued?: number;
 	/** ms the queued requests waited, summed; a long single wait is not two short ones */
 	waitedMs?: number;
 };
 
-/** windows that must ALL be contended before a lane is provisioned */
+/** windows that must all be contended before a lane is provisioned */
 export const SUSTAIN_WINDOWS = 3;
 
 /** how many windows of history are kept; older ones cannot influence a decision */
@@ -36,72 +24,28 @@ export const DEMAND_HISTORY = 6;
 
 /**
  * Lanes autoscaling may create on its own, before an operator's `REPLICA_COUNT` is considered.
- *
- * **THE OLD CAP OF 3 WAS STANDING IN FOR A WARMING BUG.** Warming is per OBJECT, so a warmed pool
- * multiplied it and 32 idle lanes would have re-armed every 8 s for 345,600 rows a day serving
- * nothing. `laneIsIdle()` lets a lane nobody routes to hibernate, so an unused lane now costs
- * storage and replication catch-up rather than a warming chain.
- *
- * **Throughput gives no reason to cap.** Measured on deployed workers at 8 / 16 / 32 / 48 replicas:
- * efficiency against perfect scaling is 100 / 95 / 90 / 85%, a flat ~5 points per doubling with no
- * knee, and saturation was checked rather than assumed (N=32 returned 183.2 req/s at 128 offered
- * clients against 183.4 at 64). A linear decline never crosses zero, so there is no payoff point to
- * calculate and any number here would be arbitrary.
- *
- * So this is the ROUTING clamp, and the bound that actually matters is per-lane idle cost --
- * storage plus catch-up -- which is not measured. Lower it with `REPLICA_MAX_LANES` on a site that
- * would rather spend its budget elsewhere; `0` and `REPLICA_AUTOSCALE=0` both switch it off.
+ * No throughput knee (efficiency 100/95/90/85% at 8/16/32/48), so this only clamps routing.
  */
 export const DEFAULT_MAX_LANES = 32;
 
+/** the replica vars autoscaling reads */
 export type DemandEnv = {
-	REPLICA_AUTOSCALE?: string | null;
-	REPLICA_MAX_LANES?: string | null;
-	REPLICA_COUNT?: string | null;
+	REPLICA_AUTOSCALE?: string;
+	REPLICA_MAX_LANES?: string;
+	REPLICA_COUNT?: string;
 };
 
-/** ON unless explicitly `0` */
-export function autoScaleEnabled(env?: DemandEnv | null): boolean {
+/** on unless `0` */
+export function autoScaleEnabled(env?: DemandEnv): boolean {
 	return String(env?.REPLICA_AUTOSCALE ?? '1') !== '0';
 }
 
 /**
- * The ceiling autoscaling will not grow past. `0` turns it off; the default is three.
- *
- * Clamped at 32 because that is where `replicaCount()` clamps, and a cap the router would not honour
- * is a cap that lies.
- *
- * **MEASURED ON A REAL REPLICATING POOL, 2026-09-19**, authenticated renders against deployed sites,
- * served count over a fixed 20 s window, zero failovers in every cell:
- *
- * | lanes | vs 0, c=16 | p50 c=16 | vs 0, c=64 | p50 c=64 |
- * | ----: | ---------: | -------: | ---------: | -------: |
- * |     1 |      0.87x |  7712 ms |      0.80x | 33741 ms |
- * |     2 |      1.27x |  3172 ms |      1.57x | 10431 ms |
- * |     4 |      1.31x |  2867 ms |      1.50x |  6506 ms |
- * |     8 |      2.06x |  1715 ms |      2.24x |  6125 ms |
- * |    16 |      4.74x |   364 ms |      4.54x |   647 ms |
- *
- * Latency is the larger effect: p50 falls 16.4x at 16 clients and 24.8x at 64. The earlier figures
- * quoted here (1.00 / 2.05 / 3.16 / 5.72x) were taken on independent objects with a synthetic burn
- * rather than on a pool that replicates, and they are superseded. Past 16 nothing is measured.
- *
- * **UNDER SATURATION THE BASELINE IS ZERO**, which the table above cannot show because 16 and 64
- * clients do not saturate. Re-driven at 512 concurrent clients over 200 distinct authenticated node
- * pages, same 20 s window: 0 lanes serves **0** (every request shed), then 426 / 814 / 1,889 at
- * 1 / 2 / 8 lanes, which is 1.00 / 1.91 / 4.43x. The 4-lane cell is withheld -- its site returned a
- * 500 rate no other arm reproduced and the rig was torn down before a re-drive. Two workloads, so
- * these do not divide into the figures above.
- *
- * **AND A LANE IS PAID FOR ON THE ROWS-WRITTEN METER, at N+1 rows per change.** Replication writes
- * every primary row again on each lane, so a pool trades write budget for read throughput: an
- * 8-lane pool reaches the daily row ceiling nine times sooner than one object. {@link laneTarget}
- * scores READ contention only, which is correct for what it measures and incomplete as a sizing
- * rule -- a write-heavy site can be told to grow a pool that costs it more than the queueing did.
- * Sizing against the write rate is not built; `REPLICA_MAX_LANES` is the manual bound meanwhile.
+ * The ceiling autoscaling will not grow past, clamped at 32 like `replicaCount()`; `0` is off.
+ * A lane costs N+1 rows per change and sizing ignores the write rate, so bound it by hand.
  */
-export function maxLanes(env?: DemandEnv | null): number {
-	// `Number('')` is 0 and finite, so an unset var read as a cap of ZERO and autoscaling never ran
+export function maxLanes(env?: DemandEnv): number {
+	// `Number('')` is 0 and finite, so an unset var read as a cap of zero and autoscaling never ran
 	const text = String(env?.REPLICA_MAX_LANES ?? '').trim();
 	if (text === '') return DEFAULT_MAX_LANES;
 	const raw = Number(text);
@@ -110,13 +54,8 @@ export function maxLanes(env?: DemandEnv | null): number {
 }
 
 /**
- * How many lanes the observed demand justifies.
- *
- * Takes the MINIMUM peak across the last {@link SUSTAIN_WINDOWS} windows, so one burst cannot
- * provision a lane that then sits warm forever. A site that sustained 3 concurrent requests through
- * every one of those windows wanted 2 more objects to run them on.
- *
- * Returns 0 when the history is too short to be sustained, which is what a quiet site always sees.
+ * How many lanes the observed demand justifies: the minimum over the last {@link SUSTAIN_WINDOWS}.
+ * Returns 0 on short history; no floor of two, since one lane only loses below saturation.
  */
 export function laneTarget(windows: readonly DemandWindow[], cap: number): number {
 	const ceiling = Math.max(0, Math.floor(cap));
@@ -124,10 +63,7 @@ export function laneTarget(windows: readonly DemandWindow[], cap: number): numbe
 	if (windows.length < SUSTAIN_WINDOWS) return 0;
 	const recent = windows.slice(-SUSTAIN_WINDOWS);
 
-	// QUEUEING FIRST, when the windows carry it. Inflight peak counts requests that were in the
-	// object at once, which on a cached site is concurrency a single object serves without anybody
-	// waiting -- so it provisions lanes for load that never queued. `queued` counts the requests
-	// that actually WAITED, which is the thing a lane removes.
+	// queueing first: inflight peak counts cached concurrency nobody waited on
 	const measured = recent.every((w) => typeof w?.queued === 'number');
 	if (measured) {
 		let sustainedQueue = Infinity;
@@ -136,8 +72,7 @@ export function laneTarget(windows: readonly DemandWindow[], cap: number): numbe
 			if (!Number.isFinite(queued)) return 0;
 			sustainedQueue = Math.min(sustainedQueue, queued);
 		}
-		// a lane per sustained waiter, because that is what each one removes. No `-1` here: unlike
-		// inflight, a queue depth of 1 already means somebody waited
+		// a lane per sustained waiter (no `-1`: a queue depth of 1 already means somebody waited)
 		return Math.max(0, Math.min(ceiling, Math.floor(sustainedQueue)));
 	}
 
@@ -151,44 +86,15 @@ export function laneTarget(windows: readonly DemandWindow[], cap: number): numbe
 	return Math.max(0, Math.min(ceiling, Math.floor(sustained) - 1));
 }
 
-/**
- * WHETHER ONE LANE HELPS DEPENDS ENTIRELY ON WHETHER THE PRIMARY IS SATURATED, measured 2026-09-19
- * on deployed sites over authenticated renders, served count in a fixed 20 s window:
- *
- * | clients | no pool | one lane | one lane vs none |
- * | ------: | ------: | -------: | ---------------- |
- * |      32 |     352 |      ~54 | 0.87x            |
- * |      64 |     347 |      339 | 0.98x            |
- * |     128 |     256 |      528 | **2.06x**        |
- * |     512 |       0 |      426 | from nothing     |
- *
- * Below saturation a single lane LOSES: routing hashes over two buckets, so it pulls ~60% of the
- * traffic onto an object whose Drupal bins are colder than the primary's while adding no
- * parallelism the primary did not already have. Above saturation the primary sheds everything --
- * 512 clients against one object served ZERO, all 503 -- and one lane is the difference between a
- * site that answers and a site that does not.
- *
- * **So autoscaling does NOT need a floor of two, and a guard that forced one was briefly shipped
- * here on the strength of the 32- and 64-client rows alone.** {@link laneTarget} fires on SUSTAINED
- * QUEUEING, which is the saturated regime by definition, and that is exactly where one lane is
- * transformative. The losing rows describe a pool nobody would have provisioned.
- */
-
-/**
- * The mean wait a queued request saw, in ms, or null when nothing queued.
- *
- * Reported rather than acted on: a lane removes waiting, and how MUCH waiting it removes is what
- * says whether the lane was worth its idle cost. Acting on it as well would be two policies for one
- * decision.
- */
-export function meanWaitMs(windows: readonly DemandWindow[]): number | null {
+/** the mean wait a queued request saw, in ms, or undefined when nothing queued; reported only */
+export function meanWaitMs(windows: readonly DemandWindow[]): number | undefined {
 	let queued = 0;
 	let waited = 0;
 	for (const w of windows) {
 		queued += Number(w?.queued ?? 0);
 		waited += Number(w?.waitedMs ?? 0);
 	}
-	return queued > 0 ? waited / queued : null;
+	return queued > 0 ? waited / queued : undefined;
 }
 
 /** keeps the history bounded, newest last */
@@ -197,23 +103,20 @@ export function recordWindow(windows: readonly DemandWindow[], next: DemandWindo
 }
 
 /**
- * The next lane to provision, or null when nothing should be.
- *
- * An operator's explicit `REPLICA_COUNT` is a floor rather than a ceiling: a site told to run 2
- * lanes runs at least 2, and autoscaling may still grow it to `REPLICA_MAX_LANES`. Setting
- * `REPLICA_AUTOSCALE=0` is how an operator pins the number instead.
+ * The next lane to provision, or undefined when nothing should be.
+ * An explicit `REPLICA_COUNT` is a floor; `REPLICA_AUTOSCALE=0` pins the number instead.
  */
 export function nextLaneToProvision(input: {
 	windows: readonly DemandWindow[];
 	provisioned: number;
-	env?: DemandEnv | null;
+	env?: DemandEnv;
 	rows?: RowBudget;
-}): number | null {
+}): number | undefined {
 	const have = Math.max(0, Math.floor(input.provisioned));
-	if (!autoScaleEnabled(input.env)) return null;
+	if (!autoScaleEnabled(input.env)) return undefined;
 	const target = laneTarget(input.windows, maxLanes(input.env));
-	if (target <= have) return null;
-	if (input.rows && !laneFitsRows(input.rows, have + 1)) return null;
+	if (target <= have) return undefined;
+	if (input.rows && !laneFitsRows(input.rows, have + 1)) return undefined;
 	return have + 1;
 }
 
@@ -229,16 +132,8 @@ export type RowBudget = {
 };
 
 /**
- * Whether a pool of `lanes` lanes keeps the day under the reduce fraction.
- *
- * Every replicated row is written again on every lane, so N lanes add N times the replicated stream
- * to what the day has already spent, and the rows meter is the one regeneration shares. Read
- * contention alone sized the pool, so a write-heavy site could grow itself into read-only mode.
- *
- * The REPLICATED stream is projected, not the primary's whole count: a site provisioned this morning
- * wrote thousands of rows once, a lane arrives by a full copy rather than by replaying them, and
- * projecting them as a rate refused a lane the day could afford. The rate is taken over at least an
- * hour, so a burst after midnight does not project as a day.
+ * Whether `lanes` lanes keep the day under the reduce fraction; each rewrites every replicated row.
+ * Only the replicated stream is projected, over at least an hour so a midnight burst is no day.
  */
 export function laneFitsRows(budget: RowBudget, lanes: number, reduceAt = 0.8): boolean {
 	if (!(budget.limit > 0)) return true;

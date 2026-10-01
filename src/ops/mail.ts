@@ -1,70 +1,17 @@
 /**
- * Outbound mail: the transport `CfwMail` reaches, and the queue that actually sends it.
- *
- * `binary.cfwMail` used to push the message onto an in-memory array and answer `{ok: true}` whenever
- * `CFW_EMAIL_BINDING` was `'1'`. Nothing was ever sent, and the var gated a RETURN VALUE rather than
- * a transport, so the lower layer reported success for a message that went nowhere. This module is
- * the transport that was missing; the var is gone.
- *
- * **The send is DEFERRED because nothing waits for it, not because PHP cannot wait.** This said
- * "PHP calls the host synchronously and cannot await", which stopped being true when `ext/cfwpark`
- * shipped -- a socket exchange can park mid-render now, and `drupal/smtp` reaches a real relay that
- * way. The reason that survives is better: `MailManager::mail()` returns a bool and no render reads
- * the result, so the send is deferrable BY CONSTRUCTION, and a parked SMTP conversation measured 13
- * round trips. Spending 13 RTT on a visitor's request to learn a boolean nobody reads is the wrong
- * trade at any latency.
- *
- * So `cfwMail` resolves a transport and durably queues, and the send happens here on the alarm, in
- * JS, between PHP runs. `{ok: true}` therefore means "a transport resolved and the message is
- * committed to the queue" -- what an SMTP submission server means by 250, not "the recipient has
- * it". No transport means a refusal WITH A REASON, which is what `CfwMail` logs.
- *
- * ## Three transports, and what actually gates them
- *
- * | kind      | how it sends                        | needs                                    |
- * | --------- | ----------------------------------- | ---------------------------------------- |
- * | `binding` | a `send_email` Workers binding      | the binding, no credentials              |
- * | `api`     | the Email Sending REST API          | `CF_EMAIL_ACCOUNT_ID` + `CF_EMAIL_TOKEN` |
- * | `smtp`    | a third-party relay, over edgeport  | `SMTP_HOST` and friends                  |
- *
- * **THE GATE IS NOT WHICH CLOUDFLARE API YOU PICK.** Cloudflare states the limits "apply to emails
- * sent via the REST API, the Workers binding, and SMTP unless noted otherwise", so `binding` and
- * `api` differ only in whether a credential is spent. Two other things gate them, and both are the
- * site owner's problem rather than this module's:
- *
- *   - **A sending domain that is not onboarded** reaches VERIFIED DESTINATION ADDRESSES ONLY -- the
- *     200 per account somebody clicked a link to confirm. Onboard the domain (SPF/DKIM on
- *     Cloudflare DNS) and any recipient works immediately.
- *   - **Workers Free has no outbound Email Sending at all**, with one carve-out that decides what
- *     this product can promise: sends to verified destination addresses are free on EVERY plan,
- *     from your routing domains, and count against no quota. So a free site can mail its owner and
- *     cannot mail a visitor who just registered.
- *
- * **That makes `smtp` the only general answer on free**, not a nice-to-have. A free site that has
- * to send a password reset to an arbitrary address needs a third-party relay, and the refusal path
- * says so rather than reporting a generic failure.
- *
- * `@earth-app/smoke` uses the REST API for all real outbound and reserves the `cloudflare:email`
- * path for `message.reply()` on an inbound message, which is a different capability again.
- *
- * **Port 25 is blocked on Workers**, so submission is 587 with STARTTLS or 465 with implicit TLS;
- * {@link resolveMailTransport} refuses 25 by name rather than opening a socket that cannot connect.
- * Cloudflare's own relay, `smtps://smtp.mx.cloudflare.net:465`, is refused on the same grounds and
- * the grounds are MEASURED rather than assumed: it resolves to 162.159.205.26-28, which is inside
- * the published `162.158.0.0/15`, and the Workers docs say "Outbound TCP sockets to Cloudflare IP
- * ranges are blocked". That is why the Cloudflare lanes here are HTTP and a binding, never SMTP.
- *
- * **One trap for whoever debugs deliverability**: mail sent through the `send_email` binding shows
- * as **dropped** in the Email Routing summary even when it was delivered. Read Email Sending
- * metrics instead; the routing summary will otherwise say the transport is broken when it is not.
- *
- * @see https://developers.cloudflare.com/email-service/platform/limits/
- * @see https://developers.cloudflare.com/email-service/platform/pricing/
- * @see https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/
+ * Outbound mail: the transports `CfwMail` resolves (`binding`, `api`, `smtp`) and the alarm drain.
+ * The send is deferred (no render reads `MailManager::mail()`'s bool; parked SMTP is 13 round
+ * trips), so `{ok: true}` means queued, like an SMTP 250. Workers Free reaches verified
+ * destinations only, so `smtp` is the general answer there; port 25 and Cloudflare's relay IPs are
+ * blocked. The `send_email` binding shows as dropped in the Email Routing summary even when
+ * delivered; read Email Sending metrics.
+ * @module
  */
 
 import { connect as coreConnect, type ConnectOptions, type CoreSocket } from 'edgeport/core';
 import { _sessionFromSocket, type Mail, type SmtpConnectOptions } from 'edgeport/smtp';
+import { errorMessage } from '../util/errors';
+import { firstRow } from '../util/sql';
 
 // #region shapes
 
@@ -81,14 +28,8 @@ export type MailMessage = {
 };
 
 /**
- * `from` is the FALLBACK sender, not the sender.
- *
- * A transport is resolved once per drain and reused across every queued message, so it cannot own
- * the From address -- Drupal's own site mail rides on the message and differs per site. The
- * effective sender is {@link senderFor}, and `from` here is `MAIL_FROM` for a message that carries
- * none. Getting this backwards made the drain resolve a transport with no message in hand, refuse
- * every time on "no From address", and leave the queue full while `cfwMail` reported success --
- * the same shape as the defect this module replaces.
+ * A resolved transport; `from` is only the fallback sender (`MAIL_FROM`), as one transport serves
+ * a whole drain and Drupal's site mail rides on each message. See {@link senderFor}.
  */
 export type MailTransport =
 	| { kind: 'binding'; from: string; binding: SendEmailLike }
@@ -105,12 +46,7 @@ export type MailTransport =
 /** either a transport, or the reason there is not one; never a bare boolean */
 export type MailPlan = { transport: MailTransport } | { refusal: string };
 
-/**
- * The `send_email` binding surface this module uses.
- *
- * Declared structurally rather than imported as `SendEmail`, so a test can pass a recorder and so
- * the module does not depend on which `@cloudflare/workers-types` entry point is in scope.
- */
+/** the `send_email` binding surface this module uses; structural so a test can pass a recorder */
 export type SendEmailLike = {
 	send(builder: Record<string, unknown>): Promise<unknown>;
 };
@@ -137,6 +73,7 @@ export type MailSql = {
 	exec(query: string, ...bindings: unknown[]): { toArray(): Record<string, unknown>[] };
 };
 
+/** the outcome of sending one queued message */
 export type MailAttempt = {
 	id: number;
 	to: string;
@@ -146,6 +83,7 @@ export type MailAttempt = {
 	detail?: string;
 };
 
+/** what one drain pass sent and how many messages still wait */
 export type MailDrain = {
 	sent: MailAttempt[];
 	remaining: number;
@@ -155,7 +93,7 @@ export type MailDrain = {
 
 // #region limits
 
-/** the endpoint `@earth-app/smoke` posts to, and the only Cloudflare send reachable without a binding */
+/** the Cloudflare send endpoint, the only one reachable without a binding */
 export const CF_SEND_ENDPOINT =
 	'https://api.cloudflare.com/client/v4/accounts/{account}/email/sending/send';
 
@@ -166,34 +104,24 @@ export const BLOCKED_SMTP_PORT = 25;
 const CF_SMTP_RELAY = /(^|\.)mx\.cloudflare\.net$/i;
 
 /**
- * The largest message the queue accepts.
- *
- * **The Durable Object record ceiling binds, not Cloudflare's.** A queued message is ONE record and
- * that ceiling is 2,199,995 bytes; Cloudflare caps a sent message at 5 MiB, which is larger and
- * therefore never the limit that fires here. 1 MB leaves room for the JSON envelope and is far
- * above any mail Drupal generates without attachments, which this transport does not carry.
+ * The largest message the queue accepts; the 2,199,995-byte Durable Object record binds, not
+ * Cloudflare's 5 MiB. 1 MB leaves room for the JSON envelope.
  */
 export const MAX_MAIL_BYTES = 1_000_000;
 
-/**
- * Cloudflare's own per-message limits, checked here so a refusal names the limit.
- *
- * A relay that rejects the message reports it after `cfwMail` has already returned, where only
- * `/__serve-stats` sees it. Checking at commit turns three of them into something `CfwMail` logs
- * against the content operation that caused them.
- */
+/** Cloudflare's per-message limits, checked at commit so `CfwMail` logs a refusal naming one */
 export const MAX_RECIPIENTS = 50;
+/** the longest subject Cloudflare accepts, in characters */
 export const MAX_SUBJECT_CHARS = 998;
+/** the most header bytes Cloudflare accepts */
 export const MAX_HEADER_BYTES = 16_384;
 
 /**
  * How many queued messages one drain may send: {@link MAIL_DRAIN_BUDGET_MS} over one send.
- *
- * The meter is DURATION, not the 50 subrequests this used to cite -- `connect()` blocks
- * hibernation and the socket is held for the whole sequential batch, so the object is billed wall
- * clock for every conversation in it.
+ * The meter is wall-clock duration: `connect()` blocks hibernation for the whole batch.
  */
 export const DEFAULT_MAIL_DRAIN_LIMIT = 5;
+/** the most messages `MAIL_DRAIN_LIMIT` may raise one firing to */
 export const MAX_MAIL_DRAIN_LIMIT = 25;
 
 /** the per-firing wall-clock budget the two bounds are derived from; stated, not yet measured */
@@ -203,13 +131,8 @@ export const MAIL_DRAIN_BUDGET_MS = 3_000;
 export const MAIL_SEND_BUDGET_MS = MAIL_DRAIN_BUDGET_MS / DEFAULT_MAIL_DRAIN_LIMIT;
 
 /**
- * How many times one message may be attempted, in total.
- *
- * **ONE**, and for the reason `attemptBudget()` gives a POST in `deferred-post.ts`: a send is not
- * idempotent. The first attempt may have been accepted at the far end and only failed to return, so
- * a retry double-delivers -- and a password-reset mail arriving twice with two different one-time
- * links is worse than one that did not arrive. A failure is recorded as a failure and reported on
- * `/__serve-stats`, rather than laundered into a duplicate.
+ * Attempts per message: one, since a send is not idempotent and a retry after a lost reply
+ * double-delivers (two different reset links). A failure is recorded, not retried.
  */
 export const MAIL_ATTEMPT_BUDGET = 1;
 
@@ -217,6 +140,7 @@ export const MAIL_ATTEMPT_BUDGET = 1;
 
 // #region transport resolution
 
+/** trimmed string form, empty for null or undefined */
 function str(value: unknown): string {
 	return value === undefined || value === null ? '' : String(value).trim();
 }
@@ -235,22 +159,13 @@ export function defaultSmtpPort(tls: 'starttls' | 'implicit' | 'off'): number {
 }
 
 /**
- * `smtp.settings`, mapped onto the transport vars.
- *
- * **`drupal/smtp` INSTALLS HERE AND ITS SOCKET NEVER RUNS**, because `system.mail` is forced to
- * `cfw_mail`. So a site that installed it, filled in its relay and saved has a complete, correct
- * SMTP configuration that nothing read -- the operator then had to type the same host, port and
- * password again as Worker vars to get mail out. This closes that: the module's own settings become
- * a transport source, and the module stays unmodified and inert.
- *
- * The module's `smtp_protocol` is `standard | tls | ssl`, where `standard` means no encryption at
- * all; edgeport's `starttls` is what `tls` means there.
+ * `smtp.settings` mapped onto the transport vars (`system.mail` is forced to `cfw_mail`, so the
+ * module's own socket never runs). `smtp_protocol` is `standard` (none), `tls` (starttls) or `ssl`.
  */
 export function mailEnvFromSite(settings: unknown): Partial<MailEnv> {
 	if (settings === null || typeof settings !== 'object') return {};
 	const s = settings as Record<string, unknown>;
-	// smtp_on off means the site turned the relay off; honouring it is the difference between a
-	// disabled configuration and a live one
+	// `smtp_on` off means the site turned the relay off
 	if (s.smtp_on === false || s.smtp_on === 0 || s.smtp_on === '0') return {};
 
 	const host = str(s.smtp_host);
@@ -269,23 +184,20 @@ export function mailEnvFromSite(settings: unknown): Partial<MailEnv> {
 }
 
 /**
- * The deployment's vars over the site's own settings.
- *
- * **THE ENV WINS, always.** A var is set by whoever can deploy the Worker; `smtp.settings` is set by
- * whoever can reach a Drupal admin form, which is a wider set of people. So the site's settings fill
- * gaps and never override a decision the deployer made -- and a deployer who wants to pin the relay
- * only has to set `SMTP_HOST`.
+ * The deployment's vars over the site's own settings; the env always wins, since whoever can
+ * reach a Drupal admin form is a wider set than whoever can deploy.
  */
 export function mergeMailEnv(env: MailEnv, fromSite: Partial<MailEnv>): MailEnv {
 	const merged: MailEnv = { ...fromSite };
 	for (const [key, value] of Object.entries(env)) {
 		// an absent var arrives as undefined or '' and must not shadow a configured setting
-		if (value === undefined || value === null || value === '') continue;
+		if (value === undefined || value === '') continue;
 		(merged as Record<string, unknown>)[key] = value;
 	}
 	return merged;
 }
 
+/** the smtp transport from env, or the refusal naming what is wrong */
 function smtpPlan(env: MailEnv, from: string): MailPlan {
 	const hostname = str(env.SMTP_HOST);
 	if (!hostname) {
@@ -321,7 +233,7 @@ function smtpPlan(env: MailEnv, from: string): MailPlan {
 	const username = str(env.SMTP_USER);
 	const password = str(env.SMTP_PASS);
 	if (username && tls === 'off') {
-		// AUTH over plaintext puts the relay password on the wire; refusing is the only honest answer
+		// auth over plaintext puts the relay password on the wire
 		return { refusal: 'SMTP_TLS=off with SMTP_USER would send the password in the clear' };
 	}
 	const rawMechanism = str(env.SMTP_AUTH).toUpperCase() || 'PLAIN';
@@ -341,6 +253,7 @@ function smtpPlan(env: MailEnv, from: string): MailPlan {
 	};
 }
 
+/** the Email Sending API transport from env, or the refusal */
 function apiPlan(env: MailEnv, from: string): MailPlan {
 	const accountId = str(env.CF_EMAIL_ACCOUNT_ID);
 	const token = str(env.CF_EMAIL_TOKEN);
@@ -354,6 +267,7 @@ function apiPlan(env: MailEnv, from: string): MailPlan {
 	return { transport: { kind: 'api', from, accountId, token } };
 }
 
+/** the `send_email` binding transport from env, or the refusal */
 function bindingPlan(env: MailEnv, from: string): MailPlan {
 	const binding = env.SEND_EMAIL;
 	if (!binding || typeof binding.send !== 'function') {
@@ -363,16 +277,8 @@ function bindingPlan(env: MailEnv, from: string): MailPlan {
 }
 
 /**
- * Which transport this site sends through, or why it cannot send.
- *
- * `MAIL_TRANSPORT` names one explicitly; `auto` (the default) takes the first that is configured, in
- * the order binding, api, smtp. The binding leads on CREDENTIALS alone -- it reaches exactly what
- * the REST API reaches, and an operator who added `send_email` to their Wrangler config has already
- * said what they want, so spending an API token instead would be gratuitous.
- *
- * The refusal is a sentence rather than a flag, because it is what `CfwMail` writes to the log and
- * the operator reads. "No email binding is configured" was the whole of the previous diagnostic and
- * it named nothing an operator could act on.
+ * Which transport this site sends through (`auto` takes the first configured of binding, api,
+ * smtp), or the refusal sentence `CfwMail` logs.
  */
 export function resolveMailTransport(env: MailEnv): MailPlan {
 	const selected = (str(env.MAIL_TRANSPORT) || 'auto').toLowerCase();
@@ -405,11 +311,8 @@ export function resolveMailTransport(env: MailEnv): MailPlan {
 }
 
 /**
- * The address this message goes out as.
- *
- * Drupal's own site mail wins, because that is what the site is configured to send as; `MAIL_FROM`
- * covers a message that carries none. Empty means the message cannot be sent at all, which is a
- * refusal `cfwMail` makes at commit time rather than a failure the drain discovers.
+ * The address this message goes out as: Drupal's site mail, else `MAIL_FROM`. Empty means it
+ * cannot be sent, which `cfwMail` refuses at commit time rather than the drain discovering it.
  */
 export function senderFor(transport: { from: string }, message: Pick<MailMessage, 'from'>): string {
 	return str(message.from) || str(transport.from);
@@ -431,15 +334,12 @@ export function mailDrainLimit(env: MailEnv): number {
 
 // #region the queue
 
+/** the outbound queue table */
 export const MAIL_TABLE = 'cfw_mail_queue';
 
 /**
- * The outbound queue.
- *
- * KEYED BY ROWID, not by content, and that is the one place this differs from `cfw_http_queue`. Two
- * identical deferred fetches are one request and de-duplicate correctly; two identical mails are TWO
- * MAILS -- a visitor who asks for a password reset twice must receive two of them, and collapsing
- * them would silently drop the second.
+ * Creates the outbound queue, keyed by rowid and not content (unlike `cfw_http_queue`): two
+ * identical mails are two mails, and a second password reset must not collapse into the first.
  */
 export function ensureMailTable(sql: MailSql): void {
 	sql.exec(
@@ -455,16 +355,14 @@ export function ensureMailTable(sql: MailSql): void {
 	);
 }
 
+/** a queued message's id and size, or the reason it was refused */
 export type QueueOutcome = { id: number; bytes: number } | { refusal: string };
 
 /**
- * Every per-message limit, checked before the row is written, or `null` when the message fits.
- *
- * Named individually rather than reported as "invalid": a relay refuses these after `cfwMail` has
- * returned, so the operator sees a bounce with no cause. Checked here, the cause is in the Drupal
- * log next to the operation that produced the message.
+ * The first per-message limit a message breaks, or undefined when it fits; named so the cause
+ * lands in the Drupal log (a relay bounces after `cfwMail` has returned).
  */
-export function mailLimitRefusal(message: MailMessage, bytes: number): string | null {
+export function mailLimitRefusal(message: MailMessage, bytes: number): string | undefined {
 	const recipients = [
 		...splitAddresses(message.to),
 		...splitAddresses(str(message.headers?.Cc)),
@@ -488,23 +386,16 @@ export function mailLimitRefusal(message: MailMessage, bytes: number): string | 
 		return `the headers are ${headerBytes} bytes, over the ${MAX_HEADER_BYTES}-byte limit`;
 	}
 	if (bytes > MAX_MAIL_BYTES) {
-		// the DO record ceiling, NOT Cloudflare's 5 MiB; naming the wrong one sends an operator
-		// looking at the mail limits page for a limit that is not what stopped them
+		// the DO record ceiling, not Cloudflare's 5 MiB
 		return (
 			`the message is ${bytes} bytes, over the ${MAX_MAIL_BYTES}-byte queue limit ` +
 			'(one queued message is one Durable Object record, capped at 2,199,995 bytes)'
 		);
 	}
-	return null;
+	return undefined;
 }
 
-/**
- * Commits one message to the queue.
- *
- * Refuses rather than truncating: a mail with no recipient has nowhere to go, and one over the
- * record ceiling would fail the storage write, which surfaces as an opaque error rather than as
- * something `CfwMail` can log.
- */
+/** commits one message to the queue, refusing rather than truncating */
 export function queueMail(
 	sql: MailSql,
 	message: MailMessage,
@@ -523,8 +414,8 @@ export function queueMail(
 	if (overLimit) return { refusal: overLimit };
 
 	ensureMailTable(sql);
-	const row = sql
-		.exec(
+	const row = firstRow(
+		sql.exec(
 			`INSERT INTO ${MAIL_TABLE} (recipient, transport, payload, queued_at)
 			 VALUES (?, ?, ?, ?) RETURNING id`,
 			recipients.join(', '),
@@ -532,20 +423,20 @@ export function queueMail(
 			payload,
 			nowMs
 		)
-		.toArray()[0];
+	);
 	return { id: Number(row?.id ?? 0), bytes };
 }
 
-/** how many messages are waiting; `null` before anything has queued, so an absence is not a 0 */
+/** how many messages are waiting */
 export function mailQueueDepth(sql: MailSql): number {
-	return Number(sql.exec(`SELECT COUNT(*) AS c FROM ${MAIL_TABLE}`).toArray()[0]?.c ?? 0);
+	return Number(firstRow(sql.exec(`SELECT COUNT(*) AS c FROM ${MAIL_TABLE}`))?.c ?? 0);
 }
 
 // #endregion
 
 // #region sending
 
-/** the Cloudflare send body, built where it can be asserted rather than inline in a `fetch` */
+/** the Cloudflare send body, built here so a spec can assert it */
 export function cloudflareSendBody(
 	transport: { from: string },
 	message: MailMessage
@@ -574,12 +465,12 @@ export function cloudflareSendBody(
 	};
 }
 
-/** the REST endpoint for one account */
+/** the send endpoint for one account */
 export function cloudflareSendUrl(accountId: string): string {
 	return CF_SEND_ENDPOINT.replace('{account}', encodeURIComponent(accountId));
 }
 
-/** the edgeport message, built where it can be asserted; `Reply-To` is a header because `Mail` has no field */
+/** the edgeport message; `Reply-To` rides as a header because `Mail` has no field for it */
 export function smtpMail(transport: { from: string }, message: MailMessage): Mail {
 	const headers: Record<string, string> = {};
 	for (const name of ['In-Reply-To', 'References']) {
@@ -605,13 +496,8 @@ export function smtpMail(transport: { from: string }, message: MailMessage): Mai
 }
 
 /**
- * The two seams a spec replaces, and nothing else.
- *
- * `fetch` and `connect` are the PLATFORM boundary, not this module's own code: the Cloudflare lane
- * still builds its own request and reads its own response, and the SMTP lane still runs edgeport's
- * real greeting/EHLO/STARTTLS/AUTH/DATA against whatever is on the other end. A spec that replaced
- * `sendViaApi` or `sendViaSmtp` instead would pass against a stub, which is the defect this module
- * exists to fix.
+ * The two platform seams a spec replaces, so request building and edgeport's real SMTP
+ * conversation still run (replacing `sendViaApi` would test a stub).
  */
 export type MailDeps = {
 	/** narrower than `typeof fetch`, which carries a `preconnect` property a stub cannot supply */
@@ -627,21 +513,15 @@ export type MailDeps = {
 	connect: (opts: ConnectOptions) => Promise<CoreSocket>;
 };
 
+/** the real `fetch` and edgeport `connect` */
 export const DEFAULT_MAIL_DEPS: MailDeps = {
 	fetch: (url, init) => fetch(url, init),
 	connect: coreConnect
 };
 
 /**
- * What a Cloudflare rejection most likely means, in the operator's terms.
- *
- * A bare `403` sends a site owner to their own configuration, and for the two commonest causes
- * their configuration is fine: the sending domain is not onboarded, or the site is on Workers Free
- * where outbound Email Sending does not exist except to verified destination addresses. Both are
- * account-level facts this Worker cannot read, so the hint is offered AS a hint -- but naming the
- * three candidates beats a status code, and a free site is told the answer is a third-party relay.
- *
- * `plan` is what the site is deployed as; the free sentence is omitted on paid, where it is noise.
+ * What a Cloudflare rejection likely means (un-onboarded domain, or Workers Free), as a hint
+ * since the Worker cannot read either; the free-plan sentence is omitted when `plan` is `paid`.
  */
 export function cloudflareFailureHint(status: number, plan?: string): string {
 	const free = String(plan ?? 'free').toLowerCase() !== 'paid';
@@ -669,7 +549,7 @@ export function cloudflareFailureHint(status: number, plan?: string): string {
 	return freeNote;
 }
 
-/** posts one message to the Cloudflare Email Sending REST API */
+/** posts one message to the Cloudflare Email Sending HTTP API */
 export async function sendViaApi(
 	transport: Extract<MailTransport, { kind: 'api' }>,
 	message: MailMessage,
@@ -694,12 +574,7 @@ export async function sendViaApi(
 	return `api ${res.status}`;
 }
 
-/**
- * Hands one message to the `send_email` binding.
- *
- * The binding throws rather than returning a status, so the hint is attached without one -- which
- * still carries the free-plan sentence, the part an operator most often needs.
- */
+/** hands one message to the `send_email` binding, which throws without a status (hint takes 0) */
 export async function sendViaBinding(
 	transport: Extract<MailTransport, { kind: 'binding' }>,
 	message: MailMessage,
@@ -711,19 +586,15 @@ export async function sendViaBinding(
 		return `binding ${str(result?.messageId) || 'accepted'}`;
 	} catch (e: unknown) {
 		throw new Error(
-			`send_email binding refused the message: ${String((e as Error)?.message ?? e).slice(0, 200)}` +
+			`send_email binding refused the message: ${errorMessage(e).slice(0, 200)}` +
 				cloudflareFailureHint(0, plan)
 		);
 	}
 }
 
 /**
- * Opens a submission session and sends one message through it.
- *
- * `connect()` + `_sessionFromSocket()` rather than edgeport's one-shot `send()`, which is those two
- * lines plus a `close()`. The one-shot dials `cloudflare:sockets` itself, so nothing above it can
- * reach the socket and the whole protocol would be untestable in the gate; taking the transport as a
- * dependency lets a spec script a real SMTP server against edgeport's real client.
+ * Opens a submission session and sends one message through it. Not edgeport's one-shot `send()`,
+ * which dials `cloudflare:sockets` itself and so cannot be driven in the gate.
  */
 export async function sendViaSmtp(
 	transport: Extract<MailTransport, { kind: 'smtp' }>,
@@ -767,12 +638,8 @@ export function sendMail(
 // #region the drain
 
 /**
- * Sends what `cfwMail` queued, in JS, where awaiting is legal.
- *
- * Runs between PHP invocations rather than inside one, and bounded per call for the same reason the
- * HTTP drain is: a queue full of slow relays would otherwise occupy the object. A row leaves the
- * queue whether it succeeded or not -- {@link MAIL_ATTEMPT_BUDGET} is 1 -- and the failure travels
- * back in {@link MailDrain.sent} so `/__serve-stats` can show it.
+ * Sends what `cfwMail` queued, between PHP runs and bounded per call. A row leaves the queue
+ * either way ({@link MAIL_ATTEMPT_BUDGET} is 1); failures return in {@link MailDrain.sent}.
  */
 export async function drainMailQueue(
 	sql: MailSql,
@@ -816,7 +683,7 @@ export async function drainMailQueue(
 			sql.exec(`DELETE FROM ${MAIL_TABLE} WHERE id = ?`, id);
 			sent.push({ id, to, transport: transport.kind, ok: true, detail });
 		} catch (e: unknown) {
-			const error = String((e as Error)?.message ?? e).slice(0, 200);
+			const error = errorMessage(e).slice(0, 200);
 			const attempts = Number(row.attempts ?? 0) + 1;
 			if (attempts >= MAIL_ATTEMPT_BUDGET) {
 				sql.exec(`DELETE FROM ${MAIL_TABLE} WHERE id = ?`, id);

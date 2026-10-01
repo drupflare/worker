@@ -52,6 +52,8 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Typecheck
         run: bun run typecheck
+      - name: Check the Generated Assets
+        run: bun run gen:assets:check
       - name: Resolve Drupal Version
         id: drupalver
         run: |
@@ -67,6 +69,22 @@ jobs:
         run: bun run fetch:drupal
       - name: Pack the Drupal Modules
         run: bun run assets:driver
+      - name: Cache Composer Dependencies
+        uses: actions/cache@v6
+        with:
+          path: .composer-vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+      - name: Install Composer Dependencies
+        run: composer install --no-interaction --no-progress
+      - name: Link the Analysis Paths
+        run: |
+          sudo ln -s "$PWD/drupal-src" /drupal
+          ln -s "$PWD/.siblings/drupflare" ../drupflare
+          ln -s "$PWD/.siblings/rom" ../rom
+      - name: Lint PHP
+        run: bun run lint:php
+      - name: Analyze PHP
+        run: bun run analyze:php
       - name: Run Vitest Suites
         run: bun run test
       - name: Run PHP Driver Suite

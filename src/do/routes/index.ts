@@ -1,5 +1,5 @@
 import type { SitePhpDurableObject } from '../../site-do';
-import { oidc, oidcsetup, ownercheck } from './auth';
+import { oidc, oidcsetup, ownercheck, recoverToken } from './auth';
 import {
 	ai,
 	backend,
@@ -67,6 +67,7 @@ export const ROUTES: Record<string, Route> = {
 	'/__modify': modify,
 	'/__githook': githook,
 	'/__ownercheck': ownercheck,
+	'/__recover-token': recoverToken,
 	'/__pitr': pitr,
 	'/__restore': restore,
 	'/__export': exportRoute,

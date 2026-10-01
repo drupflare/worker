@@ -1,4 +1,5 @@
 import { IMAGE_ROUTE_PREFIX } from '../ops/image-runtime';
+import { RECOVER_PATH } from '../ops/owner-recovery';
 import { ADMIN_PAGES, LOGIN_PATH, LOGOUT_PATH, SURFACE_PREFIX } from '../ui/admin';
 
 /**
@@ -11,10 +12,14 @@ import { ADMIN_PAGES, LOGIN_PATH, LOGOUT_PATH, SURFACE_PREFIX } from '../ui/admi
  *
  * `/setup/cf/callback` and `/oidc` arrive as provider redirects carrying no header drupflare
  * controls; `state` authenticates them (constant-time match against the pending record).
+ *
+ * `/recover-token` is for a caller who has lost the owner token: a nonce whose hash the account's
+ * `CONFIG_KV` holds is the credential, and it shares the owner check's failure budget.
  */
 export const PUBLIC_ROUTES = new Set([
 	'/serve',
 	'/firstrun',
+	RECOVER_PATH,
 	'/setup/cf/callback',
 	'/githook',
 	'/oidc',

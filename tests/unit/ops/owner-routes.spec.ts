@@ -9,7 +9,7 @@ import { SURFACE_PREFIX } from '../../../src/ui/admin';
  * database), `/restore` (a whole-database overwrite) and `/php`. Four ordinary maintenance actions
  * sat behind it, so purging your own page cache meant opening a remote shell to the internet first.
  *
- * The direction matters and is asserted both ways: an owner token is NARROWER than the flag, because
+ * The direction matters and is asserted both ways: an owner token is NARROWER than the flag,
  * it is per site, and adding a route here must not remove the flag's existing reach for anything
  * that already worked.
  *
@@ -52,14 +52,21 @@ describe('site maintenance is reachable with an owner token', () => {
 /**
  * Every route reaches something, asserted over the WHOLE table rather than over a named list.
  *
- * The dispatcher ends `inner.pathname = DO_ROUTE[url.pathname] as string`, and a route with no entry
- * therefore sends the literal `undefined` to the object. That has shipped twice: `/setup/cf` and
- * `/setup/mail` were documented as live and were rewritten to `/serve`, and `/fleet` answered 404 to
+ * The dispatcher ends `inner.pathname = DO_ROUTE[url.pathname] as string`, and a route with no
+ * entry therefore sends the literal `undefined` to the object. That has shipped twice: `/setup/cf`
+ * and `/setup/mail` were documented as live and were rewritten to `/serve`, and `/fleet` answered
+ * 404 to
  * every caller including `scripts/security-update.mjs --fleet=`. Both were found by a human using
  * the route, because every assertion covering this names the routes it checks -- so a route added
  * tomorrow is covered by none of them.
  */
-const WORKER_ANSWERED = new Set(['/fillwindow', '/fleet', '/settings', '/deployment']);
+const WORKER_ANSWERED = new Set([
+	'/fillwindow',
+	'/fleet',
+	'/settings',
+	'/deployment',
+	'/recover-token'
+]);
 
 describe('the route table forwards everything it claims to own', () => {
 	it('gives every route either a DO_ROUTE entry or a Worker-side answer', () => {

@@ -10,7 +10,8 @@
  * behaviour does not make a module Drupal-specific. `bun run check:reachability` reports it, and
  * `tests/node/reachability.spec.ts` fails when a `host` module imports a `cms` one, when a module
  * has no side, when an entry names a module or directory that no longer holds one, and when a
- * per-file entry repeats its directory's side. Probes are frozen instruments and are not classified.
+ * per-file entry repeats its directory's side. Probes are frozen instruments and
+ * are not classified.
  */
 export type Side = 'host' | 'cms' | 'mixed';
 
@@ -122,7 +123,8 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	// the public files directory, module asset roots and public:// uris
 	'src/site/files.ts': 'mixed',
 	'src/site/fill-window.ts': 'host',
-	// the PHP fragments Drupal runs and the pages the host serves, packed from src/site/php and html
+	// the PHP fragments Drupal runs and the pages the host serves, packed from
+	// src/site/php and html
 	'src/site/generated/assets.ts': 'mixed',
 	// the scanner deny list and the core entry point redirects
 	'src/site/guards.ts': 'mixed',
@@ -135,6 +137,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/site/owner.ts': 'host',
 	// reads the session csrf token out of a Drupal render
 	'src/site/plan-tier.ts': 'mixed',
+	'src/site/recover.ts': 'host',
 	'src/site/routes.ts': 'host',
 	// names Drupal's entry points in the deny headers
 	'src/site/screen.ts': 'mixed',
@@ -211,6 +214,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	// install verdicts keyed on the Drupal core version, tiers from the contrib catalog
 	'src/ops/oracle.ts': 'mixed',
 	'src/ops/outbound-guard.ts': 'host',
+	'src/ops/owner-recovery.ts': 'host',
 	// drupal/* packages resolve against packages.drupal.org
 	'src/ops/package-install.ts': 'mixed',
 	'src/ops/packagist.ts': 'mixed',

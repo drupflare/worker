@@ -18,6 +18,7 @@ import { learnFromReply } from './site/learn';
 import { noteAbsorbed } from './site/memos';
 import { claimPhases, healthRoute } from './site/object-routes';
 import { compilePlan, readPlanTier } from './site/plan-tier';
+import { recoverRoute } from './site/recover';
 import { isReservedPath } from './site/routes';
 import { denyProbe, refuseOversized } from './site/screen';
 import { fillWindowRoute, surfaceRoute } from './site/surfaces';
@@ -193,6 +194,8 @@ async function frontFetch(
 	if (unrouted !== undefined) return unrouted;
 	const gated = await ownerRoute(entry);
 	if (gated !== undefined) return gated;
+	const recovered = await recoverRoute(entry);
+	if (recovered !== undefined) return recovered;
 
 	const f = await openContext(entry);
 	const windowed = await fillWindowRoute(f);

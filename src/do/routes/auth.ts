@@ -7,9 +7,16 @@ import {
 	// aliased: `cf-oauth.ts` exports the same two names for Cloudflare's own dashboard flow
 	authorizeUrl as oidcAuthorizeUrl,
 	pendingMatches as oidcPendingMatches,
-	type PendingLogin,
-	readOidcSetup
+	readOidcSetup,
+	type PendingLogin
 } from '../../ops/oidc';
+import {
+	isNonce,
+	judgeProof,
+	recoverKey,
+	spendProof,
+	type RecoverKv
+} from '../../ops/owner-recovery';
 import { bearerToken, OWNER_TOKEN_KEY, tokenMatches } from '../../ops/site-secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { jsonError } from '../../util/reply';
@@ -148,6 +155,78 @@ export async function oidcsetup(
 						jwks: discovered.provider.jwksUri
 					}
 	});
+}
+
+/**
+ * Spends a recovery proof and returns the owner token (inner route; the front worker applies the
+ * failure budget around it).
+ *
+ * Every refusal names a `reason` the client branches on. Only `unknown` is retryable, because a
+ * record written seconds ago may not have reached this colo yet.
+ */
+export async function recoverToken(
+	site: SitePhpDurableObject,
+	request: Request,
+	url: URL
+): Promise<Response> {
+	const refuse = (status: number, reason: string, error: string) =>
+		Response.json(
+			{ ok: false, reason, error },
+			{ status, headers: { 'cache-control': 'no-store' } }
+		);
+	let nonce: unknown;
+	try {
+		nonce = ((await request.json()) as { nonce?: unknown }).nonce;
+	} catch {
+		nonce = undefined;
+	}
+	if (!isNonce(nonce))
+		return refuse(400, 'malformed', 'the nonce is not 43 base64url characters');
+	const kv = (site.env as { CONFIG_KV?: RecoverKv } | undefined)?.CONFIG_KV;
+	if (!kv)
+		return refuse(501, 'no-kv', 'this deployment has no CONFIG_KV binding to verify against');
+
+	const key = await recoverKey(url.host, nonce);
+	const raw = await kv.get(key);
+	if (raw === null) return refuse(404, 'unknown', 'no such proof');
+	let record: unknown;
+	try {
+		record = JSON.parse(raw);
+	} catch {
+		record = undefined;
+	}
+	const now = site.nowMs();
+	const judged = judgeProof(record, url.host, now);
+	const forget = async () => {
+		// best effort: the spent table, not this delete, is what makes a proof single-use
+		try {
+			await kv.delete?.(key);
+		} catch {
+			// the TTL removes it
+		}
+	};
+	if (judged.verdict !== 'ok') {
+		await forget();
+		const refusals = {
+			malformed: [400, 'the stored proof is malformed'],
+			'wrong-host': [403, 'the proof was written for another host'],
+			spent: [410, 'the proof has expired']
+		} as const;
+		const [status, error] = refusals[judged.verdict];
+		return refuse(status, judged.verdict, error);
+	}
+	// no await between the check inside and the write: that is what makes two racers spend it once
+	if (!spendProof(site.secretStore(), key, judged.exp, now)) {
+		return refuse(410, 'spent', 'the proof was already used');
+	}
+	await forget();
+	// read, never minted: `ensureOwnerToken()` here would let a recovery claim an unclaimed site
+	const token = site.metaGet(OWNER_TOKEN_KEY);
+	if (!token) return refuse(409, 'unclaimed', 'this site has no owner token yet');
+	return Response.json(
+		{ ok: true, ownerToken: token },
+		{ headers: { 'cache-control': 'no-store' } }
+	);
 }
 
 /** answers 200 when the presented bearer token is the owner token, else 401 */

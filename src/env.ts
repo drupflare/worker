@@ -1,27 +1,14 @@
 import type { SiteEnv as BaseSiteEnv } from '@drupflare/durabledb/do-sqlite';
-import type { SendEmailLike } from './ops/mail.js';
+import type { SendEmailLike } from './ops/mail';
 
 /**
  * The worker's environment: `@drupflare/durabledb`'s generic shape plus the vars only this
- * application reads.
- *
- * These four stay here rather than in the package because nothing else could act on them -- heap
- * restore, the R2 mirror drain and prefill are all worker concerns.
+ * application reads (heap restore, the R2 mirror drain and prefill).
  */
 export interface SiteEnv extends BaseSiteEnv {
-	/**
-	 * Which uploaded Worker version is serving, supplied by the platform.
-	 *
-	 * `wrangler.jsonc` has declared `version_metadata` since the binding existed and NOTHING read
-	 * it, so "which code is answering for this site" had no answer at all -- a deploy that half
-	 * landed, or a site pinned to an older version by a gradual rollout, looked identical to a
-	 * current one. It rides `/health` because that is the route an operator already polls.
-	 *
-	 * Absent under `wrangler dev --local` and in the test lanes, so every reader treats it as
-	 * optional rather than asserting it.
-	 */
+	/** the serving Worker version, reported on `/health`; absent under `wrangler dev --local` */
 	CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
-	/** the rendering lanes an upload's image styles are rendered on; see `src/ops/render-lane.ts` */
+	/** the lanes an upload's image styles are rendered on; see `src/ops/render-lane.ts` */
 	RENDER_LANES?: DurableObjectNamespace;
 	/** `0` stops rendering styles on upload while the binding stays */
 	EAGER_DERIVATIVES?: string;
@@ -29,220 +16,152 @@ export interface SiteEnv extends BaseSiteEnv {
 	HEAP_RESTORE_CHUNKS?: string | number;
 	MIRROR_LIMIT?: string | number;
 	/**
-	 * linear memory above which the interpreter is dropped at the end of an invocation.
-	 *
-	 * Defaults to 117,440,512 (112 MiB) against a 128 MiB isolate. Raising it past ~120 MiB trades
-	 * the boot this avoids for the reset it exists to prevent.
+	 * Linear memory above which the interpreter is dropped at the end of an invocation.
+	 * Defaults to 112 MiB; past ~120 MiB it trades the boot it avoids for the reset it prevents.
 	 */
 	RECYCLE_ABOVE_BYTES?: string | number;
-	/** ms a freshly booted interpreter runs no background PHP (fill, cron); 60,000 by default, 0 off */
+	/** ms a fresh interpreter runs no background PHP (fill, cron); default 60,000, 0 is off */
 	FILL_SETTLE_MS?: string | number;
 	/**
-	 * the WHOLE isolate's drop threshold, wasm linear memory plus the JS-side mount bytes.
-	 *
-	 * `RECYCLE_ABOVE_BYTES` reads linear memory alone, and the 128 MiB ceiling covers both -- so at
-	 * its default plus the pack blob and MEMFS the object is already past the limit when it fires.
+	 * Whole-isolate drop threshold: linear memory plus the JS-side mount bytes.
+	 * `RECYCLE_ABOVE_BYTES` reads linear memory alone, but the 128 MiB ceiling covers both.
 	 */
 	ISOLATE_ABOVE_BYTES?: string | number;
 	PREFILL?: string;
-	/** fragment assembly for authenticated GETs; ON unless explicitly set to `0` */
+	/** fragment assembly for authenticated GETs; on unless `0` */
 	SHELL_ASSEMBLY?: string;
-	/** the front worker's compiled-plan tier; ON unless explicitly set to `0` */
+	/** the front worker's compiled-plan tier; on unless `0` */
 	EDGE_PLAN?: string;
 	/**
-	 * which engine produces image derivatives: `tinyimg` (default) or `images`.
-	 *
-	 * Cloudflare Images needs a zone with transformations enabled, does not exist on
-	 * `*.workers.dev`, and caps at 5,000 transformations a month -- 1,250 images against the four
-	 * shipped styles. It is kept reachable because it is the only one of the two that encodes AVIF.
+	 * Image derivative engine: `tinyimg` (default) or `images`.
+	 * `images` needs a zone with transformations and caps at 5,000 a month; only it encodes `avif`.
 	 */
 	IMAGE_ENGINE?: string;
 	/**
-	 * the origin public files are served from, when the `FILES` bucket has a custom domain.
-	 *
-	 * Empty by default, which serves every file through the Worker -- correct, and one Worker
-	 * request per file. Set to an R2 custom domain and a MIRRORED public file is linked there
-	 * instead, which costs no Worker request at all. A file that has not mirrored yet keeps the
-	 * Worker URL, because the alternative is a 404 on a file the site holds.
+	 * The origin public files are served from, when `FILES` has a custom domain.
+	 * Empty serves through the Worker; a file not yet mirrored keeps the Worker URL.
 	 */
 	FILES_PUBLIC_URL?: string;
 	/**
-	 * replace a stored page's asset tags with the build's aggregates; OFF unless `1`.
-	 *
-	 * Needs `bun run assets:agg` to have run, which writes `assets/agg/`. Off by default because the
-	 * artifact is 6.57 MB for 808 libraries and a given site uses a few dozen -- shipping the rest
-	 * would be paying for aggregates nothing reads.
+	 * Replaces a stored page's asset tags with the build's aggregates; off unless `1`.
+	 * Needs `bun run assets:agg` (writes `assets/agg/`, 6.57 MB for 808 libraries).
 	 */
 	ASSET_AGGREGATES?: string;
 	/**
-	 * where release history is fetched from, when a site does not use drupal.org.
-	 *
-	 * Only the declared prefetch reads it; Drupal reads its own `update.settings:fetch.url`. Set
-	 * both or neither -- a warm against one server and a fetch against another warms nothing.
+	 * Where release history is fetched from when a site does not use drupal.org.
+	 * Only the prefetch reads it; set it together with `update.settings:fetch.url`.
 	 */
 	UPDATE_FETCH_URL?: string;
 	/**
-	 * extra path prefixes that may never be answered from a PREVIOUS generation, comma separated.
-	 *
-	 * Added to the built-in deny-list rather than replacing it, so a site cannot make its own login
-	 * page staleable by configuring badly. See `staleAllowed()` in `src/ops/page-store.ts`.
+	 * Comma-separated path prefixes never answered from a previous generation.
+	 * Added to the built-in deny-list, not replacing it; see `staleAllowed()`.
 	 */
 	NEVER_STALE?: string;
 	/** how long a superseded page may still be answered, in ms; see `agedServeMaxMs()` */
 	AGED_SERVE_MAX_MS?: string;
 	/**
-	 * makes this object a read-only replica: every mutating host capability is refused.
-	 *
-	 * OFF unless explicitly `1`, and it must stay that way -- an object that answers writes is a
-	 * primary, and a primary that silently refuses them is a broken site. See `src/ops/replica.ts`.
+	 * Makes this object a read-only replica: every mutating host capability is refused.
+	 * Off unless `1`; a primary that silently refuses writes is a broken site.
 	 */
 	REPLICA_READ_ONLY?: string;
 	/**
-	 * how many replica lanes a site has beyond the primary; 0 and unset mean one object per site.
-	 *
-	 * The var only tells the ROUTER how many lanes exist. An object's own role comes from its name,
-	 * so raising this cannot make an existing object read-only by accident.
+	 * Replica lanes a site has beyond the primary; 0 or unset means one object per site.
+	 * Only the router reads it; an object's own role comes from its name.
 	 */
 	REPLICA_COUNT?: string;
 	/**
-	 * whether the Zend park may arm; on unless set to something other than `1`.
-	 *
-	 * Arming routes every render through `cfw_park_run`, including the ones that call nothing, so a
-	 * site running no module that needs a blocking outbound call pays a wrapper for no yield.
+	 * Whether the Zend park may arm; on unless set to something other than `1`.
+	 * Arming routes every render through `cfw_park_run`, even when nothing yields.
 	 */
 	PARK?: string;
 	/**
-	 * how long a SERVING lane may go without pulling the primary's log; the bound on staleness.
-	 *
-	 * A lane that stops replicating answers from a frozen copy and looks healthy, because the fence
-	 * refuses only a caller that states a freshness requirement and a visitor states none.
+	 * How long a serving lane may go without pulling the primary's log; the staleness bound.
+	 * A stalled lane looks healthy: the fence refuses only callers that state a freshness need.
 	 */
 	REPLICA_LAG_MS?: string;
 	/**
-	 * lets a pool lane execute writes and forward them to the primary instead of refusing them.
-	 *
-	 * OFF unless explicitly `1`. The read path's safety argument covers reads; a lane that forwards
-	 * is doing something that argument does not reach.
+	 * Lets a pool lane execute writes and forward them to the primary instead of refusing them.
+	 * Off unless `1`; the read path's safety argument does not cover forwarding.
 	 */
 	WRITE_FORWARD?: string;
 	/**
-	 * takes a heap image once per pack generation, so a cold boot can restore instead of booting.
-	 *
-	 * **OFF unless `1`, and it used to be on.** `HEAP_SNAPSHOT` gates the restore; this gates the
-	 * PRODUCER. Measured on two deployed free workers differing only in these two vars, `cpuTime` on
-	 * the cold render, no state polling between samples: **imaged 2020/1908/1937/1561/1912 (n=5,
-	 * median 1,912) against unimaged 1277/1343/1113/1251 (n=4, median 1,264)**. The ranges do not
-	 * overlap, so restoring an image costs about 648 ms MORE than booting from scratch. It also
-	 * costs 8,071,929 bytes a site against an account-wide 5 GB cap.
-	 *
-	 * A cost on both meters and no benefit on either, so the default is off. The mechanism is
-	 * unattributed. It is NOT `digestBytes`: verifying a 37,158,912-byte image, whole and per chunk,
-	 * is 13-20 ms on a laptop's V8 (`scripts/measure/heap-digest-cost.ts`), about 3% of the gap.
+	 * Takes a heap image per pack generation so a cold boot can restore; off unless `1`.
+	 * A restore cost ~648 ms more cpuTime than a boot (1,912 vs 1,264 ms median, deployed free).
 	 */
 	HEAP_IMAGE?: string;
-	/**
-	 * response header rules for the front worker, as a JSON string or the array itself; see
-	 * `src/ops/edge-rules.ts` for the shape and what may not be set
-	 */
+	/** response header rules for the front worker, as a JSON string or array; see `edge-rules` */
 	RESPONSE_HEADERS?: string | unknown[];
 	/** redirect rules for the front worker, in the same two forms */
 	REDIRECTS?: string | unknown[];
 	/**
-	 * brings an already-provisioned site up to the pack that ships today.
-	 *
-	 * ON unless `0`. The pack delivers only at provisioning, so without this a fix inside it reaches
-	 * new sites and no existing one. Off is for a site being debugged against a known state; leaving
-	 * it off means a security fix in the pack never arrives.
+	 * Brings an already-provisioned site up to the pack that ships today; on unless `0`.
+	 * The pack delivers only at provisioning, so off means pack fixes never arrive.
 	 */
 	RECONCILE?: string;
 	/** `1` logs memory readings at each boot and invocation end; for diagnosing a reset */
 	MEMORY_TRACE?: string;
 	/** see `sleepBudgetMs()` */
 	SLEEP_BUDGET_MS?: string;
-	/**
-	 * the object's own namespace, so a replica lane can pull the log from its primary.
-	 *
-	 * Optional here and required in `SiteWorkerEnv`: the front end cannot work without it, and a
-	 * Durable Object only needs it to reach a SIBLING -- which nothing did until catch-up.
-	 */
+	/** the object's own namespace, so a replica lane can reach its primary to pull the log */
 	SITE?: DurableObjectNamespace;
 	/** the opcache arm: `file` (shipping), `shm` or `off`; see `src/runtime/opcache.ts` */
 	OPCACHE_MODE?: string;
-	/** argon2id password hashing; OFF unless explicitly `1`, because it rehashes every login */
+	/** argon2id password hashing; off unless `1`, because it rehashes every login */
 	ARGON2?: string;
 	DRUPAL_CRON?: string;
 	CRON_MAX_UNITS?: string | number;
 	CRON_MAX_ROWS?: string | number;
 	CRON_MAX_MS?: string | number;
 	/**
-	 * the `scheme://host[:port]` Drupal renders absolute URLs against.
-	 *
-	 * Optional. Unset, the object pins the first non-local origin it serves and uses that; see
-	 * `src/ops/site-origin.ts`. Set it when a site is reached through a host it cannot observe --
-	 * behind a proxy that rewrites `Host`, or on a deploy whose first request is a health check.
+	 * The `scheme://host[:port]` Drupal renders absolute URLs against.
+	 * Unset, the object pins the first non-local origin; set it behind a proxy rewriting `Host`.
 	 */
 	SITE_ORIGIN?: string;
 	/**
-	 * where a site's Durable Object is created: one of `wnam enam sam weur eeur apac oc afr me`.
-	 *
-	 * Unset by default, which lets placement follow the first request. **KV-overridable** through the
-	 * `settings` key, so an owner who learns where their audience is can act on it without a
-	 * redeploy. Applies at CREATION only; Cloudflare ignores it for an object that already exists.
+	 * Where a site's Durable Object is created: one of `wnam enam sam weur eeur apac oc afr me`.
+	 * KV-overridable through `settings`; applies at creation only.
 	 */
 	SITE_LOCATION_HINT?: string;
-	/**
-	 * the largest non-file request body the edge will forward, in bytes.
-	 *
-	 * Defaults to 2 MiB. `0` disables the guard. `multipart/form-data` is exempt, so raising it is
-	 * only about non-upload submissions.
-	 */
+	/** largest non-file request body the edge forwards, in bytes; default 2 MiB, `0` disables */
 	MAX_BODY_BYTES?: string | number;
 	/**
-	 * how much of PHP's log is mirrored to `console.log`, by RFC 5424 name.
-	 *
-	 * `off | error | warn | log | info | debug`. Defaults to `info`, so `debug` -- which on 8.5 is
-	 * mostly deprecation notices with full stack traces, several per render -- stays out of
-	 * `wrangler tail` and out of a dev terminal unless it is asked for.
+	 * PHP log level mirrored to `console.log`: `off | error | warn | log | info | debug`.
+	 * Defaults to `info`; on 8.5 `debug` is mostly deprecation notices with stack traces.
 	 */
 	PHP_LOG_LEVEL?: string;
 	/**
-	 * refuses an outbound fetch to a private, loopback or metadata address; ON unless `0`.
-	 *
-	 * PHP names the URL for `cfwFetch` and `cfwQueueFetch`, so any module that can build a string
-	 * chooses the destination. `0` is for the e2e rig, which points a site at containers on the host.
+	 * Refuses an outbound fetch to a private, loopback or metadata address; on unless `0`.
+	 * PHP names the URL, so any module chooses the destination; `0` is for the e2e rig.
 	 */
 	OUTBOUND_GUARD?: string;
 	/** logs every Drupal statement through console.log, which survives an object reset */
 	PW_SQL_TRACE?: string;
-	/** first statement number to log, so a 256 KB tail budget covers the END of a long run */
+	/** first statement number to log, so a 256 KB tail budget covers the end of a long run */
 	PW_SQL_TRACE_FROM?: string | number;
 
 	/**
-	 * a `send_email` binding, which is the only Cloudflare send that needs no credential.
-	 *
-	 * It reaches VERIFIED DESTINATION ADDRESSES ONLY -- 200 per account -- so it covers "mail the
-	 * site owner" and cannot cover "mail a visitor who just registered". Free on every plan, where
-	 * the REST API below is Workers Paid. See `src/ops/mail.ts`.
+	 * A `send_email` binding, the only Cloudflare send that needs no credential.
+	 * It reaches verified destination addresses only (200 per account), so it cannot mail visitors.
 	 */
 	SEND_EMAIL?: SendEmailLike;
 
-	/** `auto | binding | api | smtp | off`; `auto` takes the first transport that is configured */
+	/** `auto | binding | api | smtp | off`; `auto` takes the first configured transport */
 	MAIL_TRANSPORT?: string;
-	/** the From address for a message that carries none; Drupal's own site mail wins when it does */
+	/** the From address for a message that carries none; Drupal's site mail wins when set */
 	MAIL_FROM?: string;
 	/** whether `alarm()` sends what `cfwMail` queued */
 	MAIL_DRAIN_ON_ALARM?: string;
 	/** messages one firing may send; capped at 25, because each is one of 50 subrequests */
 	MAIL_DRAIN_LIMIT?: string | number;
 
-	/** the account the Cloudflare Email Sending REST API posts under */
+	/** the account the Cloudflare Email Sending HTTP API posts under */
 	CF_EMAIL_ACCOUNT_ID?: string;
 	/** an API token with Email Sending: Edit; a secret, never a `vars` entry */
 	CF_EMAIL_TOKEN?: string;
 
-	/** submission host for the third-party lane; a Cloudflare relay is refused, see `src/ops/mail.ts` */
+	/** submission host for the third-party lane; a Cloudflare relay is refused */
 	SMTP_HOST?: string;
-	/** 587 for STARTTLS, 465 for implicit TLS; 25 is blocked on Workers and is refused */
+	/** 587 for starttls, 465 for implicit TLS; 25 is blocked on Workers and is refused */
 	SMTP_PORT?: string | number;
 	/** `starttls | implicit | off` */
 	SMTP_TLS?: string;
@@ -252,36 +171,26 @@ export interface SiteEnv extends BaseSiteEnv {
 	SMTP_AUTH?: string;
 
 	/**
-	 * The TCP tier's endpoints, one var per protocol; see `src/ops/tcp.ts`.
-	 *
-	 * A whole URL rather than a host/port/user/pass set, because these carry credentials and a
-	 * secret is one binding: `redis://user:pass@host:6379/0` (or `rediss://` for TLS). The
-	 * ENDPOINT is the operator's -- PHP names an operation and never a host, or any
-	 * module able to call a host function could reach arbitrary TCP.
+	 * The Redis endpoint as one URL, `redis://user:pass@host:6379/0` (`rediss://` for TLS).
+	 * The endpoint is the operator's; PHP names an operation and never a host.
 	 */
 	REDIS_URL?: string;
 	/** `syslog://collector:514` or `syslogs://collector:6514` for RFC 5425 TLS */
 	SYSLOG_URL?: string;
-	/** APP-NAME on every record this site ships; defaults to `drupal` */
+	/** the app name on every record this site ships; defaults to `drupal` */
 	SYSLOG_APP_NAME?: string;
 
 	/**
-	 * The Workers AI binding, and the model allow-list; see `src/ops/ai.ts`.
-	 *
-	 * A binding rather than the REST API, because the binding carries its own authorisation while a
-	 * REST call would need the account token readable from a queue row. Absent on any account that
-	 * has not enabled Workers AI, which is why every reader treats it as optional.
+	 * The Workers AI binding; absent on accounts without it, so readers treat it as optional.
+	 * A binding, not the HTTP API, which would need the account token readable from a queue row.
 	 */
-	AI?: { run(model: string, input: Record<string, unknown>): Promise<unknown> } | null;
+	AI?: { run(model: string, input: Record<string, unknown>): Promise<unknown> };
 	/** comma-separated model ids; unset means the short default list */
 	AI_MODELS?: string;
 
 	/**
-	 * The OIDC client secret, for a provider that issued one; see `src/ops/oidc.ts`.
-	 *
-	 * A secret rather than a `vars` entry, and it must never join `KV_OVERRIDABLE` -- neither may
-	 * the issuer, which lives in `cfw_meta`: a KV writer who could set it would point the consent
-	 * screen at a provider they control and every login would authenticate against it.
+	 * The OIDC client secret. Never add it or the issuer (in `cfw_meta`) to `KV_OVERRIDABLE`:
+	 * a KV writer could point logins at their own provider.
 	 */
 	OIDC_CLIENT_SECRET?: string;
 }

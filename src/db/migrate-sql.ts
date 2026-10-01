@@ -1,30 +1,11 @@
-import { isPaid } from '../ops/plan.js';
-/**
- * First-run migration, replayed in JavaScript straight into `ctx.storage.sql`.
- *
- * Replaying pre-built statements from JS fixes that for a reason that has nothing to do
- * with JavaScript being faster. **A JS loop is divisible where a synchronous wasm call
- * is not.** One chunk per invocation, cursor in DO SQLite, resume on the next
- * invocation -- no JSPI, no VM-interrupt patch, no mask seam, none of the four
- * undocumented behaviours the sliced-render path depends on.
- *
- * ATOMICITY. The cursor advances inside the same `transactionSync()` as the chunk's
- * statements. That is the whole correctness argument: a chunk either lands with its
- * cursor or neither, so a killed invocation is always retried from a consistent point
- * and never double-applies. A cursor in `ctx.storage.put()` would be a second commit
- * and a window where the data is in and the cursor is not.
- *
- * @see scripts/pack-sql.ts for the artifact format and why params beat SQL literals.
- */
-
-/** A value `sql.exec()` can bind. Wide integers arrive here as decimal strings; see decodeParam. */
+import { isPaid } from '../ops/plan';
+import { errorMessage } from '../util/errors';
+/** a value `sql.exec()` can bind; wide integers arrive as decimal strings (see `decodeParam`) */
 export type SqlParam = null | number | bigint | string | Uint8Array;
 
 /**
- * What `decodeParam()` returns for a given packed param.
- *
- * A call site that already knows the tag gets the one type back; everything else gets the whole
- * bindable union, which is what the replay loop passes straight to `exec()`.
+ * What `decodeParam()` returns for a packed param: the one type for a known tag, else the whole
+ * bindable union.
  */
 export type DecodedParam<T> = T extends { $b64: unknown }
 	? Uint8Array
@@ -32,24 +13,24 @@ export type DecodedParam<T> = T extends { $b64: unknown }
 		? string
 		: SqlParam;
 
-/** The cursor `sql.exec()` hands back, narrowed to what a replay reads off it. */
+/** the cursor `sql.exec()` returns, narrowed to what a replay reads */
 export interface SqlCursor {
 	toArray(): Record<string, unknown>[];
 	rowsRead: number;
 	rowsWritten: number;
 }
 
-/** `ctx.storage.sql`, narrowed. The gate tests drive a real SQLite through this same shape. */
+/** `ctx.storage.sql`, narrowed; gate tests drive a real SQLite through the same shape */
 export interface SqlLike {
 	exec(text: string, ...params: SqlParam[]): SqlCursor;
 }
 
-/** `ctx.storage`, narrowed to the one call that makes a chunk atomic with its cursor. */
+/** `ctx.storage`, narrowed to the call that makes a chunk atomic with its cursor */
 export interface StorageLike {
 	transactionSync<T>(cb: () => T): T;
 }
 
-/** The part of `manifest.json` a replay reads; `scripts/pack-sql.ts` writes considerably more. */
+/** the part of `manifest.json` a replay reads (`scripts/pack-sql.ts` writes more) */
 export interface MigrationManifest {
 	generation: string;
 	totals: { chunks: number; statements: number; rows: number };
@@ -57,41 +38,39 @@ export interface MigrationManifest {
 	creates?: string[];
 	tables?: Record<string, number>;
 	/**
-	 * Whether this manifest may replay over a database that has already finished a DIFFERENT
-	 * generation. Absent, which is the shipped pack, means no.
-	 *
-	 * A restore sets it, and that is the whole difference between the two directions. Replaying a
-	 * newer pack over a site that has been running and writing for months would produce a database
-	 * that is neither; replaying a BACKUP over that same site is the entire point of the backup.
+	 * Whether this manifest may replay over a database that finished a different generation. Absent
+	 * (the shipped pack) means no; only a restore sets it, since a newer pack over a live site
+	 * would produce a database that is neither.
 	 */
 	replaces?: boolean;
 }
 
-/** One packed statement: SQL text plus its params, still in packed form. */
+/** one packed statement: SQL text plus its params, still packed */
 export interface PackedStatement {
 	s: string;
 	p?: unknown[];
 }
 
-/** One chunk file. Both fields are optional; a chunk missing either is a case step() refuses. */
+/** one chunk file; `step()` refuses a chunk missing either optional field */
 export interface MigrationChunk {
 	i?: number;
 	statements?: PackedStatement[];
 }
 
-/** Where the manifest and chunks come from. Injected so the gate tests can replay off disk. */
+/** where the manifest and chunks come from; injected so gate tests can replay off disk */
 export interface MigrationLoader {
 	loadManifest: () => Promise<MigrationManifest>;
 	loadChunk: (file: string, index: number) => Promise<MigrationChunk>;
 }
 
+/** constructor options for {@link SqlMigrator}; `now` is injectable for tests */
 export interface SqlMigratorOptions extends MigrationLoader {
 	sql: SqlLike;
 	storage: StorageLike;
 	now?: () => number;
 }
 
-/** The cursor row, decoded. `state` stays a plain string because SQL is what produced it. */
+/** the cursor row, decoded; `state` stays a plain string because SQL produced it */
 export interface MigrateCursor {
 	generation: string;
 	chunk: number;
@@ -104,20 +83,20 @@ export interface MigrateCursor {
 	updatedAt: number;
 }
 
+/** options for {@link SqlMigrator.step} */
 export interface MigrateStepOptions {
 	maxChunks?: number;
 	budgetMs?: number;
 }
 
+/** options for {@link SqlMigrator.runAll} */
 export interface MigrateRunAllOptions {
 	budgetMs?: number;
 }
 
 /**
- * What `step()` reports.
- *
- * `skipped` is set only on the already-migrated no-op, and `generation` / `elapsedMs` only on a
- * run that reached the replay loop, so all three are optional on the one shape.
+ * What `step()` reports; `skipped` is set only on the already-migrated no-op, and `generation` /
+ * `elapsedMs` only on a run that reached the replay loop.
  */
 export interface MigrateStepResult {
 	ok: true;
@@ -132,40 +111,45 @@ export interface MigrateStepResult {
 	elapsedMs?: number;
 }
 
+/** what {@link SqlMigrator.status} reports */
 export interface MigrateStatus {
 	generation: string;
 	chunks: number;
 	statements: number;
 	rows: number;
-	cursor: MigrateCursor | null;
+	cursor?: MigrateCursor;
 	done: boolean;
 	started: boolean;
 }
 
+/** what {@link SqlMigrator.reset} reports */
 export interface MigrateResetResult {
 	ok: true;
 	dropped: number;
 }
 
-/** The binding the shipped loader fetches its assets through. */
+/** the binding the shipped loader fetches its assets through */
 export interface MigrateAssetEnv {
 	ASSETS: Fetcher;
 }
 
-/** The two bindings the chunk budget reads; both arrive from wrangler as strings. */
+/** the two bindings the chunk budget reads; wrangler delivers them as strings */
 export interface MigratePlanEnv {
 	PLAN?: string;
 	MIGRATE_CHUNKS_PER_INVOCATION?: string | number;
 }
 
-/** Table holding the single cursor row. Named like the other `cfw_*` host tables. */
+/** table holding the single cursor row */
 export const MIGRATE_TABLE = 'cfw_migrate';
 
-/** Cursor states, in order. `failed` is terminal only until the next attempt. */
+/** cursor states, in order; `failed` is terminal only until the next attempt */
 export const MIGRATE_STATES = ['pending', 'running', 'done', 'failed'];
 
+/** the cursor is partway through one generation and the manifest names another */
 export class MigrationGenerationError extends Error {
+	/** the generation the cursor is partway through */
 	stored: string;
+	/** the generation the manifest names */
 	incoming: string;
 
 	constructor(stored: string, incoming: string) {
@@ -179,7 +163,9 @@ export class MigrationGenerationError extends Error {
 	}
 }
 
+/** a chunk failed (and was rolled back) or could not be replayed */
 export class MigrationChunkError extends Error {
+	/** the failing chunk's index */
 	index: number;
 
 	constructor(index: number, cause: string) {
@@ -191,16 +177,13 @@ export class MigrationChunkError extends Error {
 }
 
 /**
- * Decodes one packed param back to something `sql.exec()` can bind.
- *
- * `$b64` is bytes that were not valid UTF-8. `$i` is an integer outside the IEEE-754
- * safe range: it is bound as a decimal STRING, because SQLite's INTEGER
- * affinity converts a well-formed integer string losslessly on the way in, while a JS
- * number would already have lost the low bits before the binding saw it.
+ * Decodes one packed param for `sql.exec()`. `$b64` is bytes that were not valid UTF-8; `$i` is an
+ * integer beyond the safe range, bound as a decimal string (INTEGER affinity converts it
+ * losslessly; a JS number would already have lost the low bits).
  */
 export function decodeParam<T>(v: T): DecodedParam<T>;
 export function decodeParam(v: unknown): SqlParam {
-	// anything the packer did not tag is already a bindable scalar out of JSON
+	// untagged values are already bindable JSON scalars
 	if (v === null || typeof v !== 'object') return v as SqlParam;
 	const packed = v as { $b64?: unknown; $i?: unknown };
 	if (typeof packed.$b64 === 'string') {
@@ -213,7 +196,7 @@ export function decodeParam(v: unknown): SqlParam {
 	throw new Error(`unrecognised packed param: ${JSON.stringify(v).slice(0, 80)}`);
 }
 
-/** Creates the cursor table. Safe to call on every invocation. */
+/** creates the cursor table; safe on every invocation */
 export function ensureMigrateTable(sql: SqlLike): void {
 	sql.exec(
 		`CREATE TABLE IF NOT EXISTS ${MIGRATE_TABLE} (
@@ -231,11 +214,11 @@ export function ensureMigrateTable(sql: SqlLike): void {
 	);
 }
 
-/** @returns the cursor row, or null when migration has never been started. */
-export function readMigrateCursor(sql: SqlLike): MigrateCursor | null {
+/** the cursor row, or undefined when migration never started */
+export function readMigrateCursor(sql: SqlLike): MigrateCursor | undefined {
 	const rows = sql.exec(`SELECT * FROM ${MIGRATE_TABLE} WHERE id = 1`).toArray();
 	const r = rows[0];
-	if (r === undefined) return null;
+	if (r === undefined) return undefined;
 	return {
 		generation: String(r.generation),
 		chunk: Number(r.chunk),
@@ -250,19 +233,26 @@ export function readMigrateCursor(sql: SqlLike): MigrateCursor | null {
 }
 
 /**
- * Drives the chunk replay.
+ * First-run migration, replayed in JavaScript into `ctx.storage.sql`. A JS loop is divisible where
+ * a synchronous wasm call is not: one chunk per invocation, cursor in DO SQLite, resume next time.
  *
- * `loadManifest` / `loadChunk` are injected rather than reading `env.ASSETS` directly so
- * the gate tests can replay the real shipped chunks off disk into a real SQLite without
- * a dev server. `now` is injected for the same reason.
+ * The cursor advances inside the same `transactionSync()` as the chunk's statements, so a killed
+ * invocation retries from a consistent point (a `ctx.storage.put()` cursor would be a second
+ * commit). `loadManifest`, `loadChunk` and `now` are injected so gate tests replay off disk.
  */
 export class SqlMigrator {
+	/** the tenant database the chunks replay into */
 	sql: SqlLike;
+	/** the storage handle whose `transactionSync()` makes a chunk atomic with its cursor */
 	storage: StorageLike;
+	/** fetches the manifest (memoised by `getManifest()`) */
 	loadManifest: () => Promise<MigrationManifest>;
+	/** fetches one chunk by file name and index */
 	loadChunk: (file: string, index: number) => Promise<MigrationChunk>;
+	/** the clock, injectable for tests */
 	now: () => number;
-	manifest: MigrationManifest | null;
+	/** the manifest once loaded */
+	manifest?: MigrationManifest;
 
 	constructor({
 		sql,
@@ -276,23 +266,15 @@ export class SqlMigrator {
 		this.loadManifest = loadManifest;
 		this.loadChunk = loadChunk;
 		this.now = now;
-		this.manifest = null;
 	}
 
+	/** the manifest, loaded once per migrator */
 	async getManifest(): Promise<MigrationManifest> {
 		if (!this.manifest) this.manifest = await this.loadManifest();
 		return this.manifest;
 	}
 
-	/**
-	 * Everything a diagnostics route needs about the migration, in one read.
-	 *
-	 * The JSDoc `@returns` that used to sit here was WRONG -- it claimed
-	 * `{state, chunk, chunks, done}` while the method returns generation, chunks, statements,
-	 * rows, cursor, done and started. It went unnoticed because JSDoc types on a `.js` file are
-	 * advisory; once the file became TypeScript the declared `MigrateStatus` contradicted it in
-	 * plain sight, which is the argument for the conversion in one line.
-	 */
+	/** everything a diagnostics route needs about the migration, in one read */
 	async status(): Promise<MigrateStatus> {
 		ensureMigrateTable(this.sql);
 		const manifest = await this.getManifest();
@@ -304,21 +286,15 @@ export class SqlMigrator {
 			rows: manifest.totals.rows,
 			cursor,
 			done: cursor?.state === 'done',
-			started: cursor !== null
+			started: cursor !== undefined
 		};
 	}
 
 	/**
-	 * Replays up to `maxChunks` chunks, then returns.
-	 *
-	 * One chunk is the default because one chunk is the unit sized to fit a single
-	 * invocation's CPU budget. `maxChunks: Infinity` is the paid-plan and local path,
-	 * where the whole migration in one invocation is simply cheaper.
-	 *
-	 * A chunk that throws leaves the database exactly as it was and records the error on
-	 * the cursor without advancing it, so the next call retries the same chunk rather
-	 * than skipping it. Skipping a failed chunk is how you get a site that renders and is
-	 * quietly missing rows.
+	 * Replays up to `maxChunks` chunks (default one; `Infinity` is the paid and local path), then
+	 * returns. A chunk that throws leaves the database as it was and records the error without
+	 * advancing the cursor, so the next call retries it; skipping would leave a site quietly
+	 * missing rows.
 	 */
 	async step({
 		maxChunks = 1,
@@ -333,12 +309,8 @@ export class SqlMigrator {
 		if (cursor && cursor.generation !== generation && cursor.state !== 'done') {
 			throw new MigrationGenerationError(cursor.generation, generation);
 		}
-		// "already migrated" has to mean "already migrated THIS generation". It used to mean "the
-		// cursor says done", which read the row without looking at whose it was -- so a restore, which
-		// shares this one cursor row with the pack, was skipped on every site that had finished
-		// migrating and reported `{ ok: true, done: true }` having replayed nothing. A rollback
-		// reported success and changed no data. The namespaced `import:<id>:<gen>` generation was
-		// written to prevent that and could not, because the branch never compared generations.
+		// "already migrated" means this generation: a restore shares the cursor row with the pack,
+		// and a bare `done` skipped it while reporting success with no data changed
 		const sameGeneration = cursor?.generation === generation;
 		if (cursor?.state === 'done' && (sameGeneration || manifest.replaces !== true)) {
 			return {
@@ -381,7 +353,6 @@ export class SqlMigrator {
 				startedAt
 			);
 			cursor = readMigrateCursor(this.sql);
-			// the row was just inserted, so this only guards the type
 			if (!cursor) throw new Error('migrate cursor missing immediately after its insert');
 		}
 
@@ -393,8 +364,7 @@ export class SqlMigrator {
 
 		while (index < total && applied < maxChunks) {
 			const meta = manifest.chunks[index];
-			// a manifest whose totals outrun its own chunk list is the same class of mismatch as a
-			// chunk file from another build, so it fails the same way
+			// totals outrunning the chunk list is the same mismatch as a chunk from another build
 			if (!meta) {
 				throw new MigrationChunkError(
 					index,
@@ -402,7 +372,7 @@ export class SqlMigrator {
 				);
 			}
 			const chunk = await this.loadChunk(meta.file, index);
-			const list = Array.isArray(chunk?.statements) ? chunk.statements : null;
+			const list = Array.isArray(chunk?.statements) ? chunk.statements : undefined;
 			if (!list) {
 				throw new MigrationChunkError(index, 'chunk has no statements array');
 			}
@@ -425,8 +395,7 @@ export class SqlMigrator {
 						c.toArray();
 						chunkRows += Number(c.rowsWritten ?? 0);
 					}
-					// same transaction as the data: a chunk and its cursor
-					// commit together or not at all
+					// same transaction as the data: chunk and cursor commit together
 					this.sql.exec(
 						`UPDATE ${MIGRATE_TABLE}
 						 SET chunk = ?, statements = ?, rows_written = ?, state = ?, error = NULL, updated_at = ?
@@ -439,7 +408,7 @@ export class SqlMigrator {
 					);
 				});
 			} catch (e) {
-				const message = String((e as { message?: unknown } | null)?.message ?? e);
+				const message = errorMessage(e);
 				// outside the rolled-back transaction, so the record of the failure survives
 				this.sql.exec(
 					`UPDATE ${MIGRATE_TABLE} SET state = 'failed', error = ?, updated_at = ? WHERE id = 1`,
@@ -454,8 +423,7 @@ export class SqlMigrator {
 			index = next;
 			applied++;
 
-			// a wall-clock guard for the paid/local path only: it cannot bound CPU, and on
-			// the edge in-wasm and in-JS clocks both read 0, so the real bound is maxChunks
+			// wall-clock guard for paid and local; edge clocks read 0 (`maxChunks` bounds)
 			if (budgetMs > 0 && this.now() - t0 >= budgetMs) break;
 		}
 
@@ -473,25 +441,21 @@ export class SqlMigrator {
 		};
 	}
 
-	/** Runs to completion. The paid-plan and local shape; on free this is 227x the ceiling. */
+	/** runs to completion: the paid and local shape (on free it exceeds the ceiling) */
 	async runAll({ budgetMs = 0 }: MigrateRunAllOptions = {}): Promise<MigrateStepResult> {
 		return this.step({ maxChunks: Infinity, budgetMs });
 	}
 
 	/**
-	 * Clears the cursor AND every table the manifest declares, so a re-migration starts
-	 * from empty rather than colliding with its own previous rows.
-	 *
-	 * Destructive by definition, which is why the route gates it behind an explicit flag.
+	 * Clears the cursor and every table the manifest declares so a re-migration starts empty.
+	 * Destructive; the route gates it behind an explicit flag.
 	 */
 	async reset(): Promise<MigrateResetResult> {
 		ensureMigrateTable(this.sql);
 		const manifest = await this.getManifest();
 		const dropped: string[] = [];
-		// `creates` rather than `tables`: the latter is a row-count map and omits every
-		// table with no rows, including the synthesised `sessions`. Dropping only the
-		// row-bearing tables left `sessions` behind and the next migration died on
-		// "table sessions already exists"
+		// `creates` as well as `tables`: the row-count map omits empty tables such as `sessions`,
+		// and leaving one behind fails the next migration on "already exists"
 		const targets = new Set([
 			...(Array.isArray(manifest.creates) ? manifest.creates : []),
 			...Object.keys(manifest.tables ?? {})
@@ -512,12 +476,8 @@ export class SqlMigrator {
 }
 
 /**
- * Reads the manifest and chunks out of the Workers Static Assets binding.
- *
- * Assets are fetched whole rather than range-fetched for the reason recorded against
- * the pack: a Range request against the asset server costs the same subrequest and
- * arrives as a fresh response either way, and the chunk sizing already bounds how much
- * a single invocation pulls.
+ * Reads the manifest and chunks from the static assets binding, whole: a Range request costs the
+ * same subrequest and chunk sizing already bounds what one invocation pulls.
  */
 export function assetChunkLoader(env: MigrateAssetEnv, prefix = 'drupal-sql'): MigrationLoader {
 	const base = `https://a.local/${prefix}/`;
@@ -542,39 +502,21 @@ export function assetChunkLoader(env: MigrateAssetEnv, prefix = 'drupal-sql'): M
 /**
  * How many chunks a plan should replay per invocation.
  *
- * **FREE WAS 1, AND THE REASON IT GAVE WAS THE 10 ms CAP.** That premise is retracted in writing
- * one file over: a single invocation reading 1,882 ms of `cpuTime` completed on a deployed free
- * worker, so the cap does not bind an object invocation, which is where migration runs -- see
- * `FREE_PROFILE` in `src/ops/plan-profile.ts`. At 1, a shipped pack of 75 chunks provisions a site
- * over **75 separate
- * Durable Object invocations**, each paying an alarm turnaround, a `setAlarm` row and a cursor row,
- * while the new owner watches the `migrating` page refresh itself.
- *
- * **The real bound is SUBREQUESTS, and it was measured rather than reasoned.** `/migrate?all=1` on
- * a deployed free worker failed with `Too many subrequests by single Worker invocation` -- free
- * allows 50, and {@link assetChunkLoader} spends one `env.ASSETS.fetch()` per chunk plus one for a
- * manifest that is memoised per incarnation. So N chunks costs at most N+1. That failure is also
- * the positive evidence that the whole replay fits one invocation's CPU: nothing else stopped it.
- *
- * 40 leaves ten subrequests of headroom. The migration branch returns before any other alarm work
- * runs, so nothing else is competing for them.
- *
- * Paid has a 30 s CPU budget and a 1,000-subrequest allowance, so the whole migration is one
- * invocation and the chunking is only a crash-resume property there.
+ * The bound is subrequests, not the 10 ms cap (an object invocation read 1,882 ms of `cpuTime`
+ * on free): free allows 50 and {@link assetChunkLoader} spends one fetch per chunk plus one for the
+ * memoised manifest, so free replays 40 per invocation. Paid is one invocation (30 s CPU, 1,000
+ * subrequests), so chunking there is only crash-resume.
  */
-export function chunksPerInvocation(env?: MigratePlanEnv | null): number {
+export function chunksPerInvocation(env?: MigratePlanEnv): number {
 	const explicit = Number(env?.MIGRATE_CHUNKS_PER_INVOCATION ?? 0);
 	if (Number.isFinite(explicit) && explicit > 0) return explicit;
-	// not a planFlag(): this one is a COUNT, so it shares the predicate and not the boolean chain
+	// a count, so it shares the predicate but not the `planFlag()` boolean chain
 	return isPaid(env) ? Infinity : FREE_CHUNKS_PER_INVOCATION;
 }
 
 /**
- * Chunks a free invocation replays, bounded by the subrequest allowance rather than by CPU.
- *
- * Kept beside {@link FREE_SUBREQUEST_LIMIT} so the relationship is checkable: one fetch per chunk
- * plus one for the manifest must stay under the platform's count, which is what
- * `tests/unit/db/migrate-plan.spec.ts` asserts.
+ * Chunks a free invocation replays; one fetch per chunk plus the manifest must stay under
+ * {@link FREE_SUBREQUEST_LIMIT} (`tests/node/migrate-sql.spec.ts`).
  */
 export const FREE_CHUNKS_PER_INVOCATION = 40;
 

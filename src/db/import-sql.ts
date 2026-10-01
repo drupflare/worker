@@ -1,23 +1,22 @@
-import { DO_SQLITE_MAX_STATEMENT_CHARS } from './heap-store.js';
+/**
+ * The other half of `/export`: replaying a SQL dump back into a Durable Object.
+ * Chunks are bounded by statement count, not bytes (a byte budget does not bound replay cost).
+ * @module
+ */
+import { firstRow } from '../util/sql';
+import { DO_SQLITE_MAX_STATEMENT_CHARS } from './heap-store';
 import type {
 	MigrationChunk,
 	MigrationLoader,
 	MigrationManifest,
 	SqlLike,
 	StorageLike
-} from './migrate-sql.js';
+} from './migrate-sql';
 
-/**
- * The other half of `/export`, which had none: replaying a dump back into a Durable Object.
- *
- * The chunk SIZE is bounded by statement count rather than by bytes, following the correction that
- * cost two separate defects: a text-byte budget does not bound what replaying a statement costs. See
- * "a chunk sized by the wrong quantity" in `TECHNICAL_REPORT.md`.
- */
-
-/** statements per import chunk; the migration pack uses comparable units and measures 0-3 ms each */
+/** statements per import chunk; the migration pack uses comparable units at 0-3 ms each */
 export const IMPORT_STATEMENTS_PER_CHUNK = 40;
 
+/** the DDL for the import tables: one parent row per dump and one row per replay chunk */
 export const IMPORT_DDL = `
 CREATE TABLE IF NOT EXISTS cfw_import (
 	id INTEGER PRIMARY KEY,
@@ -35,6 +34,7 @@ CREATE TABLE IF NOT EXISTS cfw_import_chunk (
 );
 `.trim();
 
+/** creates the import tables if missing */
 export function ensureImportTables(sql: SqlLike): void {
 	for (const statement of IMPORT_DDL.split(';')) {
 		const trimmed = statement.trim();
@@ -43,15 +43,9 @@ export function ensureImportTables(sql: SqlLike): void {
 }
 
 /**
- * Splits a SQL dump into individual statements.
- *
- * Quote-aware, because a naive split on `;` breaks the moment a dump contains one inside a string --
- * and a Drupal dump certainly does: serialised config, rendered HTML and watchdog messages are full of
- * them. Getting this wrong would not error; it would replay a truncated statement and leave a
- * plausible database, which is this project's signature failure.
- *
- * SQLite string literals escape a quote by doubling it, so a `''` inside a quoted run is content and
- * not a terminator.
+ * Splits a SQL dump into statements, quote-aware: a Drupal dump has `;` inside strings, and a
+ * naive split would replay truncated statements without erroring. A doubled quote (`''`) inside a
+ * quoted run is content, not a terminator.
  */
 export function splitSqlStatements(dump: string): string[] {
 	const out: string[] = [];
@@ -65,7 +59,7 @@ export function splitSqlStatements(dump: string): string[] {
 		if (inSingle) {
 			current += ch;
 			if (ch === "'") {
-				// a doubled quote is an escaped quote, so consume both and stay inside the literal
+				// a doubled quote is an escape: consume both and stay in the literal
 				if (dump[i + 1] === "'") {
 					current += "'";
 					i++;
@@ -98,7 +92,7 @@ export function splitSqlStatements(dump: string): string[] {
 			current += ch;
 			continue;
 		}
-		// a `--` comment runs to end of line and may legally contain a semicolon
+		// a `--` comment runs to end of line and may contain a semicolon
 		if (ch === '-' && dump[i + 1] === '-') {
 			const nl = dump.indexOf('\n', i);
 			i = nl === -1 ? dump.length : nl;
@@ -118,6 +112,7 @@ export function splitSqlStatements(dump: string): string[] {
 	return out;
 }
 
+/** a stored dump: its row id, chunk and statement counts, and generation label */
 export type StoredImport = {
 	id: number;
 	chunks: number;
@@ -125,9 +120,11 @@ export type StoredImport = {
 	generation: string;
 };
 
-/** a statement no replay could ever execute, named at STORE time rather than mid-restore */
+/** a statement no replay could execute, refused at store time rather than mid-restore */
 export class ImportStatementTooLongError extends Error {
+	/** the offending statement's position in the dump */
 	index: number;
+	/** its length in characters */
 	chars: number;
 
 	constructor(index: number, chars: number) {
@@ -145,11 +142,9 @@ export class ImportStatementTooLongError extends Error {
 /**
  * Stores a dump as replay chunks and returns what a loader will find.
  *
- * ATOMIC, for the same reason the replay is: the parent row and every chunk commit together or not at
- * all. Without that, an invocation killed midway leaves a `cfw_import` row claiming N chunks with
- * fewer than N stored -- and that row is what `latestImport()` offers a rollback as a restore point.
- * The replay would start, run until the first missing chunk, and stop with the database half
- * overwritten and the backup only partly applied.
+ * Atomic: the parent row and every chunk commit together, or a killed invocation leaves a row
+ * claiming N chunks that `latestImport()` offers as a restore point, and the replay would stop
+ * at the first missing chunk with the database half overwritten.
  *
  * @param sql the object's own SQL
  * @param dump the SQL text, as `dumpDatabase()` or `/export` produces it
@@ -171,8 +166,7 @@ export function storeImport(
 	const statements = splitSqlStatements(dump);
 	if (statements.length === 0) throw new Error('dump contains no statements');
 
-	// checked before anything is written, so an unreplayable dump costs nothing and is refused by
-	// NAME. A dump inlines its values as literals, so one oversized blob is all it takes
+	// checked before any write, so an unreplayable dump costs nothing (one big blob is enough)
 	statements.forEach((s, i) => {
 		if (s.length > DO_SQLITE_MAX_STATEMENT_CHARS) {
 			throw new ImportStatementTooLongError(i, s.length);
@@ -186,8 +180,8 @@ export function storeImport(
 	}
 
 	const id = opts.storage.transactionSync(() => {
-		const row = sql
-			.exec(
+		const row = firstRow(
+			sql.exec(
 				`INSERT INTO cfw_import
 					(created_at, generation, total_chunks, total_statements, source)
 				 VALUES (?, ?, ?, ?, ?) RETURNING id`,
@@ -197,7 +191,7 @@ export function storeImport(
 				statements.length,
 				opts.source
 			)
-			.toArray()[0] as { id: number | bigint } | undefined;
+		) as { id: number | bigint } | undefined;
 		const assigned = Number(row?.id ?? 0);
 		if (assigned === 0) throw new Error('the import row did not come back with an id');
 
@@ -206,8 +200,7 @@ export function storeImport(
 				'INSERT OR REPLACE INTO cfw_import_chunk (import_id, seq, statements) VALUES (?, ?, ?)',
 				assigned,
 				seq,
-				// the packed shape the migrator already reads: {s, p?}. No params, because a dump
-				// inlines its values -- which is also why a chunk is bounded by statement COUNT here
+				// the migrator's packed shape {s, p?}; no params since a dump inlines its values
 				JSON.stringify(group.map((s) => ({ s })))
 			);
 		});
@@ -223,24 +216,21 @@ export function storeImport(
 }
 
 /**
- * The newest COMPLETE stored import, or null.
- *
- * Completeness is checked rather than assumed, because this is the value `shouldRollback()` reads as
- * "a restore point that actually exists" and a torn one does not exist as a restore point -- it is a
- * database that gets half overwritten and then stops. `storeImport()` is atomic now, so a torn row
- * cannot be created any more; this stays as the guard for one written before it was.
+ * The newest complete stored import, or undefined.
+ * `shouldRollback()` reads it as a restore point that exists, so a torn row (fewer chunks than
+ * claimed) must not count; `storeImport()` is atomic, so this guards rows written before that.
  */
-export function latestImport(sql: SqlLike): StoredImport | null {
+export function latestImport(sql: SqlLike): StoredImport | undefined {
 	ensureImportTables(sql);
-	const row = sql
-		.exec(
+	const row = firstRow(
+		sql.exec(
 			`SELECT i.id, i.generation, i.total_chunks, i.total_statements
 			 FROM cfw_import i
 			 WHERE i.total_chunks =
 				(SELECT COUNT(*) FROM cfw_import_chunk c WHERE c.import_id = i.id)
 			 ORDER BY i.id DESC LIMIT 1`
 		)
-		.toArray()[0] as
+	) as
 		| {
 				id: number | bigint;
 				generation: string;
@@ -248,7 +238,7 @@ export function latestImport(sql: SqlLike): StoredImport | null {
 				total_statements: number | bigint;
 		  }
 		| undefined;
-	if (!row) return null;
+	if (!row) return undefined;
 	return {
 		id: Number(row.id),
 		generation: String(row.generation),
@@ -258,20 +248,18 @@ export function latestImport(sql: SqlLike): StoredImport | null {
 }
 
 /**
- * A `MigrationLoader` over a stored import, so the existing migrator replays it unchanged.
- *
- * `chunks[].file` is the seq as a string. The migrator treats `file` as an opaque handle it hands
- * back to `loadChunk`, so nothing needs a filesystem or a fetch.
+ * A `MigrationLoader` over a stored import, so the existing migrator replays it unchanged;
+ * `chunks[].file` is the seq as a string (the migrator treats it as an opaque handle).
  */
 export function storedImportLoader(sql: SqlLike, importId: number): MigrationLoader {
 	return {
 		async loadManifest(): Promise<MigrationManifest> {
-			const row = sql
-				.exec(
+			const row = firstRow(
+				sql.exec(
 					'SELECT generation, total_chunks, total_statements FROM cfw_import WHERE id = ?',
 					importId
 				)
-				.toArray()[0] as
+			) as
 				| {
 						generation: string;
 						total_chunks: number | bigint;
@@ -281,11 +269,9 @@ export function storedImportLoader(sql: SqlLike, importId: number): MigrationLoa
 			if (!row) throw new Error(`no stored import ${importId}`);
 			const chunks = Number(row.total_chunks);
 			return {
-				// the generation is the IMPORT's, not the pack's, so a replayed dump cannot be mistaken
-				// for the shipped migration and skipped as already-done
+				// the import's own generation, so the migrator cannot skip it as the shipped pack
 				generation: `import:${importId}:${row.generation}`,
-				// a backup is the one thing allowed to replay over a finished, different generation;
-				// without this the migrator skips the whole restore as "already migrated"
+				// a backup may replay over a finished, different generation (else skipped)
 				replaces: true,
 				totals: {
 					chunks,
@@ -296,16 +282,15 @@ export function storedImportLoader(sql: SqlLike, importId: number): MigrationLoa
 			};
 		},
 		async loadChunk(file: string): Promise<MigrationChunk> {
-			const row = sql
-				.exec(
+			const row = firstRow(
+				sql.exec(
 					'SELECT seq, statements FROM cfw_import_chunk WHERE import_id = ? AND seq = ?',
 					importId,
 					Number(file)
 				)
-				.toArray()[0] as { seq: number | bigint; statements: string } | undefined;
+			) as { seq: number | bigint; statements: string } | undefined;
 			if (!row) throw new Error(`stored import ${importId} has no chunk ${file}`);
-			// `i` is the seq READ BACK from the row, never the index the caller asked for. Echoing the
-			// argument made the migrator's cross-check compare a value to itself, so it could not fail
+			// `i` is read back from the row (echoing the argument makes the cross-check vacuous)
 			return { i: Number(row.seq), statements: JSON.parse(String(row.statements)) };
 		}
 	};

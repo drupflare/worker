@@ -1,9 +1,6 @@
 /**
- * The `.wasm` import in `src/runtime/php-binary*.ts`.
- *
- * wrangler's `CompiledWasm` rule turns the file into a module whose default export is a
- * `WebAssembly.Module`; tsc has no loader concept, so the shape is declared here instead. Kept
- * out of `src/runtime/` -- that directory is in the coverage include list.
+ * The `.wasm` import (wrangler's `CompiledWasm` rule); kept out of `src/runtime/`, which is in the
+ * coverage include list.
  */
 declare module '*.wasm' {
 	const wasmModule: WebAssembly.Module;
@@ -11,11 +8,8 @@ declare module '*.wasm' {
 }
 
 /**
- * A zstd frame, produced by `scripts/pack-wasm-zstd.ts` for the 8.3 and experiment arms.
- *
- * wrangler's `Data` rule turns the file into a module whose default export is an `ArrayBuffer`. It
- * existed because the bundle meter measured COMPRESSED bytes; Cloudflare removed that limit on
- * 2026-09-04, so the shipping seam imports a raw `.wasm` and no shipping path inflates anything.
+ * A zstd frame from `scripts/pack-wasm-zstd.ts` (8.3 and experiment arms only); wrangler's `Data`
+ * rule gives an `ArrayBuffer`.
  */
 declare module '*.zst' {
 	const bytes: ArrayBuffer;
@@ -23,11 +17,8 @@ declare module '*.zst' {
 }
 
 /**
- * The brotli frame `src/runtime/php-binary-85.ts` imports.
- *
- * Same `Data` rule and same reason as `*.zst`. NOT the shipping seam since 2026-09-04, when
- * Cloudflare removed the compressed size limit the frame existed to fit: the interpreter travels as a
- * raw `CompiledWasm` import now and nothing inflates anything at startup.
+ * The brotli frame `src/runtime/php-binary-85.ts` imports (same `Data` rule as `*.zst`); not the
+ * shipping seam.
  */
 declare module '*.br' {
 	const bytes: ArrayBuffer;
@@ -35,18 +26,10 @@ declare module '*.br' {
 }
 
 /**
- * The emscripten glue a `vendor/` or `assets/` build ships next to its `.wasm`.
+ * The emscripten glue (`MODULARIZE=1` shape, what `PhpBase` calls) shipped beside a `.wasm`.
  *
- * Declared because both directories are gitignored: on a machine that has never run
- * `bun run vendor` -- CI, or this repo with four of the probe builds never rebuilt -- the
- * specifier resolves to nothing and every importer fails to typecheck. The shape is the one
- * emscripten emits for MODULARIZE=1, and it is what `PhpBase` calls.
- *
- * **Matches every `.mjs`, not just `*-worker.mjs`.** The narrower pattern was green locally and
- * failed CI on three files it did not cover -- `vendor/php8.3-web.mjs` and the two
- * `assets/sjlj/*sjlj.mjs` -- which broke `typecheck` AND `docs:build`, because typedoc resolves the
- * same specifiers. Every `.mjs` imported anywhere in `src/` is emscripten glue of this shape, so
- * the wildcard is accurate rather than a blanket `any`.
+ * `vendor/` and `assets/` are gitignored, so on CI the specifier resolves to nothing. Matches every
+ * `.mjs` under `src/`, all of which are glue of this shape.
  */
 declare module '*.mjs' {
 	const factory: (moduleArg?: object) => Promise<any>;
@@ -54,11 +37,8 @@ declare module '*.mjs' {
 }
 
 /**
- * JSPI, which `src/probes/jspi-probe.ts`, `jspi-routes.ts` and `sjlj-probe.ts` read.
- *
- * Absent from TypeScript's `lib.dom` and from @cloudflare/workers-types, because the proposal
- * is behind a flag; the probes exist to find out whether the engine has it, so `typeof` guards
- * every use. Declared here rather than cast at each site so the probe bodies stay verbatim.
+ * JSPI as the probes read it; absent from `lib.dom` and workers-types (flagged proposal), so guard
+ * every use with `typeof`.
  */
 declare namespace WebAssembly {
 	/** wraps a JS function so a wasm call into it suspends the wasm stack */

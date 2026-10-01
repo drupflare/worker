@@ -1,33 +1,33 @@
+/**
+ * Storage for a wasm heap snapshot in the Durable Object's own SQLite.
+ *
+ * Every platform limit here is measured on a deployed object and kept as a constant so it does not
+ * live only in prose.
+ * @module
+ */
+
 import { deflateSync, inflateSync } from 'fflate';
 
-/**
- * Storage layer for a wasm heap snapshot in the Durable Object's own SQLite.
- *
- * Every limit below is measured on a deployed object, not inferred. They are constants here because
- * this project has repeatedly paid for platform limits that lived only in prose: the 100-parameter
- * ceiling broke the cache write path, and the 50-byte LIKE ceiling was believed to bind only `GLOB`.
- */
+// local copies of the `../util` helpers: `scripts/measure/heap-digest-cost.ts` runs this file under
+// plain node, which resolves no extensionless relative import
+const errorMessage = (e: unknown): string =>
+	String((e as { message?: unknown } | null | undefined)?.message ?? e);
+const firstRow = <T = Record<string, unknown>>(cursor: { toArray(): T[] }): T | undefined =>
+	cursor.toArray()[0];
 
-/**
- * Bytes per record in Durable Object SQLite. Measured; exceeding it is a hard error, not a truncation.
- */
+/** bytes per record in Durable Object SQLite; exceeding it is a hard error, not a truncation */
 export const DO_SQLITE_MAX_RECORD_BYTES = 2_199_995;
 
-/**
- * Statement text ceiling, in characters. This is why the heap NEVER goes through the base64 codec:
- * a base64 payload becomes statement TEXT and blows this, where a bound BLOB parameter does not.
- */
+/** statement text ceiling in characters (base64 becomes text and blows it; bound BLOBs do not) */
 export const DO_SQLITE_MAX_STATEMENT_CHARS = 100_000;
 
-/** One wasm page. Elision works at page granularity because that is how the heap is grown. */
+/** one wasm page; elision works at page granularity because the heap grows by pages */
 export const WASM_PAGE_BYTES = 65_536;
 
 /**
- * Default bytes per stored chunk.
+ * Default bytes per stored chunk, sized by the 10 ms CPU cap rather than the record cap.
  *
- * Sized by the CPU cap, not by the record cap, and the correction is measured.
- * The old default was 2,000,000 -- chosen because it fits `DO_SQLITE_MAX_RECORD_BYTES` -- and a
- * deployed sweep with `HEAP_RESTORE_CHUNKS=1` showed the record cap is not the binding constraint:
+ * Deployed sweep with `HEAP_RESTORE_CHUNKS=1`:
  *
  * | chunk bytes | rows | per-firing edge cpuTime | over the 10 ms cap |
  * | ----------- | ---- | ----------------------- | ------------------ |
@@ -35,14 +35,12 @@ export const WASM_PAGE_BYTES = 65_536;
  * | 400,000     | 21   | median 8, max 13 ms     | 4 of 21            |
  * | 200,000     | 41   | median 2, max 10 ms     | **0 of 41**        |
  *
- * So the goal of chunking -- one restore step inside one free-plan invocation -- only holds
- * at roughly this size. 41 rows for an 8.1 MB elided image is still a handful of reads, and rows are
- * not the meter that binds. Per-firing CPU tracks chunk size; the per-chunk digest is not what
- * scales it, at about 0.1 ms per 200,000 bytes on V8 (`scripts/measure/heap-digest-cost.ts`).
+ * One restore step fits one free-plan invocation only near this size. Per-firing CPU tracks chunk
+ * size; the digest is about 0.1 ms per 200,000 bytes (`scripts/measure/heap-digest-cost.ts`).
  */
 export const DEFAULT_CHUNK_BYTES = 200_000;
 
-/** DDL for the snapshot tables. Two tables: one row of metadata, N rows of bytes. */
+/** ddl for the snapshot tables: one metadata row, N chunk rows of bytes */
 export const HEAP_SNAPSHOT_DDL = `
 CREATE TABLE IF NOT EXISTS cfw_heap_snapshot (
 	id INTEGER PRIMARY KEY,
@@ -71,8 +69,7 @@ CREATE TABLE IF NOT EXISTS cfw_heap_chunk (
 /**
  * A heap with its all-zero pages removed, plus the index needed to put them back.
  *
- * `pageIndex` holds the page numbers that were KEPT, ascending. Everything not listed was all zero
- * and is restored as zero, which is what a fresh `WebAssembly.Memory` already contains.
+ * `pageIndex` lists the kept page numbers; every page not listed was all zero and restores as zero.
  */
 export type ElidedHeap = {
 	/** the retained pages, concatenated in `pageIndex` order */
@@ -88,26 +85,22 @@ export type ElidedHeap = {
 };
 
 /**
- * Copies a heap out of wasm memory into a plain array so it can be stored.
+ * Copies a heap out of wasm memory so it can be stored.
  *
- * This function exists because of a silent-failure trap. `someUint8Array.set(arrayBuffer)` copies
- * **zero bytes** and throws nothing -- the destination stays zeroed and the snapshot looks like it
- * worked until the restore renders an empty page. An `ArrayBuffer` is not an array-like, so `set()`
- * treats it as having no indexed properties and length 0. It must be wrapped in a view first.
- *
- * Wrapping also detaches the result from the live `WebAssembly.Memory`, which matters: the buffer a
- * growing heap hands out can be replaced, so a stored reference would read the wrong bytes later.
+ * `uint8.set(arrayBuffer)` copies zero bytes and throws nothing (an `ArrayBuffer` is not
+ * array-like), so the source is wrapped in a view first. The copy also detaches from the live
+ * `WebAssembly.Memory`, whose buffer is replaced on growth.
  */
 export function toStorableBytes(src: ArrayBuffer | ArrayBufferLike | Uint8Array): Uint8Array {
 	const view = src instanceof Uint8Array ? src : new Uint8Array(src);
-	// slice() rather than a view: a copy that cannot be invalidated by a later memory.grow()
+	// a copy, not a view (a later memory.grow() cannot invalidate it)
 	return view.slice();
 }
 
 /**
- * True when every byte in `[from, to)` is zero, read a word at a time: 3.93x the byte form over a
- * 96 MiB heap. Head and tail stay bytewise because a `Uint32Array` view needs a 4-aligned ABSOLUTE
- * offset, and a page boundary always is one.
+ * True when every byte in `[from, to)` is zero, read a word at a time (3.93x the byte form on a
+ * 96 MiB heap). Head and tail stay bytewise: a `Uint32Array` view needs a 4-aligned absolute
+ * offset.
  */
 function isZeroRange(bytes: Uint8Array, from: number, to: number): boolean {
 	let i = from;
@@ -133,10 +126,8 @@ function isZeroRange(bytes: Uint8Array, from: number, to: number): boolean {
 /**
  * Drops all-zero pages from a heap.
  *
- * Measured on a booted Drupal heap: 80,543,744 bytes goes to 39,911,590 raw, so slightly over half
- * the image is pages that a fresh instance already has. Compression is a SEPARATE and conditional
- * decision -- elision is free and always correct, compression trades boot CPU for bytes at rest and
- * only pays when the measurement says the bytes are needed.
+ * A booted Drupal heap goes from 80,543,744 to 39,911,590 bytes raw. Elision is free; compression
+ * (see {@link packChunk}) trades boot CPU for bytes at rest.
  */
 export function elideZeroPages(heap: Uint8Array, pageBytes = WASM_PAGE_BYTES): ElidedHeap {
 	if (pageBytes <= 0) throw new RangeError('pageBytes must be positive');
@@ -164,8 +155,8 @@ export function elideZeroPages(heap: Uint8Array, pageBytes = WASM_PAGE_BYTES): E
 /**
  * Rebuilds the full heap from an elided one. Pages not in `pageIndex` come back as zero.
  *
- * The result is `byteLength` long, NOT `totalPages * pageBytes`, because the last page is usually
- * partial and a heap that is even one byte too long shifts nothing but still fails a digest compare.
+ * The result is `byteLength` long, not `totalPages * pageBytes` (the last page is usually partial,
+ * and one extra byte fails the digest compare).
  */
 export function reassembleHeap(elided: ElidedHeap, pageBytes = WASM_PAGE_BYTES): Uint8Array {
 	const full = new Uint8Array(elided.byteLength);
@@ -178,8 +169,7 @@ export function reassembleHeap(elided: ElidedHeap, pageBytes = WASM_PAGE_BYTES):
 		at += len;
 	}
 	if (at !== elided.bytes.length) {
-		// a mismatch means the index and the payload disagree, which would restore a plausible but
-		// wrong heap -- refuse rather than hand back something that renders
+		// index and payload disagree; refuse rather than restore a plausible wrong heap
 		throw new Error(`page index consumed ${at} of ${elided.bytes.length} bytes`);
 	}
 	return full;
@@ -188,29 +178,19 @@ export function reassembleHeap(elided: ElidedHeap, pageBytes = WASM_PAGE_BYTES):
 /**
  * Deflates one chunk for storage, or hands it back unpacked when packing it gains nothing.
  *
- * A stored image is 69% of what a site occupies, and free's 5 GB is an account-wide HARD CAP that no
- * rate meter reports -- so an account reaches it at ~315 sites with every other number healthy.
- * Measured on a provisioned site's own image, 11,206,656 bytes in 57 chunks: **3.54x per chunk**,
- * against 3.565x for one member over the whole image. Splitting the stream costs 0.7% of the ratio
- * and is what keeps the restore able to hold one chunk at a time.
+ * An image is 69% of a site's storage and free's 5 GB is an account-wide hard cap. Measured on an
+ * 11,206,656-byte image in 57 chunks: 3.54x per chunk against 3.565x for the whole image.
  *
- * PER CHUNK RATHER THAN PER IMAGE, and that is a requirement rather than a preference.
- * {@link streamRestoreInto} never allocates more than one chunk because the isolate ceiling is
- * non-monotone -- a 128 MiB allocation failed where 160 MiB succeeded -- so an image that must be
- * inflated whole would pass every test and then fail in production. One member per chunk is
- * addressable by `seq`; one member per image is not.
+ * It is per chunk by requirement: {@link streamRestoreInto} holds one chunk at a time because the
+ * isolate memory ceiling is non-monotone (a 128 MiB allocation failed where 160 MiB succeeded).
+ * `deflateSync` keeps both sides synchronous.
  *
- * `deflateSync` rather than `CompressionStream` so both sides stay synchronous and no call site
- * changes. fflate is already in the shipping bundle through `src/drupal/zlib-fix.ts`.
- *
- * @returns the bytes to store, and `rawBytes` -- the inflated length, or 0 when the bytes are
- *   stored as they came. Zero is also what every chunk written before this column existed reads,
- *   so the marker doubles as the migration.
+ * @returns the bytes to store, and `rawBytes` (the inflated length, or 0 when stored as they came;
+ *   0 is also what rows written before the column read, so it doubles as the migration)
  */
 export function packChunk(bytes: Uint8Array): { stored: Uint8Array; rawBytes: number } {
 	const packed = deflateSync(bytes);
-	// no chunk of a real image has expanded (worst measured 0.719), but already-compressed bytes
-	// would; storing the larger form would cost storage AND inflate CPU for nothing
+	// no real chunk has expanded (worst ratio 0.719) but already-compressed bytes would
 	if (packed.length >= bytes.length) return { stored: bytes, rawBytes: 0 };
 	return { stored: packed, rawBytes: bytes.length };
 }
@@ -218,18 +198,13 @@ export function packChunk(bytes: Uint8Array): { stored: Uint8Array; rawBytes: nu
 /**
  * The inverse of {@link packChunk}: inflates a stored chunk back to the heap bytes.
  *
- * @param rawBytes the inflated length recorded with the row; 0 means the row holds heap bytes
- *   already, which is every row written before the column existed.
- * @throws when the inflated length disagrees with what was recorded. A chunk of the right length
- *   and the wrong content is this project's signature failure, so a disagreement refuses here
- *   rather than landing in the heap.
+ * @param rawBytes the inflated length recorded with the row; 0 means the row is already heap bytes
+ * @throws when the inflated length disagrees with the recorded one
  */
 export function unpackChunk(stored: Uint8Array, rawBytes: number): Uint8Array {
 	if (rawBytes <= 0) return stored;
-	// NO `{ out }` HINT. Passing a preallocated buffer makes fflate TRUNCATE to it and return
-	// quietly, so a row whose recorded length disagrees with its payload would inflate to exactly
-	// the length the check compares against -- right length, wrong content, which is the failure
-	// this whole file refuses. Same shape as `node:sqlite` cutting a TEXT value at its first NUL.
+	// no `{ out }` hint: fflate truncates to a preallocated buffer silently, which would pass the
+	// length check below with the wrong content
 	const out = inflateSync(stored);
 	if (out.length !== rawBytes) {
 		throw new Error(`chunk inflated to ${out.length} bytes, row recorded ${rawBytes}`);
@@ -243,8 +218,8 @@ export type HeapChunk = { seq: number; bytes: Uint8Array };
 /**
  * Splits bytes into rows that fit the record cap.
  *
- * Refuses a chunk size at or over the cap rather than letting SQLite reject the write halfway
- * through a snapshot, which would leave a partial image that looks storable.
+ * Refuses a chunk size at or over the cap up front, so SQLite cannot reject a write mid-snapshot
+ * and leave a partial image.
  */
 export function chunkHeap(bytes: Uint8Array, chunkBytes = DEFAULT_CHUNK_BYTES): HeapChunk[] {
 	if (chunkBytes <= 0) throw new RangeError('chunkBytes must be positive');
@@ -255,7 +230,7 @@ export function chunkHeap(bytes: Uint8Array, chunkBytes = DEFAULT_CHUNK_BYTES): 
 	}
 	const out: HeapChunk[] = [];
 	for (let at = 0, seq = 0; at < bytes.length; at += chunkBytes, seq++) {
-		// subarray would store a view onto the whole heap; slice keeps each row independent
+		// slice, not subarray (a view would pin the whole heap)
 		out.push({ seq, bytes: bytes.slice(at, Math.min(at + chunkBytes, bytes.length)) });
 	}
 	return out;
@@ -264,9 +239,8 @@ export function chunkHeap(bytes: Uint8Array, chunkBytes = DEFAULT_CHUNK_BYTES): 
 /**
  * Concatenates stored rows back into one buffer.
  *
- * Sorts by `seq` rather than trusting arrival order: SQLite returns rows in whatever order the query
- * plan produces, and an out-of-order join yields a heap that is the right LENGTH and wrong content,
- * which is the failure shape this project keeps producing.
+ * Sorts by `seq` (SQLite row order follows the query plan; an out-of-order join gives the right
+ * length and wrong content) and throws on a gap or a length mismatch.
  */
 export function joinChunks(chunks: HeapChunk[], expectedBytes?: number): Uint8Array {
 	const sorted = [...chunks].sort((a, b) => a.seq - b.seq);
@@ -287,20 +261,17 @@ export function joinChunks(chunks: HeapChunk[], expectedBytes?: number): Uint8Ar
 }
 
 /**
- * 128-bit FNV-1a over the heap: an equality assertion, not a cryptographic guarantee.
- *
- * It answers "are these the same bytes", which is the only question a restore asks.
+ * 128-bit FNV-1a over the heap: an equality check, not a cryptographic guarantee.
  */
 export function digestBytes(bytes: Uint8Array): string {
-	// four lanes, because 32 bits collides at 77,163 pages (213 sites) and a dedup-key collision
-	// serves one site another's memory. Lanes rather than BigInt: 23.7 MB a byte at a time
+	// four 32-bit lanes (one collides at 77,163 pages, ~213 sites, and a dedup collision serves
+	// another site's memory); lanes, not BigInt (23.7 MB a byte at a time)
 	let a = 0x811c9dc5;
 	let b = 0x01000193;
 	let c = 0x9e3779b9;
 	let d = 0x85ebca6b;
-	// a word per lane, 3.83x the byte form over 35 MB, native-endian (only ever compared against
-	// another from the same machine). An unaligned view is COPIED, not walked: word boundaries
-	// would otherwise fall differently and key the same bytes twice. No shipping caller is unaligned
+	// a word per lane (3.83x the byte form), native-endian; an unaligned view is copied so the same
+	// bytes always hash alike
 	if ((bytes.byteOffset & 3) !== 0) bytes = bytes.slice();
 	let i = 0;
 	const wordCount = bytes.length >>> 2;
@@ -318,8 +289,7 @@ export function digestBytes(bytes: Uint8Array): string {
 	for (; i < bytes.length; i++) {
 		d = Math.imul(d ^ (bytes[i] as number), 0x27d4eb2f) >>> 0;
 	}
-	// multiply carries propagate UPWARD only, so without a finalizer a flipped high bit never
-	// reaches the low ones and near-identical pages stay near-identical
+	// multiply carries only propagate upward, so the finalizer mixes high bits down
 	return fmix(a) + fmix(b) + fmix(c) + fmix(d);
 }
 
@@ -331,47 +301,33 @@ function fmix(h: number): string {
 }
 
 /**
- * The open file descriptors a restored heap must have, recorded at snapshot time.
+ * The open file descriptors a restored heap needs, at the same fd numbers (inodes do not matter).
  *
- * Measured on the standalone restore probe, and it inverted the hypothesis this code was written
- * against: inode alignment is NOT load-bearing (shifting every inode by 1 and by 500 both restored
- * byte-identically), but the open fd table IS, at the same fd numbers. Four descriptors. Dropping
- * `/dev/urandom`'s alone throws `RandomException`; dropping the three sqlite fds gives a
- * locking-protocol error after an **80-120 second stall**, which on the edge is a hung request
- * rather than an error -- so this is asserted BEFORE the memcpy and fails loudly.
+ * Dropping `/dev/urandom` throws `RandomException`; dropping the three sqlite fds stalls 80-120 s
+ * before a locking error, a hung request on the edge. So the table is asserted before the memcpy.
  */
 export type FdEntry = { fd: number; path: string; flags: number };
 
 /**
- * Paths whose absence from a NON-EMPTY capture means the table was reconstructed, not captured.
+ * Paths whose absence from a non-empty capture means the table was reconstructed, not captured.
  *
- * NOT a list of descriptors every runtime has, which is how it was being read and is where the false
- * alarm came from. On the Durable Object path the database is a HOST CALL rather than a file, so a
- * booted object legitimately has zero descriptors above stdio, and the check demanded a
- * `/dev/urandom` that is correctly absent. The four descriptors came from `static-free-v1`
- * STANDALONE, with a real `.sqlite` open on disk.
- *
- * What survives is the narrow inference: a runtime that opened ANY descriptor also opened
- * `/dev/urandom`, because PHP's CSPRNG does. So a capture that holds descriptors but no
- * `/dev/urandom` did not come from a live `captureStreams()` -- it was assembled somewhere else,
- * which is the failure this exists to catch.
+ * Not a list every runtime has: on the Durable Object path the database is a host call, so a
+ * booted object has no descriptors above stdio. A runtime with any descriptor also opened
+ * `/dev/urandom` (PHP's random source), so descriptors without it were assembled elsewhere.
  */
 export const RECONSTRUCTION_TELL_PATHS = ['/dev/urandom'] as const;
 
-/** @deprecated read `RECONSTRUCTION_TELL_PATHS`; this name reads as a requirement list and is not one */
+/** @deprecated use `RECONSTRUCTION_TELL_PATHS`; this name reads as a requirement list */
 export const REQUIRED_FD_PATHS = RECONSTRUCTION_TELL_PATHS;
 
 /**
  * Compares a live fd table against the snapshot's.
  *
- * Returns the problems rather than throwing, so a caller can report all of them at once: a restore
- * that fails on the second of four descriptors after an 80-second stall is much harder to diagnose
- * than one that names all four up front.
+ * Returns every problem instead of throwing, so a caller names them all up front.
  */
 export function fdTableProblems(snapshot: FdEntry[], live: FdEntry[]): string[] {
 	const problems: string[] = [];
-	// nothing captured is not a missing capture. An empty table replays to an empty table, so there is
-	// nothing a restore can get wrong -- this is the DO path, where the database is a host call
+	// an empty capture replays to an empty table (the DO path, where the database is a host call)
 	if (snapshot.length === 0) return problems;
 
 	const liveByFd = new Map(live.map((e) => [e.fd, e]));
@@ -381,8 +337,7 @@ export function fdTableProblems(snapshot: FdEntry[], live: FdEntry[]): string[] 
 			problems.push(`fd ${want.fd} (${want.path}) is not open`);
 			continue;
 		}
-		// same NUMBER and same path: a matching path at a different fd still breaks, because the heap
-		// holds the integer
+		// the heap holds the fd number, so a matching path at another number still breaks
 		if (got.path !== want.path) {
 			problems.push(`fd ${want.fd} is ${got.path}, snapshot had ${want.path}`);
 		}
@@ -401,10 +356,8 @@ export function fdTableProblems(snapshot: FdEntry[], live: FdEntry[]): string[] 
 /**
  * One open descriptor, in the form a restore needs it.
  *
- * `fd` is the load-bearing field: the heap holds descriptor NUMBERS, so a correct path reopened at
- * a different number still breaks. `position` matters for the same reason -- a replayed handle at
- * offset 0 against a heap that believes it is mid-file reads the wrong bytes and returns them
- * happily.
+ * `fd` and `position` both matter: the heap holds the descriptor number, and a handle replayed at
+ * offset 0 against a heap that believes it is mid-file reads the wrong bytes without error.
  */
 export type StreamRecord = {
 	fd: number;
@@ -441,12 +394,8 @@ export interface StreamFS {
 /**
  * Every open descriptor above stdio.
  *
- * Starts at 3: 0/1/2 are stdio, which emscripten sets up for every instance, so
- * replaying them would fight the runtime rather than restore anything.
- *
- * Ported from the restore probe rather than reimplemented -- that code is the only version of this
- * that has been proven against a real restore, and `src/probes/**` are frozen instruments that
- * must not be edited, so the logic is promoted here instead.
+ * Starts at 3: emscripten sets up 0/1/2 (stdio) for every instance, so replaying them would fight
+ * the runtime.
  */
 export function captureStreams(FS: StreamFS): StreamRecord[] {
 	const out: StreamRecord[] = [];
@@ -467,25 +416,16 @@ export function captureStreams(FS: StreamFS): StreamRecord[] {
 }
 
 /**
- * One vrzno handle, recorded as a NAME rather than as the object it points at.
+ * One vrzno handle, recorded as a name rather than the object it points at.
  *
- * MEASURED, and it falsifies what this project wrote down twice. `Module.targets` is a
- * `UniqueIndex`: `add(obj)` hands out `++this.id` and the PHP side stores that INTEGER inside the
- * heap. So a handle taken before a snapshot is an index into a JS table that a fresh instance does
- * not have, and the glue's call thunk is
- * `const target = Module.targets.get($0); ... target(...args)` -- an absent entry is `undefined`
- * and the call dies as **`TypeError: target is not a function`**, uncatchable from PHP.
+ * `Module.targets.add(obj)` hands out `++this.id` and the PHP heap stores that integer, so after a
+ * restore into a fresh instance the call dies as an uncatchable `TypeError: target is not a
+ * function`. `CfwSqlClient::$execFunction` is resolved once and memoised into the kernel, so it
+ * goes stale (`vrzno_env()` re-resolves at call time).
  *
- * That is exactly what a render through a restored heap did on a deployed worker, and it is why
- * "no handle-table replay was needed" was wrong: `vrzno_env()` re-resolves `Module[$name]` at CALL
- * time, so the `op=bridge` probe mints a fresh handle and passes, while
- * `CfwSqlClient::$execFunction` -- resolved ONCE in the constructor and memoised into the booted
- * kernel -- is a stale integer the moment the heap is restored into a new instance.
- *
- * A name rather than a reference because a reference cannot survive the isolate. `globalThis` and
- * the `cfw*` host functions hung off the Module are reproducible by name in any fresh instance; an
- * arbitrary object (a `Response`, an `ArrayBuffer`) is not, which is why capture reports what it
- * could NOT name instead of silently dropping it.
+ * A name survives the isolate where a reference cannot: `globalThis` and the `cfw*` Module
+ * functions resolve by name in any instance, an arbitrary object does not, so capture reports what
+ * it could not name instead of dropping it.
  */
 export type HandleRecord = { id: number; name: string };
 
@@ -495,9 +435,8 @@ export const GLOBAL_HANDLE_NAME = '@globalThis';
 /**
  * The `Module.targets` surface capture and replay touch, and nothing wider.
  *
- * `byInteger` is php-wasm's `WeakerMap`, which is iterable and holds `[id, object]`; `byObject` is
- * a real `WeakMap`. `id` is a plain writable property, and writing it is load-bearing: without it
- * the next `add()` would re-issue an id the restored heap already believes it owns.
+ * `byInteger` is php-wasm's iterable `WeakerMap` of `[id, object]`; `byObject` is a `WeakMap`. `id`
+ * must be written on replay or the next `add()` re-issues an id the heap already owns.
  */
 export interface HandleIndex {
 	byObject: { set(key: object, id: number): unknown };
@@ -511,7 +450,7 @@ export interface HandleIndex {
 /** what a capture found, split into what can be restored and what cannot */
 export type HandleCapture = {
 	handles: HandleRecord[];
-	/** handles whose object has no name in a fresh instance; a restore MUST refuse on these */
+	/** handles whose object has no name in a fresh instance; a restore must refuse on these */
 	unnameable: Array<{ id: number; kind: string }>;
 };
 
@@ -527,15 +466,12 @@ function describeValue(value: unknown): string {
 /**
  * Records the live vrzno handle table as names.
  *
- * Resolution is BY VALUE against the Module's own keys plus the global object, because that is the
- * only naming a fresh instance can reproduce: `vrzno_env($name)` reaches `Module[$name]`, so every
- * handle PHP can legitimately have acquired is either the global or something the Module hangs.
- *
- * Reads of Module keys are individually guarded: an emscripten Module carries accessor properties,
- * and one throwing getter must not cost the whole snapshot its handle table.
+ * Names resolve by value against the Module's keys plus the global object (`vrzno_env($name)`
+ * reaches `Module[$name]`, so those are the only handles PHP can hold). Each key read is guarded,
+ * since one throwing accessor must not cost the snapshot its handle table.
  */
 export function captureHandles(
-	index: HandleIndex | null | undefined,
+	index: HandleIndex | undefined,
 	module: Record<string, unknown>,
 	root: unknown = globalThis
 ): HandleCapture {
@@ -575,18 +511,15 @@ export type HandleReplayResult = {
 };
 
 /**
- * Re-registers each captured handle AT THE SAME INTEGER ID.
+ * Re-registers each captured handle at the same integer id, in ascending order, and raises
+ * `index.id` to the highest one. An id that lands elsewhere silently calls the wrong object, and a
+ * low `index.id` lets the next `add()` reuse an owned id.
  *
- * Ascending id order, and `index.id` is raised to the highest one seen. Both matter: the PHP heap
- * holds the integers, so an id that lands anywhere else is a handle pointing at the wrong object --
- * which does not throw, it silently calls something else. Leaving `index.id` low is the same defect
- * one step later, because the next `add()` would hand a fresh object an id the heap already owns.
- *
- * Failures are collected rather than thrown so the caller can refuse the restore BEFORE the memcpy
- * and name every bad handle at once, exactly as `replayStreams` does for descriptors.
+ * Failures are collected so the caller can refuse the restore before the memcpy, as `replayStreams`
+ * does for descriptors.
  */
 export function replayHandles(
-	index: HandleIndex | null | undefined,
+	index: HandleIndex | undefined,
 	module: Record<string, unknown>,
 	handles: HandleRecord[],
 	root: unknown = globalThis
@@ -608,7 +541,7 @@ export function replayHandles(
 		try {
 			value = h.name === GLOBAL_HANDLE_NAME ? root : module[h.name];
 		} catch (e) {
-			out.failed.push({ id: h.id, name: h.name, error: String((e as Error)?.message ?? e) });
+			out.failed.push({ id: h.id, name: h.name, error: errorMessage(e) });
 			continue;
 		}
 		if (typeof value !== 'function' && (typeof value !== 'object' || value === null)) {
@@ -625,7 +558,7 @@ export function replayHandles(
 			if (index.id < h.id) index.id = h.id;
 			out.replayed.push(h);
 		} catch (e) {
-			out.failed.push({ id: h.id, name: h.name, error: String((e as Error)?.message ?? e) });
+			out.failed.push({ id: h.id, name: h.name, error: errorMessage(e) });
 		}
 	}
 	out.nextId = index.id;
@@ -639,18 +572,11 @@ export type ReplayResult = {
 };
 
 /**
- * Reopens each captured descriptor AT THE SAME fd NUMBER.
+ * Reopens each captured descriptor at the same fd number.
  *
- * `FS.open()` returns the next free descriptor, which is not necessarily the one the image
- * expects, so the stream is relocated afterwards and the vacated slot nulled.
- *
- * The numeric flags go back in as-is: they came out of a real open, and the node ops then see
- * exactly the mode PHP opened with. Measured without this -- dropping
- * `/dev/urandom` alone throws `RandomException`, and dropping the three sqlite descriptors gives a
- * locking-protocol error **after an 80-120 second stall**, which on the edge is a hung request
- * rather than an error. That is why failures are collected and returned rather than thrown past:
- * the caller must be able to refuse the restore BEFORE the memcpy, naming every bad descriptor at
- * once.
+ * `FS.open()` returns the next free descriptor, so the stream is relocated and the vacated slot
+ * nulled. The numeric flags go back as-is so the node ops see the mode PHP opened with. Failures
+ * are returned, not thrown, so the caller can refuse the restore before the memcpy.
  */
 export function replayStreams(FS: StreamFS, streams: StreamRecord[]): ReplayResult {
 	const out: ReplayResult = { replayed: [], failed: [] };
@@ -665,8 +591,7 @@ export function replayStreams(FS: StreamFS, streams: StreamRecord[]): ReplayResu
 			stream.position = s.position;
 			out.replayed.push({ fd: s.fd, path: s.path, position: s.position });
 		} catch (e) {
-			const err = e as { message?: string };
-			out.failed.push({ fd: s.fd, path: s.path, error: String(err?.message ?? e) });
+			out.failed.push({ fd: s.fd, path: s.path, error: errorMessage(e) });
 		}
 	}
 	return out;
@@ -675,19 +600,17 @@ export function replayStreams(FS: StreamFS, streams: StreamRecord[]): ReplayResu
 /**
  * The `ctx.storage.sql` surface this module needs, and nothing wider.
  *
- * Narrow: it makes the read/write path drivable from a unit test with a fake, which is
- * the only way to test a Durable Object's storage without a Durable Object.
+ * Narrow so a unit test can drive the read/write path with a fake.
  */
 export interface HeapSql {
-	// NOT generic: the platform's `exec()` returns Record<string, SqlStorageValue>[],
-	// and a generic T is too permissive to accept it. Rows are narrowed at each use instead
+	// not generic: the platform's `exec()` returns Record<string, SqlStorageValue>[]; rows are
+	// narrowed at each use
 	exec(
 		query: string,
 		...bindings: Array<null | number | bigint | string | Uint8Array>
 	): {
 		toArray(): Array<Record<string, unknown>>;
-		// the DO cursor is iterable, and iterating is what keeps a restore from materializing every
-		// row before a single byte moves
+		// iterating keeps a restore from materializing every row up front
 		[Symbol.iterator](): Iterator<Record<string, unknown>>;
 	};
 }
@@ -706,7 +629,7 @@ export type SnapshotMeta = {
 	createdAt: number;
 };
 
-/** whether a table already carries a column, so an ALTER can be skipped rather than attempted */
+/** whether a table already carries a column, so `ALTER` can be skipped */
 function hasColumn(sql: HeapSql, table: string, column: string): boolean {
 	return (
 		sql.exec(`SELECT name FROM pragma_table_info(?) WHERE name = ?`, table, column).toArray()
@@ -714,17 +637,14 @@ function hasColumn(sql: HeapSql, table: string, column: string): boolean {
 	);
 }
 
+/** creates the snapshot tables and adds any column an older deployed table lacks */
 export function ensureHeapTables(sql: HeapSql): void {
 	for (const stmt of HEAP_SNAPSHOT_DDL.split(';')) {
 		const t = stmt.trim();
 		if (t) sql.exec(`${t};`);
 	}
-	// a table created before a column existed keeps its old shape under CREATE TABLE IF NOT EXISTS,
-	// and a deployed object carries one; the ALTER is the only thing that adds it.
-	//
-	// CHECKED, NOT ATTEMPTED AND CAUGHT. A failing ALTER still dirties `sqlite_master`, and doing
-	// that on every call took the serve path into `migrate: starting` on 2 of 3 runs elsewhere in
-	// this codebase -- the exception is not the cost, attempting the statement is.
+	// check before `ALTER`, never catch (a failing one dirties `sqlite_master` and sent the serve
+	// path into `migrate: starting`)
 	if (!hasColumn(sql, 'cfw_heap_snapshot', 'handle_table')) {
 		sql.exec(
 			`ALTER TABLE cfw_heap_snapshot ADD COLUMN handle_table TEXT NOT NULL DEFAULT '[]';`
@@ -738,13 +658,9 @@ export function ensureHeapTables(sql: HeapSql): void {
 /**
  * Writes a heap into the object's own SQLite.
  *
- * Elide, chunk, then insert each chunk as a BOUND BLOB PARAMETER. The binding is not a style
- * choice: a base64 payload would become statement TEXT and blow the 100,000-character statement
- * ceiling long before the record cap, which is why the codec is bypassed entirely here.
- *
- * The fd table goes in the metadata row rather than being derived on restore. It is the
- * load-bearing part of a restore, so it is stored WITH the bytes it belongs to -- a snapshot whose
- * descriptor table is reconstructed from a different instance's state is not a snapshot.
+ * Elides, chunks, then inserts each chunk as a bound BLOB parameter (base64 would become statement
+ * text and blow {@link DO_SQLITE_MAX_STATEMENT_CHARS}). The fd table is stored with the bytes it
+ * belongs to, never rebuilt from another instance.
  */
 export function writeHeapSnapshot(
 	sql: HeapSql,
@@ -792,8 +708,8 @@ export function writeHeapSnapshot(
 	};
 	const digest = digestBytes(heap);
 
-	const row = sql
-		.exec(
+	const row = firstRow(
+		sql.exec(
 			`INSERT INTO cfw_heap_snapshot
 				(created_at, byte_length, page_bytes, total_pages, kept_pages, page_index, chunk_bytes, digest, generation, fd_table, handle_table)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
@@ -809,30 +725,23 @@ export function writeHeapSnapshot(
 			JSON.stringify(opts.streams),
 			JSON.stringify(opts.handles ?? [])
 		)
-		.toArray()[0];
+	);
 	const id = Number(row?.id ?? 0);
 	if (!id) throw new Error('snapshot insert returned no id');
 
-	// one chunk-sized staging buffer, refilled in place. The kept pages are copied into it in
-	// order, so the byte stream is identical to elideZeroPages() + chunkHeap() and a restore reads
-	// it the same way -- `seq * chunkBytes` still locates a chunk in the elided stream
+	// one staging buffer refilled in place; the stream equals elideZeroPages() + chunkHeap(), so
+	// `seq * chunkBytes` still locates a chunk
 	const staging = new Uint8Array(chunkBytes);
 	let filled = 0;
 	let seq = 0;
 	let compressedBytes = 0;
 	const flush = () => {
 		if (filled === 0) return;
-		// sliced to its real length: the last chunk is short, and storing the whole staging
-		// buffer would pad the elided stream with zeroes a restore would then apply
+		// real length (the last chunk is short; padding would restore zeroes)
 		const bytes = staging.slice(0, filled);
 		const { stored, rawBytes } = packChunk(bytes);
-		// a digest PER CHUNK, not just for the whole heap: a streaming restore applies bytes as it
-		// reads them, so a whole-image check can only tell you afterwards that the heap is already
-		// wrong. This one refuses the chunk before it lands.
-		//
-		// Over the HEAP bytes rather than the stored ones, so it still means what it meant before
-		// the rows were packed: it catches a bad inflate as well as bad storage, and every row
-		// written before the codec existed verifies unchanged.
+		// per-chunk digest over the heap bytes: a streaming restore must refuse a chunk before it
+		// lands, and this also catches a bad inflate and verifies rows written before packing
 		sql.exec(
 			'INSERT INTO cfw_heap_chunk (snapshot_id, seq, bytes, digest, raw_bytes) VALUES (?, ?, ?, ?, ?)',
 			id,
@@ -863,9 +772,8 @@ export function writeHeapSnapshot(
 		id,
 		rows: seq,
 		storedBytes: elided.bytesLength,
-		// what the rows actually occupy, which is the figure the storage cap is spent in.
-		// `storedBytes` is the ELIDED HEAP length and stays that, because the restore's offset
-		// arithmetic is in those coordinates
+		// what the rows occupy (the storage cap's unit); `storedBytes` stays the elided length
+		// because restore offsets are in those coordinates
 		compressedBytes,
 		digest,
 		keptPages: elided.pageIndex.length
@@ -875,20 +783,17 @@ export function writeHeapSnapshot(
 /**
  * Whether the newest stored image predates the chunk codec, so re-imaging would shrink it.
  *
- * A SITE ALREADY DEPLOYED NEVER RE-IMAGES ON ITS OWN. The producer skips when the site's recorded
- * generation matches the current one, so an unpacked image sits there costing 3.57x its packed size
- * until the pack moves -- which is the shape of a change that reaches new sites and no existing one.
- * This is the predicate the alarm reads to clear that recorded generation once.
+ * The producer skips a site whose recorded generation is current, so an unpacked image (3.57x its
+ * packed size) would never re-image on its own; the alarm reads this to clear that generation once.
  *
- * A zero `raw_bytes` on ANY chunk is enough: the codec writes it on every packed row, and the one
- * legitimate zero is a chunk that could not be compressed, which does not happen on a heap image.
- * Answering true for such a site costs one re-image and nothing else.
+ * A zero `raw_bytes` on any chunk is enough (the codec writes it on every packed row, and only an
+ * incompressible chunk is legitimately zero); a false positive costs one re-image.
  *
- * @returns false when there is no image at all, since there is nothing to reclaim.
+ * @returns false when there is no image at all
  */
 export function hasUnpackedChunks(sql: HeapSql): boolean {
 	const meta = latestSnapshotMeta(sql);
-	if (meta === null) return false;
+	if (meta === undefined) return false;
 	return (
 		sql
 			.exec(
@@ -899,8 +804,8 @@ export function hasUnpackedChunks(sql: HeapSql): boolean {
 	);
 }
 
-/** the newest snapshot's metadata, or null when there is none */
-export function latestSnapshotMeta(sql: HeapSql, generation?: string): SnapshotMeta | null {
+/** the newest snapshot's metadata, or undefined when there is none */
+export function latestSnapshotMeta(sql: HeapSql, generation?: string): SnapshotMeta | undefined {
 	const rows = generation
 		? sql
 				.exec(
@@ -910,7 +815,7 @@ export function latestSnapshotMeta(sql: HeapSql, generation?: string): SnapshotM
 				.toArray()
 		: sql.exec('SELECT * FROM cfw_heap_snapshot ORDER BY id DESC LIMIT 1').toArray();
 	const r = rows[0];
-	if (!r) return null;
+	if (!r) return undefined;
 	return {
 		id: Number(r.id),
 		byteLength: Number(r.byte_length),
@@ -928,11 +833,14 @@ export function latestSnapshotMeta(sql: HeapSql, generation?: string): SnapshotM
 export function snapshotPageIndex(
 	sql: HeapSql,
 	id: number
-): { pageIndex: number[]; streams: StreamRecord[]; handles: HandleRecord[] } | null {
-	const row = sql
-		.exec('SELECT page_index, fd_table, handle_table FROM cfw_heap_snapshot WHERE id = ?', id)
-		.toArray()[0];
-	if (!row) return null;
+): { pageIndex: number[]; streams: StreamRecord[]; handles: HandleRecord[] } | undefined {
+	const row = firstRow(
+		sql.exec(
+			'SELECT page_index, fd_table, handle_table FROM cfw_heap_snapshot WHERE id = ?',
+			id
+		)
+	);
+	if (!row) return undefined;
 	return {
 		pageIndex: JSON.parse(String(row.page_index ?? '[]')) as number[],
 		streams: JSON.parse(String(row.fd_table ?? '[]')) as StreamRecord[],
@@ -943,21 +851,15 @@ export function snapshotPageIndex(
 /**
  * Reads a snapshot back and rebuilds the heap.
  *
- * **The digest is verified and a mismatch REFUSES.** That check is the whole reason the digest is
- * stored: a heap that is the right length and the wrong bytes restores cleanly and then renders
- * something subtly wrong, which is this project's signature failure. Refusing costs one boot;
- * accepting costs a silently incorrect site.
- *
- * `ORDER BY seq` is belt and braces -- `joinChunks` sorts and checks for gaps anyway, because
- * SQLite makes no promise about row order and an out-of-order join produces a right-length,
- * wrong-content heap.
+ * A digest mismatch throws: a right-length wrong-bytes heap restores cleanly and renders subtly
+ * wrong, so refusing (one boot) beats accepting. `joinChunks` also sorts and checks gaps.
  */
 export function readHeapSnapshot(
 	sql: HeapSql,
 	opts: { generation?: string } = {}
-): { heap: Uint8Array; streams: StreamRecord[]; meta: SnapshotMeta } | null {
+): { heap: Uint8Array; streams: StreamRecord[]; meta: SnapshotMeta } | undefined {
 	const meta = latestSnapshotMeta(sql, opts.generation);
-	if (!meta) return null;
+	if (!meta) return undefined;
 
 	const chunkRows = sql
 		.exec(
@@ -967,9 +869,9 @@ export function readHeapSnapshot(
 		.toArray();
 	if (chunkRows.length === 0) throw new Error(`snapshot ${meta.id} has no chunks`);
 
-	const fdRow = sql
-		.exec('SELECT page_index, fd_table FROM cfw_heap_snapshot WHERE id = ?', meta.id)
-		.toArray()[0];
+	const fdRow = firstRow(
+		sql.exec('SELECT page_index, fd_table FROM cfw_heap_snapshot WHERE id = ?', meta.id)
+	);
 	const pageIndex = JSON.parse(String(fdRow?.page_index ?? '[]')) as number[];
 	const streams = JSON.parse(String(fdRow?.fd_table ?? '[]')) as StreamRecord[];
 
@@ -985,11 +887,9 @@ export function readHeapSnapshot(
 					)
 				};
 			} catch (e) {
-				// this reader assembles before it applies, so nothing has landed; the digest
-				// vocabulary is kept anyway so both readers refuse in the same words
+				// nothing has landed yet; same wording as the streaming reader
 				throw new Error(
-					`snapshot ${meta.id} chunk ${seq} did not inflate: ` +
-						String((e as Error)?.message ?? e)
+					`snapshot ${meta.id} chunk ${seq} did not inflate: ` + errorMessage(e)
 				);
 			}
 		})
@@ -1017,9 +917,8 @@ export function readHeapSnapshot(
 /**
  * Where one kept page lives, in both coordinate systems.
  *
- * A restore has to map an offset in the ELIDED stream (what the chunks concatenate to) onto an offset
- * in the heap (where the page belongs). Precomputing the map is what lets a chunk be applied without
- * ever assembling the elided stream.
+ * Maps an offset in the elided stream (what chunks concatenate to) onto the heap, so a chunk
+ * applies without assembling the stream.
  */
 type PageSpan = { elidedStart: number; heapStart: number; length: number };
 
@@ -1044,15 +943,15 @@ export function pageSpans(
 /**
  * A chunk whose stored bytes disagree with its stored digest.
  *
- * Typed rather than a bare `Error` because `bytesWritten` decides what the CALLER owes. A refusal on
- * the first chunk leaves the heap untouched and costs one boot from the pack; a refusal at chunk N
- * has already applied N chunks, so the live heap is now the right LENGTH and the wrong BYTES and
- * must be thrown away rather than booted. A boolean-free `Error` cannot tell those apart, and the
- * boot path was treating both as the cheap case.
+ * `bytesWritten` says what the caller owes: on the first chunk the heap is untouched (boot from
+ * the pack); at chunk N the heap has the right length and wrong bytes and must be dropped.
  */
 export class HeapChunkDigestError extends Error {
+	/** the chunk sequence number that failed */
 	readonly seq: number;
+	/** the digest stored with the chunk */
 	readonly expected: string;
+	/** the digest of the bytes read, or why they would not inflate */
 	readonly actual: string;
 	/** bytes this call had already applied to the live heap before it refused */
 	readonly bytesWritten: number;
@@ -1090,29 +989,16 @@ export type StreamRestoreResult = {
 };
 
 /**
- * Applies a stored snapshot DIRECTLY into a live heap, one chunk at a time.
+ * Applies a stored snapshot directly into a live heap, one chunk at a time.
  *
- * **Nothing larger than a single chunk is ever allocated.** That is a hard requirement rather than an
- * optimisation, and it comes from a measurement: the isolate memory ceiling is **non-monotone** --
- * a 128 MiB allocation failed while 160 MiB succeeded -- because it is an isolate-wide budget shared
- * with whatever else a reused isolate holds. A restore that materialises the image will therefore
- * pass N times and then fail in production, which is the worst possible test signal. The previous
- * implementation allocated the row array, the joined buffer AND the reassembled heap: roughly 4x the
- * image.
+ * Nothing larger than one chunk is allocated: the isolate memory ceiling is non-monotone (128 MiB
+ * failed where 160 MiB succeeded), so materialising the image passes repeatedly, then fails in
+ * production. Each digest is checked before its chunk is applied. `DecompressionStream` is not
+ * used (15.7 ms per MB of output on the edge); fflate inflates synchronously.
  *
- * Compression is absent for the same reason it was disqualified rather than traded off:
- * `DecompressionStream` bills at **15.7 ms/MB of output** on the edge, so inflating a 22.4 MB
- * snapshot would cost ~350 ms of billed CPU -- 35x the free per-invocation cap -- against a memcpy
- * measured at roughly a tenth of that. The compressed form wins on rows and storage and loses on the
- * only meter that binds.
- *
- * Each chunk's digest is checked BEFORE its bytes are applied. A whole-image check cannot help a
- * streaming restore: by the time it fails, the heap is already wrong.
- *
- * @param sql The Durable Object's own SQL.
- * @param target The live heap. Written in place.
- * @param opts `from`/`limit` restrict the work to a slice of the chunk sequence, which is what makes
- *   a restore divisible across alarm invocations.
+ * @param sql - the Durable Object's own SQL
+ * @param target - the live heap, written in place
+ * @param opts - `from`/`limit` slice the chunk sequence so a restore divides across alarm firings
  */
 export function streamRestoreInto(
 	sql: HeapSql,
@@ -1129,9 +1015,9 @@ export function streamRestoreInto(
 
 	const totalChunks = Number(
 		(
-			sql
-				.exec('SELECT COUNT(*) AS n FROM cfw_heap_chunk WHERE snapshot_id = ?', meta.id)
-				.toArray()[0] as { n: number | bigint } | undefined
+			firstRow(
+				sql.exec('SELECT COUNT(*) AS n FROM cfw_heap_chunk WHERE snapshot_id = ?', meta.id)
+			) as { n: number | bigint } | undefined
 		)?.n ?? 0
 	);
 	const out: StreamRestoreResult = {
@@ -1144,8 +1030,7 @@ export function streamRestoreInto(
 		complete: false
 	};
 
-	// ORDER BY seq and ITERATE. `.toArray()` here would materialise every chunk row, which is the
-	// allocation this whole function exists to avoid
+	// iterate; `.toArray()` would materialise every chunk row
 	const cursor = sql.exec(
 		'SELECT seq, bytes, digest, raw_bytes FROM cfw_heap_chunk WHERE snapshot_id = ? AND seq >= ? ORDER BY seq',
 		meta.id,
@@ -1156,13 +1041,8 @@ export function streamRestoreInto(
 	for (const row of cursor) {
 		if (out.chunks >= limit) break;
 		const seq = Number(row.seq);
-		// inflated one chunk at a time, which is what keeps the peak allocation bounded: a packed
-		// image is 3.54x smaller and an inflated chunk is still only `chunkBytes`.
-		//
-		// A CHUNK THAT WILL NOT INFLATE IS A CORRUPTED CHUNK, and it has to arrive as the same
-		// verdict a bad digest does. `bytesWritten` decides what the caller owes -- a refusal on
-		// chunk 0 costs one boot, a refusal at chunk N leaves a right-length wrong-bytes heap that
-		// must be thrown away -- and a bare inflate error carries neither number
+		// a chunk that will not inflate is corrupt: report it as a digest error so the caller
+		// gets `bytesWritten`
 		let bytes: Uint8Array;
 		try {
 			bytes = unpackChunk(
@@ -1173,7 +1053,7 @@ export function streamRestoreInto(
 			throw new HeapChunkDigestError({
 				seq,
 				expected: String(row.digest ?? ''),
-				actual: `did not inflate: ${String((e as Error)?.message ?? e)}`,
+				actual: `did not inflate: ${errorMessage(e)}`,
 				bytesWritten: out.bytesWritten,
 				chunksApplied: out.chunks
 			});
@@ -1181,9 +1061,7 @@ export function streamRestoreInto(
 		const expected = String(row.digest ?? '');
 		const actual = digestBytes(bytes);
 		if (expected !== '' && actual !== expected) {
-			// refuse BEFORE applying. A corrupted chunk that lands leaves a heap that is the right
-			// length and the wrong bytes, which restores cleanly and then renders something subtly
-			// wrong -- this project's signature failure
+			// refuse before applying (a landed bad chunk restores cleanly and renders wrong)
 			throw new HeapChunkDigestError({
 				seq,
 				expected,
@@ -1197,8 +1075,7 @@ export function streamRestoreInto(
 		// this chunk covers [chunkStart, chunkStart + bytes.length) of the elided stream
 		const chunkStart = seq * (meta.chunkBytes ?? DEFAULT_CHUNK_BYTES);
 		const chunkEnd = chunkStart + bytes.length;
-		// advance to the first span this chunk touches; spans and chunks are both ascending, so the
-		// walk is linear rather than a search per chunk
+		// spans and chunks both ascend, so this walk is linear
 		while (
 			spanAt > 0 &&
 			spans[spanAt - 1] &&
@@ -1219,7 +1096,7 @@ export function streamRestoreInto(
 			const overlapStart = Math.max(sp.elidedStart, chunkStart);
 			const overlapEnd = Math.min(sp.elidedStart + sp.length, chunkEnd);
 			if (overlapEnd <= overlapStart) continue;
-			// subarray is a VIEW, not a copy: no allocation here
+			// a view, not a copy
 			target.set(
 				bytes.subarray(overlapStart - chunkStart, overlapEnd - chunkStart),
 				sp.heapStart + (overlapStart - sp.elidedStart)
@@ -1236,9 +1113,7 @@ export function streamRestoreInto(
 /**
  * Keeps the newest `keep` snapshots and deletes the rest.
  *
- * An unbounded snapshot table is the watchdog lesson repeated at 40 MB a row: the health ledger
- * grew to 46% of the database before it was capped. Chunks go first so a crash between the two
- * deletes leaves orphaned metadata rather than orphaned megabytes.
+ * Chunks go first, so a crash between the deletes leaves orphaned metadata rather than megabytes.
  */
 export function gcHeapSnapshots(sql: HeapSql, keep = 1): number {
 	if (keep < 1) throw new RangeError('keep must be at least 1');
@@ -1254,20 +1129,11 @@ export function gcHeapSnapshots(sql: HeapSql, keep = 1): number {
 }
 
 /**
- * Deletes every snapshot that is not for `generation`.
- *
- * A generation only moves forward, so an image for any other one can never be restored -- it is
- * dead storage, and at ~10 MB an image that is worth reclaiming rather than waiting for the next
- * write to garbage-collect.
- */
-/**
  * Deletes every snapshot, whatever generation it is for.
  *
- * The generation is the pack plus the enabled-module set, and neither moves when a reconciliation
- * step rewrites configuration -- so a step that changed the site would otherwise leave an image the
- * restore still considers valid, and the next boot would come back holding the kernel the step
- * exists to replace. `dropStaleSnapshots()` cannot serve this: it keeps exactly the generation that
- * is now wrong.
+ * The generation (pack plus enabled modules) does not move when a reconciliation step rewrites
+ * configuration, so the old image would still restore the kernel the step replaces.
+ * `dropStaleSnapshots()` cannot serve: it keeps exactly the generation that is now wrong.
  */
 export function dropAllSnapshots(sql: HeapSql): number {
 	const doomed = sql
@@ -1281,6 +1147,11 @@ export function dropAllSnapshots(sql: HeapSql): number {
 	return doomed.length;
 }
 
+/**
+ * Deletes every snapshot that is not for `generation`.
+ *
+ * A generation only moves forward, so an image for any other one is dead storage (~10 MB each).
+ */
 export function dropStaleSnapshots(sql: HeapSql, generation: string): number {
 	const doomed = sql
 		.exec('SELECT id FROM cfw_heap_snapshot WHERE generation IS NOT ?', generation)

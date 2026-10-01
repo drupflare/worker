@@ -1,5 +1,5 @@
 <div style="display: flex; align-items: center; flex-direction: column;" align="center">
-    <img align="center" style="align-self: center; max-width: 256px" src="https://docs.drupflare.com/drupflare.png" width="30%" alt="" />
+    <img align="center" style="align-self: center; max-width: 256px" src="https://drupflare-cdn.gmitch215.dev/drupflare.png" width="30%" alt="" />
     <h1 style="text-align: center;">Drupflare</h1>
     <p style="text-align: center;">Drupal 11 on Cloudflare Workers</p>
     <div align="center">

@@ -31,8 +31,8 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { drupalVersion, installedVersion } from './fetch-drupal-tree';
-import { markHydrating } from './hydrating.js';
-import { packVersionsHash } from './pack-hash.js';
+import { markHydrating } from './hydrating';
+import { packVersionsHash } from './pack-hash';
 
 /** an external program a step shells out to, and how to get it */
 export type ToolId = 'bun' | 'node' | 'php' | 'composer' | 'docker' | 'zstd' | 'git' | 'tar';

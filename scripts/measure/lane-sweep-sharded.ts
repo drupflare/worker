@@ -198,7 +198,6 @@ async function rampSolo(
 	return best;
 }
 
-/** candidate paths, wide enough to cover any pool this rig builds */
 /**
  * Candidate paths for one arm, bounded by the content it actually holds.
  *
@@ -227,6 +226,7 @@ async function nodeCount(base: string): Promise<number> {
 }
 
 const CANDIDATES_BY_ARM = new Map<string, string[]>();
+/** candidate paths, wide enough to cover any pool this rig builds */
 const candidates = (base: string): string[] => CANDIDATES_BY_ARM.get(base) ?? candidatesFor(2200);
 
 /**

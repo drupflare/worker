@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { packVersionsHash } from '../pack-hash.js';
+import { packVersionsHash } from '../pack-hash';
 
 /**
  * Whether the pack on disk and the tracked database were built from the same composer state.

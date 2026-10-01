@@ -3,9 +3,9 @@ import {
 	newestVersion,
 	verdictFor,
 	type Conflict
-} from '../../src/ops/packagist.js';
-import { SHIPPED_LOCK_VERSIONS } from '../../src/ops/shipped-lock.js';
-import { QA_MODULES } from './modules.js';
+} from '../../src/ops/packagist';
+import { SHIPPED_LOCK_VERSIONS } from '../../src/ops/shipped-lock';
+import { QA_MODULES } from './modules';
 
 /**
  * What `/installable` would answer if its metadata URL were right.

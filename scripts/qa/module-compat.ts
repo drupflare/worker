@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { classify, QA_MODULES, type QaResult, type Verdict } from './modules.js';
+import { classify, QA_MODULES, type QaResult, type Verdict } from './modules';
 
 /**
  * The contrib compatibility pass, against a real running site.

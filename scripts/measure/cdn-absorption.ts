@@ -19,8 +19,8 @@
  * {@link absorptionFromCounters} computes it the moment an operator supplies them.
  */
 
-import { drainPageMirrors, pageMirrorKey, type PageMirrorSql } from '../../src/ops/page-mirror.js';
-import { DEFAULT_MIX, optimalOffWorker, type TrafficMix } from './free-envelope.js';
+import { drainPageMirrors, pageMirrorKey, type PageMirrorSql } from '../../src/ops/page-mirror';
+import { DEFAULT_MIX, optimalOffWorker, type TrafficMix } from './free-envelope';
 
 /**
  * Extensions Cloudflare's CDN caches with no rule configured, transcribed from the docs table.

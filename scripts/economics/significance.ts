@@ -1,6 +1,6 @@
 /** What the numbers equate to, at realistic density, with equivalencies. */
-import { num, sweep } from './args.js';
-import { f, fr, n, nr, r } from './fmt.js';
+import { num, sweep } from './args';
+import { f, fr, n, nr, r } from './fmt';
 
 const SITES = sweep('sites', [1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000]);
 

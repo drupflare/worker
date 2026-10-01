@@ -10,7 +10,7 @@
  * class gets its own site and the two are reconciled by the allocation check.
  */
 
-import { WRITE_WORKLOADS, type WriteWorkload } from '../../src/drupal/site-php.js';
+import { WRITE_WORKLOADS, type WriteWorkload } from '../../src/drupal/site-php';
 import {
 	allocationAgreement,
 	cpuUnderstatement,
@@ -18,7 +18,7 @@ import {
 	flattenPeriodic,
 	sumRows,
 	type PeriodicRow
-} from './gbs-per-operation.js';
+} from './gbs-per-operation';
 
 /** what the route hands back; every field is a host-side delta around the one call */
 export type WriteSample = {

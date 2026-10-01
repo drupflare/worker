@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { parse } from 'yaml';
-import { startDevServer, type DevServer } from '../dev-server.js';
+import { startDevServer, type DevServer } from '../dev-server';
 import {
 	installPath,
 	lockedContrib,
@@ -42,7 +42,7 @@ import {
 	projectPlan,
 	upgradeNote,
 	type ProjectPlan
-} from './corpus-project.js';
+} from './corpus-project';
 import {
 	encodeForm,
 	ERROR_PAGE,
@@ -50,7 +50,7 @@ import {
 	hiddenFields,
 	sessionFrom,
 	textFields
-} from './live-deploy.js';
+} from './live-deploy';
 
 // #region the model, exported for the gate
 
@@ -653,11 +653,6 @@ async function termCrud(site: Local): Promise<{ ok: boolean; note: string }> {
 }
 
 /**
- * What a browser would submit for a form as rendered: every named input with a value, each checked
- * box or radio, each textarea and each select's selected option. A probe that sent only hidden fields
- * dropped a prefilled required value (farmOS's term weight renders as 0) and read the refusal as a gap.
- */
-/**
  * The owner token a claim answer hands the lane, setting the lane's password when the site was
  * already claimed.
  *
@@ -705,6 +700,11 @@ export async function claimOwner(
 /** an attribute by its own name; a bare `type="` also matches `data-paragraphs-split-text-type="` */
 const attr = (tag: string, name: string) => new RegExp(`\\s${name}="([^"]*)"`).exec(tag)?.[1];
 
+/**
+ * What a browser would submit for a form as rendered: every named input with a value, each checked
+ * box or radio, each textarea and each select's selected option. A probe that sent only hidden fields
+ * dropped a prefilled required value (farmOS's term weight renders as 0) and read the refusal as a gap.
+ */
 export function formValues(html: string): Record<string, string> {
 	const fields: Record<string, string> = {};
 	for (const tag of html.match(/<input[^>]*>/g) ?? []) {
@@ -890,7 +890,6 @@ export function infoRequires(root: string, modules: string[]): Record<string, st
 	return out;
 }
 
-/** what the repository's own composer.json requires beyond the platform and core */
 /** the names a repository's composer.json says it replaces */
 export function composerReplaces(root: string): Set<string> {
 	const file = join(root, 'composer.json');
@@ -899,6 +898,7 @@ export function composerReplaces(root: string): Set<string> {
 	return new Set(Object.keys(doc.replace ?? {}));
 }
 
+/** what the repository's own composer.json requires beyond the platform and core */
 export function composerRequires(root: string): Record<string, string> {
 	const file = join(root, 'composer.json');
 	if (!existsSync(file)) return {};
@@ -1254,11 +1254,6 @@ function enabler(site: Local, revive: () => Promise<void>) {
 	};
 }
 
-/**
- * Registry first: each required package goes through `/install?deps=1` at the version the lock
- * resolved, the modules the repository carries are uploaded, and every module the project's own
- * `core.extension` enables is enabled, in passes so a module can wait for its dependency.
- */
 /** each locked package through `/install?deps=1`, in the order the plan lists them */
 async function installPackages(
 	site: Local,
@@ -1284,7 +1279,6 @@ async function installPackages(
 	return { packages, failures };
 }
 
-/** every module and theme a Drupal database's core.extension enables */
 /** the module and theme names in a serialized core.extension */
 export function extensionNames(serialized: string): Set<string> {
 	return new Set(
@@ -1338,6 +1332,7 @@ const deliveredBy = new Map<string, { packages: string[]; custom: string[] }>();
 /** what each driven site enabled when its run ended, keyed by fixture */
 const enabledBy = new Map<string, string[]>();
 
+/** every module and theme a Drupal database's core.extension enables */
 export function enabledExtensions(db: string): Set<string> {
 	// not readOnly: under bun a read-only open of a WAL database with no -shm file cannot create one
 	const conn = new DatabaseSync(db);
@@ -1397,6 +1392,11 @@ async function uploadCustom(
 	return { uploaded, failures };
 }
 
+/**
+ * Registry first: each required package goes through `/install?deps=1` at the version the lock
+ * resolved, the modules the repository carries are uploaded, and every module the project's own
+ * `core.extension` enables is enabled, in passes so a module can wait for its dependency.
+ */
 async function deliverProject(
 	site: Local,
 	plan: ProjectPlan,
@@ -1529,7 +1529,6 @@ function messagesOf(body: string): string {
 	return found.length > 0 ? found.join(' | ').slice(0, 400) : 'no message on the page';
 }
 
-/** whether an updb drain answer says another beat is owed */
 /** the halt a drain ended on, which answers 200 with no `error`; null when the last beat ran clean */
 export function haltedBeat(json: Record<string, unknown>): string | null {
 	const beats = ((json['ran'] as { beats?: Record<string, unknown>[] } | undefined)?.beats ??
@@ -1539,6 +1538,7 @@ export function haltedBeat(json: Record<string, unknown>): string | null {
 	return `the run halted: ${String(last['reason'] ?? last['kind'])}${last['detail'] ? `: ${String(last['detail']).slice(0, 240)}` : ''}`;
 }
 
+/** whether an updb drain answer says another beat is owed */
 function moreBeats(json: Record<string, unknown>): boolean {
 	const beats = ((json['ran'] as { beats?: { more?: boolean }[] } | undefined)?.beats ?? []) as {
 		more?: boolean;

@@ -10,7 +10,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { writeStackFile } from './unicode-stack.js';
+import { writeStackFile } from './unicode-stack';
 
 const here = new URL('.', import.meta.url).pathname;
 const args = process.argv.slice(2);

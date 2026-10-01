@@ -13,9 +13,11 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { ICONV_STRRPOS } from '../../src/drupal/iconv-fix.js';
-import { MB_ASCII, MB_FIX, MB_SANITIZE } from '../../src/drupal/mb-fix.js';
-import { UNICODE_TABLES } from '../../src/drupal/unicode-tables.js';
+import { ICONV_STRRPOS } from '../../src/drupal/iconv-fix';
+import { MB_ASCII, MB_FIX } from '../../src/drupal/mb-fix';
+import { UNICODE_TABLES } from '../../src/drupal/unicode-tables';
+import { MB_FIX_PHP, MB_SANITIZE_PHP } from '../../src/site/generated/assets';
+import { hoistUses } from '../../src/util/php';
 
 /**
  * The generated table, in the SIBLING module rather than in `src/`.
@@ -30,15 +32,9 @@ export const TABLES = resolve(
 	'src/unicode-tables.php'
 );
 
-/** undoes the single-quoted PHP string escaping the eval() wrappers are written in */
-const unescapePhp = (s: string) => s.replace(/\\\\/g, '\\').replace(/\\'/g, "'");
-
-/** the sanitiser body, out of its eval() so `php -l` and a native runner see real source */
+/** the sanitiser body, unwrapped so `php -l` and a native runner see real source */
 export function sanitizeSource(): string {
-	const inner = MB_SANITIZE.match(/eval\('([\s\S]*)'\);\s*\}\s*$/)?.[1];
-	if (inner === undefined)
-		throw new Error('MB_SANITIZE no longer has the eval() shape this reads');
-	return unescapePhp(inner);
+	return MB_SANITIZE_PHP;
 }
 
 /** the mb_* names MB_FIX declares, read from the fragment rather than listed here */
@@ -59,9 +55,7 @@ export function wrappedFunctions(): string[] {
  * re-implementation would have seen. Measure the shipping function, not a model of it.
  */
 export function wrapperSource(): string {
-	const src = MB_FIX.match(/cfw_mb_installed\(\) \{ return true; \}([\s\S]*?)'\); \}\s*$/)?.[1];
-	if (src === undefined) throw new Error('MB_FIX no longer has the eval() shape this reads');
-	return unescapePhp(src);
+	return MB_FIX_PHP;
 }
 
 export interface StackFile {
@@ -90,15 +84,19 @@ export function writeStackFile(opts: { iconvFix?: boolean; tables?: string } = {
 		[
 			'<?php',
 			'namespace {',
-			'use Symfony\\Polyfill\\Iconv\\Iconv;',
-			// the seam the loader reads: on the edge the table is at its mounted path, here it is
-			// the sibling checkout the generator writes
-			`define('CFW_UNICODE_TABLES', ${JSON.stringify(tables)});`,
-			sanitizeSource(),
-			MB_ASCII,
-			UNICODE_TABLES,
-			iconvFix ? ICONV_STRRPOS : '',
-			`const CFW_WRAPPED = ${JSON.stringify(wrapped).replace(/"/g, "'")};`,
+			hoistUses(
+				[
+					'use Symfony\\Polyfill\\Iconv\\Iconv;',
+					// the seam the loader reads: on the edge the table is at its mounted path, here it
+					// is the sibling checkout the generator writes
+					`define('CFW_UNICODE_TABLES', ${JSON.stringify(tables)});`,
+					sanitizeSource(),
+					MB_ASCII,
+					UNICODE_TABLES,
+					iconvFix ? ICONV_STRRPOS : '',
+					`const CFW_WRAPPED = ${JSON.stringify(wrapped).replace(/"/g, "'")};`
+				].join('\n')
+			),
 			'}',
 			'namespace CfwShip {',
 			wrapperSource(),

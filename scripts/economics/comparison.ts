@@ -14,7 +14,7 @@
  *   bun scripts/economics/comparison.ts --md
  *   bun scripts/economics/comparison.ts --views=1000,10000 --grid-us=280
  */
-import { BREAK_EVEN_RENDERS_PER_DAY } from '../../src/ops/thermal.js';
+import { BREAK_EVEN_RENDERS_PER_DAY } from '../../src/ops/thermal';
 import {
 	DO_GB_ALLOCATED,
 	FREE_QUOTAS,
@@ -25,19 +25,19 @@ import {
 	WARM_INTERVAL_MS,
 	keepWarmFleetCost,
 	rowsForWarmthMix
-} from '../measure/free-envelope.js';
-import { pageStoreFraction } from '../measure/render-fraction.js';
-import { num, sweep } from './args.js';
-import { drupflareKwhYear, vpsKwhYear } from './energy.js';
-import { f, n, nr, r, sfx } from './fmt.js';
+} from '../measure/free-envelope';
+import { pageStoreFraction } from '../measure/render-fraction';
+import { num, sweep } from './args';
+import { drupflareKwhYear, vpsKwhYear } from './energy';
+import { f, n, nr, r, sfx } from './fmt';
 import {
 	CACHED_SERVE_TOTAL_MS as CPU_CACHED,
 	RENDER_WARM_BIN_MS as CPU_RENDER,
 	MJ_CACHED_VPS,
 	MJ_RENDER_VPS,
 	SITE_GB
-} from './measured.js';
-import { DURABLE_OBJECTS, WORKERS_PAID } from './rates.js';
+} from './measured';
+import { DURABLE_OBJECTS, WORKERS_PAID } from './rates';
 
 const VIEWS = sweep('views', [1_000, 10_000, 100_000, 1_000_000, 10_000_000]);
 const SITES = sweep('sites', [1, 10, 100, 1_000]);

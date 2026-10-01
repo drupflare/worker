@@ -9,9 +9,9 @@
  *   Boavizta platform_compute_medium embedded 900 kg CO2e (462-2,089)
  *   EIA 2025 US generation mix: ~41% gas + 17% coal + 0.7% petroleum = 58.7% fossil
  */
-import { num, sweep } from './args.js';
-import { WATER_DIRECT_L_PER_KWH, WATER_INDIRECT_L_PER_KWH } from './fleet.js';
-import { f, nr, r } from './fmt.js';
+import { num, sweep } from './args';
+import { WATER_DIRECT_L_PER_KWH, WATER_INDIRECT_L_PER_KWH } from './fleet';
+import { f, nr, r } from './fmt';
 
 const SITES = sweep('sites', [1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000]);
 

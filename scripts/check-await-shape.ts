@@ -26,6 +26,8 @@ const THENABLE = /^\s*(Promise|PromiseLike|Thenable)\s*</;
 type Decl = { name: string; file: string; line: number; async: boolean; returns: string | null };
 
 const declarations = new Map<string, Decl>();
+// a name exported from two files cannot be resolved by name alone, so it is never reported
+const ambiguous = new Set<string>();
 const files: string[] = [];
 for (const root of roots) {
 	for await (const file of new Glob('**/*.ts').scan({ cwd: root, absolute: true })) {
@@ -53,6 +55,7 @@ for (const file of files) {
 				break;
 		}
 		const ret = /\)\s*:\s*([^{]+?)\s*\{/.exec(tail);
+		if (declarations.has(name)) ambiguous.add(name);
 		declarations.set(name, {
 			name,
 			file,
@@ -95,9 +98,11 @@ for (const file of files) {
 	// a same-file declaration shadows the exported one of that name; the map is keyed by name alone,
 	// so without this an unrelated export elsewhere resolves the call and reports a correct line
 	const localFns = new Set(
-		[...text.matchAll(/^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)/gm)].map(
-			(d) => d[1] as string
-		)
+		[
+			...text.matchAll(
+				/^\s*(?:(?:export\s+)?(?:async\s+)?function\s+|(?:const|let)\s+)([A-Za-z0-9_$]+)/gm
+			)
+		].map((d) => d[1] as string)
 	);
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i] as string;
@@ -109,7 +114,7 @@ for (const file of files) {
 			// someone applies is to break it
 			if (chained(line, (m.index ?? 0) + m[0].length - 1)) continue;
 			const decl = declarations.get(callee);
-			if (!decl || decl.async) continue;
+			if (!decl || decl.async || ambiguous.has(callee)) continue;
 			if (decl.file !== file && localFns.has(callee)) continue;
 			// no annotation means the return type is inferred; unknown is not a finding
 			if (decl.returns === null) continue;

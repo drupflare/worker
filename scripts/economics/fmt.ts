@@ -5,9 +5,9 @@
  * rather than by reading, which is why these exist as one shared helper: `{x:>12,.0f}` and
  * `{x:>8.3f}` are the two shapes the models use everywhere, and hand-rolling them per file is how
  * a column drifts by a space and nobody notices.
+ *
+ * `{x:,.Nf}` -- thousands separators, fixed decimals.
  */
-
-/** `{x:,.Nf}` -- thousands separators, fixed decimals */
 export function n(x: number, decimals = 0): string {
 	return x.toLocaleString('en-US', {
 		minimumFractionDigits: decimals,

@@ -29,9 +29,7 @@ import { SHIPPING_PACK_CONTRIB, moduleTable } from '../src/ops/module-table';
  * precision the evidence does not have, and would go stale against drupal.org on its own schedule.
  * {@link CENSUS_CONSTRAINTS} carries the handful that cannot resolve from a bare name, and each entry
  * says why.
- */
-
-/**
+ *
  * DEV STABILITY, PREFERRING STABLE, and that replaces a list of per-package constraints.
  *
  * The tarball's manifest is `minimum-stability: stable`, and a census of 62 contributed modules

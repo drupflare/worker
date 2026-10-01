@@ -14,7 +14,7 @@
  * usage: bun scripts/measure/blake2b-parity.ts [--json]
  */
 import { spawnSync } from 'node:child_process';
-import { blake2bHostCall, emptyStates } from '../../src/drupal/sodium-fix.js';
+import { blake2bHostCall, emptyStates } from '../../src/drupal/sodium-fix';
 
 const asJson = process.argv.slice(2).includes('--json');
 

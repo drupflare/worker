@@ -14,7 +14,7 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { CMS_PREFIX, MODULE_SIDES, ROUTE_SIDES, type Side } from './cms-boundary';
+import { DIRECTORY_SIDES, MODULE_SIDES, ROUTE_SIDES, type Side } from './cms-boundary';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const SRC = join(ROOT, 'src');
@@ -126,13 +126,23 @@ function exportsOf(source: string): string[] {
 	return [...source.matchAll(EXPORTED)].map((m) => m[1] ?? '').filter(Boolean);
 }
 
+/** the side `DIRECTORY_SIDES` gives a module by its longest matching directory */
+function directorySide(rel: string): Side | undefined {
+	const dir = Object.keys(DIRECTORY_SIDES)
+		.filter((d) => rel.startsWith(d))
+		.sort((a, b) => b.length - a.length)[0];
+	return dir === undefined ? undefined : DIRECTORY_SIDES[dir];
+}
+
 function sideOf(rel: string): Side | undefined {
-	return rel.startsWith(CMS_PREFIX) ? 'cms' : MODULE_SIDES[rel];
+	return MODULE_SIDES[rel] ?? directorySide(rel);
 }
 
 /** the `DO_ROUTE` keys, read from source so the scan needs no worker runtime */
 function doRoutes(): string[] {
-	const block = /const DO_ROUTE[^=]*=\s*\{([\s\S]*?)\n\};/.exec(readFileSync(ENTRY, 'utf8'))?.[1];
+	const block = /const DO_ROUTE[^=]*=\s*\{([\s\S]*?)\n\};/.exec(
+		readFileSync(join(SRC, 'site/routes.ts'), 'utf8')
+	)?.[1];
 	return [...(block ?? '').matchAll(/^\s*'([^']+)':/gm)].map((m) => m[1] ?? '');
 }
 
@@ -145,6 +155,10 @@ type Boundary = {
 	violations: { file: string; imports: string[] }[];
 	unclassified: string[];
 	stale: string[];
+	/** `DIRECTORY_SIDES` keys that no scanned module sits under */
+	staleDirectories: string[];
+	/** `MODULE_SIDES` entries that repeat the side their directory already gives */
+	redundant: string[];
 	unclassifiedRoutes: string[];
 	staleRoutes: string[];
 };
@@ -178,6 +192,12 @@ function boundary(all: string[]): Boundary {
 		violations,
 		unclassified: modules.filter((r) => sideOf(r) === undefined),
 		stale: Object.keys(MODULE_SIDES).filter((r) => !present.has(r)),
+		staleDirectories: Object.keys(DIRECTORY_SIDES).filter(
+			(d) => !modules.some((r) => r.startsWith(d))
+		),
+		redundant: Object.entries(MODULE_SIDES)
+			.filter(([r, side]) => directorySide(r) === side)
+			.map(([r]) => r),
 		unclassifiedRoutes: routes.filter((r) => ROUTE_SIDES[r] === undefined),
 		staleRoutes: Object.keys(ROUTE_SIDES).filter((r) => !routes.includes(r))
 	};
@@ -292,7 +312,9 @@ function main(): void {
 			console.log(`  host imports cms: ${v.file} -> ${v.imports.join(', ')}`);
 		for (const u of [...cms.unclassified, ...cms.unclassifiedRoutes])
 			console.log(`  unclassified: ${u}`);
-		for (const s of [...cms.stale, ...cms.staleRoutes]) console.log(`  stale entry: ${s}`);
+		for (const s of [...cms.stale, ...cms.staleDirectories, ...cms.staleRoutes])
+			console.log(`  stale entry: ${s}`);
+		for (const r of cms.redundant) console.log(`  redundant entry: ${r}`);
 	}
 
 	if (strict && offEdge.length > 0) process.exit(1);

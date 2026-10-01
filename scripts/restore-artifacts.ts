@@ -32,8 +32,8 @@ import {
 	type ArchivedEntry,
 	type CdnManifest
 } from './backup-cdn';
-import { emitTunedGlue, glueFor } from './measure/growth-glue.js';
-import { emitTunedWasm, INITIAL_PAGES, mib } from './measure/initial-memory.js';
+import { emitTunedGlue, glueFor } from './measure/growth-glue';
+import { emitTunedWasm, INITIAL_PAGES, mib } from './measure/initial-memory';
 
 const ROOT = resolve(import.meta.dirname, '..');
 

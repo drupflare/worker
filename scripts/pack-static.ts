@@ -25,9 +25,9 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
  * matches `SERVED` by construction, so anything in the target that does NOT is a file it did not
  * generate and it stops rather than deleting it. Anything that does match and is no longer in the
  * source is pruned, because a stale asset served under a real URL is worse than a missing one.
+ *
+ * What a browser fetches and the PHP packers therefore drop.
  */
-
-/** what a browser fetches and the PHP packers therefore drop */
 const SERVED = /\.(css|js|woff2?|ttf|eot|svg|png|jpe?g|gif|ico|webp)$/i;
 
 /**

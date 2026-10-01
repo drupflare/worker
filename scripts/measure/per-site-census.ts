@@ -19,7 +19,7 @@ const ROOT = resolve(import.meta.dirname, '../..');
 const PROBE = resolve(ROOT, 'experiments/per-site-census.probe.spec.ts');
 const CONFIG = resolve(ROOT, 'experiments/per-site-census.vitest.config.ts');
 
-const CONFIG_SOURCE = `import base from '../vitest.config.js';
+const CONFIG_SOURCE = `import base from '../vitest.config';
 
 const cfg = base as unknown as { test: { projects: Array<Record<string, any>> } };
 const workers = cfg.test.projects[0]!;

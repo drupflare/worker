@@ -2,9 +2,9 @@
  * The 2,466 export trampolines emscripten emits, replaced by one lazy binder inside
  * `receiveInstance` -- the first point the export table exists, since `createWasm()` returns `{}` on
  * the async path. Only wrappers no other glue code reads go; `_main` and five `dynCall_*` stay.
+ *
+ * `var X=Module["K"]=(args)=>(X=Module["K"]=wasmExports["E"])(args);`
  */
-
-/** `var X=Module["K"]=(args)=>(X=Module["K"]=wasmExports["E"])(args);` */
 const WRAPPER =
 	/var ([A-Za-z0-9_$]+)=Module\["([^"]+)"\]=\(([a-z0-9,]*)\)=>\(\1=Module\["\2"\]=wasmExports\["([^"]+)"\]\)\(\3\);/g;
 

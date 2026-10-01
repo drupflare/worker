@@ -14,7 +14,7 @@
  * gate aliases the raw interpreter and cannot.
  */
 
-import { migrateSite, startDevServer } from './dev-server.js';
+import { migrateSite, startDevServer } from './dev-server';
 
 const SITE = 'release-smoke';
 

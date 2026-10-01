@@ -34,9 +34,7 @@ import { buildDriverAssets } from './gen-driver-assets';
  * ordinary development. A difference here says the lock does not describe the driver, which is worth
  * printing and is a refusal only when cutting a release. `bun run refresh -- --strict-driver` is that
  * case, and `.github/workflows/release.yml` runs this check for the same reason.
- */
-
-/**
+ *
  * Each driver package: the mount the packer writes it to, and where that mount lives INSIDE the
  * installed package.
  *

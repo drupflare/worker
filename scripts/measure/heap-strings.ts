@@ -14,9 +14,9 @@
  *
  * Three populations, kept apart: `verified` matched the hash and is a FLOOR, `unhashed` has
  * `h == 0` and cannot be checked, everything else is rejected.
+ *
+ * `IS_STRING`, from `Zend/zend_types.h`.
  */
-
-/** `IS_STRING`, from `Zend/zend_types.h` */
 export const IS_STRING = 6;
 
 /** `GC_TYPE_MASK`; the type nibble lives in the low byte of `gc.u.type_info` */

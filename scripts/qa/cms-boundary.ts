@@ -9,14 +9,23 @@
  * Classified by reading each module's CODE, not its comments: a docblock that explains a Drupal
  * behaviour does not make a module Drupal-specific. `bun run check:reachability` reports it, and
  * `tests/node/reachability.spec.ts` fails when a `host` module imports a `cms` one, when a module
- * has no entry, and when an entry names a module that no longer exists. Probes are frozen
- * instruments and are not classified.
+ * has no side, when an entry names a module or directory that no longer holds one, and when a
+ * per-file entry repeats its directory's side. Probes are frozen instruments and are not classified.
  */
 export type Side = 'host' | 'cms' | 'mixed';
 
-/** every module under this prefix is `cms`: the PHP fragments and the shims Drupal needs */
-export const CMS_PREFIX = 'src/drupal/';
+/**
+ * Directories whose every module shares one side, keyed with a trailing slash. The longest
+ * matching prefix wins, and a `MODULE_SIDES` entry overrides it for one file.
+ */
+export const DIRECTORY_SIDES: Readonly<Record<string, Side>> = {
+	// the PHP fragments and the shims Drupal needs
+	'src/drupal/': 'cms',
+	'src/runtime/': 'host',
+	'src/util/': 'host'
+};
 
+/** one side per module outside `DIRECTORY_SIDES`, or an override for one module inside it */
 export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/db/backend.ts': 'host',
 	// knows which tables are Drupal's disposable caches (cachetags, cache_*)
@@ -29,8 +38,109 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/db/wide-integers.ts': 'host',
 	// reads the router table's statement count
 	'src/db/write-tally.ts': 'mixed',
+	'src/do/alarm-body.ts': 'mixed',
+	'src/do/alarm.ts': 'host',
+	'src/do/alarm/autoscale.ts': 'host',
+	'src/do/alarm/context.ts': 'host',
+	// drives Drupal's own cron
+	'src/do/alarm/cron.ts': 'mixed',
+	// drains deferred HTTP and mail, whose queues Drupal's fetch and mail handlers fill
+	'src/do/alarm/drains.ts': 'mixed',
+	'src/do/alarm/fill.ts': 'host',
+	// runs the cron GC pass over Drupal's disposable tables
+	'src/do/alarm/health.ts': 'mixed',
+	'src/do/alarm/image.ts': 'host',
+	'src/do/alarm/lane.ts': 'host',
+	'src/do/alarm/meters.ts': 'host',
+	'src/do/alarm/migrate.ts': 'host',
+	'src/do/alarm/mirrors.ts': 'host',
+	'src/do/alarm/quarantine.ts': 'host',
+	// reads the cron and mail queues to pick the next firing
+	'src/do/alarm/rearm.ts': 'mixed',
+	'src/do/alarm/reconcile.ts': 'host',
+	'src/do/alarm/restore.ts': 'host',
+	// carries Drupal's database update chain
+	'src/do/alarm/stepped.ts': 'mixed',
+	'src/do/capabilities.ts': 'mixed',
+	'src/do/fill.ts': 'mixed',
+	// reports the shipped Drupal core version
+	'src/do/fleet.ts': 'mixed',
+	'src/do/git-delivery.ts': 'mixed',
+	'src/do/git.ts': 'mixed',
+	'src/do/health.ts': 'mixed',
+	'src/do/heap-image.ts': 'mixed',
+	// passes x-drupal-* headers through and reads cachetags writes
+	'src/do/helpers.ts': 'mixed',
+	'src/do/invalidate.ts': 'mixed',
+	'src/do/isolate.ts': 'host',
+	'src/do/keys.ts': 'host',
+	'src/do/lanes.ts': 'mixed',
+	'src/do/lazy-mount.ts': 'host',
+	// defaults the drupal-sql chunk prefix
+	'src/do/levers.ts': 'mixed',
+	// matches writes to Drupal's cachetags table
+	'src/do/limits.ts': 'mixed',
+	'src/do/mail-setup.ts': 'host',
+	'src/do/meters.ts': 'host',
+	'src/do/modify.ts': 'mixed',
+	'src/do/outbound.ts': 'mixed',
+	'src/do/packages.ts': 'mixed',
+	'src/do/provision.ts': 'mixed',
+	'src/do/reconcile.ts': 'mixed',
+	'src/do/replication.ts': 'mixed',
+	'src/do/routes/auth.ts': 'mixed',
+	// imports src/drupal/
+	'src/do/routes/diagnostics.ts': 'mixed',
+	'src/do/routes/fill.ts': 'mixed',
+	'src/do/routes/heap.ts': 'mixed',
+	// the table names the Drupal-only routes
+	'src/do/routes/index.ts': 'mixed',
+	'src/do/routes/lifecycle.ts': 'mixed',
+	'src/do/routes/mail.ts': 'host',
+	'src/do/routes/owner.ts': 'mixed',
+	'src/do/routes/packages.ts': 'mixed',
+	'src/do/routes/replica.ts': 'mixed',
+	'src/do/routes/serve.ts': 'mixed',
+	'src/do/routes/writes.ts': 'mixed',
+	'src/do/serve.ts': 'mixed',
+	// the settings.php override and services.yml
+	'src/do/settings.ts': 'mixed',
+	'src/do/shell.ts': 'mixed',
+	'src/do/stats.ts': 'mixed',
+	// carries Drupal's Set-Cookie lines and x-drupal-* headers
+	'src/do/types.ts': 'mixed',
 	// declares DRUPAL_CRON and other Drupal-named vars
 	'src/env.ts': 'mixed',
+	'src/site/admin.ts': 'mixed',
+	'src/site/allowance.ts': 'host',
+	'src/site/decorate.ts': 'host',
+	'src/site/deployment.ts': 'host',
+	'src/site/edge-cache.ts': 'host',
+	'src/site/edge-read.ts': 'host',
+	'src/site/edge-store.ts': 'host',
+	'src/site/entry.ts': 'host',
+	// the public files directory, module asset roots and public:// uris
+	'src/site/files.ts': 'mixed',
+	'src/site/fill-window.ts': 'host',
+	// the PHP fragments Drupal runs and the pages the host serves, packed from src/site/php and html
+	'src/site/generated/assets.ts': 'mixed',
+	// the scanner deny list and the core entry point redirects
+	'src/site/guards.ts': 'mixed',
+	'src/site/hop.ts': 'host',
+	// the /enable module install and its fill arming
+	'src/site/learn.ts': 'mixed',
+	'src/site/memos.ts': 'host',
+	// the claim's warm and consistency phases are Drupal's install steps
+	'src/site/object-routes.ts': 'mixed',
+	'src/site/owner.ts': 'host',
+	// reads the session csrf token out of a Drupal render
+	'src/site/plan-tier.ts': 'mixed',
+	'src/site/routes.ts': 'host',
+	// names Drupal's entry points in the deny headers
+	'src/site/screen.ts': 'mixed',
+	'src/site/surfaces.ts': 'host',
+	'src/site/target.ts': 'host',
+	'src/site/types.ts': 'host',
 	'src/ops/admin-session.ts': 'host',
 	// the update module's state row
 	'src/ops/advisories.ts': 'cms',
@@ -151,20 +261,24 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/warming-page.ts': 'host',
 	// parses Drupal's cachetags statements out of a forwarded batch
 	'src/ops/write-forwarding.ts': 'mixed',
-	'src/runtime/opcache.ts': 'host',
-	'src/runtime/php-binary-85.ts': 'host',
-	'src/runtime/php-binary-jspi.ts': 'host',
-	'src/runtime/php-binary-o2.ts': 'host',
-	'src/runtime/php-binary-raw.ts': 'host',
-	'src/runtime/php-binary.ts': 'host',
 	'src/site-do.ts': 'mixed',
 	'src/site.ts': 'mixed',
 	// drupal/* package search and module upload
 	'src/ui/admin.ts': 'mixed',
+	'src/ui/admin/access.ts': 'host',
+	// drush aliases and the `/__ops` operations are Drupal's
+	'src/ui/admin/commands.ts': 'mixed',
+	'src/ui/admin/deploy.ts': 'host',
+	// drupal/* package search and module upload
+	'src/ui/admin/extend.ts': 'mixed',
+	'src/ui/admin/git.ts': 'host',
+	'src/ui/admin/limits.ts': 'host',
+	'src/ui/admin/operate.ts': 'host',
+	'src/ui/admin/shell.ts': 'host',
 	'src/vendor.d.ts': 'host'
 };
 
-/** every `DO_ROUTE` key in `src/site.ts`, by what its handler does */
+/** every `DO_ROUTE` key in `src/site/routes.ts`, by what its handler does */
 export const ROUTE_SIDES: Readonly<Record<string, Side>> = {
 	'/heap': 'host',
 	'/opcache': 'host',

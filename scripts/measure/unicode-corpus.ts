@@ -25,7 +25,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { TABLES, writeStackFile } from './unicode-stack.js';
+import { TABLES, writeStackFile } from './unicode-stack';
 
 const here = new URL('.', import.meta.url).pathname;
 const repo = resolve(here, '../..');

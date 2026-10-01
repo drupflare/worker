@@ -11,7 +11,7 @@
  * wall clock is legitimate because it is reported only as a RATIO within one isolate.
  */
 
-import { digestBytes } from '../../src/db/heap-store.js';
+import { digestBytes } from '../../src/db/heap-store';
 
 /** the byte-at-a-time scan this replaced, kept so the ratio has a subtrahend */
 export function isZeroRangeBytewise(bytes: Uint8Array, from: number, to: number): boolean {

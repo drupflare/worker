@@ -14,9 +14,7 @@ import type { Summary } from './vps-compare';
  *
  * The predicate is stated here rather than in the runner for a second reason: it has to be readable
  * without the numbers beside it, so it cannot be quietly fitted to a result.
- */
-
-/**
+ *
  * What the verdict weighs each workload by, from `config/traffic.yml`.
  *
  * Read rather than generated: this is a build-lane instrument and never reaches a Worker, so it can
@@ -150,24 +148,6 @@ export function weightedP50(cells: Cell[], pick: (c: Cell) => number, mix = TRAF
 }
 
 /**
- * Whether the measured cells support calling drupflare a viable host.
- *
- * A host is VIABLE when, with the VPS given its best case on the same machine, drupflare
- *
- *   1. serves every workload without errors the VPS does not also produce,
- *   2. is no worse than 2x on p95 in any cell the generator did not bound, where the two arms are
- *      further apart than the rig's own resolution, and
- *   3. is at or below the VPS on TRAFFIC-WEIGHTED p50.
- *
- * Rule 2 rather than "wins every cell": a host that regenerates asynchronously is expected to lose
- * the uncached-tail cell, and one cell of a 9.5% slice does not decide a host. Rule 3 is what keeps
- * that honest, because a slice large enough to matter cannot lose without moving the weighted mean.
- *
- * A generator-bound cell is excluded from rule 2 and kept in rule 3. Excluded because a cell at the
- * generator's ceiling measures the generator, so a p95 taken there is not the host's. Kept in the
- * mean because dropping it would let a fast arm remove its own strongest evidence.
- */
-/**
  * The error fraction past which a cell measures a broken server rather than a slow one.
  *
  * A DEAD ARM IS NOT A FAST ARM. When the local worker crashed mid-run every later request returned
@@ -199,6 +179,24 @@ export function unusable(c: Cell): boolean {
  */
 export const P95_CLOCK_QUANTUM_MS = 1;
 
+/**
+ * Whether the measured cells support calling drupflare a viable host.
+ *
+ * A host is VIABLE when, with the VPS given its best case on the same machine, drupflare
+ *
+ *   1. serves every workload without errors the VPS does not also produce,
+ *   2. is no worse than 2x on p95 in any cell the generator did not bound, where the two arms are
+ *      further apart than the rig's own resolution, and
+ *   3. is at or below the VPS on TRAFFIC-WEIGHTED p50.
+ *
+ * Rule 2 rather than "wins every cell": a host that regenerates asynchronously is expected to lose
+ * the uncached-tail cell, and one cell of a 9.5% slice does not decide a host. Rule 3 is what keeps
+ * that honest, because a slice large enough to matter cannot lose without moving the weighted mean.
+ *
+ * A generator-bound cell is excluded from rule 2 and kept in rule 3. Excluded because a cell at the
+ * generator's ceiling measures the generator, so a p95 taken there is not the host's. Kept in the
+ * mean because dropping it would let a fast arm remove its own strongest evidence.
+ */
 export function decide(
 	cells: Cell[],
 	rttMs = 0,

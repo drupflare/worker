@@ -15,7 +15,7 @@ import {
 	type Census,
 	type CensusCategory,
 	type Subsystem
-} from '../../src/ops/statement-census.js';
+} from '../../src/ops/statement-census';
 import {
 	DEFAULT_MIX,
 	envelope,
@@ -23,7 +23,7 @@ import {
 	ROWS_PER_FILL,
 	type Envelope,
 	type TrafficMix
-} from './free-envelope.js';
+} from './free-envelope';
 
 const SPEC = 'tests/integration/statement-census.spec.ts';
 const CASE = 'decomposes every crossing';

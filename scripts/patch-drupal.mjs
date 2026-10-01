@@ -194,7 +194,7 @@ const PSR4_PATCH = `
 // bake-collectors.php and lift-container.ts all did. settings.php is the one place every bootstrap
 // reads, which is the same reason the edge registers this root in its own settings override.
 // PHP_SAPI === 'cli' GATES THIS TO NATIVE BUILDS, and the gate is the point. This file is PACKED
-// and the Durable Object reads it, where the same root is already registered by SETTINGS_OVERRIDE --
+// and the Durable Object reads it, where the same root is already registered by settings-override.php --
 // so an unguarded block makes every edge request pay for a workaround only the bake scripts need.
 // Every native consumer here is a CLI script; the runtime is not.
 if (PHP_SAPI === 'cli') {

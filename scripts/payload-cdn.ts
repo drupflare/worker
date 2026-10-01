@@ -18,9 +18,9 @@
  * payloads/v1.0.0/      a release, immutable, one per version
  * payloads/dev-master/  the tip of a branch, overwritten on every push
  * ```
+ *
+ * Everything payload lives under this, so the prefix alone separates output from the backup set.
  */
-
-/** everything payload lives under this, so the prefix alone separates output from the backup set */
 export const PAYLOAD_PREFIX = 'payloads';
 
 /** an immutable cut version, or a branch tip that the next push replaces */

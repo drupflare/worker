@@ -18,7 +18,7 @@
  * distinct objects answered has measured the primary N times and called it scaling.
  */
 
-import { coveringSpread } from './v101-arms.js';
+import { coveringSpread } from './v101-arms';
 
 type Reply = { status: number; text: string; json?: Record<string, unknown> };
 
@@ -391,14 +391,6 @@ for (const lanes of LANE_COUNTS) {
 	// instead queues hundreds of requests on an object that has not booted yet, and the drain
 	// afterwards took longer than every measured cell combined
 	/**
-	 * Warm until the pool STOPS refusing, rather than once.
-	 *
-	 * A lane admits an existing session only once replication has carried it, bounded by
-	 * `DEFAULT_REPLICA_LAG_MS` at 30 s, and a 16-lane pool warmed immediately after provisioning
-	 * still answered 13 of 106 with 403. Measuring inside that window measures the refusal; the
-	 * settle is a property of the product, so it is waited out rather than subtracted.
-	 */
-	/**
 	 * WARM EVERY LANE, not just once each.
 	 *
 	 * One pass per path leaves each lane rendering its page cold on every later request, and a bigger
@@ -411,6 +403,14 @@ for (const lanes of LANE_COUNTS) {
 	for (let i = 0; i < WARM_ROUNDS; i += 1) {
 		warm = await drive(site, cookie, paths.length * 2, paths);
 	}
+	/**
+	 * Warm until the pool STOPS refusing, rather than once.
+	 *
+	 * A lane admits an existing session only once replication has carried it, bounded by
+	 * `DEFAULT_REPLICA_LAG_MS` at 30 s, and a 16-lane pool warmed immediately after provisioning
+	 * still answered 13 of 106 with 403. Measuring inside that window measures the refusal; the
+	 * settle is a property of the product, so it is waited out rather than subtracted.
+	 */
 	for (let i = 0; i < 4 && warm.requests - warm.errors < warm.requests * 0.98; i += 1) {
 		await new Promise((r) => setTimeout(r, 20_000));
 		warm = await drive(site, cookie, paths.length, paths);

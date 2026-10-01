@@ -12,8 +12,8 @@
  * 1.54 weighted average. SPECpower R6725 active idle 135 W. EPA 4.6 t CO2e/passenger vehicle/year.
  * Ember US grid 384 g/kWh. Measured here: VPS 122 req/s anonymous cached at 32 clients on 2 vCPU.
  */
-import { num, sweep } from './args.js';
-import { fr, nr, r } from './fmt.js';
+import { num, sweep } from './args';
+import { fr, nr, r } from './fmt';
 
 const SITES = sweep('sites', [1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000]);
 

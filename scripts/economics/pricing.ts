@@ -10,16 +10,16 @@ import {
 	SECONDS_PER,
 	STEADY_STATE_WARMTH,
 	rowsForWarmthMix
-} from '../measure/free-envelope.js';
-import { pageStoreFraction } from '../measure/render-fraction.js';
-import { f, fr, n, nr, pctr, r } from './fmt.js';
+} from '../measure/free-envelope';
+import { pageStoreFraction } from '../measure/render-fraction';
+import { f, fr, n, nr, pctr, r } from './fmt';
 import {
 	CACHED_SERVE_TOTAL_MS as CPU_CACHED,
 	RENDER_WARM_BIN_MS as CPU_RENDER,
 	SITE_GB,
 	renderMsFor
-} from './measured.js';
-import { CLOUDFLARE_FOR_SAAS, DURABLE_OBJECTS, WORKERS_FOR_PLATFORMS } from './rates.js';
+} from './measured';
+import { CLOUDFLARE_FOR_SAAS, DURABLE_OBJECTS, WORKERS_FOR_PLATFORMS } from './rates';
 
 export const WFP_BASE = WORKERS_FOR_PLATFORMS.usdPerMonth;
 const WFP_REQ_INC = WORKERS_FOR_PLATFORMS.requestsIncluded;

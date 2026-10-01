@@ -4,9 +4,9 @@
  * Every figure is PUBLISHED, from developers.cloudflare.com on the date beside its card. A price
  * that moves is edited here and every model reads the new one; a copy anywhere else is the drift
  * this module exists to stop.
+ *
+ * Workers Paid, retrieved 2026-09-20.
  */
-
-/** Workers Paid, retrieved 2026-09-20 */
 export const WORKERS_PAID = {
 	retrieved: '2026-09-20',
 	usdPerMonth: 5.0,

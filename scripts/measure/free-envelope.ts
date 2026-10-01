@@ -12,9 +12,9 @@
  * The measurements behind each figure are in `TECHNICAL_REPORT.md`.
  */
 
-import { meterFlushBudget } from '../../src/ops/day-meters.js';
-import { DURABLE_OBJECTS } from '../economics/rates.js';
-import { GENERATED_FREE_QUOTAS } from '../generated/quotas.js';
+import { meterFlushBudget } from '../../src/ops/day-meters';
+import { DURABLE_OBJECTS } from '../economics/rates';
+import { GENERATED_FREE_QUOTAS } from '../generated/quotas';
 
 /**
  * Documented free-plan daily quotas, declared in `config/quotas.yml`.
@@ -31,8 +31,9 @@ export const FREE_QUOTAS = GENERATED_FREE_QUOTAS;
  * and read 23,724,032 -- 1.53x low, so everything derived from it was optimistic by that factor.
  */
 export const SITE_STORAGE_BYTES = {
-	/** the seeded database alone, `databaseSize` after `/migrate?all=1` */
 	/**
+	 * The seeded database alone, `databaseSize` after `/migrate?all=1`.
+	 *
 	 * 4,616,192 on the traced-list pack; 5,550,080 on the 11.4.6 from-source one, which is what
 	 * ships. `seed-cache-cost.spec.ts` reads it as the untrimmed arm's `afterMigrate`, n=2 with zero
 	 * spread. The file on disk is SMALLER than before (5,349,376 against 7,585,792) and the migrated
@@ -269,7 +270,6 @@ export function paidDurationCost(
 	};
 }
 
-/** derived from `cpuTime`, which excludes awaiting; treat every ceiling from these as a bound */
 /**
  * The duration meter, calibrated on a deployed object rather than inferred.
  *
@@ -569,31 +569,31 @@ export const ROWS_PER_FILL = {
 	 *
 	 * 156 -> 103 with the `WITHOUT ROWID` bins, which is where the conversion pays most: this class
 	 * is almost entirely shared-bin inserts.
-	 */
-	// 103 before the commit sequence; the clock costs 2 rows on a fill that writes authoritative
-	// state, and nothing on one that does not -- a read writes none by construction.
-	// 105 -> 107 with the provisioning drop: this fill now pays the interpreter boot that
-	// `/__migrate` and `/__firstrun` used to leave resident, and a boot writes 2. Paid once per
-	// object, against an install whose whole heap it removes from the serving incarnation
-	//
-	// 107 -> 88 AT DRUPAL 11.4.6, and the saving is the pack rather than the release.
-	// `install-site-db.php` now creates the six lazily-made cache bins and warms the RouteProvider
-	// collection at BUILD time, so the first fill no longer writes what it used to discover. The
-	// remaining charge attributes to `cache_data` (12) and `key_value` (4), measured by
-	// `rows-per-fill-audit.spec.ts`, which reports every class beside its constant
-	//
-	// 88 -> 96 WITH THE MODULE SURFACE THIS REPOSITORY SHIPS. The packed driver went from 2 routes
-	// to 4 and gained the health ledger's capability; the growth is `cache_discovery` 27,
-	// `cache_default` 21 and `cache_render` 15, which is where a larger surface is discovered.
-	// THE CONTROL IS THE OTHER THREE CLASSES: `firstEverForPath` 14, `realRender` 9 and
-	// `warmReassemble` 2 are unchanged to the row, so nothing about steady-state rendering or
-	// storing moved and the cost is confined to the once-per-object class. n=2, no spread.
-	//
-	// The A/B that would have named it directly is not constructible: packing the driver from the
-	// pre-session sibling and leaving the host current reads 70, with 5 `watchdog` rows and
-	// `warmReassemble` moving the WRONG way, because that pairing is a host and a module that no
-	// longer fit. A control has to move both sides or neither
-	/**
+	 *
+	 * 103 before the commit sequence; the clock costs 2 rows on a fill that writes authoritative
+	 * state, and nothing on one that does not -- a read writes none by construction.
+	 * 105 -> 107 with the provisioning drop: this fill now pays the interpreter boot that
+	 * `/__migrate` and `/__firstrun` used to leave resident, and a boot writes 2. Paid once per
+	 * object, against an install whose whole heap it removes from the serving incarnation
+	 *
+	 * 107 -> 88 AT DRUPAL 11.4.6, and the saving is the pack rather than the release.
+	 * `install-site-db.php` now creates the six lazily-made cache bins and warms the RouteProvider
+	 * collection at BUILD time, so the first fill no longer writes what it used to discover. The
+	 * remaining charge attributes to `cache_data` (12) and `key_value` (4), measured by
+	 * `rows-per-fill-audit.spec.ts`, which reports every class beside its constant
+	 *
+	 * 88 -> 96 WITH THE MODULE SURFACE THIS REPOSITORY SHIPS. The packed driver went from 2 routes
+	 * to 4 and gained the health ledger's capability; the growth is `cache_discovery` 27,
+	 * `cache_default` 21 and `cache_render` 15, which is where a larger surface is discovered.
+	 * THE CONTROL IS THE OTHER THREE CLASSES: `firstEverForPath` 14, `realRender` 9 and
+	 * `warmReassemble` 2 are unchanged to the row, so nothing about steady-state rendering or
+	 * storing moved and the cost is confined to the once-per-object class. n=2, no spread.
+	 *
+	 * The A/B that would have named it directly is not constructible: packing the driver from the
+	 * pre-session sibling and leaving the host current reads 70, with 5 `watchdog` rows and
+	 * `warmReassemble` moving the WRONG way, because that pairing is a host and a module that no
+	 * longer fit. A control has to move both sides or neither
+	 *
 	 * 96 -> 94 on 2026-09-11, when `advanceCommit()` stopped writing `cfw_meta` per authoritative
 	 * statement. A fill advances the commit sequence a handful of times; batching them to one row
 	 * per invocation is what moved this, and it moved a content SAVE far more -- 188 -> 161.

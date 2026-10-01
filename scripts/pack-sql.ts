@@ -46,9 +46,9 @@ import {
  *
  * CHUNK SIZING is by cost, not statement count: one `cache_container` row is 500 KB and
  * one `key_value` row is 40 bytes, so each chunk closes on whichever limit trips first.
+ *
+ * One bound param in its JSON form, including the two tagged forms JSON cannot carry.
  */
-
-/** One bound param in its JSON form, including the two tagged forms JSON cannot carry. */
 type PackedParam = null | number | string | { $b64: string } | { $i: string };
 
 const args = process.argv.slice(2);

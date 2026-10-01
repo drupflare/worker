@@ -14,7 +14,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { landDatabase } from './corpus-lane.js';
+import { landDatabase } from './corpus-lane';
 
 /** the arguments `live-deploy.ts` takes to deploy a worker and leave the claim to the caller */
 export function deployArgs(

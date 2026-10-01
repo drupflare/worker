@@ -25,9 +25,9 @@
  * The orchestration around this -- deploy a `cfw-*` worker, drive the scenarios, query, tear down,
  * verify the worker list returns to baseline -- is the runbook in {@link BENCH_RUNBOOK}, kept as
  * text because it spends a real account's quota and should be read before it is run.
+ *
+ * RULE 0's floor: below this the platform's bimodality swamps anything under ~500 ms.
  */
-
-/** RULE 0's floor: below this the platform's bimodality swamps anything under ~500 ms */
 export const MIN_SAMPLES = 5;
 
 /** how long Workers Observability took to ingest a tag that was already driven, measured once */

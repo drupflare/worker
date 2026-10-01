@@ -31,9 +31,9 @@ import { emitTunedGlue, glueFor, stepFor, tunedGlueFor, type Abi } from './growt
  * node scripts/measure/abi-speed.ts --n=25
  * node scripts/measure/abi-speed.ts --abis=wasm32,wasm32 --n=25
  * ```
+ *
+ * One PHP case, sized to land in the low hundreds of milliseconds under wasm.
  */
-
-/** one PHP case, sized to land in the low hundreds of milliseconds under wasm */
 type Case = {
 	name: string;
 	/** the mechanism it isolates, printed beside the ratio so a reading is not read blind */

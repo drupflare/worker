@@ -9,9 +9,9 @@
  * reasoned from `src/ops/catalog.ts` and `src/ops/shipped-lock.ts` before the run; where a run
  * contradicts one, the disagreement is the finding and the prediction stays put as the record of
  * what was believed.
+ *
+ * What a module turns out to be, once the site has actually been asked.
  */
-
-/** what a module turns out to be, once the site has actually been asked */
 export type Verdict =
 	| 'ships'
 	| 'core'

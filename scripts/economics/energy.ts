@@ -4,9 +4,9 @@
  * Every input is sourced. Where a range exists the model takes the value that is GENEROUS TO THE
  * VPS, so the result is a floor on the saving rather than a headline.
  */
-import { pageStoreFraction } from '../measure/render-fraction.js';
-import { num, sweep } from './args.js';
-import { fr, nr, pctr, r } from './fmt.js';
+import { pageStoreFraction } from '../measure/render-fraction';
+import { num, sweep } from './args';
+import { fr, nr, pctr, r } from './fmt';
 
 const VIEWS = sweep('views', [10_000, 100_000, 1_000_000]);
 // every figure and its provenance lives in measured.ts, which also carries the constraint that
@@ -15,7 +15,7 @@ import {
 	CACHED_SERVE_TOTAL_MS as CPU_MS_CACHED,
 	RENDER_WARM_BIN_MS as CPU_MS_RENDER,
 	renderMsFor
-} from './measured.js';
+} from './measured';
 
 // --- sourced inputs -------------------------------------------------------
 const IDLE_W = 135.0; // SPECpower, Dell PowerEdge R6725 (EPYC 9845), active idle, 2025-10

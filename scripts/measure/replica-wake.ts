@@ -10,9 +10,9 @@
  * an idle hibernation-eligible object accrues no duration, so the open half is the wake: what a
  * visitor pays on the request that lands on a cold object, and how that moves as replicas are added.
  * rows written is account-wide, so a replica buys no quota and this is not a capacity lever
+ *
+ * One latency sample.
  */
-
-/** one latency sample */
 export type Sample = { ms: number; status: number; site: string; booted: boolean };
 
 /** nearest-rank, so every reported value is one that was actually observed */

@@ -9,7 +9,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
-import { satisfies } from '../../src/ops/composer-constraint.js';
+import { satisfies } from '../../src/ops/composer-constraint';
 
 /** core versions a constraint is tried against to see whether it admits any Drupal 11 release */
 const ELEVEN = Array.from({ length: 10 }, (_, minor) =>

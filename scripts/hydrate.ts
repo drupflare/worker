@@ -267,7 +267,6 @@ async function assetExists(url: string): Promise<boolean> {
 	}
 }
 
-/** Extracts a verified payload over the checkout, writing only what the manifest names. */
 /**
  * Files the REPOSITORY owns, which the payload may never overwrite.
  *
@@ -297,6 +296,7 @@ function trackedFiles(root: string): Set<string> {
 	}
 }
 
+/** Extracts a verified payload over the checkout, writing only what the manifest names. */
 function landPayload(root: string, tarball: string, work: string): PayloadManifest {
 	const staged = join(work, 'staged');
 	mkdirSync(staged, { recursive: true });

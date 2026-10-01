@@ -10,7 +10,7 @@ import { readJsonc } from './release-payload';
  * can write them into MEMFS. Both are read from their SIBLING repositories, which are the source
  * of truth; this repo keeps no copy.
  *
- *   node scripts/gen-driver-assets.ts
+ *   bun scripts/gen-driver-assets.ts
  *
  * The driver is NOT in assets/drupal/core.bin.gz. That pack is
  * generated from the installed site, which uses core's sqlite driver, and
@@ -53,8 +53,7 @@ const ROM_SRC = process.env.ROM_SRC ?? '../rom';
  * `vendor/`, `composer.json`, phpdoc scripts and a `coverage/` directory. Copying a checkout
  * wholesale would ship all of it into a 3 MiB bundle. `drupal/` happened to hold only the module
  * files, which is exactly what made it look like a safe input.
- */
-/**
+ *
  * The files a module REPO contributes to the mounted tree.
  *
  * An allow-list rather than a walk, because these are whole repository checkouts: walking one

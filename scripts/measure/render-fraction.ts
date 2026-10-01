@@ -52,7 +52,7 @@ const PAGES_PER_SAVE = 5;
 
 /** measured 2026-09-21 on bare metal, RAPL package, 2-CPU VPS arm, n=7; see `vps-energy.ts` */
 // one source; these were hardcoded single-rate readings and are now the measured marginals
-import { MJ_CACHED_VPS as MJ_CACHED, MJ_RENDER_VPS as MJ_RENDER } from '../economics/measured.js';
+import { MJ_CACHED_VPS as MJ_CACHED, MJ_RENDER_VPS as MJ_RENDER } from '../economics/measured';
 
 /**
  * A diurnal shape, MODELLED and not measured here.

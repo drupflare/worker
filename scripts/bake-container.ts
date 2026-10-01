@@ -28,8 +28,8 @@ import { join, resolve } from 'node:path';
 import { PACKED_CONTAINER_DIGEST } from '../src/ops/container-digest.ts';
 import { DRIVER_DIGEST } from '../src/ops/driver-digest.ts';
 import { extensionFingerprint, PACKED_CONTAINER_TABLE } from '../src/ops/packed-container.ts';
-import { markHydrating } from './hydrating.js';
-import { PACK_BIN, packVersionsHash } from './pack-hash.js';
+import { markHydrating } from './hydrating';
+import { PACK_BIN, packVersionsHash } from './pack-hash';
 
 /** the exact bytes of `src/ops/container-digest.ts` for a bake against `digest` */
 export function serialiseContainerDigest(digest: string): string {

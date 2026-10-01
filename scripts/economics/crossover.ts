@@ -1,8 +1,8 @@
 /** The two boundaries a critic will look for: the carbon crossover, and the true marginal cost. */
-import { num, sweep } from './args.js';
-import { f, fr, nr, r } from './fmt.js';
-import { SITE_GB } from './measured.js';
-import { DO_REQ_RATE as DO_REQ, DO_STORE_RATE as DO_STORE, WFP_BASE } from './pricing.js';
+import { num, sweep } from './args';
+import { f, fr, nr, r } from './fmt';
+import { SITE_GB } from './measured';
+import { DO_REQ_RATE as DO_REQ, DO_STORE_RATE as DO_STORE, WFP_BASE } from './pricing';
 
 const VIEWS = sweep('views', [10_000, 100_000]);
 

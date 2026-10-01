@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { emitVariant, growthLadder } from './growth-glue.js';
+import { emitVariant, growthLadder } from './growth-glue';
 
 /**
  * Run the heap profile at several growth steps and report what the step actually buys.

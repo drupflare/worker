@@ -6,9 +6,9 @@
  * captures most of the multi-tenancy saving. Every contested input takes the value generous to the
  * opponent.
  */
-import { model, pageStoreFraction } from '../measure/render-fraction.js';
-import { num, sweep } from './args.js';
-import { fr, nr, pctr, r } from './fmt.js';
+import { model, pageStoreFraction } from '../measure/render-fraction';
+import { num, sweep } from './args';
+import { fr, nr, pctr, r } from './fmt';
 
 const VIEWS = sweep('views', [1_000, 10_000, 100_000, 1_000_000]);
 const HIGH_VIEWS = sweep('high-views', [1_000_000, 5_000_000, 10_000_000, 20_000_000]);
@@ -17,7 +17,7 @@ const HIGH_VIEWS = sweep('high-views', [1_000_000, 5_000_000, 10_000_000, 20_000
 import {
 	CACHED_SERVE_TOTAL_MS as CPU_MS_CACHED,
 	RENDER_WARM_BIN_MS as CPU_MS_RENDER
-} from './measured.js';
+} from './measured';
 
 export const IDLE_W = 135.0;
 export const PEAK_W = 460.0;

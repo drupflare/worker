@@ -5,8 +5,8 @@
  * over a million Linux containers"; "more than 70,000 custom WordPress and Drupal sites"; "more
  * than 210,000 web applications" (dev/test/live per site).
  */
-import { num } from './args.js';
-import { f, fr, nr, r } from './fmt.js';
+import { num } from './args';
+import { f, fr, nr, r } from './fmt';
 
 const CONTAINERS = 1_000_000;
 const APPS = 210_000;

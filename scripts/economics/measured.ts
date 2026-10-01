@@ -1,3 +1,5 @@
+// --- render, by workload ---------------------------------------------------------------------
+
 /**
  * Every measured input the economic models take, with its provenance and its WORKLOAD.
  *
@@ -9,11 +11,7 @@
  *
  * {@link renderMsFor} is the constraint that replaces the comment. It refuses a cold-path figure
  * where an invalidation-path figure belongs.
- */
-
-// --- render, by workload ---------------------------------------------------------------------
-
-/**
+ *
  * THE PRODUCTION RENDER. Durable Object cpuTime on a deployed paid worker, 35 renders on novel
  * keys with a warm `render` bin, every one confirmed `x-cfw-cache: RENDER` and
  * `x-cfw-php-booted: 1`, GraphQL filtered to the worker's own namespace. 2026-09-21.

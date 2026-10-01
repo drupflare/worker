@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { INITIAL_PAGES, WASM_PAGE as PAGE, PRISTINE_PAGES } from './initial-pages.js';
+import { INITIAL_PAGES, WASM_PAGE as PAGE, PRISTINE_PAGES } from './initial-pages';
 
 /**
  * The interpreter's INITIAL_MEMORY, set on the binary because nothing else can reach it.
@@ -45,7 +45,7 @@ import { INITIAL_PAGES, WASM_PAGE as PAGE, PRISTINE_PAGES } from './initial-page
  * at 64 against 135.5 at 80 (163.8 on a placement whose baseline was 36 MB), and `/php` alone 112.3
  * against 125.2. Boot CPU did not move. A warm object grows past either start, so it gains nothing.
  */
-export { INITIAL_PAGES, PRISTINE_PAGES } from './initial-pages.js';
+export { INITIAL_PAGES, PRISTINE_PAGES } from './initial-pages';
 
 export const PRISTINE_WASM = '.interp/php8.5.wasm';
 

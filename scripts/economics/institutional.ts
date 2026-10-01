@@ -4,10 +4,10 @@
  * Per-site pricing breaks down above a few hundred sites. A university with thousands of
  * mostly-idle sites wants a licence, and our marginal cost makes that trivially profitable.
  */
-import { num } from './args.js';
-import { fr, n, nr, r } from './fmt.js';
-import { SITE_GB } from './measured.js';
-import { DO_REQ_RATE, DO_STORE_RATE, WFP_BASE } from './pricing.js';
+import { num } from './args';
+import { fr, n, nr, r } from './fmt';
+import { SITE_GB } from './measured';
+import { DO_REQ_RATE, DO_STORE_RATE, WFP_BASE } from './pricing';
 
 // storage plus the object requests of a 10,000-view site, 18% of which reach the object
 const MARGINAL_SITE = SITE_GB * DO_STORE_RATE + ((10_000 * 0.18) / 1e6) * DO_REQ_RATE;

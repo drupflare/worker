@@ -10,7 +10,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { MB_PROBE2 } from '../src/probes/mb-probe2.js';
+import { MB_PROBE2 } from '../../src/probes/mb-probe2.ts';
 
 const url = process.argv[2] ?? 'http://localhost:8801/mb2';
 const root = resolve(process.argv[3] ?? './drupal-src');

@@ -26,7 +26,7 @@ import {
 	armApplications,
 	budgetedRuntimeMs,
 	resolveInstance
-} from './container-budget.js';
+} from './container-budget';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const CONTEXT = resolve(ROOT, '.vps-context');

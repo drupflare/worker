@@ -33,7 +33,7 @@ import {
 	type Allowance,
 	type InstanceSpec,
 	type Verdict
-} from './container-budget.js';
+} from './container-budget';
 
 type Env = {
 	VPS_ARM: DurableObjectNamespace;

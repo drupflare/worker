@@ -14,7 +14,7 @@
  * `bun scripts/measure/index-audit.ts [--dir=assets/drupal-sql] [--json] [--table=<name>]`
  */
 
-import { splitChargedRows } from '../../src/db/write-tally.js';
+import { splitChargedRows } from '../../src/db/write-tally';
 
 /** one statement as the pack stores it */
 export type PackStatement = { s: string; p: unknown[] };

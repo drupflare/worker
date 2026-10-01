@@ -13,9 +13,9 @@
  * duration bills wall clock, so a cpuTime-derived figure is a lower bound. provisioning runs before
  * the window and the window opens on a minute boundary, or a migration is charged to a render.
  * ingestion lags ~8 minutes, which is why `--settle` defaults to 600 s rather than zero
+ *
+ * GB allocated per Durable Object, confirmed from billing rather than from a docs example.
  */
-
-/** GB allocated per Durable Object, confirmed from billing rather than from a docs example */
 export const DO_GB_ALLOCATED = 0.128;
 
 /** one workload class: what it is called, and how to drive it */

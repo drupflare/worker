@@ -5,8 +5,8 @@
  * the argument a critic will not accept. This is the version that concedes everything: every gram
  * Cloudflare emits, divided by every request it serves, charged to us per page view.
  */
-import { num, sweep } from './args.js';
-import { f, fr, nr } from './fmt.js';
+import { num, sweep } from './args';
+import { f, fr, nr } from './fmt';
 
 const VIEWS = sweep('views', [10_000, 100_000, 1_000_000]);
 

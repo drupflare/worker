@@ -4,9 +4,9 @@
  * `bun scripts/measure/autoinc-arm.ts --endpoint=<url> --repeat=5`, or `--dry` for the plan.
  * the keyword lives in DDL text, so `/sql` rewrites it live and no rebuilt binary is needed;
  * two arms are two objects, so charged rows are exact and any CPU delta is only a bound
+ *
+ * The tables whose keyword is stripped in the plain arm; every one is on the content path.
  */
-
-/** the tables whose keyword is stripped in the plain arm; every one is on the content path */
 export const STRIPPED = ['node', 'node_revision', 'path_alias', 'file_managed', 'users'] as const;
 
 /** the same CREATE TABLE minus the keyword; null when it never had one, so a no-op is loud */

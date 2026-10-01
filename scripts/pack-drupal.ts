@@ -30,9 +30,9 @@ import { composerAutoloadFiles, scannedDirectoryFiles, sdcSiblings } from './pac
  * changed tree changes WHICH files ship; pinning the list makes a rebuild a
  * measurement of the tree rather than of the rules. Same reason
  * scripts/pack-perfile.ts reuses core.json.
+ *
+ * An input entry, from either accepted shape: a pack index keys `p`, a profile trace `path`.
  */
-
-/** an input entry, from either accepted shape: a pack index keys `p`, a profile trace `path` */
 type ListEntry = { p?: string; path?: string };
 
 /** one `core.json` entry: path, offset into the blob, byte length, and source mtime */

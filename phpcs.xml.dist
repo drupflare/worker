@@ -1,0 +1,188 @@
+<?xml version="1.0" ?>
+<ruleset name="drupflare-worker">
+	<description>Drupal coding standards for the PHP the Worker packs, with the project deviations of the sibling module repos.</description>
+
+	<file>src/site/php</file>
+	<arg name="extensions" value="php" />
+	<arg value="sp" />
+	<arg name="colors" />
+
+	<rule ref="Drupal">
+		<!--
+			The house rule is: import with `use`, then refer to the short name, everywhere, and
+			the small global classes are explicitly NOT exempt - `use Closure;` and
+			`use Exception;` are the required form, not the redundant one. This sniff asserts the
+			opposite and would force `\Closure` back into signatures, so the two cannot both be
+			right and the sniff loses. Same reasoning as the layout exclusions below: phpcs does
+			not own style in this repo.
+		-->
+		<exclude name="Drupal.Classes.UseGlobalClass.RedundantUseStatement" />
+		<!--
+			The project comment style for `//` comments is lowercase with no trailing period.
+			These two sniffs demand the opposite, and they apply ONLY to inline comments.
+			Every Drupal.Commenting.DocComment.* sniff stays enabled, because a `/** */` block
+			is real documentation and Drupal's capital-and-full-stop rule is correct there.
+		-->
+		<exclude name="Drupal.Commenting.InlineComment.NotCapital" />
+		<exclude name="Drupal.Commenting.InlineComment.InvalidEndChar" />
+		<exclude name="Drupal.Functions.DiscouragedFunctions.Discouraged" />
+	</rule>
+
+	<!--
+		The house rule is `use X` plus the short name everywhere, including docblocks. This sniff
+		counts only CODE references by default, so an import used solely by an annotation reads as
+		unused. searchAnnotations makes it read docblocks too, which keeps the check useful - a
+		genuinely orphaned import is still reported - without fighting the rule.
+	-->
+	<rule ref="SlevomatCodingStandard.Namespaces.UnusedUses">
+		<properties>
+			<property name="searchAnnotations" value="true" />
+		</properties>
+	</rule>
+
+	<rule ref="DrupalPractice">
+		<exclude name="DrupalPractice.Commenting.CommentEmptyLine.SpacingAfter" />
+		<exclude name="DrupalPractice.Variables.GetRequestData.SuperglobalAccessed" />
+	</rule>
+
+	<!--
+		Drupal's default is 80. This repo formats everything else at printWidth 100
+		(see .prettierrc), and two different limits in one repo is incoherent.
+	-->
+	<rule ref="Drupal.Files.LineLength">
+		<properties>
+			<property name="lineLimit" value="110" />
+		</properties>
+	</rule>
+
+	<!--
+		Every file here is a fragment or a stand-in, not a module: the packer embeds it into a
+		script the Worker runs, and what a file is for is its path and the TypeScript that
+		consumes it. A `@file` block would restate that in every one of them.
+	-->
+	<rule ref="Drupal">
+		<exclude name="Drupal.Commenting.FileComment.Missing" />
+		<exclude name="Drupal.Commenting.FileComment.WrongStyle" />
+		<exclude name="Drupal.Commenting.FileComment.FileTag" />
+	</rule>
+
+	<!--
+		The stand-ins declare the PHP functions and classes of extensions this build does not carry
+		(mbstring, iconv, zlib, openssl, sodium, curl, xmlwriter, argon2) under the extensions' own
+		names and signatures. The PHP manual documents each one, and a one-line stub here would say
+		nothing it does not.
+	-->
+	<rule ref="Drupal.Commenting.FunctionComment">
+		<exclude-pattern>src/site/php/mb/*</exclude-pattern>
+		<exclude-pattern>src/site/php/iconv/*</exclude-pattern>
+		<exclude-pattern>src/site/php/zlib/*</exclude-pattern>
+		<exclude-pattern>src/site/php/openssl/*</exclude-pattern>
+		<exclude-pattern>src/site/php/sodium/*</exclude-pattern>
+		<exclude-pattern>src/site/php/curl/*</exclude-pattern>
+		<exclude-pattern>src/site/php/argon2/*</exclude-pattern>
+		<exclude-pattern>src/site/php/xmlwriter/*</exclude-pattern>
+		<exclude-pattern>src/site/php/standin/*</exclude-pattern>
+		<exclude-pattern>src/site/php/fiber/*</exclude-pattern>
+		<exclude-pattern>src/site/php/unicode-tables.php</exclude-pattern>
+	</rule>
+	<rule ref="Drupal.Commenting.DocComment">
+		<exclude-pattern>src/site/php/mb/*</exclude-pattern>
+		<exclude-pattern>src/site/php/iconv/*</exclude-pattern>
+		<exclude-pattern>src/site/php/zlib/*</exclude-pattern>
+		<exclude-pattern>src/site/php/openssl/*</exclude-pattern>
+		<exclude-pattern>src/site/php/sodium/*</exclude-pattern>
+		<exclude-pattern>src/site/php/curl/*</exclude-pattern>
+		<exclude-pattern>src/site/php/argon2/*</exclude-pattern>
+		<exclude-pattern>src/site/php/xmlwriter/*</exclude-pattern>
+		<exclude-pattern>src/site/php/standin/*</exclude-pattern>
+		<exclude-pattern>src/site/php/fiber/*</exclude-pattern>
+		<exclude-pattern>src/site/php/unicode-tables.php</exclude-pattern>
+	</rule>
+	<rule ref="Drupal.Commenting.VariableComment">
+		<exclude-pattern>src/site/php/xmlwriter/*</exclude-pattern>
+		<exclude-pattern>src/site/php/fiber/*</exclude-pattern>
+	</rule>
+
+	<!--
+		A fragment builds the request it is about to hand Drupal, and the probes report what a
+		superglobal holds after a request, so reading and writing `$_SERVER`, `$_POST` and
+		`$_COOKIE` is the point of the file rather than a way around request handling.
+	-->
+
+	<!--
+		The stand-ins declare classes under the extensions' own names (XMLWriter, SodiumException,
+		PhpWasmSyncFiber) in files named for their purpose; a PSR-4 file-per-class layout would
+		rename them, and no autoloader reads this tree.
+	-->
+	<rule ref="Drupal">
+		<exclude name="Squiz.Classes.ClassFileName.NoMatch" />
+	</rule>
+	<rule ref="Drupal.Commenting.ClassComment">
+		<exclude-pattern>src/site/php/xmlwriter/*</exclude-pattern>
+		<exclude-pattern>src/site/php/sodium/*</exclude-pattern>
+		<exclude-pattern>src/site/php/fiber/*</exclude-pattern>
+		<exclude-pattern>src/site/php/openssl/*</exclude-pattern>
+	</rule>
+
+	<!--
+		libxml's writer names its methods writePI and the like; the stand-in keeps them so a
+		caller written against the extension runs unchanged.
+	-->
+	<rule ref="Drupal.NamingConventions.ValidFunctionName.ScopeNotCamelCaps">
+		<exclude-pattern>src/site/php/xmlwriter/*</exclude-pattern>
+	</rule>
+
+	<!--
+		These two fragments read Drupal's own cache rows (the compiled container and the update
+		registry), which the site wrote itself; there is no untrusted input to restrict classes for,
+		and the container holds service objects that unserialize must be able to build.
+	-->
+	<rule ref="DrupalPractice.FunctionCalls.InsecureUnserialize">
+		<exclude-pattern>src/site/php/boot/phase/container-unserialize.php</exclude-pattern>
+		<exclude-pattern>src/site/php/updb/unit.php</exclude-pattern>
+	</rule>
+
+	<!--
+		A fragment defines variables its neighbours in the composed script read, so a variable
+		unused within one file is used in the script that embeds it.
+	-->
+	<rule ref="VariableAnalysis.CodeAnalysis.VariableAnalysis.UnusedVariable">
+		<severity>0</severity>
+	</rule>
+
+	<!--
+		#region layout is not phpcs's job in this repo
+		The house style is TABS rendered 4 wide at a 100-char line limit (.editorconfig,
+		.prettierrc), and `@prettier/plugin-php` is what enforces it. The Drupal standard
+		hard-codes 2 SPACES and Drupal's own brace placement, so the two tools cannot both
+		be right about layout and phpcs loses that argument.
+
+		The exclusion set is the one the sibling module repos use against the same formatter
+		and the same house style; every entry is pure whitespace, brace position or casing.
+		phpcs keeps docs, naming, arrays, line length, casing and every Drupal/DrupalPractice
+		API-misuse check.
+	-->
+	<rule ref="Drupal">
+		<exclude name="Generic.PHP.UpperCaseConstant.Found" />
+		<exclude name="Generic.WhiteSpace.DisallowTabIndent" />
+		<exclude name="Generic.CodeAnalysis.UselessOverridingMethod.Found" />
+		<exclude name="Drupal.WhiteSpace.ScopeIndent" />
+		<exclude name="Drupal.WhiteSpace.ObjectOperatorIndent" />
+		<exclude name="Drupal.WhiteSpace.ScopeClosingBrace" />
+		<exclude name="Drupal.Arrays.Array.ArrayIndentation" />
+		<exclude name="Drupal.Classes.ClassDeclaration.BraceOnNewLine" />
+		<exclude name="Drupal.Classes.ClassDeclaration.CloseBraceAfterBody" />
+		<exclude name="Drupal.Functions.MultiLineFunctionDeclaration.BraceOnNewLine" />
+		<exclude name="Drupal.Functions.MultiLineFunctionDeclaration.Indent" />
+		<exclude name="Drupal.ControlStructures.ControlSignature.NewlineAfterCloseBrace" />
+		<exclude name="Drupal.Commenting.InlineComment.SpacingAfter" />
+		<exclude name="Squiz.ControlStructures.ForEachLoopDeclaration.SpacingBeforeAs" />
+		<exclude name="Squiz.WhiteSpace.FunctionSpacing.AfterLast" />
+		<exclude name="Squiz.WhiteSpace.FunctionSpacing.BeforeFirst" />
+		<exclude name="Squiz.WhiteSpace.FunctionSpacing.After" />
+		<exclude name="Squiz.WhiteSpace.FunctionSpacing.Before" />
+		<exclude name="Drupal.WhiteSpace.OpenTagNewline.BlankLine" />
+		<exclude name="Squiz.Arrays.ArrayBracketSpacing" />
+	</rule>
+	<!-- #endregion -->
+</ruleset>

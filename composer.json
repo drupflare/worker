@@ -39,18 +39,28 @@
 			"drupal/core-project-message": false,
 			"drupal/core-recipe-unpack": false,
 			"drupal/core-vendor-hardening": false,
-			"symfony/runtime": true
+			"symfony/runtime": true,
+			"dealerdirect/phpcodesniffer-composer-installer": true,
+			"phpdocumentor/shim": true
 		}
 	},
 	"minimum-stability": "stable",
 	"prefer-stable": true,
 	"require-dev": {
+		"drupal/coder": "^9.0",
+		"phpdocumentor/shim": "^3.10",
 		"phpstan/phpstan": "^2.2"
 	},
 	"scripts": {
-		"analyze": "phpstan analyse --memory-limit=1G"
+		"analyze": "phpstan analyse --memory-limit=1G",
+		"analyze:scripts": "phpstan analyse -c phpstan-scripts.neon --memory-limit=1G",
+		"lint": "phpcs",
+		"lint:fix": "phpcbf"
 	},
 	"scripts-descriptions": {
-		"analyze": "Runs PHPStan over scripts/ at the level pinned in phpstan.neon. Needs the Drupal tree: bun run fetch:drupal."
+		"analyze": "Runs PHPStan over src/site/php at the level pinned in phpstan.neon. Needs the Drupal tree (bun run fetch:drupal) linked at /drupal, where the runtime mounts it.",
+		"analyze:scripts": "Runs the same analysis plus scripts/, which is not gated and needs assets/probe/pw-probe.php.",
+		"lint": "Runs phpcs over src/site/php with the ruleset in phpcs.xml.dist.",
+		"lint:fix": "Runs phpcbf over the same ruleset."
 	}
 }

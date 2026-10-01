@@ -1,0 +1,9 @@
+includes:
+    - phpstan.neon
+
+parameters:
+    paths:
+        - scripts
+    scanFiles:
+        # gitignored and produced by nothing; the bench scripts call into it
+        - assets/probe/pw-probe.php

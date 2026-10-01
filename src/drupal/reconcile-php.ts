@@ -1,268 +1,108 @@
-import { FIBER_SHIM, kernelBoot } from './cron-php.js';
+import {
+	RECONCILE_CLOCK_PHP,
+	RECONCILE_CONFIG_PHP,
+	RECONCILE_DISCOVERY_PHP,
+	RECONCILE_OWNER_PHP,
+	RECONCILE_ROUTER_PHP,
+	RECONCILE_TOOLKIT_PHP,
+	RECONCILE_UNINSTALL_PHP
+} from '../site/generated/assets';
+import { phpRender } from '../util/php';
+import { FIBER_SHIM, kernelBoot } from './cron-php';
 
 /**
  * The reconciliation steps that have to go through Drupal's own writers.
  *
- * `system.performance:cache.page.max_age` was fixed correctly in the `config` table and stayed inert,
- * because `cache_config` held its own serialized copy and Drupal reads the bin first. Every render on
- * every site still answered `no-store` for the whole time the fix was believed shipped.
+ * `ConfigFactory::save()` and `State::set()` clear every cached copy (`cache_config`,
+ * `cache_bootstrap`) and invalidate `config:<name>`; a raw SQL edit leaves a cached copy that
+ * shadows it. The boot preamble is `cron-php.ts`'s, so a fragment boots like the render path.
  *
- * `ConfigFactory::save()` writes the row, clears the bin and invalidates `config:<name>`, which is
- * what makes the render caches downstream of it stale. State keeps a static cache and a
- * `cache_bootstrap` copy and `State::set()` knows about both. A host re-deriving either list gets it
- * wrong, and the copy it forgets is the one that made the original fix inert.
- *
- * The preamble is `cron-php.ts`'s, not a copy: a fragment that booted differently from the render
- * path would be changing a site other than the one that serves.
+ * @param origin a `scheme://host[:port]`, so URLs Drupal builds during the write are this site's
  */
-
-/** @param origin a `scheme://host[:port]`, so URLs Drupal builds during the write are this site's */
 export function reconcileConfigPhp(maxAge: number, origin = ''): string {
 	const age = Math.max(0, Math.floor(maxAge));
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$out = ['ok' => false];
-try {
-${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
-  $editable = \Drupal::configFactory()->getEditable('system.performance');
-  $out['before'] = (int) $editable->get('cache.page.max_age');
-  $editable->set('cache.page.max_age', ${age});
-  $editable->save();
-  $out['after'] = (int) \Drupal::config('system.performance')->get('cache.page.max_age');
-  $out['ok'] = $out['after'] === ${age};
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['at'] = $e->getFile() . ':' . $e->getLine();
-}
-// SEPARATELY, because the write is what has to land. Config::save() already invalidates
-// config:system.performance; this is the render tier downstream of it, and a subscriber that throws
-// here must not make a successful write report as a failure
-try {
-  \Drupal\Core\Cache\Cache::invalidateTags(['config:system.performance', 'rendered']);
-  $out['invalidated'] = true;
-} catch (\Throwable $e) {
-  $out['invalidateError'] = get_class($e) . ': ' . $e->getMessage();
-}
-echo json_encode($out);
-`;
+	return phpRender(RECONCILE_CONFIG_PHP, {
+		FIBER_SHIM,
+		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		AGE: String(age)
+	});
 }
 
 /** stamps the site's own birthday over the one the pack was baked with */
 export function reconcileClockPhp(claimedAtSeconds: number, origin = ''): string {
 	const at = Math.max(0, Math.floor(claimedAtSeconds));
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$out = ['ok' => false];
-try {
-${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
-  $state = \Drupal::state();
-  $out['before'] = [
-    'install_time' => (int) $state->get('install_time', 0),
-    'cron_last' => (int) $state->get('system.cron_last', 0),
-  ];
-  if ((int) $state->get('install_time', 0) < ${at}) { $state->set('install_time', ${at}); }
-  if ((int) $state->get('system.cron_last', 0) < ${at}) { $state->set('system.cron_last', ${at}); }
-  $out['after'] = [
-    'install_time' => (int) $state->get('install_time', 0),
-    'cron_last' => (int) $state->get('system.cron_last', 0),
-  ];
-  $out['ok'] = $out['after']['install_time'] >= ${at} && $out['after']['cron_last'] >= ${at};
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-echo json_encode($out);
-`;
+	return phpRender(RECONCILE_CLOCK_PHP, {
+		FIBER_SHIM,
+		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		AT: String(at)
+	});
 }
 
 /**
  * Moves a site onto the three owner tiers and gives uid 1 the owner role.
  *
- * Every retired name is revoked before any save, because `Role::save()` throws on a permission no
- * module declares, which is what a retired name becomes once the driver moves.
+ * Retired names are revoked before any save: `Role::save()` throws on an undeclared permission.
  */
 export function reconcileOwnerPhp(renamed: Record<string, string>, origin = ''): string {
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$out = ['ok' => false, 'moved' => []];
-try {
-${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
-  // an entity save returns SAVED_NEW or SAVED_UPDATED, which live in an include a boot never loads
-  if (!defined('SAVED_UPDATED')) { require_once '/drupal/core/includes/common.inc'; }
-  $renamed = json_decode(${JSON.stringify(JSON.stringify(renamed))}, true);
-  foreach (\Drupal\user\Entity\Role::loadMultiple() as $role) {
-    $held = array_values(array_intersect(array_keys($renamed), $role->getPermissions()));
-    if ($held === []) { continue; }
-    foreach ($held as $old) { $role->revokePermission($old); }
-    foreach ($held as $old) { $role->grantPermission($renamed[$old]); }
-    $role->save();
-    $out['moved'][$role->id()] = $held;
-  }
-  $admin = \Drupal\user\Entity\User::load(1);
-  $out['established'] = $admin === NULL ? [] : \Drupal\drupflare\Hook\OwnerTier::establish($admin);
-  $out['ok'] = $admin !== NULL && $admin->hasRole(\Drupal\drupflare\Hook\OwnerTier::ROLE);
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['at'] = $e->getFile() . ':' . $e->getLine();
+	return phpRender(RECONCILE_OWNER_PHP, {
+		FIBER_SHIM,
+		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		RENAMED: JSON.stringify(JSON.stringify(renamed))
+	});
 }
-echo json_encode($out);
-`;
+
+/**
+ * Fills the discovery bin the digest step emptied, without rendering anything.
+ *
+ * Entity types, the field map and every `plugin.manager.*` definition list. A manager that throws
+ * is named and skipped; the next render rebuilds what is missing.
+ */
+export function reconcileDiscoveryPhp(origin = ''): string {
+	return phpRender(RECONCILE_DISCOVERY_PHP, {
+		FIBER_SHIM,
+		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+	});
 }
 
 /**
  * Rebuilds the route table, so a driver module's own routes exist on an already-provisioned site.
  *
- * THE SHIPPED PACK HAS `drupflare` IN `core.extension` AND NONE OF ITS ROUTES. Measured 2026-09-09
- * by rebuilding the pack database from `install-site-db.php` and diffing: the rebuilt file carries
- * `drupflare.admin`, `drupflare.status`, `drupflare.ops_terminal` and `drupflare.oidc_complete`
- * plus three menu links, and the shipped one carries zero of the seven. The module was enabled into
- * the pack before those routes existed and `router` was never rebuilt after, so the Drupflare admin
- * section, Runtime Status and the Operations Terminal answer 404 on every site.
- *
- * The container step next to this one cannot fix it: dropping `cache_container` makes the next boot
- * rediscover HOOKS, and `router` is a table `RouteBuilder` writes rather than a cache Drupal
- * rebuilds on demand.
- *
- * `setRebuildNeeded()` then `rebuildIfNeeded()` rather than `rebuild()` directly, because the
- * unconditional form does the work again on a site that is already current, and this runs inside an
- * alarm with a CPU budget.
+ * The pack enabled `drupflare` before its routes existed and never rebuilt `router`, and dropping
+ * `cache_container` does not help (`router` is a table `RouteBuilder` writes, not a cache).
+ * `setRebuildNeeded()` then `rebuildIfNeeded()` rather than `rebuild()`, which would redo the work
+ * on a current site inside an alarm's CPU budget.
  */
-/**
- * Fills the discovery bin the digest step emptied, without rendering anything.
- *
- * Entity types, the field map and every `plugin.manager.*` definition list: the set a first render
- * would otherwise rebuild inside itself. A manager that throws is named and skipped, since the render
- * after this rebuilds whatever is still missing.
- */
-export function reconcileDiscoveryPhp(origin = ''): string {
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$out = ['ok' => false, 'managers' => 0, 'failed' => []];
-try {
-${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
-  $container = \Drupal::getContainer();
-  \Drupal::entityTypeManager()->getDefinitions();
-  \Drupal::service('entity_field.manager')->getFieldMap();
-  foreach ($container->getServiceIds() as $id) {
-    if (strpos($id, 'plugin.manager.') !== 0) continue;
-    try {
-      $manager = $container->get($id);
-      if (method_exists($manager, 'getDefinitions')) {
-        $manager->getDefinitions();
-        $out['managers']++;
-      }
-    } catch (\Throwable $e) {
-      $out['failed'][] = $id;
-    }
-  }
-  $out['rows'] = (int) \Drupal::database()->query('SELECT COUNT(*) FROM {cache_discovery}')->fetchField();
-  $out['ok'] = $out['rows'] > 0;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['at'] = $e->getFile() . ':' . $e->getLine();
-}
-echo json_encode($out);
-`;
-}
-
 export function reconcileRouterPhp(origin = ''): string {
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$out = ['ok' => false];
-try {
-${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
-  $before = (int) \Drupal::database()->query('SELECT COUNT(*) FROM {router}')->fetchField();
-  $builder = \Drupal::service('router.builder');
-  $builder->setRebuildNeeded();
-  $builder->rebuildIfNeeded();
-  $after = (int) \Drupal::database()->query('SELECT COUNT(*) FROM {router}')->fetchField();
-  // the menu links come from the same discovery and are the other half of what was missing
-  \Drupal::service('plugin.manager.menu.link')->rebuild();
-  // AND THE LOCAL TASKS, which rebuilding the router does NOT reach. A tab declared in a
-  // links.task.yml file is a discovery-cached plugin, so a route can exist and resolve while the
-  // tab that leads to it is absent from its own page -- which is what the modules page showed
-  // after the Code Delivery route landed: the path answered and the page still had two tabs.
-  \Drupal::service('plugin.manager.menu.local_task')->clearCachedDefinitions();
-  $out['tasks'] = count(\Drupal::service('plugin.manager.menu.local_task')->getDefinitions());
-  $out['before'] = $before;
-  $out['after'] = $after;
-  $out['ok'] = $after > 0;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['at'] = $e->getFile() . ':' . $e->getLine();
-}
-echo json_encode($out);
-`;
+	return phpRender(RECONCILE_ROUTER_PHP, {
+		FIBER_SHIM,
+		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+	});
 }
 
 /**
  * Points `system.image` at the toolkit this runtime can serve.
  *
- * A migrated site arrives set to `gd` or `imagemagick`. gd is not compiled in and imagemagick shells
- * out to `convert`, so every image style on such a site fails until the toolkit is `cfw_images`.
+ * A migrated site arrives set to `gd` (not compiled in) or `imagemagick` (shells out to `convert`),
+ * so every image style fails until the toolkit is `cfw_images`.
  */
 export function reconcileToolkitPhp(origin = ''): string {
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$out = ['ok' => false];
-try {
-${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
-  $editable = \Drupal::configFactory()->getEditable('system.image');
-  $out['before'] = (string) $editable->get('toolkit');
-  $editable->set('toolkit', 'cfw_images');
-  $editable->save();
-  $out['after'] = (string) \Drupal::config('system.image')->get('toolkit');
-  $out['ok'] = $out['after'] === 'cfw_images';
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['at'] = $e->getFile() . ':' . $e->getLine();
-}
-echo json_encode($out);
-`;
+	return phpRender(RECONCILE_TOOLKIT_PHP, {
+		FIBER_SHIM,
+		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+	});
 }
 
 /**
  * Uninstalls modules whose whole job this runtime does another way.
  *
- * `automatic_updates` and `project_browser` rewrite the codebase with composer, and updates here are
- * delivered by `drangler update` and reconciliation. `mongodb_watchdog` logs into a MongoDB the
- * runtime cannot reach, and dblog or the host logger takes over when it goes.
+ * `automatic_updates` and `project_browser` rewrite the codebase with composer (updates here come
+ * from `drangler update` and reconciliation); `mongodb_watchdog` logs to a MongoDB the runtime
+ * cannot reach.
  */
 export function reconcileUninstallPhp(modules: readonly string[], origin = ''): string {
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$out = ['ok' => false];
-try {
-${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
-  $wanted = json_decode(${JSON.stringify(JSON.stringify(modules))}, true);
-  $present = array_values(array_filter($wanted, function ($m) {
-    return \Drupal::moduleHandler()->moduleExists($m);
-  }));
-  $out['before'] = $present;
-  if ($present) {
-    \Drupal::service('module_installer')->uninstall($present, false);
-  }
-  $out['after'] = array_values(array_filter($wanted, function ($m) {
-    return \Drupal::moduleHandler()->moduleExists($m);
-  }));
-  $out['ok'] = $out['after'] === [];
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['at'] = $e->getFile() . ':' . $e->getLine();
-}
-echo json_encode($out);
-`;
+	return phpRender(RECONCILE_UNINSTALL_PHP, {
+		FIBER_SHIM,
+		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		MODULES: JSON.stringify(JSON.stringify(modules))
+	});
 }

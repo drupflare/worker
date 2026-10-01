@@ -1,178 +1,67 @@
 /**
  * PHP fragments for the decomposed cron, run inside the Durable Object.
  *
- * They are eval'd through pib_run, so a `use` statement at the top of a fragment
- * is invalid and every class name is fully qualified. Each one prints a single
- * JSON object and nothing else, because the caller parses from the first `{`.
- *
- * NONE of these calls drupal_cron(). A full run was measured at 187 queries and
- * 227-275 ms of CPU against a 10 ms free-plan invocation budget, and four of the
- * six cron implementations on this site either need a socket or duplicate work
- * that src/cron.js already does in SQL. See CRON_HOOKS in src/cron.js for which
- * ones are skipped and why.
+ * They are eval'd through pib_run, so each script's `use` lines are lifted to the top of the
+ * composed script. Each prints one JSON object and nothing else (the caller parses from the first
+ * `{`). None calls `drupal_cron()`: a full run is 187 queries and 227-275 ms natively.
+ * @module
  */
-
-import { FIBER_SHIM } from './fiber-shim.js';
+import {
+	COLLECT_CRON_LISTENERS_PHP,
+	CRON_HOOK_LIST_PHP,
+	KERNEL_BOOT_PHP,
+	LISTENER_SHAPE_PHP,
+	RUN_ADVISORY_SCAN_PHP,
+	RUN_CRON_HOOK_PHP,
+	RUN_CRON_QUEUE_PHP,
+	RUN_FETCH_REOPEN_PHP,
+	RUN_HEALTH_SELF_TEST_PHP
+} from '../site/generated/assets';
+import { phpRender, phpWhen } from '../util/php';
+import { renderTemplate } from '../util/template';
+import { FIBER_SHIM } from './fiber-shim';
 
 export { FIBER_SHIM };
 
 /**
- * The $_SERVER block and the memoized kernel boot, matching renderPage().
+ * The `$_SERVER` block and the memoized kernel boot, matching the preamble in `site-php.ts`.
  *
- * Identical to the preamble in `site-php.ts`: a cron fragment that booted differently from the
- * render path would be measuring a different site.
- *
- * THE ORIGIN MATTERS MORE HERE THAN ON A RENDER. A render's absolute URLs are mostly relative in
- * the markup, but cron is where mail is sent -- and `user_pass_reset_url()` builds an absolute link
- * from the request. Booted against `localhost`, every link Drupal mails from cron points the
- * recipient at their own machine. `Request::create()` builds its own server bag and never reads
- * `$_SERVER`, so the URI it is given is the only thing that sets the host.
+ * The origin matters: cron sends mail, and `user_pass_reset_url()` builds an absolute link from
+ * the request, so a `localhost` boot mails links to the recipient's own machine.
+ * `Request::create()` never reads `$_SERVER`, so the URI it is given alone sets the host.
  *
  * @param origin - a `scheme://host[:port]`, already JSON-encoded as a PHP string literal
  */
-export const kernelBoot = (origin: string) => String.raw`
-$origin = json_decode(${origin});
-$__host = $origin === '' ? 'localhost' : (string) parse_url($origin, PHP_URL_HOST);
-$__port = $origin === '' ? 80 : (int) (parse_url($origin, PHP_URL_PORT) ?: (strncmp($origin, 'https:', 6) === 0 ? 443 : 80));
-$_SERVER['HTTP_HOST'] = $__port === 80 || $__port === 443 ? $__host : $__host . ':' . $__port;
-$_SERVER['SERVER_NAME'] = $__host;
-$_SERVER['SERVER_PORT'] = (string) $__port;
-if (strncmp($origin, 'https:', 6) === 0) { $_SERVER['HTTPS'] = 'on'; } else { unset($_SERVER['HTTPS']); }
-$_SERVER['REQUEST_URI'] = '/';
-$_SERVER['REQUEST_METHOD'] = 'GET';
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-// require rather than require_once: the latter returns TRUE on a second call, and a heap restore
-// reaches that state; see the note in site-php.ts
-if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-  $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-}
-$autoloader = $GLOBALS['__pw_autoloader'];
-
-if (!isset($GLOBALS['__pw_kernel'])) {
-  $request = \Symfony\Component\HttpFoundation\Request::create($origin === '' ? '/' : rtrim($origin, '/') . '/', 'GET');
-  $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-  \Drupal\Core\DrupalKernel::bootEnvironment();
-  $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
-  $kernel->setSitePath($sitePath);
-  \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-  $kernel->boot();
-  $GLOBALS['__pw_kernel'] = $kernel;
-  $out['bootedKernel'] = 1;
-}
-// the request stack is what Drupal's URL generator reads for the host, and a cron fragment
-// pushes none of its own -- so without this an absolute URL falls back to a default it invents
-try {
-  if ($origin !== '' && \Drupal::hasContainer()) {
-    \Drupal::service('request_stack')->push(
-      \Symfony\Component\HttpFoundation\Request::create(rtrim($origin, '/') . '/', 'GET')
-    );
-  }
-} catch (\Throwable $e) {}
-`;
+export const kernelBoot = (origin: string) => renderTemplate(KERNEL_BOOT_PHP, { ORIGIN: origin });
 
 /**
  * Collects the cron listeners the way Drupal\Core\Cron does, keyed by module.
  *
- * invokeAllWith() rather than invoke(): iterateByModule() is a generator, so
- * collecting the callables runs none of them, and this is the exact code path
- * Cron::invokeCronHandlers() uses. ModuleHandler::invoke($module, 'cron') does
- * also work in 11.4.5 -- verified by reading ModuleHandler.php:347-358, which
- * resolves through the same ImplementationList before falling back to a
- * $module_$hook function -- but it throws LogicException on a second
- * implementation, and a periodic unattended alarm should report that rather than
- * die of it.
+ * Uses invokeAllWith(), not invoke(): `ModuleHandler::invoke($module, 'cron')` throws
+ * LogicException on a second implementation, which an unattended alarm should report, not die of.
  */
-const COLLECT_CRON_LISTENERS = String.raw`
-$found = [];
-\Drupal::moduleHandler()->invokeAllWith('cron', function (callable $hook, string $m) use (&$found) {
-  $found[$m][] = $hook;
-});
-$out['available'] = array_keys($found);
-`;
+const COLLECT_CRON_LISTENERS = COLLECT_CRON_LISTENERS_PHP;
 
 /** describes a collected listener without calling it */
-const LISTENER_SHAPE = String.raw`
-if (!function_exists('cfw_listener_shape')) { eval('
-function cfw_listener_shape($c) {
-  if (is_array($c)) { return (is_object($c[0]) ? get_class($c[0]) : (string) $c[0]) . "::" . $c[1]; }
-  if ($c instanceof \\Closure) { return "Closure"; }
-  if (is_object($c)) { return get_class($c) . "::__invoke"; }
-  return gettype($c);
-}
-'); }
-`;
+const LISTENER_SHAPE = `\n${phpWhen("!function_exists('cfw_listener_shape')", LISTENER_SHAPE_PHP)}\n`;
 
-/**
- * Lists every cron implementation the booted site has, running none of them.
- *
- * Exists so the skip list in src/cron.js can be CHECKED against the site instead
- * of trusted: the measured set on this install is announcements_feed, dblog,
- * file, layout_builder, system, update, and a module added later has to show up
- * here before it can be scheduled.
- */
+/** lists every cron implementation the booted site has, running none (checks the skip list) */
 export function cronHookList(origin = ''): string {
-	return String.raw`<?php
-${FIBER_SHIM}
-${LISTENER_SHAPE}
-chdir('/drupal');
-
-$out = [];
-$clock = function () { return microtime(true) * 1000; };
-$t0 = $clock();
-
-try {
-${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
-${COLLECT_CRON_LISTENERS}
-  $shapes = [];
-  foreach ($found as $m => $listeners) {
-    foreach ($listeners as $listener) { $shapes[$m][] = cfw_listener_shape($listener); }
-  }
-  $out['shapes'] = $shapes;
-  $out['queues'] = [];
-  foreach (\Drupal::service('plugin.manager.queue_worker')->getDefinitions() as $id => $def) {
-    $out['queues'][$id] = isset($def['cron']) ? ($def['cron']['time'] ?? 0) : null;
-  }
-  $out['advisoriesEnabled'] = (bool) \Drupal::config('system.advisories')->get('enabled');
-  $out['dblogRowLimit'] = (int) \Drupal::config('dblog.settings')->get('row_limit');
-  $out['cacheDataMaxRows'] = (int) \Drupal::service('cache.data')->getMaxRows();
-  $out['ok'] = true;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-
-$out['ms'] = round($clock() - $t0, 2);
-echo json_encode($out);
-`;
+	return phpRender(CRON_HOOK_LIST_PHP, {
+		FIBER_SHIM,
+		LISTENER_SHAPE,
+		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		COLLECT_CRON_LISTENERS
+	});
 }
 
 /**
- * Runs exactly ONE named module's cron implementation, and nothing else.
+ * Runs one named module's cron implementation and nothing else.
  *
- * This is what the decomposition is for: the free plan caps an alarm
- * invocation at the same 10 ms of CPU as a request, so the unit of work has to be
- * one hook rather than one cron run.
- *
- * Two departures from Drupal\Core\Cron::run():
- *
- *   1. No 'cron' lock is acquired. The Durable Object gate already guarantees one
- *      caller in the interpreter at a time, and a DatabaseLockBackend lock taken
- *      here would outlive the invocation with no process shutdown to release it --
- *      after which Lock::wait() usleep()s inside a synchronous wasm call and
- *      stalls rather than fails.
- *   2. system.cron_last is NOT written here. It is one serialized integer in
- *      key_value, so src/cron.js writes it in SQL once the round completes, which
- *      keeps this fragment to a single concern.
- *
- * The account switch IS kept, because it is not bookkeeping: hooks that run
- * entity queries see different results as an authenticated user, and Cron::run()
- * switches to anonymous for exactly that reason.
+ * Departs from Drupal\Core\Cron::run() in two ways: no 'cron' lock (the object gate already
+ * serialises, and a DatabaseLockBackend lock would outlive the invocation and then stall in
+ * `Lock::wait()`), and no `system.cron_last` write (src/cron.js writes it in SQL). The switch to
+ * the anonymous account is kept, since entity queries differ by user.
  *
  * @param {string} module machine name; anything else returns a refusal
  */
@@ -181,72 +70,21 @@ export function runCronHook(module: string, origin = ''): string {
 	if (!/^[a-z][a-z0-9_]*$/.test(name)) {
 		return String.raw`<?php echo json_encode(['ran' => false, 'error' => 'refused module name']);`;
 	}
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$module = json_decode(${JSON.stringify(JSON.stringify(name))});
-$out = ['module' => $module, 'ran' => false];
-$clock = function () { return microtime(true) * 1000; };
-$t0 = $clock();
-
-try {
-${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
-${COLLECT_CRON_LISTENERS}
-
-  if (!isset($found[$module])) {
-    $out['reason'] = 'no cron implementation';
-  } elseif (count($found[$module]) > 1) {
-    // core's own invariant; ModuleHandler::invoke() raises LogicException here
-    $out['reason'] = 'more than one implementation';
-    $out['count'] = count($found[$module]);
-  } else {
-    $switcher = null;
-    try {
-      $switcher = \Drupal::service('account_switcher');
-      $switcher->switchTo(new \Drupal\Core\Session\AnonymousUserSession());
-    } catch (\Throwable $e) {
-      $out['switchError'] = $e->getMessage();
-      $switcher = null;
-    }
-    $fn = $found[$module][0];
-    $a = $clock();
-    try {
-      call_user_func($fn);
-      $out['ran'] = true;
-    } catch (\Throwable $e) {
-      $out['error'] = get_class($e) . ': ' . $e->getMessage();
-      $out['trace'] = substr($e->getTraceAsString(), 0, 800);
-    }
-    $out['hookMs'] = round($clock() - $a, 2);
-    if ($switcher !== null) {
-      try { $switcher->switchBack(); } catch (\Throwable $e) {}
-    }
-  }
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-
-$out['ms'] = round($clock() - $t0, 2);
-echo json_encode($out);
-`;
+	return phpRender(RUN_CRON_HOOK_PHP, {
+		FIBER_SHIM,
+		MODULE: JSON.stringify(JSON.stringify(name)),
+		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		COLLECT_CRON_LISTENERS
+	});
 }
 
 /**
- * Processes at most $maxItems items from ONE named queue, then stops.
+ * Processes at most `maxItems` items from one named queue, then stops.
  *
- * Drupal\Core\Cron::processQueue() loops on the wall clock until the worker's
- * declared lease elapses -- 60 s for the only cron queue on this site,
- * media_entity_thumbnail. That bound is meaningless here and the CPU one is
- * fatal, so the loop is bounded by item count instead and the cursor in
- * src/cron.js carries the chain across invocations.
- *
- * The exception handling mirrors Cron::processQueue() case for case, because each
- * branch decides whether an item is deleted, released or left leased, and getting
- * that wrong either loses work or replays it forever. The one addition is the
- * catch-all break: core logs and keeps going, but a failing item here has usually
- * failed because a socket is missing, so continuing would spend the invocation
- * discovering that again.
+ * Core's `Cron::processQueue()` loops on the wall clock until the lease elapses; here the loop is
+ * bounded by item count and the cursor in src/cron.js carries the chain. Exception handling
+ * mirrors core case for case (each branch deletes, releases or leaves an item leased), plus a
+ * catch-all break, since a failing item usually lacks a socket and would fail again.
  *
  * @param {string} name queue (and queue worker plugin) id
  * @param {number} maxItems items this invocation may process
@@ -260,239 +98,52 @@ export function runCronQueue(name: string, maxItems = 5, origin = ''): string {
 		Number.isFinite(Number(maxItems)) && Number(maxItems) >= 1
 			? Math.min(Math.floor(Number(maxItems)), 50)
 			: 5;
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$name = json_decode(${JSON.stringify(JSON.stringify(queue))});
-$max = ${max};
-$out = ['queue' => $name, 'processed' => 0, 'failed' => 0, 'requeued' => 0, 'delayed' => 0, 'suspended' => false];
-$clock = function () { return microtime(true) * 1000; };
-$t0 = $clock();
-
-try {
-${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
-
-  $manager = \Drupal::service('plugin.manager.queue_worker');
-  $definitions = $manager->getDefinitions();
-  if (!isset($definitions[$name])) {
-    $out['reason'] = 'no queue worker plugin';
-  } else {
-    $lease = (int) ($definitions[$name]['cron']['time'] ?? 60);
-    $queue = \Drupal::queue($name);
-    try { $queue->createQueue(); } catch (\Throwable $e) {}
-    $worker = $manager->createInstance($name);
-    $switcher = null;
-    try {
-      $switcher = \Drupal::service('account_switcher');
-      $switcher->switchTo(new \Drupal\Core\Session\AnonymousUserSession());
-    } catch (\Throwable $e) { $switcher = null; }
-
-    for ($i = 0; $i < $max; $i++) {
-      $item = $queue->claimItem($lease);
-      if (!$item) { break; }
-      try {
-        $worker->processItem($item->data);
-        $queue->deleteItem($item);
-        $out['processed']++;
-      } catch (\Drupal\Core\Queue\DelayedRequeueException $e) {
-        // leave the lease alone unless the queue can extend it itself
-        if ($queue instanceof \Drupal\Core\Queue\DelayableQueueInterface) {
-          $queue->delayItem($item, $e->getDelay());
-        }
-        $out['delayed']++;
-      } catch (\Drupal\Core\Queue\RequeueException $e) {
-        $queue->releaseItem($item);
-        $out['requeued']++;
-      } catch (\Drupal\Core\Queue\SuspendQueueException $e) {
-        $queue->releaseItem($item);
-        $out['suspended'] = true;
-        break;
-      } catch (\Throwable $e) {
-        // left leased, exactly as core does, so it retries after the lease
-        $out['failed']++;
-        $out['lastError'] = get_class($e) . ': ' . $e->getMessage();
-        break;
-      }
-    }
-
-    if ($switcher !== null) {
-      try { $switcher->switchBack(); } catch (\Throwable $e) {}
-    }
-    try { $out['remaining'] = (int) $queue->numberOfItems(); } catch (\Throwable $e) {}
-    $out['ran'] = true;
-  }
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-
-$out['ms'] = round($clock() - $t0, 2);
-echo json_encode($out);
-`;
+	return phpRender(RUN_CRON_QUEUE_PHP, {
+		FIBER_SHIM,
+		NAME: JSON.stringify(JSON.stringify(queue)),
+		MAX: String(max),
+		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+	});
 }
 
 /**
- * Records what the update module found, without going through hook discovery.
+ * Records what the update module found, without hook discovery.
  *
- * **The module's own `hook_cron` is not registered on an installed site.** Hook implementations are
- * compiled into the container and the pack ships that prebuilt, so a class added after the bake is
- * invisible: measured, `hasImplementations('cron', ['drupflare'])` answers false while the class
- * loads fine and `runCronHook()` reports `no cron implementation`. A security signal that only
- * reaches sites built after it shipped is not one, so the host calls the scanner directly.
- *
- * The class stays in the module because that is where the knowledge of `update_project_data`'s shape
- * belongs; only the invocation moves here.
+ * The module's own `hook_cron` is invisible on an installed site: hooks compile into the prebuilt
+ * container, so `hasImplementations('cron', ['drupflare'])` answers false. The host calls the
+ * scanner directly; the class stays in the module, only the invocation moves.
  */
 export function runAdvisoryScan(origin = ''): string {
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$out = ['ran' => false];
-$clock = function () { return microtime(true) * 1000; };
-$t0 = $clock();
-
-try {
-${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
-
-  $class = 'Drupal\\drupflare\\Update\\AdvisoryScan';
-  if (!class_exists($class)) {
-    $out['reason'] = 'the drupflare module is not installed';
-  } else {
-    $scan = new $class(\Drupal::state(), \Drupal::service('keyvalue'));
-    $out['record'] = $scan->scan(time());
-    $out['ran'] = true;
-  }
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-
-$out['ms'] = round($clock() - $t0, 2);
-echo json_encode($out);
-`;
+	return phpRender(RUN_ADVISORY_SCAN_PHP, {
+		FIBER_SHIM,
+		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+	});
 }
 
 /**
  * Reopens an update check that recorded a deferral as a failure.
  *
- * `DeferredCron` is the class that knows how to do this and it has never run anywhere: it is a
- * `#[Hook('cron')]` implementation, hook implementations compile into the container, and the pack
- * ships that container prebuilt -- so on every installed site `hasImplementations('cron',
- * ['drupflare'])` answers false while the class itself loads fine. Same shape as
- * {@link runAdvisoryScan}: the class stays where the knowledge of the update module's four records
- * belongs, and only the invocation moves to the host.
+ * `DeferredCron` is a `#[Hook('cron')]` class, invisible on installed sites for the reason given
+ * on {@link runAdvisoryScan}, so the host invokes it directly.
  */
 export function runFetchReopen(origin = ''): string {
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$out = ['ran' => false];
-$clock = function () { return microtime(true) * 1000; };
-$t0 = $clock();
-
-try {
-${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
-
-  $class = 'Drupal\\drupflare\\Hook\\DeferredCron';
-  if (!class_exists($class)) {
-    $out['reason'] = 'the drupflare module is not installed';
-  } else {
-    $releases = \Drupal::service('keyvalue.expirable')->get('update_available_releases');
-    $before = 0;
-    foreach ($releases->getAll() as $data) {
-      if (is_array($data) && ($data['project_status'] ?? null) === 'not-fetched') {
-        $before++;
-      }
-    }
-    $reopen = new $class(
-      \Drupal::state(),
-      \Drupal::configFactory(),
-      \Drupal::service('keyvalue'),
-      \Drupal::service('keyvalue.expirable'),
-    );
-    $reopen->cron();
-    $out['unanswered'] = $before;
-    $out['reopened'] = $before > 0;
-    $out['ran'] = true;
-  }
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-
-$out['ms'] = round($clock() - $t0, 2);
-echo json_encode($out);
-`;
+	return phpRender(RUN_FETCH_REOPEN_PHP, {
+		FIBER_SHIM,
+		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+	});
 }
 
 /**
  * Runs the PHP health layer over an observation the host already holds.
  *
- * WHY THIS EXISTS AT ALL. `src/Health/` is twelve files and nothing reached any of them:
- * `HealthLedger`, `BootSelfTest`, `TripwireRegistry` and `CircuitBreaker` were referenced by no
- * file outside their own directory, and the one write path they share was gated on a `cfwHealth`
- * capability the host never installed. Green in the module's own suite, absent from every site.
+ * Host-driven rather than a hook, for the reason on {@link runAdvisoryScan}. No kernel boot:
+ * `BootSelfTest::run()` reads only host-visible facts, so the observation is supplied.
  *
- * A HOST-DRIVEN UNIT RATHER THAN A HOOK, for the reason this project already recorded: hook
- * implementations compile into the container and the pack ships it prebuilt, so a `#[Hook]` class
- * added after the bake answers `hasImplementations()` false on every installed site. The advisory
- * scan moved to this shape for the same reason; this follows it.
- *
- * NO KERNEL BOOT. `BootSelfTest::run()` reads only host-visible facts -- the bridge, the missing
- * capability list, the sqlite version, the migration cursor, the updb phase and the two
- * generations -- so the observation is supplied rather than discovered, and this costs one PHP run
- * with no Drupal behind it. The tripwires that DO need Drupal's own state are the render-scoped
- * ones, and they are fed by the caller that has a render in hand rather than by this.
- *
- * @param observation - the host's own view, as JSON; keys are `BootSelfTest`'s contract.
+ * @param observation - the host's own view, as JSON; keys are `BootSelfTest`'s contract
  */
 export function runHealthSelfTest(observation: unknown): string {
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$out = ['ran' => false, 'findings' => [], 'recorded' => 0, 'mayServe' => true];
-$clock = function () { return microtime(true) * 1000; };
-$t0 = $clock();
-
-try {
-  $autoload = '/drupal/autoload.php';
-  if (!is_object($GLOBALS['__pw_autoloader'] ?? null)) {
-    // require, never require_once: a second include answers TRUE rather than the ClassLoader,
-    // and a heap restore lands in exactly that state
-    $GLOBALS['__pw_autoloader'] = require $autoload;
-  }
-  $loader = $GLOBALS['__pw_autoloader'];
-  if (is_object($loader)) {
-    $loader->addPsr4('Drupal\\drupflare\\', '/drupal/modules/custom/drupflare/src/');
-  }
-
-  $boot = 'Drupal\\drupflare\\Health\\BootSelfTest';
-  $registry = 'Drupal\\drupflare\\Health\\TripwireRegistry';
-  $ledger = 'Drupal\\drupflare\\Health\\HealthLedger';
-  if (!class_exists($boot)) {
-    $out['reason'] = 'the drupflare module is not installed';
-  } else {
-    $observation = json_decode(${JSON.stringify(JSON.stringify(observation ?? {}))}, true);
-    if (!is_array($observation)) {
-      $observation = [];
-    }
-    $findings = $boot::run($observation);
-    // the tripwires take the same bag; the ones needing a render simply find nothing in it
-    $findings = array_merge($findings, (new $registry())->run($observation));
-
-    $out['mayServe'] = $boot::mayServe($findings);
-    $out['recorded'] = $ledger::recordAll($findings);
-    foreach ($findings as $finding) {
-      $out['findings'][] = $finding->toArray();
-    }
-    $out['ran'] = true;
-  }
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-
-$out['ms'] = round($clock() - $t0, 2);
-echo json_encode($out);
-`;
+	return phpRender(RUN_HEALTH_SELF_TEST_PHP, {
+		FIBER_SHIM,
+		OBSERVATION: JSON.stringify(JSON.stringify(observation ?? {}))
+	});
 }

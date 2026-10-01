@@ -1,0 +1,8 @@
+<h1>Sign In</h1>
+<p class="sub">These pages install code and run privileged operations, so they take the site's owner token. It was printed once by the first-run step that created this site.</p>
+__CFW_ERROR__
+<form method="POST" action="__CFW_LOGIN_PATH__">
+<input type="hidden" name="next" value="__CFW_NEXT__">
+<input type="password" name="token" id="token" placeholder="owner token" autocomplete="current-password" autofocus>
+<button type="submit">Sign In</button></form>
+<p class="sub">Lost it? It cannot be read back. Re-run first-run with <code>?force=1</code> and the old token, which mints the site's credentials again.</p>

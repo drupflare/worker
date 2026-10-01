@@ -1,0 +1,51 @@
+:root {
+	color-scheme: light dark;
+}
+body {
+	margin: 0;
+	min-height: 100vh;
+	display: grid;
+	place-items: center;
+	font:
+		16px/1.5 system-ui,
+		-apple-system,
+		'Segoe UI',
+		sans-serif;
+}
+main {
+	max-width: 28rem;
+	padding: 2rem;
+	text-align: center;
+}
+h1 {
+	font-size: 1.25rem;
+	margin: 0 0 0.5rem;
+}
+p {
+	margin: 0;
+	opacity: 0.75;
+}
+.dot {
+	display: inline-block;
+	width: 0.5rem;
+	height: 0.5rem;
+	margin-right: 0.5rem;
+	border-radius: 50%;
+	background: currentColor;
+	animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+	0%,
+	100% {
+		opacity: 0.25;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.dot {
+		animation: none;
+		opacity: 0.6;
+	}
+}

@@ -1,0 +1,18 @@
+services:
+  drupflare.cache_backend.null:
+    class: Drupal\Core\Cache\NullBackendFactory
+    public: false
+  cache.page:
+    class: Drupal\Core\Cache\CacheBackendInterface
+    tags:
+      - { name: cache.bin }
+    factory: ['@drupflare.cache_backend.null', 'get']
+    arguments: [page]
+  stream_wrapper.public:
+    class: Drupal\drupflare\StreamWrapper\CfwFileStreamWrapper
+    tags:
+      - { name: stream_wrapper, scheme: public }
+  stream_wrapper.private:
+    class: Drupal\drupflare\StreamWrapper\CfwFileStreamWrapper
+    tags:
+      - { name: stream_wrapper, scheme: private }

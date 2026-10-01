@@ -1,0 +1,46 @@
+<h1>Access</h1>
+<p class="sub">Single sign-on through an OpenID Connect provider. The host verifies the <code>id_token</code> signature, because the interpreter is built without OpenSSL and cannot.</p>
+
+<div class="__CFW_CARD__">
+<strong>__CFW_STATUS__</strong>
+<p class="sub" style="margin:.4rem 0 0">Issuer <code>__CFW_ISSUER__</code><br>
+Client ID <code>__CFW_CLIENT_ID__</code><br>
+Client secret __CFW_SECRET__ <span class="dim">(the <code>OIDC_CLIENT_SECRET</code> binding, never read back here)</span></p>
+</div>
+
+<div class="card warn">
+<strong>Requires the External Authentication Module</strong>
+<p class="sub" style="margin:.4rem 0 0">The host verifies the provider's token and hands Drupal a single-use ticket; <code>drupal/externalauth</code> is what maps that identity onto an account, and no contrib module ships in the packed tree. Install it from <strong>Extend</strong> before the first login, or a verified login has nowhere to land.</p>
+</div>
+
+<h2>Redirect URI</h2>
+<p class="sub">Add this to the provider's allowed redirect list before the first login.</p>
+<div class="card"><code>__CFW_REDIRECT_URI__</code></div>
+
+<h2>Where People Sign In</h2>
+<p class="sub">This page printed the redirect URI and never the START url, and nothing on the site links to it -- so single sign-on could be fully configured and no visitor could reach it. Send people here, or link it from your theme's login block.</p>
+<div class="card"><code>__CFW_START_URL__</code>__CFW_START_LINK__</div>
+
+<h2>Configure</h2>
+<p class="sub">Saving fetches the issuer's discovery document, so a wrong issuer is reported here rather than at the first login.</p>
+<form id="oidc-form">
+<input type="text" name="issuer" placeholder="https://accounts.example.com" value="__CFW_ISSUER_INPUT__" spellcheck="false">
+<input type="text" name="clientId" placeholder="client id" value="__CFW_CLIENT_ID_INPUT__" spellcheck="false">
+<button type="submit">Save</button>
+<button type="button" id="oidc-clear"__CFW_CLEAR_DISABLED__>Clear</button></form>
+<p id="oidc-out" class="sub"></p>
+__CFW_ERROR__
+<div id="oidc-discovery">__CFW_DISCOVERY__</div>
+<script>
+__CFW_SCRIPT__
+</script>
+
+<h2>What a Login Refuses</h2>
+<ul>
+<li>a signature from a key outside the provider's JWKS</li>
+<li>a token whose <code>iss</code> is not the issuer above</li>
+<li>a token whose <code>aud</code> belongs to another client of the same provider</li>
+<li>an expired token</li>
+<li>a nonce from a different login</li>
+</ul>
+<p class="sub">The signing algorithm is taken from the key rather than from the token header, and the account is keyed by issuer and subject together, so a subject from a newly configured issuer cannot take over an existing account.</p>

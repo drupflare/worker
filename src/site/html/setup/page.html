@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Set Up This Site</title>
+<style>
+__CFW_STYLE__
+</style>
+</head>
+<body>
+<main>
+<h1>Set Up This Site</h1>
+<p>Drupal is installed and serving, but nobody has claimed it yet. Claiming it sets the
+administrator password, gives that account the Site Owner role, and issues the owner token. Until
+then, anyone who reaches this URL can claim it.</p>
+<form id="f">
+<label>Site Name<input name="siteName" value="My Site" autocomplete="off"></label>
+<label>Administrator Email<input name="adminMail" type="email" autocomplete="off"></label>
+<label>Administrator Password <span class="warn">(leave blank and one is generated)</span>
+<input name="adminPass" type="password" autocomplete="new-password"></label>
+<button type="submit">Claim This Site</button>
+</form>
+<div class="out" id="o"></div>
+<p class="warn">Or from a terminal:</p>
+<pre>curl -X POST "__CFW_ORIGIN__/firstrun" \
+  -H 'content-type: application/json' \
+  -d '{"siteName":"My Site","adminMail":"you@example.com"}'</pre>
+</main>
+<script>
+__CFW_SCRIPT__
+</script>
+</body>
+</html>

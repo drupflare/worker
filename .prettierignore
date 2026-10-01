@@ -9,11 +9,14 @@ drupal-min-src/
 coverage/
 bun.lock
 typedoc/
+.phpdoc/cache/
 .husky/
 TECHNICAL_REPORT.md
 experiments/
 tests/fixtures/unicode-corpus.json
 src/ops/generated/
+src/site/generated/
+src/site/html/
 scripts/generated/
 src/ops/shipped-lock.ts
 docs/compatibility.json

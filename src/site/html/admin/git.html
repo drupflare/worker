@@ -1,0 +1,51 @@
+<h1>Git</h1>
+<p class="sub">Connect a repository and this site follows it. A push installs the module; the result is written back as a commit status.</p>
+<table><thead><tr><th>Repository</th><th>Branch</th><th>Head</th><th>Installed</th><th>Webhook / Poll</th><th></th></tr></thead>
+<tbody>__CFW_ROWS__</tbody></table>
+<p id="git-out" class="sub"></p>
+<div id="git-detail"></div>
+
+<h2>Add a Remote</h2>
+<div class="card">
+<p class="sub">Paste a repository URL or <code>owner/repo</code>. Leave the branch empty to follow the repository's default. A public repository over <strong>Any Git Remote</strong> needs no token at all.</p>
+<form id="git-add">
+<label>Provider <select name="provider">
+<option value="github">GitHub</option><option value="gitlab">GitLab</option><option value="bitbucket">Bitbucket</option><option value="gitea">Gitea / Forgejo</option><option value="generic">Any Git Remote</option>
+</select></label>
+<input type="text" name="repo" placeholder="https://github.com/owner/repo" autocomplete="off" spellcheck="false">
+<input type="text" name="branch" placeholder="branch (optional)" autocomplete="off" spellcheck="false" style="min-width:9rem;flex:0">
+<input type="number" name="interval" min="0" step="5" value="60" title="Poll interval in minutes; 0 turns polling off" style="width:5rem;flex:0">
+<input type="text" name="token" placeholder="access token" autocomplete="off" spellcheck="false">
+<input type="text" name="email" placeholder="Atlassian account email (Bitbucket only)" autocomplete="off" spellcheck="false">
+<input type="text" name="username" placeholder="Bitbucket username (Bitbucket only)" autocomplete="off" spellcheck="false">
+<button type="submit">Connect</button>
+</form>
+<p class="sub">The token is stored in this site's own database, never in KV: KV is operator-writable and nothing there may change what a site can reach.</p>
+</div>
+
+<h2>How a Pull Works</h2>
+<div class="card">
+<p>The transport is git's own smart HTTP, so any host that serves a repository works. A poll is a ref advertisement and costs a few hundred bytes when nothing has moved. A pull asks for one commit at depth 1, reads the packfile, and writes each file as its own row.</p>
+<p class="sub">Only mountable files are kept: PHP, YAML, Twig, JS and CSS, with tests, <code>vendor/</code> and <code>node_modules/</code> dropped. Module names come from <code>*.info.yml</code>, so a repository holding several modules installs all of them at their own paths.</p>
+<p class="sub">After a pull the Drupal kernel is booted against the new tree. If it fails, the previous files are restored and the site keeps serving.</p>
+</div>
+
+<h2>What Gets Written Back</h2>
+<div class="card">
+<p>A <strong>commit status</strong> on the pushed sha, with a state, a context and a link back to this site. Every provider with an API supports it and an access token can write it.</p>
+<p class="sub">GitHub's Checks API carries annotations and per-line output, and only a GitHub App can write one. A pasted token is refused with <code>Resource not accessible by personal access token</code>, so this page does not offer check runs.</p>
+</div>
+
+<h2>Scopes</h2>
+<table><thead><tr><th>Provider</th><th>Read the tree</th><th>Write a status</th><th>Create a webhook</th></tr></thead><tbody>
+<tr><td>GitHub</td><td><code>Contents: read</code></td><td><code>Commit statuses: write</code></td><td><code>Webhooks: write</code></td></tr>
+<tr><td>GitLab</td><td><code>read_api</code></td><td><code>api</code></td><td><code>api</code> + Maintainer</td></tr>
+<tr><td>Bitbucket</td><td><code>repository:read</code></td><td><code>repository:read</code></td><td><code>webhook</code></td></tr>
+<tr><td>Gitea / Forgejo</td><td><code>read:repository</code></td><td><code>write:repository</code></td><td><code>write:repository</code></td></tr>
+<tr><td>Any Git Remote</td><td>read access over HTTPS</td><td><span class="dim">no API</span></td><td><span class="dim">register by hand</span></td></tr>
+</tbody></table>
+<p class="sub">GitLab has no narrower scope than <code>api</code> for writing a status. Bitbucket takes two names with one API token: the REST API authenticates with your Atlassian account email, and git over HTTPS authenticates with your Bitbucket username, which is case sensitive. A plain remote polls only; use <strong>Webhook</strong> to mint a secret and register the delivery URL yourself.</p>
+
+<script>
+__CFW_SCRIPT__
+</script>

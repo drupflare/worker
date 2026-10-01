@@ -4,3 +4,5 @@
 *.ico binary
 *.bin binary
 *.sqlite binary
+
+src/site/generated/** linguist-generated=true

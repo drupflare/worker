@@ -1,1004 +1,126 @@
 /**
  * PHP fragments that run inside the Durable Object.
  *
- * They are eval'd through pib_run, so a `use` statement at the top of a fragment
- * is invalid and every class name is fully qualified. Each one prints a single
- * JSON object and nothing else, because the caller parses from the first `{`.
+ * They are eval'd through `pib_run`, so a fragment takes no `use` statement and names classes fully
+ * qualified. Each prints one JSON object and nothing else (the caller parses from the first `{`).
+ * @module
  */
 
-import { bytesToBase64 } from '../db/file-store.js';
-import { FIBER_SHIM } from './fiber-shim.js';
+import { bytesToBase64 } from '../db/file-store';
+import {
+	ABANDON_TRANSACTION_PHP,
+	BOOT_KERNEL_PHP,
+	BOOT_PHASE_CONTAINER_READ_PHP,
+	BOOT_PHASE_CONTAINER_UNSERIALIZE_PHP,
+	BOOT_PHASE_KERNEL_BOOT_PHP,
+	BOOT_PHASE_KERNEL_NEW_PHP,
+	BOOT_PHASE_PHP,
+	BOOT_PHASE_PRE_HANDLE_PHP,
+	BOOT_PHASE_RENDER_PHP,
+	BOUNDARY_STATE_PHP,
+	CAPABILITY_CHECK_PHP,
+	CAPABILITY_VECTORS_PHP,
+	CLAIM_BOOT_PHP,
+	CLAIM_WARM_RUN_PHP,
+	CREATE_USER_PHP,
+	DRIVER_LIVE_SUITE_PHP,
+	DRUPAL_OP_PHP,
+	DRUPAL_REQUEST_PHP,
+	EXPORT_DATABASE_PHP,
+	FIRST_RUN_CONFIG_PHP,
+	GUZZLE_HANDLER_CHECK_PHP,
+	HARVEST_SHELL_PHP,
+	HOST_HELPERS_PHP,
+	INVALIDATE_TAGS_PHP,
+	LEAK_OPEN_SESSION_PHP,
+	LEAK_OUTPUT_BUFFER_PHP,
+	MB_CHECK_PHP,
+	MEMFS_CENSUS_PHP,
+	MIGRATE_DB_PHP,
+	OPS_REGISTRY_PHP,
+	OPS_RUN_PHP,
+	PACK_CONSISTENCY_PHP,
+	PACK_CONSISTENCY_RUN_PHP,
+	PROBE_RUNTIME_PHP,
+	PW_SERVE_INLINE_PHP,
+	RENDER_FRAGMENTS_PHP,
+	RENDER_PAGE_PHP,
+	SAVE_NODE_PHP,
+	SCHEMA_REPAIR_PHP,
+	SUBMISSION_PROBE_PHP,
+	TRANSLATE_ENGLISH_PHP,
+	VERIFY_MODULES_PHP,
+	WRITE_WORKLOAD_PHP
+} from '../site/generated/assets';
+import { phpRender, phpScript, phpWhen } from '../util/php';
+import { FIBER_SHIM } from './fiber-shim';
 
 /**
- * A host-call helper shared by the fragments below.
+ * The host-call helper every fragment uses to reach `ctx.storage.sql`.
  *
- * Every fragment reaches ctx.storage.sql the same way the driver does --
- * vrzno_env('cfwSqlExec') and the pw_encode/pw_decode codec -- so a fragment that
- * works is also evidence the driver's own transport works.
+ * It goes through `vrzno_env('cfwSqlExec')` and the `pw_encode`/`pw_decode` codec, as the driver
+ * does, so a working fragment also exercises the driver's transport.
  */
-export const HOST_HELPERS = String.raw`
-if (!function_exists('cfw_host')) { eval('
-function cfw_host($name) {
-  return function_exists("vrzno_env") ? vrzno_env($name) : null;
-}
-function cfw_call($fn, array $payload) {
-  $invoke = $fn;
-  $reply = $invoke(json_encode(pw_encode($payload)));
-  if (!is_string($reply)) {
-    return ["ok" => false, "error" => "host returned " . get_debug_type($reply) . " where a JSON string was expected"];
-  }
-  $decoded = json_decode($reply, true);
-  if (!is_array($decoded)) {
-    return ["ok" => false, "error" => "unparseable host reply: " . substr($reply, 0, 200)];
-  }
-  return pw_decode($decoded);
-}
-function cfw_sql($sql, $params = []) {
-  return cfw_call(cfw_host("cfwSqlExec"), ["sql" => $sql, "params" => $params]);
-}
-function cfw_txn(array $statements, $commit = true, $read = null) {
-  return cfw_call(cfw_host("cfwSqlTxn"), ["statements" => array_values($statements), "commit" => $commit, "read" => $read]);
-}
-'); }
-`;
+export const HOST_HELPERS = `\n${phpWhen("!function_exists('cfw_host')", HOST_HELPERS_PHP)}\n`;
 
 /**
- * Settles the runtime questions a PDO stand-in could never answer.
+ * Asks the runtime questions a PDO stand-in cannot answer, one statement each.
  *
- * DRIVER-NOTES.md "What is proven and what is not" lists six. Each is asked as
- * its own statement so one failure cannot hide the others, and the answer records
- * the engine's own message rather than a boolean, because the message is what
- * tells you whether a feature is missing or merely spelled differently.
+ * Each answer records the engine's own message, which says whether a feature is missing or only
+ * spelled differently.
  */
-export const PROBE_RUNTIME = String.raw`<?php
-${HOST_HELPERS}
-
-$out = [];
-$out['vrzno_env'] = function_exists('vrzno_env');
-$exec = cfw_host('cfwSqlExec');
-$txn = cfw_host('cfwSqlTxn');
-
-// Question 6: does vrzno_env() return something PHP can invoke as $fn($json)?
-// The driver accepts any object and lets the call fail rather than gating on
-// is_callable(), precisely because this was unverified.
-$out['bridge'] = [
-  'execType' => get_debug_type($exec),
-  'txnType' => get_debug_type($txn),
-  'execIsCallable' => is_callable($exec),
-  'txnIsCallable' => is_callable($txn),
-  'execIsObject' => is_object($exec),
-];
-
-$probe = function ($label, $sql, $params = []) use (&$out) {
-  $r = cfw_sql($sql, $params);
-  $out['q'][$label] = [
-    'sql' => $sql,
-    'ok' => ($r['ok'] ?? false) === true,
-    'error' => $r['error'] ?? null,
-    'rows' => array_slice($r['rows'] ?? [], 0, 6),
-    'rowCount' => count($r['rows'] ?? []),
-  ];
-  return $out['q'][$label]['ok'];
-};
-
-// a table to introspect
-$probe('setup_drop', 'DROP TABLE IF EXISTS cfw_probe');
-$probe('setup_create', 'CREATE TABLE cfw_probe (x INTEGER PRIMARY KEY, t TEXT, big INTEGER)');
-$probe('setup_insert', 'INSERT INTO cfw_probe (x, t, big) VALUES (1, :t, 0)', [':t' => 'hello']);
-
-// Q1: PRAGMA table_info -- the inherited Schema introspection needs it
-$probe('pragma_table_info', 'PRAGMA table_info(cfw_probe)');
-
-// Q2: PRAGMA index_list
-$probe('create_index', 'CREATE INDEX cfw_probe_t ON cfw_probe (t)');
-$probe('pragma_index_list', 'PRAGMA index_list(cfw_probe)');
-$probe('pragma_index_info', 'PRAGMA index_info(cfw_probe_t)');
-
-// Q3: schema-qualified sqlite_master, which findTables() emits
-$probe('qualified_master', 'SELECT name FROM "main".sqlite_master WHERE type = :t ORDER BY name', [':t' => 'table']);
-$probe('bare_master', 'SELECT name FROM sqlite_master WHERE type = :t ORDER BY name', [':t' => 'table']);
-
-// Q4: CREATE TEMPORARY TABLE, which queryTemporary() needs
-$probe('temp_create', 'CREATE TEMPORARY TABLE cfw_tmp (x INTEGER)');
-$probe('temp_insert', 'INSERT INTO cfw_tmp (x) VALUES (42)');
-$probe('temp_select', 'SELECT x FROM cfw_tmp');
-
-// Q5: schema-qualified index name, which Schema::createIndexSql() emits
-$probe('qualified_index', 'CREATE INDEX "main"."cfw_probe_q" ON cfw_probe (x)');
-$probe('qualified_index_bare', 'CREATE INDEX main.cfw_probe_q2 ON cfw_probe (t, x)');
-
-// Q6 continued: the SQLite version and every builtin the function audit assumed
-$fns = [
-  'version' => 'SELECT sqlite_version() AS v',
-  'concat' => "SELECT concat('a','b') AS v",
-  'concat_ws' => "SELECT concat_ws('-','a','b') AS v",
-  'pow' => 'SELECT pow(2,3) AS v',
-  'exp' => 'SELECT exp(1) AS v',
-  'iif' => 'SELECT iif(1,2,3) AS v',
-  'max_variadic' => 'SELECT max(1,2,3) AS v',
-  'min_variadic' => 'SELECT min(3,2,1) AS v',
-  'random' => 'SELECT random() IS NOT NULL AS v',
-  'substr' => "SELECT substr('abcdef',2,3) AS v",
-  'substring' => "SELECT substring('abcdef',2,3) AS v",
-  'length_chars' => "SELECT length('naive') AS v",
-  'md5' => "SELECT md5('a') AS v",
-  'regexp' => "SELECT 'abc' REGEXP 'b' AS v",
-  'nocase_eq' => "SELECT ('Hello' = 'hello' COLLATE NOCASE) AS v",
-  'nocase_utf8' => "SELECT ('A' = 'a' COLLATE NOCASE_UTF8) AS v",
-];
-foreach ($fns as $label => $sql) { $probe('fn_' . $label, $sql); }
-
-// A version ladder, because the engine refuses to report its own version and
-// Drupal 11.4.5 gates installation on SQLite >= 3.45. Each row is a feature that
-// landed in exactly one release, so the highest passing row is a proven floor.
-$ladder = [
-  '3.32' => "SELECT iif(1,2,3) AS v",
-  '3.35' => "SELECT pow(2,3) AS v",
-  '3.38' => "SELECT ('{\"a\":1}' ->> '$.a') AS v",
-  '3.44' => "SELECT concat('a','b') AS v",
-  '3.45' => "SELECT hex(jsonb('{\"a\":1}')) AS v",
-  '3.46' => "SELECT unhex('41') AS v",
-];
-$floor = null;
-foreach ($ladder as $release => $sql) {
-  if ($probe('ver_' . $release, $sql)) { $floor = $release; }
-}
-$out['versionFloor'] = $floor;
-$out['meetsDrupalMinimum'] = $floor !== null && version_compare($floor . '.0', '3.45', '>=');
-
-// builtin GLOB semantics, which decide whether likeToGlob() can be wired in
-$globs = [
-  'glob_star' => "SELECT ('abc' GLOB 'a*') AS v",
-  'glob_question' => "SELECT ('abc' GLOB 'a?c') AS v",
-  'glob_percent_literal' => "SELECT ('a%c' GLOB 'a%c') AS v",
-  'glob_percent_not_wildcard' => "SELECT ('abc' GLOB 'a%c') AS v",
-  'glob_bracket_quote_star' => "SELECT ('a*c' GLOB 'a[*]c') AS v",
-  'glob_bracket_quote_question' => "SELECT ('a?c' GLOB 'a[?]c') AS v",
-  'glob_bracket_quote_bracket' => "SELECT ('a[c' GLOB 'a[[]c') AS v",
-  'glob_case_sensitive' => "SELECT ('ABC' GLOB 'abc') AS v",
-  'glob_with_escape_clause' => "SELECT ('abc' GLOB 'abc' ESCAPE '\\') AS v",
-  'like_case_insensitive' => "SELECT ('ABC' LIKE 'abc') AS v",
-  'like_with_escape_clause' => "SELECT ('a%c' LIKE 'a\\%c' ESCAPE '\\') AS v",
-];
-foreach ($globs as $label => $sql) { $probe($label, $sql); }
-
-// Q7: does sql.exec() bind a JS BigInt? The codec produces one for an integer
-// beyond Number.MAX_SAFE_INTEGER, which JSON cannot carry and a JS number cannot
-// hold exactly, so the envelope is the only way the value travels at all.
-$wide = '9007199254740993';
-$probe('bigint_write_envelope', 'UPDATE cfw_probe SET big = :b WHERE x = 1', [':b' => ['__phpint' => $wide]]);
-$probe('bigint_read_envelope', 'SELECT big FROM cfw_probe WHERE x = 1');
-
-// the fallback the driver has to use if a BigInt cannot be bound: a decimal
-// string, relying on the column's INTEGER affinity to convert it
-$probe('bigint_write_string', 'UPDATE cfw_probe SET big = :b WHERE x = 1', [':b' => $wide]);
-$probe('bigint_read_string', 'SELECT big FROM cfw_probe WHERE x = 1');
-$probe('bigint_typeof', 'SELECT typeof(big) AS t, big + 0 AS n, CAST(big AS TEXT) AS s FROM cfw_probe WHERE x = 1');
-$probe('bigint_match_string', 'SELECT COUNT(*) AS c FROM cfw_probe WHERE big = :b', [':b' => $wide]);
-$probe('bigint_max', 'UPDATE cfw_probe SET big = :b WHERE x = 1', [':b' => '9223372036854775807']);
-$probe('bigint_max_read', 'SELECT CAST(big AS TEXT) AS s FROM cfw_probe WHERE x = 1');
-
-$resolve = function ($v) {
-  return is_array($v) ? ($v['__phpint'] ?? json_encode($v)) : $v;
-};
-$out['bigint'] = [
-  'sent' => $wide,
-  'envelopeBindOk' => $out['q']['bigint_write_envelope']['ok'],
-  'envelopeBindError' => $out['q']['bigint_write_envelope']['error'],
-  'stringBindOk' => $out['q']['bigint_write_string']['ok'],
-  'readBackRaw' => $resolve($out['q']['bigint_read_string']['rows'][0]['big'] ?? null),
-  'readBackExact' => (string) $resolve($out['q']['bigint_read_string']['rows'][0]['big'] ?? null) === $wide,
-  'storedType' => $out['q']['bigint_typeof']['rows'][0]['t'] ?? null,
-  'castToTextExact' => (string) $resolve($out['q']['bigint_typeof']['rows'][0]['s'] ?? null) === $wide,
-  'matchedByStringBind' => (string) $resolve($out['q']['bigint_match_string']['rows'][0]['c'] ?? null) === '1',
-  'int64MaxCastExact' => (string) $resolve($out['q']['bigint_max_read']['rows'][0]['s'] ?? null) === '9223372036854775807',
-];
-
-// the transaction bridge, against real storage rather than a PDO stand-in
-$t = cfw_txn([
-  ['sql' => 'INSERT INTO cfw_probe (x, t, big) VALUES (2, :t, 0)', 'params' => [':t' => 'speculative']],
-], false, ['sql' => 'SELECT COUNT(*) AS c FROM cfw_probe', 'params' => []]);
-$after = cfw_sql('SELECT COUNT(*) AS c FROM cfw_probe');
-$out['txn'] = [
-  'ok' => ($t['ok'] ?? false) === true,
-  'error' => $t['error'] ?? null,
-  'speculativeCount' => $t['readResult']['rows'][0]['c'] ?? null,
-  'committedCount' => $after['rows'][0]['c'] ?? null,
-  'leftNothingBehind' => ($t['readResult']['rows'][0]['c'] ?? null) !== ($after['rows'][0]['c'] ?? null),
-];
-
-$probe('cleanup', 'DROP TABLE IF EXISTS cfw_probe');
-
-$out['phpVersion'] = PHP_VERSION;
-$out['intSize'] = PHP_INT_SIZE;
-echo json_encode($out);
-`;
+export const PROBE_RUNTIME = phpRender(PROBE_RUNTIME_PHP, { HOST_HELPERS });
 
 /**
- * Runs the mb_* invalid-UTF-8 cases inside wasm, where the polyfill is real.
+ * Runs the `mb_*` invalid-UTF-8 cases inside wasm, where the polyfill is in use.
  *
- * The gate test (scripts/test-mb-fix.mjs) proves the sanitiser against native
- * mbstring, but native HAS mbstring, so it cannot exercise the polyfill path that
- * actually carries the bug. This does, and the caller diffs it against the native
- * oracle. It requires /drupal/autoload.php so the Symfony polyfill classes the
- * wrappers delegate to are loadable.
+ * Native PHP has mbstring and cannot reach the polyfill path, so the caller diffs this against the
+ * native oracle. It requires `/drupal/autoload.php` for the Symfony polyfill classes.
  */
-export const MB_CHECK = String.raw`<?php
-if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-  $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-}
-
-$cases = [
-  'ascii' => 'abc',
-  'valid accented' => "caf\xc3\xa9",
-  'valid CJK' => "\xe4\xbd\xa0\xe5\xa5\xbd",
-  'valid astral emoji' => "\xf0\x9f\x98\x80",
-  'two bad bytes' => "abc\xff\xfedef",
-  'lone continuation' => "abc\x80def",
-  'truncated 3-byte end' => "abc\xe4\xbd",
-  'truncated 3-byte mid' => "abc\xe4\xbddef",
-  'overlong C0' => "abc\xc0\xafdef",
-  'surrogate ED A0 80' => "abc\xed\xa0\x80def",
-  'truncated 4-byte mid' => "abc\xf0\x9fdef",
-  'F5 out of range' => "abc\xf5\x80\x80\x80def",
-];
-
-$out = [
-  'mbstringExtension' => extension_loaded('mbstring'),
-  'iconvExtension' => extension_loaded('iconv'),
-  'wrappersInstalled' => function_exists('cfw_mb_installed'),
-  'sanitizerPresent' => function_exists('cfw_mb_sanitize'),
-  'cases' => [],
-];
-
-foreach ($cases as $label => $raw) {
-  $out['cases'][$label] = [
-    'in' => bin2hex($raw),
-    'mb_substr' => mb_substr($raw, 0, 100000),
-    'mb_strlen' => mb_strlen($raw),
-    'mb_strtolower' => mb_strtolower($raw),
-    // must NOT be sanitised: an invalid string has to still report invalid
-    'mb_check_encoding' => mb_check_encoding($raw, 'UTF-8'),
-  ];
-}
-
-echo json_encode($out);
-`;
+export const MB_CHECK = phpScript(MB_CHECK_PHP);
 
 /**
- * Copies the packed SQLite file into ctx.storage.sql.
+ * Copies the packed SQLite file into `ctx.storage.sql`.
  *
- * The pack ships site.sqlite because MEMFS was the only store the earlier rounds
- * had. Reading it with the in-wasm PDO and replaying it through the bridge is the
- * one-time move onto durable storage, and it is also the backup/restore primitive
- * in the other direction.
- *
- * Two rewrites are mandatory:
- *
- *   - the DDL in sqlite_master was written by core's sqlite driver, which
- *     registers NOCASE_UTF8 as a real collation. ctx.storage.sql has no
- *     user-defined collations at all, so every NOCASE_UTF8 becomes NOCASE -- the
- *     same substitution Schema.php already makes for new tables.
- *   - sqlite_sequence and sqlite_autoindex_* are engine-owned and refuse to be
- *     created.
+ * Two rewrites are mandatory: `NOCASE_UTF8` becomes `NOCASE` (the host has no user-defined
+ * collations; `Schema.php` makes the same substitution), and `sqlite_sequence` and
+ * `sqlite_autoindex_*` are skipped (engine-owned, refuse creation).
  */
-export const MIGRATE_DB = String.raw`<?php
-${HOST_HELPERS}
-
-$out = ['ok' => false];
-$path = '/drupal/sites/default/files/.sqlite';
-if (!file_exists($path)) { echo json_encode(['ok' => false, 'error' => 'no packed database at ' . $path]); return; }
-
-$t0 = microtime(true) * 1000;
-$pdo = new \PDO('sqlite:' . $path, null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
-
-$rewrite = function ($sql) {
-  // no user-defined collations on the host; ASCII folding is the documented gap
-  return str_ireplace('NOCASE_UTF8', 'NOCASE', $sql);
-};
-
-$objects = $pdo->query("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 ELSE 2 END")->fetchAll(\PDO::FETCH_ASSOC);
-
-$ddl = [];
-$tables = [];
-foreach ($objects as $o) {
-  if (str_starts_with($o['name'], 'sqlite_')) { continue; }
-  $ddl[] = ['sql' => $rewrite($o['sql']), 'params' => []];
-  if ($o['type'] === 'table') { $tables[] = $o['name']; }
-}
-
-// schema first, in one transaction, so a partial schema cannot survive
-$schemaResult = cfw_txn($ddl, true);
-if (($schemaResult['ok'] ?? false) !== true) {
-  echo json_encode(['ok' => false, 'stage' => 'schema', 'error' => $schemaResult['error'] ?? 'unknown', 'statements' => count($ddl)]);
-  return;
-}
-
-$rowsCopied = 0;
-$batches = 0;
-$perTable = [];
-$BATCH = 200;
-foreach ($tables as $table) {
-  $cols = $pdo->query('PRAGMA table_info(' . '"' . $table . '"' . ')')->fetchAll(\PDO::FETCH_ASSOC);
-  $names = array_map(function ($c) { return $c['name']; }, $cols);
-  if (!$names) { continue; }
-  $quoted = implode(', ', array_map(function ($n) { return '"' . $n . '"'; }, $names));
-  $marks = implode(', ', array_fill(0, count($names), '?'));
-  $insert = 'INSERT INTO "' . $table . '" (' . $quoted . ') VALUES (' . $marks . ')';
-
-  $stmt = $pdo->query('SELECT ' . $quoted . ' FROM "' . $table . '"');
-  $pending = [];
-  $count = 0;
-  while ($row = $stmt->fetch(\PDO::FETCH_ASSOC)) {
-    $params = [];
-    foreach ($names as $n) { $params[] = $row[$n]; }
-    $pending[] = ['sql' => $insert, 'params' => $params];
-    $count++;
-    if (count($pending) >= $BATCH) {
-      $r = cfw_txn($pending, true);
-      $batches++;
-      if (($r['ok'] ?? false) !== true) {
-        echo json_encode(['ok' => false, 'stage' => 'rows', 'table' => $table, 'error' => $r['error'] ?? 'unknown', 'rowsCopied' => $rowsCopied]);
-        return;
-      }
-      $rowsCopied += count($pending);
-      $pending = [];
-    }
-  }
-  if ($pending) {
-    $r = cfw_txn($pending, true);
-    $batches++;
-    if (($r['ok'] ?? false) !== true) {
-      echo json_encode(['ok' => false, 'stage' => 'rows', 'table' => $table, 'error' => $r['error'] ?? 'unknown', 'rowsCopied' => $rowsCopied]);
-      return;
-    }
-    $rowsCopied += count($pending);
-  }
-  $perTable[$table] = $count;
-}
-
-// The packed database has NO sessions table: Drupal creates it lazily on the
-// first session write, and a pack built by browsing anonymously never writes one.
-// Nothing on a read path notices; the first entity save fails the whole transaction
-// replay with "no such table: sessions". Created here, outside any transaction,
-// because doing it mid-save turns every later read into a speculative replay --
-// DDL dirties sqlite_master, and that is the documented O(W x R) cost.
-$sessionsCreated = 'already present';
-$check = cfw_sql("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sessions'");
-if (($check['ok'] ?? false) === true && count($check['rows'] ?? []) === 0) {
-  // NOT $ddl: MIGRATE_DB already uses that name for the ARRAY of schema statements,
-  // and overwriting it with a string made the final count($ddl) fatal
-  $sessionsDdl = "CREATE TABLE sessions (uid INTEGER NOT NULL DEFAULT 0, sid VARCHAR(128) NOT NULL PRIMARY KEY, hostname VARCHAR(128) NOT NULL DEFAULT '', timestamp INTEGER NOT NULL DEFAULT 0, session BLOB)";
-  $made = cfw_sql($sessionsDdl);
-  $sessionsCreated = ($made['ok'] ?? false) === true ? 'created' : ('FAILED: ' . ($made['error'] ?? '?'));
-  if (($made['ok'] ?? false) === true) {
-    cfw_sql('CREATE INDEX sessions_timestamp ON sessions (timestamp)');
-    cfw_sql('CREATE INDEX sessions_uid ON sessions (uid)');
-  }
-}
-
-arsort($perTable);
-echo json_encode([
-  'sessionsTable' => $sessionsCreated,
-  'ok' => true,
-  'tables' => count($tables),
-  'ddlStatements' => count($ddl),
-  'rowsCopied' => $rowsCopied,
-  'batches' => $batches,
-  'biggestTables' => array_slice($perTable, 0, 12, true),
-  'elapsedMs' => round(microtime(true) * 1000 - $t0, 1),
-]);
-`;
+export const MIGRATE_DB = phpRender(MIGRATE_DB_PHP, { HOST_HELPERS });
 
 /**
- * Serves one request against a persistent kernel, correctly.
+ * Serves one request against a persistent kernel.
  *
- * DrupalKernel::preHandle() is guarded by $this->prepared, so it pushes onto
- * request_stack only on the FIRST handle(). Every later call therefore routes
- * against the first request's path -- measured in TECHNICAL_REPORT.md: reqUri
- * /admin/content but route view.frontpage.page_1. Clearing the flag and draining
- * the stack makes Drupal re-initialise per-request state the way a fresh process
- * would.
+ * `DrupalKernel::preHandle()` is guarded by `$this->prepared` and pushes onto `request_stack` only
+ * on the first `handle()`, so later calls route against the first request's path. The fragment
+ * clears the flag and drains the stack.
  */
-const PW_SERVE_INLINE = String.raw`
-if (!function_exists('cfw_serve')) { eval('
-function cfw_close_session() {
-  // THE HOST IS THE SAPI, SO IT OWNS THE CLOSE THAT BigPipe DOES NOT REACH.
-  // BigPipe::sendContent() ends with performPostSendTasks(), which is the session save, and there
-  // is no try/finally around the three sends before it. StackMiddleware\\Session deliberately
-  // skipped its own save already, because a BigPipeResponse is ResponseKeepSessionOpenInterface.
-  // So a sendContent() that throws loses every session write the render made.
-  //
-  // The CSRF seed is one of those writes. RouteProcessorCsrf defers a _csrf_token route to a lazy
-  // builder on an HTML request, so CsrfTokenGenerator::get() MINTS the seed while placeholders are
-  // being replaced -- inside sendContent(). A lost seed makes validate() answer false on the next
-  // request, which is a 403 on every _csrf_token link the page carries.
-  try {
-    $container = \\Drupal::getContainer();
-    if ($container !== null) {
-      foreach (["session", "session_manager"] as $name) {
-        if ($container->initialized($name)) {
-          $service = $container->get($name);
-          if (method_exists($service, "save")) { $service->save(); return $name; }
-        }
-      }
-    }
-  } catch (\\Throwable $e) {}
-  if (function_exists("session_status") && session_status() === PHP_SESSION_ACTIVE) {
-    @session_write_close();
-    return "session_write_close";
-  }
-  return "nothing to close";
-}
-function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $contentType = "", $cookieHeader = "", $origin = "", $clientIp = "", $accept = "") {
-  $kernel = $GLOBALS["__pw_kernel"];
-
-  // PHP\x27S HEADER LIST OUTLIVES THE REQUEST ON A PERSISTENT INTERPRETER, and session_start()
-  // emits its Set-Cookie into exactly that list. Without this, visitor B\x27s response carries
-  // visitor A\x27s session cookie -- a session handover, not a stale header. Cleared BEFORE the
-  // request rather than after, so a fragment that never reaches the end still cannot leak one.
-  if (function_exists("header_remove")) { header_remove(); }
-
-  // THE METHOD AND BODY ARE THREADED FROM THE HOST, and before this every call site passed a
-  // literal "GET". No form submission of any kind could work: not login, not a contact form, not
-  // node edit. A CMS that cannot accept a form is not a CMS.
-  //
-  // The parsed parameters are passed to Request::create() rather than only set on $_POST, because
-  // Drupal reads the REQUEST OBJECT and not the superglobal. Setting $_POST alone produces a
-  // request Drupal treats as an empty submission, which returns 200 and looks like it worked.
-  $method = strtoupper($method === "" ? "GET" : $method);
-  $parameters = [];
-  $uploads = [];
-  $isForm = stripos($contentType, "application/x-www-form-urlencoded") !== false;
-  $isMultipart = stripos($contentType, "multipart/form-data") !== false;
-  if ($method !== "GET" && $body !== "" && $isForm) { parse_str($body, $parameters); }
-
-  // the uploads this request may move (CfwFileSystem reads it); a leftover from the last request
-  // was never moved, so it is deleted the way PHP deletes an unmoved upload at shutdown
-  foreach (($GLOBALS["__cfw_uploads"] ?? []) as $stale => $unused) { if (is_file($stale)) { @unlink($stale); } }
-  $GLOBALS["__cfw_uploads"] = [];
-
-  // MULTIPART IS PARSED BY HAND, because PHP fills $_POST and $_FILES only for a real POST SAPI and
-  // this interpreter has none. Without it every form carrying a file field submitted an EMPTY
-  // request: Drupal saw no form_id, rebuilt the form and answered 200, so /user/register and
-  // /user/*/edit discarded every submission with no error anywhere. A file field is what sets
-  // enctype, so the blast radius is every node type with an image, media add, and both account forms.
-  //
-  // NO REGEX AND NO APOSTROPHES: this fragment is emitted inside a single-quoted eval string, so an
-  // apostrophe closes it and a backslash needs doubling. substr parsing sidesteps both.
-  if ($method !== "GET" && $body !== "" && $isMultipart) {
-    $quoted = function ($line, $key) {
-      $at = stripos($line, $key . "=\"");
-      if ($at === false) { return null; }
-      $from = $at + strlen($key) + 2;
-      $end = strpos($line, "\"", $from);
-      if ($end === false) { return null; }
-      return substr($line, $from, $end - $from);
-    };
-    $boundary = "";
-    $bat = stripos($contentType, "boundary=");
-    if ($bat !== false) {
-      $boundary = trim(substr($contentType, $bat + 9));
-      $semi = strpos($boundary, ";");
-      if ($semi !== false) { $boundary = substr($boundary, 0, $semi); }
-      $boundary = trim($boundary, "\" ");
-    }
-    if ($boundary !== "") {
-      $pairs = [];
-      foreach (explode("--" . $boundary, $body) as $part) {
-        if (trim($part) === "" || trim($part) === "--") { continue; }
-        $split = strpos($part, "\r\n\r\n");
-        if ($split === false) { continue; }
-        $head = substr($part, 0, $split);
-        $value = substr($part, $split + 4);
-        // the CRLF before the next boundary belongs to the delimiter, not to the value
-        if (substr($value, -2) === "\r\n") { $value = substr($value, 0, -2); }
-        $name = "";
-        $filename = null;
-        $partType = "application/octet-stream";
-        foreach (explode("\r\n", trim($head)) as $line) {
-          if (stripos($line, "content-disposition:") === 0) {
-            $got = $quoted($line, "name");
-            if ($got !== null) { $name = $got; }
-            $filename = $quoted($line, "filename");
-          } elseif (stripos($line, "content-type:") === 0) {
-            $partType = trim(substr($line, 13));
-          }
-        }
-        if ($name === "") { continue; }
-        if ($filename === null) {
-          $pairs[] = urlencode($name) . "=" . urlencode($value);
-          continue;
-        }
-        // an unchosen file arrives as filename="" with an empty body; treating that as an upload
-        // makes Drupal validate a zero-byte file nobody sent
-        if ($filename === "") { continue; }
-        $tmp = tempnam(sys_get_temp_dir(), "cfwup");
-        if ($tmp === false) { continue; }
-        file_put_contents($tmp, $value);
-        $tmp = realpath($tmp) ?: $tmp;
-        $GLOBALS["__cfw_uploads"][$tmp] = true;
-        // TEST MODE, because a raw array became an UploadedFile whose isValid() asks
-        // is_uploaded_file(), which only a POST SAPI answers true, so every upload was refused
-        $entry = new \\Symfony\\Component\\HttpFoundation\\File\\UploadedFile($tmp, $filename, $partType, 0, true);
-        // one bracketed level is what a form sends, as in files[user_picture_0]
-        $open = strpos($name, "[");
-        if ($open !== false && substr($name, -1) === "]") {
-          $outer = substr($name, 0, $open);
-          $inner = substr($name, $open + 1, strlen($name) - $open - 2);
-          $uploads[$outer][$inner] = $entry;
-        } else {
-          $uploads[$name] = $entry;
-        }
-      }
-      if ($pairs !== []) { parse_str(implode("&", $pairs), $parameters); }
-    }
-  }
-
-  $server = [];
-  if ($contentType !== "") { $server["CONTENT_TYPE"] = $contentType; }
-  if ($body !== "") { $server["CONTENT_LENGTH"] = (string) strlen($body); }
-  if ($cookieHeader !== "") { $server["HTTP_COOKIE"] = $cookieHeader; }
-  // ON THE REQUEST BAG, not just \$_SERVER: flood control reads \$request->getClientIp(), and
-  // Request::create() builds its own bag, so an assignment afterwards is invisible to it
-  if ($clientIp !== "") { $server["REMOTE_ADDR"] = $clientIp; }
-  // same reason, and it is why the Web server row on the status report was BLANK: it reads
-  // \$request->server->get("SERVER_SOFTWARE") and the \$_SERVER assignment below never reached the bag
-  $server["SERVER_SOFTWARE"] = "Cloudflare Workers";
-  // AND WITHOUT THIS, EVERY EXPIRABLE KEYVALUE WRITE LANDS IN 1970. Time::getRequestTime() reads
-  // REQUEST_TIME off this bag, so an absent one is 0, and DatabaseStorageExpirable stores
-  // REQUEST_TIME + \$ttl -- which for setWithExpire(\$k, \$v, 3600) is an expiry of 01:00 on
-  // 1 Jan 1970. The row is written and is already expired, so the next read filters it out and the
-  // GC deletes it. Measured on update_project_projects: getProjects() rebuilt it on every request,
-  // never saw it again, and update_available_releases stayed empty forever with no error anywhere.
-  // The rows that DID survive were the ones core happens to offset by
-  // getCurrentTime() - getRequestTime(), which is a full epoch when the second term is 0.
-  $now = time();
-  $server["REQUEST_TIME"] = $now;
-  $server["REQUEST_TIME_FLOAT"] = (float) $now;
-  // AND WITHOUT THIS, EVERY AJAX RESPONSE COMES BACK IN A TEXTAREA. AjaxResponseSubscriber wraps
-  // the JSON and relabels it text/html when Accept contains text/html, which is an IE9
-  // iframe-upload workaround -- and Request::create() supplies a DEFAULT Accept that matches it.
-  // So the browser asked for application/json, Drupal answered a wrapped text/html document, and
-  // Drupal.AjaxError fired on every AJAX request the admin makes. Measured on Add field.
-  if ($accept !== "") { $server["HTTP_ACCEPT"] = $accept; }
-
-  // THE COOKIE IS WHY AN AUTHENTICATED REQUEST EXISTS AT ALL. Without it every request is uid 0,
-  // so Drupal denies a create-entity route at the ROUTING layer and no form is ever built --
-  // which is what "the submission does not work" looked like from outside. Parsed by hand rather
-  // than through a helper, because the value arrives as one raw header line from the host.
-  $cookies = [];
-  foreach (explode(";", $cookieHeader) as $pair) {
-    $pair = trim($pair);
-    if ($pair === "") { continue; }
-    $split = strpos($pair, "=");
-    if ($split === false) { continue; }
-    $cookies[urldecode(substr($pair, 0, $split))] = urldecode(substr($pair, $split + 1));
-  }
-
-  // THE ORIGIN IS PREPENDED SO SYMFONY PARSES IT, rather than set on $_SERVER afterwards.
-  // Request::create() builds its OWN server bag from defaults and does not read $_SERVER, so the
-  // HTTP_HOST assignments the fragments make were never what Drupal saw -- an absolute URI is. With
-  // a relative one Symfony fills in "localhost", which is why a deployed site put http://localhost
-  // into every canonical tag, form action, Location header and password-reset mail.
-  $url = $origin === "" ? $path : rtrim($origin, "/") . $path;
-  $request = \\Symfony\\Component\\HttpFoundation\\Request::create($url, $method, $parameters, $cookies, $uploads, $server, $body);
-
-  // the superglobals follow the request rather than leading it, so a fragment reading $_POST and
-  // one reading the Request agree -- INCLUDING the host trio, which is read directly by code that
-  // predates the request object
-  $_SERVER["HTTP_HOST"] = $request->getHttpHost();
-  $_SERVER["SERVER_NAME"] = $request->getHost();
-  $_SERVER["SERVER_PORT"] = (string) $request->getPort();
-  if ($request->isSecure()) { $_SERVER["HTTPS"] = "on"; } else { unset($_SERVER["HTTPS"]); }
-  $_SERVER["REQUEST_METHOD"] = $method;
-  if ($clientIp !== "") { $_SERVER["REMOTE_ADDR"] = $clientIp; }
-  $_SERVER["SERVER_SOFTWARE"] = $request->server->get("SERVER_SOFTWARE");
-  // EVERY input superglobal, not just $_POST. When a CSRF token fails, FormBuilder empties the
-  // request and calls $request->overrideGlobals() to make the globals agree
-  // (FormBuilder.php:1024-1030); on a real SAPI those globals die with the process and here they
-  // do not. Re-initialising all of them is what a SAPI does per request. NOTE: this alone does not
-  // fix the residual defect pinned in tests/integration/csrf.spec.ts -- measured, so not claimed.
-  $_POST = $parameters;
-  $_GET = [];
-  $_FILES = [];
-  $_REQUEST = $parameters;
-  $_COOKIE = $cookies;
-  if ($contentType !== "") { $_SERVER["CONTENT_TYPE"] = $contentType; }
-  if ($body !== "") { $_SERVER["CONTENT_LENGTH"] = (string) strlen($body); }
-  if ($cookieHeader !== "") { $_SERVER["HTTP_COOKIE"] = $cookieHeader; } else { unset($_SERVER["HTTP_COOKIE"]); }
-
-  // THE SESSION HAS TO BE ENDED BEFORE THE NEXT ONE IS READ, and this interpreter is where that
-  // stops being automatic. PHP holds $_SESSION and the active id on the PROCESS, and Symfony
-  // memoises its started flag on a service that outlives the request -- so without this, request 2
-  // is whoever request 1 was. Measured: a second login POST answered
-  // "This route can only be accessed by anonymous users".
-  //
-  // drupflare owns the mechanism because it is the same mechanism drupal_static() and the node
-  // grants need; the hand-rolled resets below are the fallback for a site that has not enabled it.
-  try {
-    $container = \\Drupal::getContainer();
-    if ($container !== null && $container->has("drupflare.request_resetter")) {
-      $GLOBALS["__pw_reset"] = $container->get("drupflare.request_resetter")->reset();
-    } else {
-      if (function_exists("session_status") && session_status() === PHP_SESSION_ACTIVE) {
-        @session_write_close();
-      }
-      $_SESSION = [];
-    }
-  } catch (\\Throwable $e) { $GLOBALS["__pw_reset"] = ["error" => $e->getMessage()]; }
-
-  // AND THE ID HAS TO BE SET FROM THIS REQUEST, not left wherever the last one put it.
-  // session_start() prefers an id already set on the process over the cookie, so an unset id is
-  // not a clean slate -- it is the previous visitor. Always overwrite: the cookie when there is
-  // one, a fresh id when there is not.
-  if (function_exists("session_id")) {
-    $sid = "";
-    foreach ($cookies as $cookieName => $cookieValue) {
-      if (strncmp($cookieName, "SESS", 4) === 0 || strncmp($cookieName, "SSESS", 5) === 0) {
-        $sid = (string) $cookieValue;
-        break;
-      }
-    }
-    if ($sid !== "" && preg_match("/^[A-Za-z0-9,-]{1,128}$/", $sid) === 1) {
-      @session_id($sid);
-    } elseif (function_exists("session_create_id")) {
-      @session_id(session_create_id());
-    }
-  }
-
-  try {
-    $rp = new \\ReflectionProperty(\\Drupal\\Core\\DrupalKernel::class, "prepared");
-    $rp->setValue($kernel, false);
-  } catch (\\Throwable $e) {}
-
-  try {
-    $stack = \\Drupal::service("request_stack");
-    while ($stack->getCurrentRequest() !== null) { $stack->pop(); }
-  } catch (\\Throwable $e) {}
-
-  if (function_exists("drupal_static_reset")) { drupal_static_reset(); }
-
-  // Html::$seenIds is a plain static and is NOT registered through drupal_static(), so the line
-  // above does not clear it. On a persistent interpreter the id registry accumulates across
-  // requests: render 1 is 12,304 bytes, renders 2-5 come back 12,310 with
-  // block-olivero-page-title--2 through --5. Measured on a deployed worker, so the same URL stops
-  // being byte-reproducible and every anchor, aria-labelledby target and id-based selector moves.
-  //
-  // Fully qualified because this fragment is assembled as a string and has nowhere legal to put a
-  // use block, which is the one documented exception to the import rule.
-  if (method_exists("\\Drupal\\Component\\Utility\\Html", "resetSeenIds")) {
-    \\Drupal\\Component\\Utility\\Html::resetSeenIds();
-  }
-
-  // AND Html::$isAjax IS THE SAME STATIC ONE CLASS OVER, which resetSeenIds() does not touch.
-  // AjaxResponseSubscriber sets it true on an ajax request and nothing sets it back, so on a
-  // persistent interpreter the FIRST ajax request makes getUniqueId() take its random branch --
-  // \\Crypt::randomBytesBase64(8) -- for every later render on that incarnation. Measured in the
-  // browser lane: add a field through the field-UI modal, and /node/add/page then renders
-  // node-page-form--iGSVurTf0ZU instead of node-page-form, differently on every request. A cached
-  // page stops being byte-reproducible and every id-based selector on the site moves.
-  if (method_exists("\\Drupal\\Component\\Utility\\Html", "setIsAjax")) {
-    \\Drupal\\Component\\Utility\\Html::setIsAjax(false);
-  }
-
-  // AND THE PAGE CACHE KILL SWITCH IS THE SAME SHAPE AGAIN, on a container SERVICE this time.
-  // KillSwitch::trigger() sets $kill true and core never sets it back, because a real SAPI ends the
-  // process instead. Messenger::addMessage() calls it, so ONE saved node or config form makes
-  // check() answer DENY for every later render on this incarnation: every page comes back
-  // private, no-store, fillOne() refuses the upsert, and cfw_page stops filling for the whole site.
-  // Measured in the browser lane -- save a node as admin and the ANONYMOUS front page is
-  // uncacheable from then on. The service carries the page_cache and dynamic_page_cache tags both,
-  // so one reset covers both policies. Skipped when it was never built, which cannot have set it.
-  try {
-    $container = \\Drupal::getContainer();
-    if ($container !== null && $container->initialized("page_cache_kill_switch")) {
-      $switch = $container->get("page_cache_kill_switch");
-      $ref = new \\ReflectionObject($switch);
-      if ($ref->hasProperty("kill")) { $ref->getProperty("kill")->setValue($switch, false); }
-    }
-  } catch (\\Throwable $e) {}
-
-  // AND EntityViewBuilder::$recursionKeys, which is the one that costs CONTENT rather than bytes.
-  // A key goes in at #pre_render and comes out at #post_render, so a render that throws in between
-  // leaves it set -- and on a persistent interpreter every later build of that entity and view mode
-  // is marked #printed and renders EMPTY. Measured: save a node, empty the render bin, and the front
-  // page comes back 9,981 bytes against 15,055 with the teaser gone, logging "Recursive rendering
-  // attempt aborted for node:entity_id:1:1:en:teaser". One failed render blanks that node for the
-  // life of the incarnation, and /node/1 still rendering is what makes it look like a view problem.
-  try {
-    $keys = new \\ReflectionProperty(
-      \\Drupal\\Core\\Entity\\EntityViewBuilder::class,
-      "recursionKeys"
-    );
-    $keys->setValue(null, []);
-  } catch (\\Throwable $e) {}
-
-  // AND Renderer::$isRenderingRoot, which turns every later render into a 500.
-  // renderRoot() sets it, and core resets it in a catch -- so an EXCEPTION is handled and an
-  // abort is not. This SAPI does not unwind: a run cut short leaves the flag true on a service
-  // that outlives the request, and every renderRoot() after it throws "A stray renderRoot()
-  // invocation is causing bubbling of attached assets to break". Measured in the e2e lane as the
-  // front page answering 500 after an invalidation, with the site otherwise healthy.
-  // Walked through any decorator, for the reason the path.matcher walk below gives.
-  try {
-    $node = \\Drupal::service("renderer");
-    $seen = 0;
-    while (is_object($node) && $seen < 8) {
-      $seen++;
-      $ref = new \\ReflectionObject($node);
-      if ($ref->hasProperty("isRenderingRoot")) {
-        $ref->getProperty("isRenderingRoot")->setValue($node, false);
-      }
-      if (!$ref->hasProperty("decorated")) { break; }
-      $node = $ref->getProperty("decorated")->getValue($node);
-    }
-  } catch (\\Throwable $e) {}
-
-  // PATH.MATCHER LEAKS ITS FRONT-PAGE VERDICT ACROSS RENDERS, and this fixes markup that was
-  // being served wrong to real visitors. isFrontPage() memoises into $isCurrentFrontPage, and on a
-  // persistent container the FIRST path rendered decides for every later one. Measured: render /
-  // then /user/login on one interpreter and /user/login comes back with class="path-frontpage",
-  // no active trail and no breadcrumb -- front-page markup on a page that is not the front page.
-  //
-  // walked by reflection, and the chain is why. path_alias DECORATES path.matcher, so
-  // \Drupal::service("path.matcher") is an AliasPathMatcher holding the real one in $decorated --
-  // and it declares its OWN $isCurrentFrontPage, memoised with ??=, which shadows the inner
-  // matcher entirely. Two earlier attempts missed that: drupal_static_reset() does not touch a
-  // protected property, and giving the INNER class a reset() fixed an object whose answer is
-  // never consulted. Walking every link means no decoration depth or ordering can hide a memo.
-  //
-  // NULL rather than FALSE: isFrontPage() guards on the property being unset, so FALSE reads as a
-  // computed "not the front page" and pins every later request to it -- the same bug reversed.
-  try {
-    $node = \\Drupal::service("path.matcher");
-    $seen = 0;
-    while (is_object($node) && $seen < 8) {
-      $seen++;
-      $ref = new \\ReflectionObject($node);
-      if ($ref->hasProperty("isCurrentFrontPage")) {
-        $prop = $ref->getProperty("isCurrentFrontPage");
-        $prop->setValue($node, null);
-      }
-      if (!$ref->hasProperty("decorated")) { break; }
-      $inner = $ref->getProperty("decorated");
-      $node = $inner->getValue($node);
-    }
-  } catch (\\Throwable $e) {}
-
-  // NOT releasing locks here, and the reasoning is measured. The mechanism is real: DatabaseLockBackend relies on releaseAll() at
-  // PROCESS SHUTDOWN, this interpreter never shuts down, and a lock held forever would
-  // be worse than a stale cache because Lock::wait() calls usleep() inside a
-  // synchronous wasm call that nothing can interrupt -- it stalls instead of failing.
-  // But the semaphore table measured EMPTY on every site exercised, including three that ran
-  // the destruct pass before any release was added, so nothing actually leaks on these
-  // paths: CacheCollector::destruct() releases its own lock. Paying a statement per
-  // render for an unobserved leak is the same trade this file just rejected for the
-  // destruct pass. Instead: alarm() releases (cheap, periodic, unattended) and
-  // test-serve-chain.mjs asserts the semaphore table is empty, so a future leak trips a test
-  // rather than stalling a request.
-
-  // $catch = TRUE, which is what index.php passes and what this had wrong. With FALSE, HttpKernel
-  // rethrows instead of dispatching KernelEvents::EXCEPTION -- so Drupal\x27s own 403 and 404 pages
-  // never rendered, and a successful login came back as a bare
-  // Drupal\\Core\\Form\\EnforcedResponseException because the redirect a form sets is DELIVERED as an
-  // exception and converted by EnforcedFormResponseSubscriber. Every one of those is a normal
-  // response that was being reported as a render failure.
-  $response = $kernel->handle($request, \\Symfony\\Component\\HttpKernel\\HttpKernelInterface::MAIN_REQUEST, true);
-
-  // shutdown callbacks and the named TERMINATE subscribers, which a persistent interpreter never
-  // runs by itself; a server error skips them inside drain()
-  if (class_exists("Drupal\\drupflare\\Terminate")) {
-    try {
-      \\Drupal\\drupflare\\Terminate::drain($kernel, $request, $response);
-    } catch (\\Throwable $e) {
-    }
-  }
-
-  // Nothing had ever completed the request lifecycle, so every needs_destruction
-  // service -- theme.registry, library.discovery, library.parsing_cache,
-  // menu.active_trail, router.builder, path_alias -- discarded its accumulated
-  // CacheCollector entries instead of persisting them. Those writes happen in
-  // CacheCollector::destruct().
-  //
-  // This is NOT $kernel->terminate(). Two measured reasons:
-  //   1. terminate() dispatches TERMINATE, which automated_cron subscribes to. With
-  //      system.cron_last absent it runs drupal_cron() inline, cron reaches for
-  //      outbound HTTP, and the invocation dies with "ReferenceError: Asyncify is
-  //      not defined" -- a JS exception that catch (\\Throwable) cannot contain.
-  //   2. Even with cron disabled, terminate() POISONED the interpreter: the first
-  //      render returned 12,304 bytes and every render after it returned 0 bytes,
-  //      with rows-written per render jumping 15 -> 85. terminate() is written for a
-  //      process that is about to exit; this interpreter is persistent and reuses
-  //      the same kernel.
-  // So iterate the container parameter the compiler pass fills and destruct only the
-  // services that were actually initialised this request -- the collector writes we
-  // want, none of the process-death semantics we do not.
-  // $destruct is true, false, or a comma-separated allowlist of service ids, so the
-  // culprit can be bisected
-  if ($destruct !== false && $destruct !== "0") {
-    $only = is_string($destruct) ? explode(",", $destruct) : null;
-    // theme.registry is EXCLUDED, and it is the one service whose destruct() cannot
-    // be used here. Bisected one service at a time: state, menu.active_trail,
-    // router.builder, library.discovery and library.parsing_cache all destruct
-    // safely (12,310-byte render, every render); theme.registry alone gives 12,304
-    // on render 1 and then 0 BYTES on every render after it.
-    // Registry::destruct() persists the RUNTIME registry, which core\x27s own docblock
-    // calls "incomplete". Clearing cache_bootstrap between renders does NOT fix it,
-    // so the corruption is the in-memory collector object, which survives because
-    // this interpreter reuses the container across requests. Registry::reset() is not
-    // an escape either -- it deletes the theme_registry:runtime:* cids that destruct()
-    // just wrote, so it undoes the persistence it would be repairing.
-    // The COMPLETE registry was never at risk: Registry::get() persists that itself
-    // via setCache() when the module handler is loaded, with no destruct() involved.
-    $skip = ["theme.registry"];
-    try {
-      $c = \\Drupal::getContainer();
-      $GLOBALS["__pw_destructed"] = [];
-      foreach ($c->getParameter("kernel.destructable_services") as $id) {
-        if ($only !== null && !in_array($id, $only, true)) { continue; }
-        if ($only === null && in_array($id, $skip, true)) { continue; }
-        if (!$c->initialized($id)) { continue; }
-        $svc = $c->get($id);
-        if ($svc instanceof \\Drupal\\Core\\DestructableInterface) {
-          $svc->destruct();
-          $GLOBALS["__pw_destructed"][] = $id;
-        }
-      }
-    } catch (\\Throwable $e) {}
-  }
-
-  return $response;
-}
-'); }
-`;
+const PW_SERVE_INLINE = `\n${phpWhen("!function_exists('cfw_serve')", PW_SERVE_INLINE_PHP)}\n`;
 
 /**
- * A real Drupal request whose database is the Durable Object.
+ * Boots the Drupal kernel and stops; no request is handled.
  *
- * Rule 3 of this project is applied here rather than trusted: every response
- * reports x-drupal-cache and x-drupal-dynamic-cache, and the caller asserts on
- * them. A dozen figures in TECHNICAL_REPORT.md were page_cache HITs wearing a render's
- * label because Request::create() carries no session cookie, so
- * DefaultRequestPolicy marks the request cacheable and handle() costs 0.5 ms
- * while nothing renders.
- *
- * Timing is taken inside a closure. At the eval'd global scope anything walking a
- * backtrace inflates 12-24x, invisibly.
+ * It is the post-boot, pre-render snapshot point (a heap taken after a render carries request
+ * state). The kernel is memoised in `$GLOBALS['__pw_kernel']`, which later renders reuse.
  */
-/**
- * Builds the PHP for one measured Drupal request.
- *
- * `bins` is the load-bearing parameter, because Drupal has three separate
- * caches in front of a render and each one produces a different number wearing
- * the same label. Measured on this driver:
- *
- *   []                              -> page_cache HIT, 1 ms, 1 statement
- *   ['page']                        -> dynamic_page_cache HIT, 8-15 ms, 5 statements
- *   ['page','dynamic_page_cache']   -> a real render
- *
- * So a render figure has to name which bins were emptied. Reporting one
- * without that is how a dozen figures in TECHNICAL_REPORT.md came to be page_cache hits.
- *
- * @param {string} path Drupal path to request.
- * @param {number} repeat How many times, in one interpreter.
- * @param {string[]} bins Cache bins to empty before each run.
- * @param {boolean} resetCid Whether to null PageCache's memoized cid.
- */
-/**
- * Boots the Drupal kernel and STOPS. No request is handled.
- *
- * This is the snapshot point a heap restore needs, and "post-boot, pre-render" means exactly here:
- * after the kernel and its container exist, before any request has touched them. A snapshot taken
- * after a render is a request-contaminated heap, which is what collides with the uid-1
- * cache-poisoning bug.
- *
- * It memoises into the same `$GLOBALS['__pw_kernel']` slot the render path uses, so a later render
- * in the same interpreter reuses this kernel rather than booting a second one.
- */
-export const BOOT_KERNEL = String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-
-$clock = function () { return microtime(true) * 1000; };
-$mark = [];
-$t0 = $clock();
-
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
-$_SERVER['REQUEST_URI'] = '/';
-$_SERVER['REQUEST_METHOD'] = 'GET';
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  $mark['alreadyBooted'] = isset($GLOBALS['__pw_site_booted']) ? 1 : 0;
-
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $a = $clock();
-    $request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $mark['kernelBootMs'] = round($clock() - $a, 2);
-    $GLOBALS['__pw_kernel'] = $kernel;
-    $GLOBALS['__pw_site_booted'] = true;
-  }
-
-  // the container has to be reachable, or the "booted" claim is empty
-  $container = \Drupal::hasContainer() ? \Drupal::getContainer() : null;
-  $mark['ok'] = $container !== null;
-  $mark['hasDb'] = $container !== null && $container->has('database');
-  $mark['totalMs'] = round($clock() - $t0, 2);
-  echo json_encode($mark);
-} catch (\Throwable $e) {
-  echo json_encode(['ok' => false, 'error' => get_class($e) . ': ' . $e->getMessage()]);
-}
-`;
+export const BOOT_KERNEL = phpRender(BOOT_KERNEL_PHP, { FIBER_SHIM, HOST_HELPERS });
 
 /**
- * Loads every enabled module's PHP, which is what a boot alone does not do.
+ * Loads every enabled module's PHP, which a boot alone does not do.
  *
- * `DrupalKernel::boot()` builds the container, and the container comes out of `cache_container`, so
- * a boot reads no module file at all. `ModuleHandler::loadAll()` is what includes each enabled
- * module's `.module`, and it runs during `preHandle()` rather than during `boot()`.
+ * The container comes from `cache_container`, so `boot()` reads no module file;
+ * `ModuleHandler::loadAll()` includes each `.module` during `preHandle()`.
  *
- * MEASURED, because the verification it belongs to was passing everything: a `.module` full of
- * nonsense, the same file with the module enabled, and a malformed `.info.yml` all reported a clean
- * boot. A guard that cannot reach the code it is guarding is a guard that cannot fire.
- *
- * A PARSE error is uncatchable -- `include` raises E_COMPILE_ERROR and `try` does not see it -- so
- * this prints its verdict LAST and the caller treats a missing verdict as a failure. That is the
- * half that matters: a fatal kills the run, and a caller reading only for a thrown exception sees
- * nothing and calls it fine.
+ * A parse error is uncatchable (`include` raises E_COMPILE_ERROR), so the verdict prints last and
+ * the caller treats a missing verdict as a failure.
  */
-export const VERIFY_MODULES = String.raw`<?php
-try {
-  $kernel = $GLOBALS['__pw_kernel'] ?? null;
-  if ($kernel === null || !\Drupal::hasContainer()) {
-    echo json_encode(['ok' => false, 'error' => 'no kernel to verify against']);
-  } else {
-    // delivered code can add an extension, so the scan and every list rediscover, as a cache
-    // rebuild would (a profile uploaded after the claim read as not installed)
-    try {
-      $prop = new \ReflectionProperty(\Drupal\Core\Extension\ExtensionDiscovery::class, 'files');
-      $prop->setValue(null, []);
-    } catch (\Throwable $e) {}
-    foreach (['module', 'theme', 'profile'] as $type) {
-      \Drupal::service('extension.list.' . $type)->reset();
-    }
-    $handler = \Drupal::service('module_handler');
-    $handler->loadAll();
-    $modules = array_keys($handler->getModuleList());
-    sort($modules);
-    echo json_encode(['ok' => true, 'modules' => count($modules)]);
-  }
-} catch (\Throwable $e) {
-  echo json_encode(['ok' => false, 'error' => get_class($e) . ': ' . $e->getMessage()]);
-}
-`;
+export const VERIFY_MODULES = phpScript(VERIFY_MODULES_PHP);
 
 /**
  * The boot phases, in the order a boot runs them.
  *
- * `container-read` and `container-unserialize` are BRANCHES off `kernel-new`, not steps on the way to
- * `kernel-boot`: both measure what `$kernel->boot()` is about to do without letting it happen, so
- * their baseline is `kernel-new` and so is `kernel-boot`'s. Running them inline before the boot would
- * warm whatever the read touches and make the boot look cheaper than it is.
+ * `container-read` and `container-unserialize` are branches off `kernel-new`, not steps before
+ * `kernel-boot`; running them inline would warm what the boot reads.
  */
 export const BOOT_PHASES = [
 	'autoload',
@@ -1010,192 +132,55 @@ export const BOOT_PHASES = [
 	'render'
 ] as const;
 
+/** one name from {@link BOOT_PHASES} */
 export type BootPhase = (typeof BOOT_PHASES)[number];
 
 /**
- * One boot phase, cumulatively: runs every phase up to `phase` and then stops.
+ * One boot phase, cumulatively: runs every phase up to `phase` and stops.
  *
- * One invocation per phase. About 850 ms survives a container cache HIT and nothing is attributed
- * inside it -- the largest unexplained cost in the project and 85x the free cap on its own. It cannot
- * be split from inside, because on the edge `microtime()` and `Date.now()` both return 0 (RULE 0), so
- * the only clock that reports anything is `cpuTime` in `wrangler tail`, and that meters an INVOCATION.
- * A phase therefore needs an invocation of its own, and the cost of phase N is
- * `cpuTime(N) - cpuTime(N-1)`.
- *
- * The caller must drop the interpreter before each measurement. `BOOT_KERNEL` memoises the kernel into
- * `$GLOBALS['__pw_kernel']`, so a second phase measured against a warm object measures nothing and
- * reports a plausible small number -- which is how this cost stayed unattributed in the first place.
- *
- * Each fragment echoes what it actually did rather than only how long it took, because the elapsed
- * figure it prints is a LOCAL number and is worthless on the edge. The byte counts are the useful
- * output: `containerBytes` is the row the read had to carry across the host bridge.
+ * Use one invocation per phase and read `cpuTime` from `wrangler tail` (the clock is frozen inside
+ * an invocation, so the phase cost is `cpuTime(N) - cpuTime(N-1)`). The caller must drop the
+ * interpreter first: `BOOT_KERNEL` memoises the kernel, so a warm object measures nothing.
+ * The elapsed figure is local-only; the byte counts (`containerBytes`) are the useful output.
  */
 export function bootPhaseFragment(phase: BootPhase): string {
 	const index = BOOT_PHASES.indexOf(phase);
 	if (index < 0) throw new RangeError(`unknown boot phase: ${phase}`);
 	const upto = (name: BootPhase): boolean => index >= BOOT_PHASES.indexOf(name);
+	const branch = phase === 'container-read' || phase === 'container-unserialize';
 
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-${upto('render') ? PW_SERVE_INLINE : ''}
-chdir('/drupal');
-
-$mark = ['phase' => ${JSON.stringify(phase)}];
-$clock = function () { return microtime(true) * 1000; };
-$t0 = $clock();
-
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
-$_SERVER['REQUEST_URI'] = '/';
-$_SERVER['REQUEST_METHOD'] = 'GET';
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-try {
-  // a warm object would make every phase past this one free, and a free phase reads as a cheap one
-  $mark['alreadyBooted'] = isset($GLOBALS['__pw_site_booted']) ? 1 : 0;
-
-  $autoloader = require '/drupal/autoload.php';
-  $mark['autoloadDone'] = true;
-${
-	upto('kernel-new')
-		? String.raw`
-  $request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-  $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-  \Drupal\Core\DrupalKernel::bootEnvironment();
-  $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
-  $kernel->setSitePath($sitePath);
-  \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-  $mark['kernelConstructed'] = true;`
-		: ''
-}
-${
-	phase === 'container-read' || phase === 'container-unserialize'
-		? String.raw`
-  // 3.1's suspect, isolated. This is the row $kernel->boot() reads, fetched the same way -- across
-  // the host bridge, which encodes every value through json_encode(pw_encode()). Selecting data
-  // rather than LENGTH(data): the question is what carrying half a megabyte through that
-  // bridge costs, and LENGTH() would answer it with an integer.
-  $rows = cfw_sql('SELECT cid, data FROM cache_container LIMIT 1');
-  $row = is_array($rows) && isset($rows['rows'][0]) ? $rows['rows'][0] : null;
-  $blob = is_array($row) ? (string) ($row['data'] ?? '') : '';
-  $mark['containerRowFound'] = $row !== null;
-  $mark['containerCid'] = is_array($row) ? substr((string) ($row['cid'] ?? ''), 0, 80) : null;
-  $mark['containerBytes'] = strlen($blob);`
-		: ''
-}
-${
-	phase === 'container-unserialize'
-		? String.raw`
-  // and separately, what turning those bytes into an object graph costs. Split from the read because
-  // "reading 479 KB is slow" and "unserialising 479 KB is slow" are different problems with different
-  // fixes, and the container cache is the only place either would show up.
-  $graph = $blob === '' ? null : @unserialize($blob);
-  $mark['unserialized'] = $graph !== false && $graph !== null;
-  $mark['unserializedType'] = get_debug_type($graph);`
-		: ''
-}
-${
-	upto('kernel-boot') && phase !== 'container-read' && phase !== 'container-unserialize'
-		? String.raw`
-  $kernel->boot();
-  $mark['booted'] = \Drupal::hasContainer();`
-		: ''
-}
-${
-	upto('pre-handle') && phase !== 'container-read' && phase !== 'container-unserialize'
-		? String.raw`
-  $kernel->preHandle($request);
-  $mark['preHandled'] = true;`
-		: ''
-}
-${
-	phase === 'render'
-		? String.raw`
-  $GLOBALS['__pw_kernel'] = $kernel;
-  $GLOBALS['__pw_site_booted'] = true;
-  // cfw_serve() hands back a Symfony Response, not a string; treating it as one reported -1 bytes
-  // for a render that had in fact succeeded, which is a broken instrument reading as a broken render
-  $response = cfw_serve('/');
-  $body = is_object($response) && method_exists($response, 'getContent')
-    ? (string) $response->getContent()
-    : (is_string($response) ? $response : '');
-  $mark['renderStatus'] = is_object($response) && method_exists($response, 'getStatusCode')
-    ? $response->getStatusCode()
-    : null;
-  $mark['renderBytes'] = strlen($body);`
-		: ''
-}
-  // a LOCAL figure, kept only so a local run is orderable; it reads 0 on the edge, where the real
-  // number is cpuTime from wrangler tail
-  $mark['localMs'] = round($clock() - $t0, 2);
-  $mark['ok'] = true;
-  echo json_encode($mark);
-} catch (\Throwable $e) {
-  $mark['ok'] = false;
-  $mark['error'] = get_class($e) . ': ' . $e->getMessage();
-  echo json_encode($mark);
-}
-`;
+	return phpRender(BOOT_PHASE_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		PW_SERVE_INLINE: upto('render') ? PW_SERVE_INLINE : '',
+		PHASE: JSON.stringify(phase),
+		KERNEL_NEW: upto('kernel-new') ? BOOT_PHASE_KERNEL_NEW_PHP.trimEnd() : '',
+		CONTAINER_READ: branch ? BOOT_PHASE_CONTAINER_READ_PHP.trimEnd() : '',
+		CONTAINER_UNSERIALIZE:
+			phase === 'container-unserialize' ? BOOT_PHASE_CONTAINER_UNSERIALIZE_PHP.trimEnd() : '',
+		KERNEL_BOOT: upto('kernel-boot') && !branch ? BOOT_PHASE_KERNEL_BOOT_PHP.trimEnd() : '',
+		PRE_HANDLE: upto('pre-handle') && !branch ? BOOT_PHASE_PRE_HANDLE_PHP.trimEnd() : '',
+		RENDER: phase === 'render' ? BOOT_PHASE_RENDER_PHP.trimEnd() : ''
+	});
 }
 
 /**
- * The `cfw_ops` registry, read WITHOUT booting a kernel.
+ * The `cfw_ops` registry, read without booting a kernel.
  *
- * `OpsRegistry` is a `final class` with no `use` statements and no constructor -- it returns a literal
- * array of eight operations, each declaring `label`, `writes`, `sliced` and a measured `cost`. So it
- * is reachable by requiring its file directly, which matters: a discovery endpoint that costs a
- * ~1,400 ms kernel boot to answer "what can I run" is not a discovery endpoint. The boot-phase
- * measurement puts `autoload` at the cheap end, and this does not even need that.
- *
- * Requiring by PATH rather than by autoload. Drupal registers module namespaces during
- * kernel boot, so `Drupal\drupflare\Ops\OpsRegistry` does not resolve through the composer
- * autoloader on its own, and relying on it would work only in the one case this fragment exists to
- * avoid.
+ * `OpsRegistry` has no dependencies, so the fragment requires its file by path (a ~1,400 ms boot to
+ * list operations is not discovery). Autoload cannot be used: Drupal registers module namespaces
+ * only during kernel boot.
  */
-export const OPS_REGISTRY = String.raw`<?php
-$path = '/drupal/modules/custom/drupflare/src/Ops/OpsRegistry.php';
-if (!is_file($path)) {
-  echo json_encode(['ok' => false, 'error' => 'OpsRegistry is not in the mount at ' . $path]);
-  return;
-}
-require_once $path;
-$cls = 'Drupal\\drupflare\\Ops\\OpsRegistry';
-if (!class_exists($cls, false)) {
-  echo json_encode(['ok' => false, 'error' => 'OpsRegistry did not declare its class']);
-  return;
-}
-$ops = $cls::operations();
-echo json_encode([
-  'ok' => true,
-  'count' => count($ops),
-  'operations' => $ops,
-  // the fail-closed pair, reported rather than assumed: an unknown name must read as writing and
-  // sliced, so a caller that forgets has() cannot expose a mutation as a read
-  'failsClosed' => [
-    'writes' => $cls::writes('not-a-command'),
-    'sliced' => $cls::sliced('not-a-command'),
-  ],
-  'readOnlyUnsliced' => $cls::readOnlyUnsliced(),
-]);
-`;
+export const OPS_REGISTRY = phpScript(OPS_REGISTRY_PHP);
 
 /**
  * Runs one registry operation through `OpsRunner`, with a kernel.
  *
- * Unlike {@link OPS_REGISTRY} this DOES boot, because every operation here reaches a Drupal service.
- * The registry stays boot-free so discovery is cheap; execution is not discovery.
+ * Unlike {@link OPS_REGISTRY} this boots a kernel (every operation reaches a Drupal service).
  *
  * @param name - a registry operation
  * @param args - positional arguments, already stripped of flags
- * @param options - offset/limit for cex, payload for cim, and the collections and budget a step takes
+ * @param options - `offset`/`limit` for cex, `payload` for cim, `collections`/`budget` for steps
  */
 export function opsRun(
 	name: string,
@@ -1221,62 +206,20 @@ export function opsRun(
 			}
 		})
 	);
-	return String.raw`<?php
-${FIBER_SHIM}
-chdir('/drupal');
-
-$out = ['ok' => false];
-$clock = function () { return microtime(true) * 1000; };
-$t0 = $clock();
-$req = json_decode(${encoded}, true);
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-  }
-  // several operations reach a service that reads the current request; a fragment pushes none
-  if (\Drupal::hasContainer()) {
-    \Drupal::service('request_stack')->push(
-      \Symfony\Component\HttpFoundation\Request::create('/', 'GET')
-    );
-  }
-
-  $path = '/drupal/modules/custom/drupflare/src/Ops/OpsRunner.php';
-  if (!class_exists('Drupal\\drupflare\\Ops\\OpsRunner', false) && is_file($path)) {
-    require_once $path;
-  }
-  $cls = 'Drupal\\drupflare\\Ops\\OpsRunner';
-  if (!class_exists($cls)) {
-    $out['error'] = 'OpsRunner is not in the mount';
-  } else {
-    $out = $cls::run(
-      (string) ($req['name'] ?? ''),
-      (array) ($req['args'] ?? []),
-      (array) ($req['options'] ?? [])
-    );
-  }
-} catch (\Throwable $e) {
-  $out['ok'] = false;
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+	return phpRender(OPS_RUN_PHP, { FIBER_SHIM, REQUEST: encoded });
 }
 
-$out['ms'] = round($clock() - $t0, 2);
-echo json_encode($out);
-`;
-}
-
+/**
+ * Builds the PHP for one measured Drupal request; `repeat` runs it that many times.
+ *
+ * Every response reports `x-drupal-cache` and `x-drupal-dynamic-cache`, and callers assert on them:
+ * `Request::create()` carries no session cookie, so an unwarmed `page_cache` HIT reads as a render.
+ * Timing is taken inside a closure (a backtrace walk at eval'd global scope inflates 12-24x).
+ *
+ * `bins` names the caches emptied first, and a render figure must name them: `[]` is a
+ * `page_cache` HIT (1 ms, 1 statement), `['page']` a `dynamic_page_cache` HIT (8-15 ms, 5
+ * statements), `['page','dynamic_page_cache']` a real render.
+ */
 export function drupalRequest(
 	path = '/',
 	repeat = 1,
@@ -1288,170 +231,24 @@ export function drupalRequest(
 	const safeBins = JSON.stringify(
 		(Array.isArray(bins) ? bins : []).filter((b) => /^[a-z_]+$/.test(b))
 	);
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-${PW_SERVE_INLINE}
-chdir('/drupal');
-
-$path = json_decode(${JSON.stringify(safePath)});
-$repeat = ${safeRepeat};
-$bins = json_decode(${JSON.stringify(safeBins)}, true);
-$resetCid = ${resetCid ? 'true' : 'false'};
-
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
-$_SERVER['REQUEST_URI'] = $path;
-$_SERVER['REQUEST_METHOD'] = 'GET';
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['HTTP_USER_AGENT'] = 'workerd-site';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-$mark = [];
-$clock = function () { return microtime(true) * 1000; };
-$statements = function () { return json_decode(cfw_host('cfwStats')(), true)['queryCount'] ?? 0; };
-
-$t0 = $clock();
-try {
-  // require_once returns true rather than the autoloader once the interpreter
-  // has already loaded the file, and the interpreter persists between requests
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  $mark['autoloadMs'] = round($clock() - $t0, 2);
-  $mark['warmInterpreter'] = isset($GLOBALS['__pw_site_booted']) ? 1 : 0;
-
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $a = $clock();
-    $request = \Symfony\Component\HttpFoundation\Request::create($path, 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $mark['settingsMs'] = round($clock() - $a, 2);
-
-    // prove the driver Drupal actually connected with, before anything renders
-    $info = \Drupal\Core\Database\Database::getConnectionInfo('default');
-    $mark['configuredDriver'] = $info['default']['driver'] ?? null;
-
-    $a = $clock();
-    $kernel->boot();
-    $mark['kernelBootMs'] = round($clock() - $a, 2);
-    $GLOBALS['__pw_kernel'] = $kernel;
-    $GLOBALS['__pw_site_booted'] = true;
-  }
-  $kernel = $GLOBALS['__pw_kernel'];
-
-  $connection = \Drupal\Core\Database\Database::getConnection();
-  $mark['connectionClass'] = get_class($connection);
-  $mark['driver'] = $connection->driver();
-  $mark['engineVersion'] = $connection->version();
-  $mark['engineVersionIsFloor'] = method_exists($connection, 'engineVersionIsFloor') ? $connection->engineVersionIsFloor() : null;
-
-  $runs = [];
-  for ($i = 0; $i < $repeat; $i++) {
-    // Rule 3, and a query string is NOT enough to get past it. PageCache
-    // memoizes $this->cid on the middleware instance, so on a persistent kernel
-    // every URL maps to the first request's cid and re-serves its page -- the
-    // measured shape was MISS then five HITs at 1 ms with byte-identical output
-    // for six different URLs. Emptying the bin is what forces a real render.
-    // $bust=0 leaves the cached path measurable.
-    $target = $path;
-    foreach ($bins as $bin) {
-      try { \Drupal::cache($bin)->deleteAll(); } catch (\Throwable $e) {}
-    }
-    // PageCache memoizes $this->cid on the middleware instance, so a persistent
-    // kernel maps every later URL onto the first request's cid and re-serves its
-    // page. Measured: six different URLs returned byte-identical output. Nulling
-    // it is what makes a distinct path actually route.
-    if ($resetCid) {
-      try {
-        $middleware = \Drupal::service('http_middleware.page_cache');
-        $rp = new \ReflectionProperty($middleware, 'cid');
-        $rp->setValue($middleware, NULL);
-      } catch (\Throwable $e) {}
-    }
-    $before = $statements();
-    $a = $clock();
-    $response = cfw_serve($target);
-    $ms = round($clock() - $a, 2);
-    $body = (string) $response->getContent();
-    $runs[] = [
-      'ms' => $ms,
-      'status' => $response->getStatusCode(),
-      'bytes' => strlen($body),
-      'pageCache' => $response->headers->get('x-drupal-cache'),
-      'dynamicCache' => $response->headers->get('x-drupal-dynamic-cache'),
-      'hostStatements' => $statements() - $before,
-      'titleFound' => str_contains($body, '<title>') ? 1 : 0,
-      'sha1' => substr(sha1($body), 0, 12),
-    ];
-  }
-  $mark['runs'] = $runs;
-} catch (\Throwable $e) {
-  $mark['error'] = get_class($e) . ': ' . $e->getMessage();
-  $mark['trace'] = substr($e->getTraceAsString(), 0, 1400);
+	return phpRender(DRUPAL_REQUEST_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		PW_SERVE_INLINE,
+		PATH: JSON.stringify(safePath),
+		REPEAT: String(safeRepeat),
+		BINS: JSON.stringify(safeBins),
+		RESET_CID: resetCid ? 'true' : 'false'
+	});
 }
 
-$mark['totalMs'] = round($clock() - $t0, 2);
-$mark['includedFiles'] = count(get_included_files());
-echo json_encode($mark);
-`;
-}
-
-/**
- * Renders one path and hands the HTML back, for the alarm to store.
- *
- * Separate from drupalRequest() because that one reports timings for measurement
- * and this one produces a cache entry. Both empty the page bin first: the point of
- * an alarm fill is to produce a fresh render, and PageCache would otherwise answer
- * from its own memoized cid.
- *
- * `bins` names what is emptied, and it is load-bearing rather than cosmetic:
- * `['page']` alone leaves `dynamic_page_cache` warm, so the page is REASSEMBLED
- * from cached render arrays instead of rendered. That is the cheap path a
- * pre-filled site takes on a MISS, and the two cost 4.3x different amounts, so a
- * caller has to choose which one it is asking for.
- *
- * `destruct` defaults to FALSE on the render path, and that is a measured decision
- * rather than an oversight.
- *
- * The hypothesis was that nothing ever completed the request lifecycle, so every
- * `needs_destruction` CacheCollector discarded its accumulated entries instead of
- * writing them, and the render paid to rebuild them every time. The mechanism is
- * real. The payoff is not: with the five safe services destructing, a repeated
- * anonymous front-page render costs **17 host statements against 15**, writes the
- * **same 15 rows**, and returns the same 12,310 bytes. Cost, no benefit.
- *
- * The reason is the same property that made `$kernel->terminate()` dangerous here:
- * the interpreter is PERSISTENT, so the collectors are already populated in memory
- * and never re-read from cache. Persistence only pays for a fresh process. On this
- * runtime the in-memory collector IS the cache.
- *
- * Still worth passing `true` on a WRITE path, where `router.builder`'s
- * `rebuildIfNeeded()` and accumulated state flushes are correctness rather than
- * speed. Unmeasured: whether persisted collectors pay for themselves on the COLD
- * path, after a hibernation discards the interpreter.
- *
- * @param {string} path
- * @param {string[]} bins
- * @param {boolean|string} destruct true, false, or an allowlist to bisect with
- */
+/** the request-shaped inputs of {@link renderPage}; every field is optional */
 export interface RenderRequest {
 	/**
-	 * the `scheme://host[:port]` Drupal renders absolute URLs against.
+	 * The `scheme://host[:port]` Drupal renders absolute URLs against.
 	 *
-	 * Empty means "leave it to Symfony", which fills in `http://localhost` -- correct for a probe
-	 * and wrong for anything a visitor sees. `src/ops/site-origin.ts` decides the value; it is a
-	 * property of the site rather than of the request, so a forged `Host` cannot move it.
+	 * Empty falls back to Symfony's `http://localhost`. It is a property of the site, so a forged
+	 * `Host` cannot move it.
 	 */
 	origin?: string;
 	/** HTTP method; anything other than GET makes this a submission */
@@ -1459,42 +256,32 @@ export interface RenderRequest {
 	/** the raw request body, forwarded verbatim */
 	body?: string;
 	/**
-	 * the body as base64, for one that is not UTF-8; wins over `body`.
+	 * The body as base64, for one that is not UTF-8; wins over `body`.
 	 *
-	 * The body travels inside the PHP source as a JSON string, which cannot carry arbitrary bytes, so
-	 * every uploaded image arrived corrupted and the render died.
+	 * The body rides in the PHP source as a JSON string, which cannot carry arbitrary bytes.
 	 */
 	bodyBase64?: string;
 	/** the inbound content type, which decides whether the body is parsed as a form */
 	contentType?: string;
 	/**
-	 * the raw `Cookie` header, which is what makes a request authenticated.
+	 * The raw `Cookie` header, which is what makes a request authenticated.
 	 *
-	 * Without it every render is uid 0, so Drupal refuses a create-entity route at the ROUTING
-	 * layer and no form is built at all -- see `tests/integration/submission-wall.spec.ts`, which
-	 * named that wall before this existed.
+	 * Without it every render is uid 0 and a create-entity route is refused at routing.
 	 */
 	cookie?: string;
 	/**
-	 * the visitor's address, from `CF-Connecting-IP`.
+	 * The visitor's address, from `CF-Connecting-IP`.
 	 *
-	 * Drupal's flood control identifies by `getClientIp()`, and every render used to report
-	 * `127.0.0.1` -- so `user.failed_login_ip` (limit 50, window 3600) was ONE bucket for the whole
-	 * site: fifty bad passwords locked every visitor out of `/user/login` for an hour, and per-IP
-	 * throttling of contact forms and password resets did nothing. Cloudflare overwrites this header
-	 * at the edge, so it is trustworthy there and is whatever the client sent under `wrangler dev`.
+	 * Flood control keys on `getClientIp()`; without this every visitor shares one
+	 * `user.failed_login_ip` bucket (limit 50 per 3600 s). Cloudflare overwrites the header at the
+	 * edge; under `wrangler dev` it is whatever the client sent.
 	 */
 	clientIp?: string;
 	/**
-	 * the raw `Accept` header, which decides the SHAPE of every AJAX response.
+	 * The raw `Accept` header, which decides the shape of every AJAX response.
 	 *
-	 * `AjaxResponseSubscriber::onResponse()` wraps the JSON in a `<textarea>` and relabels it
-	 * `text/html` whenever `Accept` contains `text/html` -- an IE9 iframe-upload workaround. Absent
-	 * here, `Request::create()` fills in its own default of
-	 * `text/html,application/xhtml+xml,...`, so EVERY Drupal AJAX response came back wrapped and
-	 * `Drupal.AjaxError` fired on every one. Measured on Add field, where picking a field type is an
-	 * AJAX POST: the admin got "Oops, something went wrong" and no field could be created.
-	 * A browser asking for JSON sends `application/json, text/javascript`, which does not match.
+	 * `AjaxResponseSubscriber` wraps the JSON in a `<textarea>` when `Accept` contains `text/html`,
+	 * and `Request::create()` defaults to exactly that, so an absent header breaks every AJAX call.
 	 */
 	accept?: string;
 }
@@ -1513,10 +300,9 @@ const FILE_PART = new TextEncoder().encode('filename="');
 /**
  * Whether a multipart body carries a chosen file.
  *
- * `file_save_upload()` caches each upload in a function static keyed on the field name. Nothing can
- * reset a function static, and this interpreter never ends the request, so the next upload to that
- * field was handed the previous file -- including one another user uploaded. The object drops the
- * interpreter after such a request. A false positive costs one boot.
+ * `file_save_upload()` keeps a function static per field name that nothing can reset, so the next
+ * upload would get the previous file (possibly another user's). The object drops the interpreter
+ * after such a request; a false positive costs one boot.
  */
 export function carriesUpload(contentType: string, bytes: Uint8Array): boolean {
 	if (!/multipart\/form-data/i.test(contentType)) return false;
@@ -1543,6 +329,17 @@ export function phpBodyExpression(request: Pick<RenderRequest, 'body' | 'bodyBas
 	return `json_decode(${JSON.stringify(JSON.stringify(String(request.body ?? '')))})`;
 }
 
+/**
+ * Renders one path and hands the HTML back, for the alarm to store.
+ *
+ * `bins` names the caches emptied first: `['page']` alone leaves `dynamic_page_cache` warm, so the
+ * page is reassembled rather than rendered (4.3x cheaper), and a caller must choose which it wants.
+ *
+ * `destruct` defaults to false, measured: destructing the five safe services costs 17 host
+ * statements against 15 for the same 15 rows, because the persistent interpreter already holds
+ * the collectors in memory. Pass `true` on a write path (`router.builder` rebuilds need it); a
+ * string is an allowlist of service ids to bisect with.
+ */
 export function renderPage(
 	path = '/',
 	bins: string[] = ['page', 'dynamic_page_cache'],
@@ -1565,13 +362,10 @@ export function renderPage(
 			: destruct
 				? 'true'
 				: 'false';
-	// JSON-encoded, never interpolated: a body carrying a quote would otherwise close the PHP
-	// literal and change what runs, which is the same hazard the file's backtick rule exists for.
+	// request fields are JSON-encoded, never interpolated (a quote would close the PHP literal)
 	const method = String(request.method ?? 'GET').toUpperCase();
 	const origin = String(request.origin ?? '');
-	// an ANONYMOUS GET with no origin still emits nothing extra, so every pre-existing caller's
-	// source is byte-identical; a cookie is enough on its own to need the argument list, because an
-	// authenticated GET is exactly the case this exists for
+	// a plain anonymous GET emits no extra arguments
 	const clientIp = String(request.clientIp ?? '');
 	const accept = String(request.accept ?? '');
 	const requestArgs =
@@ -1591,823 +385,107 @@ export function renderPage(
 				`, json_decode(${JSON.stringify(JSON.stringify(clientIp))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(accept))})`;
 
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-${PW_SERVE_INLINE}
-chdir('/drupal');
-
-$path = json_decode(${JSON.stringify(safePath)});
-$origin = json_decode(${JSON.stringify(JSON.stringify(origin))});
-
-// the host trio is derived from the ORIGIN rather than hardcoded, and cfw_serve() overwrites it
-// again from the request it builds, so the superglobals and the Request object cannot disagree
-$__host = $origin === '' ? 'localhost' : (string) parse_url($origin, PHP_URL_HOST);
-$__port = $origin === '' ? 80 : (int) (parse_url($origin, PHP_URL_PORT) ?: (strncmp($origin, 'https:', 6) === 0 ? 443 : 80));
-$_SERVER['HTTP_HOST'] = $__port === 80 || $__port === 443 ? $__host : $__host . ':' . $__port;
-$_SERVER['SERVER_NAME'] = $__host;
-$_SERVER['SERVER_PORT'] = (string) $__port;
-if (strncmp($origin, 'https:', 6) === 0) { $_SERVER['HTTPS'] = 'on'; } else { unset($_SERVER['HTTPS']); }
-$_SERVER['REQUEST_URI'] = $path;
-$_SERVER['REQUEST_METHOD'] = 'GET';
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-$out = [];
-$clock = function () { return microtime(true) * 1000; };
-$t0 = $clock();
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $request = \Symfony\Component\HttpFoundation\Request::create($path, 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-    $out['bootedKernel'] = 1;
-  }
-
-  // a fill must render, so clear what would otherwise answer for it
-  foreach (json_decode(${JSON.stringify(safeBins)}, true) as $bin) {
-    try { \Drupal::cache($bin)->deleteAll(); } catch (\Throwable $e) {}
-  }
-  try {
-    $middleware = \Drupal::service('http_middleware.page_cache');
-    $rp = new \ReflectionProperty($middleware, 'cid');
-    $rp->setValue($middleware, NULL);
-  } catch (\Throwable $e) {}
-
-  $response = cfw_serve($path, ${safeDestruct}${requestArgs});
-  $out['destructed'] = $GLOBALS["__pw_destructed"] ?? null;
-  // sendContent() RATHER THAN getContent(), and the difference is whether forms work at all.
-  // BigPipe replaces the CSRF token with a lazy placeholder and substitutes it during
-  // BigPipeResponse::sendContent(); getContent() returns the pre-substitution HTML, so every form
-  // shipped a big_pipe_nojs_placeholder_attribute_safe marker where its token belonged, and every
-  // submission came back "The form has become outdated".
-  //
-  // Buffered rather than sent, because there is no SAPI here to send to. Safe for a plain
-  // Response, whose sendContent() only echoes what getContent() returns; a throw falls back to it.
-  $body = '';
-  if (method_exists($response, 'sendContent')) {
-    $depth = ob_get_level();
-    ob_start();
-    try {
-      $response->sendContent();
-      $body = (string) ob_get_clean();
-    } catch (\Throwable $e) {
-      while (ob_get_level() > $depth) { @ob_end_clean(); }
-      $out['sendError'] = get_class($e) . ': ' . $e->getMessage();
-      // BigPipe::sendContent() has no try/finally around performPostSendTasks(), so a throw here
-      // skips the session save -- and the CSRF seed is minted during placeholder replacement,
-      // which is inside the call that just threw. Closing it is what a SAPI shutdown would do.
-      $out['sessionClosed'] = cfw_close_session();
-      $body = (string) $response->getContent();
-    }
-  } else {
-    $body = (string) $response->getContent();
-  }
-  $out['status'] = $response->getStatusCode();
-  $out['html'] = $body;
-  $out['bytes'] = strlen($body);
-  $out['pageCache'] = $response->headers->get('x-drupal-cache');
-  $out['dynamicCache'] = $response->headers->get('x-drupal-dynamic-cache');
-  // the cache tags this render bubbled, so a compiled plan can be invalidated by the same tags
-  // Drupal would invalidate the render cache with
-  try {
-    $out['cacheTags'] = $response instanceof \Drupal\Core\Cache\CacheableResponseInterface
-      ? array_values($response->getCacheableMetadata()->getCacheTags())
-      : [];
-  } catch (\Throwable $e) { $out['cacheTags'] = []; }
-  $out['contentType'] = $response->headers->get('content-type');
-  $out['location'] = $response->headers->get('location');
-  // what Drupal said about storing this, which page_cache_kill_switch and any module with a
-  // reason to opt out both express here and nowhere else
-  $out['cacheControl'] = $response->headers->get('cache-control');
-  // EVERY x-drupal-* HEADER, because dropping one silently changed what the BROWSER does.
-  // ajax.js refuses a response whose url is not in drupalSettings.ajaxTrustedUrl unless it carries
-  // X-Drupal-Ajax-Token, and answers "The response failed verification so will not be processed."
-  // -- so every AJAX interaction that was not a plain form submit died at the client with a valid
-  // response in hand. Measured on Add field. A prefix rather than a list, so the next one core adds
-  // is carried without anybody having to notice.
-  $passed = [];
-  foreach ($response->headers->all() as $name => $values) {
-    if (stripos((string) $name, 'x-drupal-') !== 0) { continue; }
-    $first = is_array($values) ? ($values[0] ?? null) : $values;
-    if ($first !== null) { $passed[(string) $name] = (string) $first; }
-  }
-  $out['passHeaders'] = $passed;
-  // BOTH SOURCES, because Drupal sets a session cookie through neither one consistently:
-  // a logout or a Symfony-managed cookie lands on the Response, while session_start() emits its
-  // own Set-Cookie into PHP's header list, which the Response never sees. Reading one of them
-  // would drop the login cookie silently and leave the session unrecoverable by the browser.
-  $cookies = [];
-  foreach ($response->headers->all('set-cookie') as $line) { $cookies[] = (string) $line; }
-  if (function_exists('headers_list')) {
-    foreach (headers_list() as $line) {
-      if (stripos($line, 'set-cookie:') === 0) { $cookies[] = trim(substr($line, 11)); }
-    }
-  }
-  $out['setCookie'] = array_values(array_unique($cookies));
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['at'] = $e->getFile() . ':' . $e->getLine();
-}
-
-// what the between-request reset actually did, and who Drupal thinks is asking. Both are cheap
-// reads and both were needed to find the session leak; a render that comes back as the WRONG USER
-// is not distinguishable from a correct one by its bytes
-$out['reset'] = $GLOBALS['__pw_reset'] ?? null;
-try {
-  $out['uid'] = (int) \Drupal::currentUser()->id();
-} catch (\Throwable $e) { $out['uid'] = null; }
-// THE ROLE SET, sorted, because the edge plan key is derived from it. A plan keyed on the raw
-// cookie is one plan per session per path, which maximises the cold-KV case it was built to avoid;
-// keyed on roles it is one per role set. Sorted so two accounts holding the same roles in a
-// different order produce one key rather than two
-try {
-  $__roles = array_values(\Drupal::currentUser()->getRoles());
-  sort($__roles);
-  $out['roles'] = $__roles;
-} catch (\Throwable $e) { $out['roles'] = null; }
-
-$out['renderMs'] = round($clock() - $t0, 2);
-echo json_encode($out);
-`;
+	return phpRender(RENDER_PAGE_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		PW_SERVE_INLINE,
+		PATH: JSON.stringify(safePath),
+		ORIGIN: JSON.stringify(JSON.stringify(origin)),
+		BINS: JSON.stringify(safeBins),
+		SERVE_ARGS: `${safeDestruct}${requestArgs}`
+	});
 }
 
 /**
  * Invalidates cache tags through Drupal's own service, nothing else.
  *
- * Exists so the edge cache's automatic invalidation seam can be PROVEN rather
- * than asserted: `DatabaseCacheTagsChecksum` writes to `cachetags` from here, the
- * write crosses `execSql()`, and the Durable Object bumps its generation. Without
- * this route the trigger could only be exercised by saving a node, which this
- * site has none of.
- *
- * @param {string[]} tags
+ * It exercises the edge cache's invalidation seam without a node save: `DatabaseCacheTagsChecksum`
+ * writes `cachetags`, the write crosses `execSql()`, and the object bumps its generation.
  */
 export function invalidateTags(tags: string[] = ['rendered']): string {
 	const safe = JSON.stringify(
 		(Array.isArray(tags) ? tags : []).filter((t) => /^[A-Za-z0-9_:.-]+$/.test(t))
 	);
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-
-$tags = json_decode(${JSON.stringify(safe)}, true);
-$out = ['tags' => $tags];
-
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
-$_SERVER['REQUEST_URI'] = '/';
-$_SERVER['REQUEST_METHOD'] = 'GET';
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-  }
-  \Drupal\Core\Cache\Cache::invalidateTags($tags);
-  $out['ok'] = true;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-
-echo json_encode($out);
-`;
+	return phpRender(INVALIDATE_TAGS_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		TAGS: JSON.stringify(safe)
+	});
 }
 
 /**
  * The driver's own assertions, run against ctx.storage.sql.
  *
- * `tests/run-driver-suite.php` proves the PHP half against a PDO host. This is
- * the same shapes against the real one, so what it adds is exactly the runtime
- * behaviour a stand-in cannot model. It boots no kernel: the driver is
- * constructed directly, because a failure here should point at the driver rather
- * than at Drupal's container.
+ * The same shapes `tests/run-driver-suite.php` runs against a PDO host, here against the real one.
+ * It boots no kernel, so a failure points at the driver rather than Drupal's container.
  */
-export const DRIVER_LIVE_SUITE = String.raw`<?php
-${HOST_HELPERS}
-
-$out = ['passed' => 0, 'failed' => 0, 'checks' => []];
-$ok = function ($label, $condition, $detail = null) use (&$out) {
-  if ($condition) { $out['passed']++; }
-  else { $out['failed']++; }
-  $out['checks'][] = ['label' => $label, 'ok' => (bool) $condition, 'detail' => $detail];
-};
-
-// require, NEVER require_once, and the guard tests the VALUE rather than the key. require_once
-// returns TRUE when the file is already included, so capturing its result yields the boolean
-// instead of the ClassLoader -- and a heap restore reaches exactly that state, with autoload.php in
-// the included-files table and this global not restored beside it. Measured on an imaged site:
-// Call to a member function addPsr4() on true. Composer getLoader() memoizes, so a plain require
-// hands back the same loader and re-registers nothing
-if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-  $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-}
-$autoloader = $GLOBALS['__pw_autoloader'];
-$autoloader->addPsr4('Drupal\\sqlite\\Driver\\Database\\sqlite\\', '/drupal/core/modules/sqlite/src/Driver/Database/sqlite/');
-$autoloader->addPsr4('Drupal\\cfw_do_sqlite\\Driver\\Database\\cfw_do_sqlite\\', '/drupal/modules/custom/cfw_do_sqlite/src/Driver/Database/cfw_do_sqlite/');
-// this suite constructs the driver directly rather than through settings.php, so it is on its own
-// for the userland PDO the statement classes need; see src/site-do.js for the served path
-require_once '/drupal/modules/custom/cfw_do_sqlite/src/pdo-shim.php';
-
-try {
-  \Drupal\Core\DrupalKernel::bootEnvironment();
-} catch (\Throwable $e) {
-  // already booted in this interpreter, which is fine
-}
-
-try {
-  $client = new \Drupal\cfw_do_sqlite\Driver\Database\cfw_do_sqlite\CfwSqlClient();
-  $ok('client constructs against the live bridge', true);
-  $ok('client reports transaction support', $client->supportsTransactions());
-
-  $connection = new \Drupal\cfw_do_sqlite\Driver\Database\cfw_do_sqlite\Connection($client, ['prefix' => '']);
-  $ok('connection constructs', true);
-  $ok('driver() is cfw_do_sqlite', $connection->driver() === 'cfw_do_sqlite', $connection->driver());
-  $ok('databaseType() is sqlite', $connection->databaseType() === 'sqlite', $connection->databaseType());
-
-  $version = $connection->version();
-  $ok('version() returns an engine version through the DBAL', (bool) preg_match('/^3\./', (string) $version), $version);
-  $ok('supportsAtomicCommit()', $connection->supportsAtomicCommit());
-
-  $schema = $connection->schema();
-  $connection->query('DROP TABLE IF EXISTS cfw_live');
-  $schema->createTable('cfw_live', [
-    'fields' => [
-      'id' => ['type' => 'serial', 'not null' => TRUE],
-      // binary FALSE is the only thing that makes core emit a collation clause,
-      // which is what Schema then rewrites to builtin NOCASE
-      'name' => ['type' => 'varchar', 'length' => 64, 'not null' => TRUE, 'binary' => FALSE],
-      'bin' => ['type' => 'varchar', 'length' => 64, 'not null' => FALSE],
-      'n' => ['type' => 'int', 'not null' => FALSE],
-    ],
-    'primary key' => ['id'],
-    'indexes' => ['name' => ['name']],
-  ]);
-  $ddl = $connection->query('SELECT sql FROM sqlite_master WHERE name = :n', [':n' => 'cfw_live'])->fetchField();
-  $ok('createTable() emitted COLLATE NOCASE, not NOCASE_UTF8', str_contains((string) $ddl, 'COLLATE NOCASE') && !str_contains((string) $ddl, 'NOCASE_UTF8'), $ddl);
-  $ok('schema()->createTable() through the DBAL', $schema->tableExists('cfw_live'));
-  $ok('fieldExists() uses PRAGMA table_info', $schema->fieldExists('cfw_live', 'name'));
-  $ok('indexExists() uses PRAGMA index_list', $schema->indexExists('cfw_live', 'name'));
-
-  $id = $connection->insert('cfw_live')->fields(['name' => 'first', 'n' => 7])->execute();
-  $ok('insert() returns a rowid', (string) $id === '1', $id);
-
-  $connection->insert('cfw_live')->fields(['name' => 'second', 'n' => 8])->execute();
-  $count = $connection->select('cfw_live', 'c')->countQuery()->execute()->fetchField();
-  $ok('select() countQuery sees both rows', (string) $count === '2', $count);
-
-  $name = $connection->query('SELECT name FROM {cfw_live} WHERE n = :n', [':n' => 8])->fetchField();
-  $ok('query() with a named placeholder', $name === 'second', $name);
-
-  $connection->update('cfw_live')->fields(['n' => 9])->condition('name', 'first')->execute();
-  $n = $connection->query('SELECT n FROM {cfw_live} WHERE name = :name', [':name' => 'first'])->fetchField();
-  $ok('update() through the DBAL', (string) $n === '9', $n);
-
-  // ASCII case-insensitivity survives the NOCASE substitution
-  $hit = $connection->query('SELECT COUNT(*) FROM {cfw_live} WHERE name = :name', [':name' => 'FIRST'])->fetchField();
-  $ok('NOCASE folds ASCII on a binary=FALSE column', (string) $hit === '1', $hit);
-
-  // the documented limitation, asserted rather than assumed: builtin NOCASE is
-  // ASCII-only, so non-ASCII comparison stays case-SENSITIVE
-  $connection->insert('cfw_live')->fields(['name' => "\u{00DC}nicode", 'n' => 1])->execute();
-  $folded = $connection->query('SELECT COUNT(*) FROM {cfw_live} WHERE name = :name', [':name' => "\u{00FC}nicode"])->fetchField();
-  $ok('NOCASE does NOT fold non-ASCII (documented gap)', (string) $folded === '0', $folded);
-  $connection->delete('cfw_live')->condition('name', "\u{00DC}nicode")->execute();
-
-  // a column without binary=FALSE gets no collation clause, so it stays
-  // case-sensitive; this is the control that proves the check above means
-  // something
-  $connection->update('cfw_live')->fields(['bin' => 'Exact'])->condition('name', 'first')->execute();
-  $binHit = $connection->query('SELECT COUNT(*) FROM {cfw_live} WHERE bin = :v', [':v' => 'exact'])->fetchField();
-  $ok('a column with default collation stays case-sensitive (control)', (string) $binHit === '0', $binHit);
-
-  // LIKE BINARY, which threw before likeToGlob() was wired in. Every one of
-  // these is a case where builtin GLOB alone would have been silently wrong.
-  $connection->insert('cfw_live')->fields(['name' => 'Alpha%Beta', 'n' => 20])->execute();
-  $connection->insert('cfw_live')->fields(['name' => 'Alpha*Beta', 'n' => 21])->execute();
-  $connection->insert('cfw_live')->fields(['name' => 'alphaxbeta', 'n' => 22])->execute();
-
-  $lb = function ($pattern) use ($connection) {
-    return (string) $connection->select('cfw_live', 'c')
-      ->condition('name', $pattern, 'LIKE BINARY')
-      ->countQuery()->execute()->fetchField();
-  };
-  $ok('LIKE BINARY no longer throws', TRUE);
-  $ok('LIKE BINARY % is a wildcard', $lb('Alpha%') === '2', $lb('Alpha%'));
-  $ok('LIKE BINARY is case-sensitive', $lb('alpha%') === '1', $lb('alpha%'));
-  $ok('LIKE BINARY _ matches one character', $lb('alpha_beta') === '1', $lb('alpha_beta'));
-  $ok('LIKE BINARY treats * as a literal', $lb('%*%') === '1', $lb('%*%'));
-  $ok('LIKE BINARY finds a literal percent', $lb('%\\%%') === '0', $lb('%\\%%'));
-  $notLike = (string) $connection->select('cfw_live', 'c')
-    ->condition('name', 'Alpha%', 'NOT LIKE BINARY')
-    ->countQuery()->execute()->fetchField();
-  $ok('NOT LIKE BINARY negates', $notLike !== '0', $notLike);
-
-  // the entity-query path that generates LIKE BINARY in the first place
-  $starts = (string) $connection->select('cfw_live', 'c')
-    ->condition('name', $connection->escapeLike('Alpha') . '%', 'LIKE BINARY')
-    ->countQuery()->execute()->fetchField();
-  $ok('STARTS_WITH shape through escapeLike()', $starts === '2', $starts);
-
-  $connection->delete('cfw_live')->condition('n', 20, '>=')->execute();
-
-  // a real transaction, buffered in PHP and replayed atomically in the host
-  $txn = $connection->startTransaction();
-  $connection->insert('cfw_live')->fields(['name' => 'buffered', 'n' => 10])->execute();
-  $inside = $connection->select('cfw_live', 'c')->countQuery()->execute()->fetchField();
-  $ok('a read inside the transaction sees its own buffered write', (string) $inside === '3', $inside);
-  unset($txn);
-  $afterCommit = $connection->select('cfw_live', 'c')->countQuery()->execute()->fetchField();
-  $ok('commit replays the buffer', (string) $afterCommit === '3', $afterCommit);
-
-  $txn2 = $connection->startTransaction();
-  $connection->insert('cfw_live')->fields(['name' => 'doomed', 'n' => 11])->execute();
-  $txn2->rollBack();
-  unset($txn2);
-  $afterRollback = $connection->select('cfw_live', 'c')->countQuery()->execute()->fetchField();
-  $ok('rollback writes nothing', (string) $afterRollback === '3', $afterRollback);
-
-  // queryRange, which the core sqlite driver implements with LIMIT/OFFSET
-  $range = $connection->queryRange('SELECT name FROM {cfw_live} ORDER BY id', 1, 1)->fetchField();
-  $ok('queryRange()', $range === 'second', $range);
-
-  // CREATE TEMPORARY TABLE is refused by the host authorizer, so the contract is
-  // that queryTemporary() throws a message naming the reason rather than
-  // surfacing a raw SQLITE_AUTH from somewhere deeper
-  try {
-    $connection->queryTemporary('SELECT name FROM {cfw_live}', []);
-    $ok('queryTemporary() refuses loudly', false, 'no exception thrown');
-  } catch (\Drupal\Core\Database\InvalidQueryException $e) {
-    $ok('queryTemporary() refuses loudly', str_contains($e->getMessage(), 'SQLITE_AUTH'), $e->getMessage());
-  }
-
-  // a constraint violation must map onto Drupal's exception, not a raw error
-  try {
-    $connection->query('INSERT INTO {cfw_live} (id, name, n) VALUES (1, :name, 0)', [':name' => 'dupe']);
-    $ok('duplicate primary key throws IntegrityConstraintViolationException', false, 'no exception');
-  } catch (\Drupal\Core\Database\IntegrityConstraintViolationException $e) {
-    $ok('duplicate primary key throws IntegrityConstraintViolationException', true);
-  } catch (\Throwable $e) {
-    $ok('duplicate primary key throws IntegrityConstraintViolationException', false, get_class($e) . ': ' . $e->getMessage());
-  }
-
-  $out['statementCount'] = $client->statementCount();
-  $connection->query('DROP TABLE IF EXISTS cfw_live');
-} catch (\Throwable $e) {
-  $out['fatal'] = get_class($e) . ': ' . $e->getMessage();
-  $out['trace'] = substr($e->getTraceAsString(), 0, 1200);
-}
-
-echo json_encode($out);
-`;
+export const DRIVER_LIVE_SUITE = phpRender(DRIVER_LIVE_SUITE_PHP, { HOST_HELPERS });
 
 /**
  * Dumps ctx.storage.sql back out as portable SQL.
  *
- * The other half of MIGRATE_DB, and the half that backup/restore was missing:
- * a site whose data cannot be extracted is not a product. Reads the schema and
- * every row through the SAME bridge the driver uses, so what it exports is exactly
- * what Drupal sees rather than a second opinion from a different path.
- *
- * Emits one statement per line so the caller can stream it to R2 in chunks instead
- * of holding a whole site in memory. NOCASE is left as-is: it is what the host
- * accepts, and rewriting it back to NOCASE_UTF8 would produce a dump that only
- * restores onto a driver with user-defined collations.
+ * The inverse of `MIGRATE_DB`, read through the driver's own bridge. It emits one statement per
+ * line so the caller can stream chunks. `NOCASE` stays as-is; `NOCASE_UTF8` would only restore onto
+ * a driver with user-defined collations.
  */
 export function exportDatabase(limitPerTable = 0): string {
 	const cap = Number.isInteger(limitPerTable) && limitPerTable > 0 ? limitPerTable : 0;
-	return String.raw`<?php
-${HOST_HELPERS}
-
-$cap = ${cap};
-$out = ['ok' => false, 'statements' => 0, 'bytes' => 0, 'tables' => [], 'sql' => ''];
-$lines = [];
-
-$master = cfw_sql("SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, name");
-if (($master['ok'] ?? false) !== true) {
-  echo json_encode(['ok' => false, 'error' => $master['error'] ?? 'cannot read sqlite_master']);
-  return;
-}
-
-$tables = [];
-foreach ($master['rows'] as $row) {
-  $name = (string) ($row['name'] ?? '');
-  // engine-owned objects refuse to be created, and miniflare adds bookkeeping
-  if ($name === '' || str_starts_with($name, 'sqlite_') || str_starts_with($name, '__miniflare')) { continue; }
-  $lines[] = rtrim((string) $row['sql'], ";\n\r\t ") . ';';
-  if (($row['type'] ?? '') === 'table') { $tables[] = $name; }
-}
-
-$quote = function ($v) {
-  if ($v === null) { return 'NULL'; }
-  if (is_array($v)) { $v = (string) ($v['__phpint'] ?? ''); }
-  if (is_int($v) || is_float($v)) { return (string) $v; }
-  $s = (string) $v;
-  // a decimal string is emitted bare so INTEGER affinity survives a round trip
-  if ($s !== '' && preg_match('/^-?[0-9]{1,18}$/', $s) === 1) { return $s; }
-  return "'" . str_replace("'", "''", $s) . "'";
-};
-
-foreach ($tables as $table) {
-  $sql = 'SELECT * FROM "' . str_replace('"', '""', $table) . '"';
-  if ($cap > 0) { $sql .= ' LIMIT ' . $cap; }
-  $rows = cfw_sql($sql);
-  if (($rows['ok'] ?? false) !== true) {
-    $out['tables'][$table] = 'ERROR: ' . ($rows['error'] ?? 'unknown');
-    continue;
-  }
-  $n = 0;
-  foreach ($rows['rows'] as $row) {
-    $cols = array_keys($row);
-    if (!$cols) { continue; }
-    $quoted = array_map(function ($c) { return '"' . str_replace('"', '""', $c) . '"'; }, $cols);
-    $vals = array_map($quote, array_values($row));
-    $lines[] = 'INSERT INTO "' . $table . '" (' . implode(', ', $quoted) . ') VALUES (' . implode(', ', $vals) . ');';
-    $n++;
-  }
-  $out['tables'][$table] = $n;
-}
-
-$dump = implode("\n", $lines);
-$out['ok'] = true;
-$out['statements'] = count($lines);
-$out['bytes'] = strlen($dump);
-$out['sha1'] = sha1($dump);
-// the caller decides whether to ship the body; a fleet backup streams it to R2
-$out['sql'] = $dump;
-echo json_encode($out);
-`;
+	return phpRender(EXPORT_DATABASE_PHP, { HOST_HELPERS, CAP: String(cap) });
 }
 
 /**
- * First-run configuration, against the already-migrated database.
+ * Creates every table a write path needs and the pack lacks (sessions, flood, ...).
  *
- * The install story is "ship a pre-installed database and migrate it", which works
- * in 256 ms but means every site boots identical -- same site name, same admin
- * account, same hash salt. That is the literal first thing a user does and it was
- * on no list until now.
+ * The pack is built by browsing anonymously, so no write-only table exists in it. Expects `$db`,
+ * `$out` and a booted kernel in scope; writes `$out['schemaRepair']`.
  *
- * NOT Drupal's installer: that is the heaviest write workload in the
- * product (1,052 ms and a 72.5 MB peak natively, never run in wasm) and it would
- * re-do work the pack already contains. This edits the four things that actually
- * differ per site, through Drupal's own APIs so the caches invalidate correctly.
+ * It calls `<module>_schema()` directly (via `loadAllIncludes()`) because
+ * `ModuleHandler::invoke($module, 'schema')` returns nothing on Drupal 11. It runs outside any
+ * transaction: DDL dirties `sqlite_master` and would turn later reads into speculative replays.
  */
-/**
- * Creates every table a write path needs and a pack does not contain.
- *
- * Extracted because a second concrete caller appeared -- saving a node hits the same
- * missing tables as saving uid 1 -- and duplicating 80 lines of DDL would guarantee
- * the two drift. Expects `$db`, `$out` and a booted kernel in scope; writes
- * `$out['schemaRepair']`.
- *
- * The general fix, not another whack-a-mole. The pack is built by browsing a site
- * anonymously, so it contains no table that only a WRITE path creates: sessions,
- * flood, and whatever the next one would have been. Read paths are not evidence
- * about write paths.
- *
- * `ModuleHandler::invoke($module, 'schema')` returned nothing on Drupal 11 -- it
- * reported `tablesCreated: []` while an insert still failed with "no such table:
- * flood", and those two cannot both be true. So the hook is called directly:
- * `loadAllIncludes()` defines `<module>_schema()` as an ordinary function, and
- * `function_exists()` is a fact rather than a hook-system opinion.
- *
- * Runs outside any transaction. DDL dirties `sqlite_master`, so creating
- * a table mid-save turns every later read in that transaction into a speculative
- * replay -- the documented O(W x R) cost, which wedged the whole local runtime the
- * first time it was attempted.
- */
-const SCHEMA_REPAIR = String.raw`
-  $db = \Drupal::database();
-  $moduleHandler = \Drupal::moduleHandler();
-  $moduleHandler->loadAllIncludes('install');
-  $created = [];
-  $failed = [];
-  $walked = 0;
-  $defined = 0;
-  foreach (array_keys($moduleHandler->getModuleList()) as $module) {
-    $walked++;
-    $fn = $module . '_schema';
-    if (!function_exists($fn)) { continue; }
-    $defined++;
-    $schema = $fn();
-    if (!is_array($schema)) { continue; }
-    foreach ($schema as $table => $spec) {
-      try {
-        if (!$db->schema()->tableExists($table)) {
-          $db->schema()->createTable($table, $spec);
-          $created[] = $table;
-        }
-      } catch (\Throwable $e) {
-        $failed[$table] = substr($e->getMessage(), 0, 140);
-      }
-    }
-  }
-  // The other half, and the reason the hook walk found nothing. Drupal's database
-  // backends for flood, queue, semaphore, batch and expirable key-value do NOT
-  // declare hook_schema. Each keeps its schema in a class method and creates the
-  // table ON DEMAND by catching a failed query -- which cannot work here, because
-  // the failure surfaces inside a transaction replay where the catch-and-create
-  // path is exactly what the replay refuses. So they are pre-created.
-  //
-  // Mapped explicitly rather than discovered, because there is nothing to discover
-  // from: a class method is not registered anywhere a hook system can see.
-  $classTables = [
-    'flood' => '\Drupal\Core\Flood\DatabaseBackend',
-    'queue' => '\Drupal\Core\Queue\DatabaseQueue',
-    'semaphore' => '\Drupal\Core\Lock\DatabaseLockBackend',
-    'batch' => '\Drupal\Core\Batch\BatchStorage',
-    'key_value_expire' => '\Drupal\Core\KeyValueStore\DatabaseStorageExpirable',
-  ];
-  foreach ($classTables as $table => $class) {
-    try {
-      if ($db->schema()->tableExists($table)) { continue; }
-      if (!class_exists($class)) { $failed[$table] = 'class absent: ' . $class; continue; }
-      $rm = new \ReflectionMethod($class, 'schemaDefinition');
-      $spec = $rm->isStatic() ? $rm->invoke(NULL) : $rm->invoke($rm->getDeclaringClass()->newInstanceWithoutConstructor());
-      // some return one table spec, some a map of them
-      $specs = isset($spec['fields']) ? [$table => $spec] : $spec;
-      foreach ($specs as $name => $definition) {
-        if (is_array($definition) && isset($definition['fields']) && !$db->schema()->tableExists($name)) {
-          $db->schema()->createTable($name, $definition);
-          $created[] = $name;
-        }
-      }
-    } catch (\Throwable $e) {
-      $failed[$table] = substr($e->getMessage(), 0, 140);
-    }
-  }
-
-  $out['schemaRepair'] = ['modulesWalked' => $walked, 'withSchemaHook' => $defined, 'created' => $created];
-  if ($failed) { $out['schemaRepair']['failed'] = $failed; }
-`;
+const SCHEMA_REPAIR = SCHEMA_REPAIR_PHP;
 
 /**
- * The three ways the shipped pack disagrees with itself, each reported by Drupal's own status page.
+ * Fixes the two places the shipped pack disagrees with itself, both flagged by the status page.
  *
- * THE DRIVER MODULE IS NOT IN `core.extension`. Drupal resolves the driver class off the filesystem,
- * so the site works -- and `system_requirements()` checks `moduleExists()` separately and answers
- * "The current database driver is provided by the module: cfw_do_sqlite. The module is currently not
- * installed. You should immediately install the module." Enabled through the module installer rather
- * than by writing the config row, so the container and the router are rebuilt the way any other
- * enable would.
- *
- * `node.body` IS INSTALLED EVERYWHERE EXCEPT THE REGISTRY. `field.storage.node.body` exists,
- * `node__body` and `node_revision__body` exist, and a saved node's body reaches the table -- measured.
- * What is missing is the entry in `entity.definitions.installed`, so
- * `EntityDefinitionUpdateManager` reports a mismatch and every later field change is blocked behind
- * it. Installing the definition is a metadata write against tables that are already correct.
+ * The driver module is missing from `core.extension` (`system_requirements()` checks
+ * `moduleExists()`), so it is enabled through the module installer, which rebuilds the container
+ * and router. `node.body` is missing from `entity.definitions.installed`, which blocks later field
+ * changes; the fix is a metadata write.
  */
-const PACK_CONSISTENCY = String.raw`
-  $fixed = [];
-  // loadLegacyIncludes() runs from preHandle(), not boot(), so a kernel booted to run this and
-  // nothing else has no module_config_sort() -- which is what ModuleInstaller::install() calls.
-  // Measured on a deployed free site: every firstrun reported
-  // 'module-failed:Call to undefined function module_config_sort()' and the driver module was
-  // never installed, so system_requirements() told the owner to install it by hand
-  try {
-    $kernel = $GLOBALS['__pw_kernel'] ?? null;
-    if ($kernel !== null && method_exists($kernel, 'loadLegacyIncludes')) {
-      $kernel->loadLegacyIncludes();
-    }
-    // and the router rebuild inside install() builds a RequestContext from the current request,
-    // so one has to be on the stack; the same trio the enable path already sets up
-    $stack = \Drupal::service('request_stack');
-    if ($stack->getCurrentRequest() === null) {
-      $stack->push(\Symfony\Component\HttpFoundation\Request::create('/', 'GET'));
-    }
-    // hook_modules_installed reaches update_storage_clear(), a plain function in update.module,
-    // and a bare boot has loaded no .module file at all
-    \Drupal::moduleHandler()->loadAll();
-  } catch (\Throwable $e) {
-    $fixed[] = 'includes-failed:' . substr($e->getMessage(), 0, 120);
-  }
-  // ONE install() for both modules: each call rebuilds the container and the router, and on a
-  // migrated 160-module site two rebuilds took the claim to 25 s of CPU against a 30 s limit
-  $want = [];
-  try {
-    $driverModule = \Drupal::database()->getProvider();
-    if ($driverModule && $driverModule !== 'core' && !\Drupal::moduleHandler()->moduleExists($driverModule)) {
-      $want[$driverModule] = 'module';
-    }
-  } catch (\Throwable $e) {
-    $fixed[] = 'module-failed:' . substr($e->getMessage(), 0, 120);
-  }
-  // a migrated database never had the platform module; without it core's requirements for a php.ini
-  // this runtime does not have stay errors, and every database update run halts on them
-  try {
-    // the config row, as the installer itself reads it; a container can list a module config dropped
-    $enabled = \Drupal::config('core.extension')->get('module') ?: [];
-    if (!isset($enabled['drupflare'])
-      && isset(\Drupal::service('extension.list.module')->getList()['drupflare'])) {
-      $want['drupflare'] = 'drupflare';
-    }
-  } catch (\Throwable $e) {
-    $fixed[] = 'drupflare-failed:' . substr($e->getMessage(), 0, 120);
-  }
-  if ($want) {
-    try {
-      \Drupal::service('module_installer')->install(array_keys($want));
-      $out['packConsistencyInstalls'] = ($out['packConsistencyInstalls'] ?? 0) + 1;
-      foreach (array_keys($want) as $module) { $fixed[] = 'module:' . $module; }
-    } catch (\Throwable $e) {
-      foreach ($want as $kind) { $fixed[] = $kind . '-failed:' . substr($e->getMessage(), 0, 120); }
-    }
-  }
-
-  try {
-    $udm = \Drupal::service('entity.definition_update_manager');
-    $changes = $udm->getChangeList();
-    foreach ($changes as $entityTypeId => $change) {
-      foreach (($change['field_storage_definitions'] ?? []) as $fieldName => $op) {
-        // 1 is CREATE; an UPDATE or DELETE is a schema change this must not perform silently
-        if ((int) $op !== 1) { continue; }
-        $definition = \Drupal::service('entity_field.manager')
-          ->getFieldStorageDefinitions($entityTypeId)[$fieldName] ?? null;
-        if ($definition === null) { continue; }
-        $udm->installFieldStorageDefinition($fieldName, $entityTypeId, $definition->getProvider(), $definition);
-        $fixed[] = 'field:' . $entityTypeId . '.' . $fieldName;
-      }
-    }
-  } catch (\Throwable $e) {
-    $fixed[] = 'field-failed:' . substr($e->getMessage(), 0, 120);
-  }
-  // THE TOOLKIT SHIPS AND WAS NEVER SELECTED. system.image says gd, which is not in this build, so
-  // Drupal reports "No image toolkit is configured" while cfw_images sits in the packed module
-  // unused. It is a real toolkit rather than a stub -- getimagesize() is ext-standard and needs no
-  // gd, so dimensions stay correct and resizing defers to delivery.
-  //
-  // WITH NO TOOLKIT AT ALL, /user/register AND /user/*/edit ARE A WSOD. ImageFactory resolves the
-  // id from the AVAILABLE toolkits, so with none it holds NULL and getSupportedExtensions() raises
-  // PluginNotFoundException on the empty id -- which the user picture field hits on every account
-  // form. Found by opening the sign-up page in a browser.
-  try {
-    $manager = \Drupal::service('image.toolkit.manager');
-    // the definitions are cached from before this module was enabled, so a read without this sees
-    // only gd and the branch below silently declines to fix anything
-    $manager->clearCachedDefinitions();
-    $defined = array_keys($manager->getDefinitions());
-    $available = array_keys($manager->getAvailableToolkits());
-    $imageConfig = \Drupal::configFactory()->getEditable('system.image');
-    $selected = $imageConfig->get('toolkit');
-    if (in_array($selected, $available, true)) {
-      // already usable, nothing to do
-    } elseif (in_array('cfw_images', $available, true)) {
-      $imageConfig->set('toolkit', 'cfw_images')->save();
-      $fixed[] = 'toolkit:cfw_images';
-    } else {
-      // NOT silent: with no available toolkit every account form raises, so a repair that cannot
-      // run has to say so rather than report an empty list
-      $fixed[] = 'toolkit-unavailable:defined=' . implode(',', $defined)
-        . ';available=' . implode(',', $available);
-    }
-  } catch (\Throwable $e) {
-    $fixed[] = 'toolkit-failed:' . substr($e->getMessage(), 0, 120);
-  }
-  $out['packConsistency'] = $fixed;
-`;
+const PACK_CONSISTENCY = PACK_CONSISTENCY_PHP;
 
 /** the kernel boot a claim needs, shared by its two invocations */
-const CLAIM_BOOT = String.raw`
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-  }
-  // A MIGRATED SITE HAS PROCEDURAL HOOKS IN .module FILES, and saving the account dispatches them
-  // before anything has included one: farmOS answered Class "entity_entity_type_build" does not
-  // exist, DrupalX a RequestContext built from no request. The enable fragment does the same two
-  $stack = \Drupal::service('request_stack');
-  if ($stack->getCurrentRequest() === null) {
-    $claimRequest = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    // a hook asks the request for its session (varbase: SessionNotFoundException); in memory, so
-    // the claim writes no session row
-    $claimRequest->setSession(new \Symfony\Component\HttpFoundation\Session\Session(
-      new \Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage()
-    ));
-    $stack->push($claimRequest);
-  }
-  \Drupal::moduleHandler()->loadAll();
-  // The first WRITE path anything in this project has exercised, and it found a
-  // new instance of the trace-blind class immediately: SAVED_NEW / SAVED_UPDATED
-  // are plain constants in core/includes/common.inc, which a render never needs
-  // and DrupalKernel::boot() does not include. EntityStorageBase::doSave()
-  // returns SAVED_UPDATED, so every entity save fatals with
-  // "Undefined constant Drupal\\Core\\Entity\\SAVED_UPDATED" until it is loaded.
-  // Read paths are not evidence about write paths. Before the first config write, because a
-  // config save subscriber can save an entity (open y's upgrade_tool logs every change).
-  if (!defined('SAVED_UPDATED')) {
-    require_once '/drupal/core/includes/common.inc';
-    $out['loadedCommonInc'] = true;
-  }
-`;
+const CLAIM_BOOT = CLAIM_BOOT_PHP;
 
 /**
  * The half of a claim that needs no claim data: the schema repair and the pack consistency install.
  *
- * Run as its OWN invocation before the claim, because the CPU limit is per invocation and a killed
- * one rolls every write back. On a migrated ~150-module site (Thunder) the claim was reset at 32 s
- * of CPU on every attempt and so reinstalled the same two modules each time. Both halves are
- * idempotent, so the claim that follows repeats them as no-ops.
+ * It runs as its own invocation before the claim: the CPU limit is per invocation and a killed one
+ * rolls back every write (Thunder's claim died at 32 s of CPU on each attempt). Both halves are
+ * idempotent, so the claim repeats them as no-ops.
  */
 export function packConsistencyRun(): string {
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-$out = ['ok' => false];
-try {
-${CLAIM_BOOT}
-${SCHEMA_REPAIR}
-${PACK_CONSISTENCY}
-  $out['ok'] = true;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-echo json_encode($out);
-`;
+	return phpRender(PACK_CONSISTENCY_RUN_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		CLAIM_BOOT,
+		SCHEMA_REPAIR,
+		PACK_CONSISTENCY
+	});
 }
 
 /**
  * The claim's first invocation: fills the discovery caches the install reads, and installs nothing.
  *
- * Measured on a deployed Thunder: the consistency install alone was reset at 32.5 s of CPU from a
- * cold object, and 7.1 s when earlier invocations had filled these caches. Each piece stays cached
- * in the site's own tables for the invocations after it, whatever happens to the interpreter.
+ * On Thunder the consistency install alone took 32.5 s of CPU cold and 7.1 s with these caches
+ * filled; they persist in the site's tables whatever happens to the interpreter.
  */
 export function claimWarmRun(): string {
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-$out = ['ok' => false, 'warmed' => []];
-try {
-${CLAIM_BOOT}
-  \Drupal::service('extension.list.module')->getList();
-  \Drupal::entityTypeManager()->getDefinitions();
-  \Drupal::service('entity_field.manager')->getFieldMap();
-  $out['warmed'][] = 'entity';
-  \Drupal::service('config.typed')->getDefinitions();
-  $out['warmed'][] = 'typed';
-  foreach (\Drupal::getContainer()->getServiceIds() as $id) {
-    if (!str_starts_with($id, 'plugin.manager.')) { continue; }
-    try { \Drupal::service($id)->getDefinitions(); } catch (\Throwable $e) {}
-  }
-  $out['warmed'][] = 'plugins';
-  \Drupal::service('router.builder')->rebuildIfNeeded();
-  $out['ok'] = true;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-echo json_encode($out);
-`;
+	return phpRender(CLAIM_WARM_RUN_PHP, { FIBER_SHIM, HOST_HELPERS, CLAIM_BOOT });
 }
 
-/** the site identity and uid-1 account a first run establishes; every field is validated below */
+/** the site identity and uid-1 account a first run establishes */
 export type FirstRunOptions = {
 	siteName?: string;
 	siteMail?: string;
@@ -2418,11 +496,8 @@ export type FirstRunOptions = {
 	/**
 	 * Unix seconds to stamp on uid 1's `created`, or omitted to leave it alone.
 	 *
-	 * The pack ships an installed database, so uid 1 carries the date the pack was BAKED -- three
-	 * weeks before the site exists on a typical release. Passed in rather than read from the
-	 * interpreter's clock because `time()` inside a wasm run is the host's `Date.now()` and the
-	 * caller already knows when the claim happened. Omitted on a `force=1` reconfigure, where the
-	 * account is not new and rewriting its birthday would be a lie in the other direction.
+	 * The pack's uid 1 carries the bake date. It is passed in because `time()` in wasm is the
+	 * host's frozen `Date.now()`; omit it on a `force=1` reconfigure, where the account is not new.
 	 */
 	claimedAt?: number;
 	/** claim a site that already has an administrator and a site identity, changing neither */
@@ -2436,6 +511,13 @@ export type SaveNodeOptions = {
 	body?: string;
 };
 
+/**
+ * First-run configuration, against the already-migrated database.
+ *
+ * Every site boots from the same pack (same name, admin account, hash salt). This edits the four
+ * things that differ per site through Drupal's own APIs, so caches invalidate; Drupal's installer
+ * is far heavier (1,052 ms, 72.5 MB natively) and redoes what the pack holds.
+ */
 export function firstRunConfig(options: FirstRunOptions = {}): string {
 	const payload = JSON.stringify({
 		siteName: typeof options.siteName === 'string' ? options.siteName : null,
@@ -2450,143 +532,22 @@ export function firstRunConfig(options: FirstRunOptions = {}): string {
 				: null,
 		migrated: options.migrated === true
 	});
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-
-$opt = json_decode(${JSON.stringify(payload)}, true);
-$out = ['ok' => false, 'applied' => [], 'skipped' => []];
-
-try {
-${CLAIM_BOOT}
-
-  // site name, mail and timezone are config, so go through the config factory
-  if (empty($opt['migrated'])) {
-    $editable = \Drupal::configFactory()->getEditable('system.site');
-    foreach (['siteName' => 'name', 'siteMail' => 'mail'] as $key => $configKey) {
-      if (!empty($opt[$key])) {
-        $editable->set($configKey, $opt[$key]);
-        $out['applied'][] = 'system.site.' . $configKey;
-      } else {
-        $out['skipped'][] = 'system.site.' . $configKey;
-      }
-    }
-    $editable->save();
-  }
-
-  if (!empty($opt['timezone'])) {
-    \Drupal::configFactory()->getEditable('system.date')
-      ->set('timezone.default', $opt['timezone'])->save();
-    $out['applied'][] = 'system.date.timezone.default';
-  }
-
-  // MANDATORY, not tidiness. Completing the request lifecycle means calling
-  // $kernel->terminate(), and automated_cron subscribes to TERMINATE. With
-  // system.cron_last absent it fires drupal_cron() inline on the very first
-  // request, cron reaches for outbound HTTP (update, announcements_feed), and the
-  // wasm build dies with "ReferenceError: Asyncify is not defined" -- a JS
-  // exception, so catch (\Throwable) around terminate() does NOT contain it.
-  // Measured: every terminate=1 render 500'd until this was set. Interval 0 is
-  // core's own "Never" option. Cron runs from the Durable Object alarm instead.
-  if (\Drupal::moduleHandler()->moduleExists('automated_cron')) {
-    $cronConfig = \Drupal::configFactory()->getEditable('automated_cron.settings');
-    if ((int) $cronConfig->get('interval') !== 0) {
-      $cronConfig->set('interval', 0)->save();
-      $out['applied'][] = 'automated_cron.settings.interval=0';
-    } else {
-      $out['skipped'][] = 'automated_cron.settings.interval (already 0)';
-    }
-  }
-
-
-${SCHEMA_REPAIR}
-
-${PACK_CONSISTENCY}
-
-  // uid 1 through the entity API so the password hasher and the presave hooks run
-  $admin = empty($opt['migrated']) ? \Drupal\user\Entity\User::load(1) : NULL;
-  if (!empty($opt['migrated'])) {
-    $out['skipped'][] = 'uid1 (migrated site keeps its administrator)';
-  } elseif ($admin === NULL) {
-    $out['skipped'][] = 'uid1 (not loadable)';
-  } else {
-    if (!empty($opt['adminName'])) { $admin->setUsername($opt['adminName']); $out['applied'][] = 'uid1.name'; }
-    if (!empty($opt['adminMail'])) { $admin->setEmail($opt['adminMail']); $out['applied'][] = 'uid1.mail'; }
-    if (!empty($opt['adminPass'])) { $admin->setPassword($opt['adminPass']); $out['applied'][] = 'uid1.pass'; }
-    // the pack was installed weeks before this site existed, so uid 1's birthday is the BAKE date
-    // and the account reads as created before the site it belongs to
-    if (!empty($opt['claimedAt'])) {
-      $admin->set('created', (int) $opt['claimedAt']);
-      $out['applied'][] = 'uid1.created';
-    }
-    $admin->activate();
-    $admin->save();
-    $out['adminName'] = $admin->getAccountName();
-    $out['adminMail'] = $admin->getEmail();
-    // the claimed account is the owner, as a role so a team can share it
-    if (class_exists(\Drupal\drupflare\Hook\OwnerTier::class)) {
-      $out['owner'] = \Drupal\drupflare\Hook\OwnerTier::establish($admin);
-    }
-  }
-
-  // THE CLOCK IN THE PACK IS THE ONE FROM THE BAKE, and the status report reads it. install_time
-  // shipped inside the packed database at the bake date, system.cron_last shipped absent, and
-  // SystemRequirementsHooks falls back to install_time when cron_last is not numeric -- so a site
-  // provisioned today opened with a red Cron row weeks old. Both are stamped at the claim, which is
-  // the first moment this site has a real birthday
-  if (!empty($opt['claimedAt'])) {
-    \Drupal::state()->set('install_time', (int) $opt['claimedAt']);
-    \Drupal::state()->set('system.cron_last', (int) $opt['claimedAt']);
-    $out['applied'][] = 'state.install_time';
-    $out['applied'][] = 'state.cron_last';
-  }
-
-  // MINTED HERE BECAUSE A REPLICA MAY NOT MINT IT, and until this line nothing did. Drupal creates
-  // system.private_key lazily on the first render that needs a CSRF token, so a site that had been
-  // migrated and claimed did not hold one -- and admissionVerdict() lists it as mandatory state,
-  // correctly, since two objects each minting their own issue tokens the other rejects. Measured:
-  // three lanes sat at CREATED through 40 provision steps each, then reached VERIFIED in 1 step
-  // each once a single form render had minted it. Drupal's own service, so the value is
-  // indistinguishable from a lazily minted one
-  $out['privateKey'] = strlen(\Drupal::service('private_key')->get()) > 0 ? 'present' : 'MISSING';
-
-  // the salt is the HOST's now: src/ops/site-secrets.ts mints one per site at boot, persists it in
-  // cfw_meta and appends the assignment to settings.php, so generating another here would replace a
-  // live salt with one nothing stores and invalidate every session on the next remount
-  $out['hashSalt'] = strlen(\Drupal\Core\Site\Settings::getHashSalt()) > 0 ? 'present' : 'MISSING';
-
-  // config changes have to reach the render caches or the old site name persists
-  \Drupal\Core\Cache\Cache::invalidateTags(['config:system.site', 'rendered']);
-  $out['ok'] = true;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['trace'] = substr($e->getTraceAsString(), 0, 900);
-}
-
-echo json_encode($out);
-`;
+	return phpRender(FIRST_RUN_CONFIG_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		PAYLOAD: JSON.stringify(payload),
+		CLAIM_BOOT,
+		SCHEMA_REPAIR,
+		PACK_CONSISTENCY
+	});
 }
 
 /**
- * Saves one node and then re-renders, which is the whole write-refresh loop.
+ * Saves one node and then re-renders (the write-refresh loop).
  *
- * This is the first CONTENT write anything in this project has exercised. Every
- * earlier measurement was a read, and the one earlier write -- first-run config --
- * already found three tables a pack cannot contain. A content save additionally
- * crosses the two places the standing rules were written for: the transaction replay
- * (an entity save is one transaction with interleaved reads of its own writes) and
- * the 2^53 write guard.
- *
- * The type is discovered rather than assumed. `assets/drupal` is the standard pack
- * and standard ships `article` and `page`, but a minimal pack ships neither, and
- * hard-coding a bundle would fail with an error about the bundle rather than about
- * the save.
- *
- * `promote` is set so the front page changes, because that is what makes this a
- * write-REFRESH measurement rather than an insert.
- *
- * @param {{title?: string, type?: string, body?: string}} options
+ * A content save crosses the transaction replay (one transaction with reads of its own writes) and
+ * the 2^53 write guard. The type is discovered, since a minimal pack ships neither `article` nor
+ * `page`. `promote` is set so the front page changes.
  */
 export function saveNode(options: SaveNodeOptions = {}): string {
 	const payload = JSON.stringify({
@@ -2594,509 +555,43 @@ export function saveNode(options: SaveNodeOptions = {}): string {
 		type: typeof options.type === 'string' ? options.type : null,
 		body: typeof options.body === 'string' ? options.body : null
 	});
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-${PW_SERVE_INLINE}
-chdir('/drupal');
-
-$opt = json_decode(${JSON.stringify(payload)}, true);
-$out = ['ok' => false];
-$clock = function () { return microtime(true) * 1000; };
-$statements = function () { return json_decode(cfw_host('cfwStats')(), true)['queryCount'] ?? 0; };
-
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
-$_SERVER['REQUEST_URI'] = '/';
-$_SERVER['REQUEST_METHOD'] = 'GET';
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-    $out['bootedKernel'] = 1;
-  }
-
-  // SAVED_NEW / SAVED_UPDATED live in core/includes/common.inc, which boot() does
-  // not include and no render needs; EntityStorageBase::doSave() returns one
-  if (!defined('SAVED_NEW')) {
-    require_once '/drupal/core/includes/common.inc';
-    $out['loadedCommonInc'] = true;
-  }
-
-${SCHEMA_REPAIR}
-
-  // Whoever owns the content has to be the acting user for the save, or node access
-  // denies the save's own reads.
-  //
-  // and it must be put back. The interpreter persists between requests, so a
-  // current-user switch that is never undone leaks into every later render in the
-  // process -- measured: the front page went from 12,296 bytes to 90,038 because the
-  // alarm chain rendered it as uid 1, and that ADMIN HTML was then stored in the
-  // anonymous page cache and served to visitors. A cache-poisoning bug from one
-  // unrestored global.
-  $previousAccount = \Drupal::currentUser()->getAccount();
-  $admin = \Drupal\user\Entity\User::load(1);
-  if ($admin !== NULL) {
-    \Drupal::currentUser()->setAccount($admin);
-    $out['actingUid'] = (int) $admin->id();
-  }
-
-  $types = array_keys(\Drupal\node\Entity\NodeType::loadMultiple());
-  $out['availableTypes'] = $types;
-  $type = $opt['type'] ?? null;
-  if ($type === null || !in_array($type, $types, true)) {
-    $type = in_array('article', $types, true) ? 'article' : ($types[0] ?? null);
-  }
-  if ($type === null) {
-    throw new \RuntimeException('no node type exists in this site, so nothing can be saved');
-  }
-  $out['type'] = $type;
-
-  $title = $opt['title'] ?? ('Measured save ' . date('H:i:s'));
-  $values = [
-    'type' => $type,
-    'title' => $title,
-    'uid' => 1,
-    'status' => 1,
-    // promoted, so the FRONT PAGE changes and this measures a refresh
-    'promote' => 1,
-  ];
-  $node = \Drupal\node\Entity\Node::create($values);
-  $definitions = \Drupal::service('entity_field.manager')->getFieldDefinitions('node', $type);
-  if (isset($definitions['body'])) {
-    $node->set('body', [
-      'value' => $opt['body'] ?? 'Written from inside a Durable Object.',
-      'format' => 'basic_html',
-    ]);
-    $out['bodySet'] = true;
-  }
-
-  $before = $statements();
-  $t0 = $clock();
-  $result = $node->save();
-  $out['saveMs'] = round($clock() - $t0, 2);
-  $out['saveStatements'] = $statements() - $before;
-  $out['saveResult'] = (int) $result;
-  $out['savedIsNew'] = defined('SAVED_NEW') && $result === SAVED_NEW;
-  $out['nid'] = (int) $node->id();
-  $out['vid'] = (int) $node->getRevisionId();
-
-  // read it back through a FRESH storage handler, so this is the database answering
-  // rather than the entity object that was just held in memory
-  \Drupal::entityTypeManager()->getStorage('node')->resetCache([$node->id()]);
-  $reloaded = \Drupal\node\Entity\Node::load($node->id());
-  $out['reloadedTitle'] = $reloaded === NULL ? null : $reloaded->getTitle();
-  $out['persisted'] = $reloaded !== NULL && $reloaded->getTitle() === $title;
-
-  // back to whoever was acting before, BEFORE anything renders, so these figures are
-  // the anonymous page a visitor gets and comparable to every other render here
-  \Drupal::currentUser()->setAccount($previousAccount);
-  $out['restoredUid'] = (int) \Drupal::currentUser()->id();
-
-  // and the refresh half: the node's own page, then the front page
-  foreach (['/node/' . $node->id() => 'nodePage', '/' => 'frontPage'] as $path => $key) {
-    foreach (['page', 'dynamic_page_cache'] as $bin) {
-      try { \Drupal::cache($bin)->deleteAll(); } catch (\Throwable $e) {}
-    }
-    try {
-      $middleware = \Drupal::service('http_middleware.page_cache');
-      $rp = new \ReflectionProperty($middleware, 'cid');
-      $rp->setValue($middleware, NULL);
-    } catch (\Throwable $e) {}
-    $b = $statements();
-    $a = $clock();
-    $response = cfw_serve($path);
-    $body = (string) $response->getContent();
-    $out[$key] = [
-      'ms' => round($clock() - $a, 2),
-      'status' => $response->getStatusCode(),
-      'bytes' => strlen($body),
-      'statements' => $statements() - $b,
-      'pageCache' => $response->headers->get('x-drupal-cache'),
-      'dynamicCache' => $response->headers->get('x-drupal-dynamic-cache'),
-      'showsTitle' => str_contains($body, $title) ? 1 : 0,
-    ];
-  }
-
-  $out['ok'] = $out['persisted'] === true;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['trace'] = substr($e->getTraceAsString(), 0, 1200);
-} finally {
-  // a throw between the switch and the restore would poison every later render in
-  // this interpreter, so the restore cannot live only on the happy path
-  if (isset($previousAccount)) {
-    try { \Drupal::currentUser()->setAccount($previousAccount); } catch (\Throwable $e2) {}
-  }
-}
-
-echo json_encode($out);
-`;
+	return phpRender(SAVE_NODE_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		PW_SERVE_INLINE,
+		PAYLOAD: JSON.stringify(payload),
+		SCHEMA_REPAIR
+	});
 }
 
 /**
- * Executes the capability plugins, which until now were only lint-clean.
+ * Executes the `drupflare` capability plugin classes against the host contract.
  *
- * Five classes in the `drupflare` module had never run. Lint proves a class
- * parses; it says nothing about whether `stream_wrapper_register()` accepts it, or
- * whether the host reply shape the class expects is the shape the host sends. Both
- * of those are exactly the kind of contract this project has already got wrong on
- * paper twice.
- *
- * The module is NOT enabled -- enabling one is Drupal's installer path, the heaviest
- * write workload in the product -- so its namespace is registered in settings.php and
- * the classes are driven directly. That is a real limitation of this check and it is
- * stated rather than implied: it exercises the CLASSES and the host contract, not
- * `hook_install` or the service container wiring.
- *
- * Every assertion names what it proves. A check that cannot fail is not a check, so
- * the negative cases are here too: an uncached URL must FAIL rather than return
- * something, and mail with no binding must return FALSE rather than throw.
+ * The module is not enabled (that is the installer path), so its namespace is registered in
+ * settings.php and the classes are driven directly: this covers the classes and the host reply
+ * shape, not `hook_install` or container wiring. Negative cases are included (an uncached URL must
+ * fail, mail with no binding must return false).
  */
-export const CAPABILITY_CHECK = String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-
-$checks = [];
-$assert = function (string $label, bool $ok, $detail = null) use (&$checks) {
-  $checks[] = ['label' => $label, 'ok' => $ok, 'detail' => $detail];
-};
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  // the pack does not enable this module, so nothing else registers its namespace
-  $autoloader->addPsr4('Drupal\\drupflare\\', '/drupal/modules/custom/drupflare/src/');
-  // its HttpsStreamWrapper extends the packaged one; composer never runs here, so this is the
-  // autoloader entry composer would have written
-  $autoloader->addPsr4('Drupflare\\StreamHttp\\', '/drupal/libraries/drupflare-stream-http/src/');
-
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-  }
-
-  // #region Host, the single seam
-  $assert('Host class loads', class_exists('\Drupal\drupflare\Host'));
-  foreach (['cfwLog', 'cfwFetch', 'cfwMail', 'cfwImageUrl', 'cfwQueueFetch', 'cfwHttpCacheGet'] as $fn) {
-    $assert('Host::has(' . $fn . ')', \Drupal\drupflare\Host::has($fn));
-  }
-  $assert(
-    'Host::has() is FALSE for a capability the runtime did not install',
-    !\Drupal\drupflare\Host::has('cfwNotInstalled'),
-    'the control: if this passed for everything, the six above would prove nothing'
-  );
-  $absent = \Drupal\drupflare\Host::call('cfwNotInstalled', ['x' => 1]);
-  $assert(
-    'Host::call() on a missing capability returns a named refusal, not a throw',
-    ($absent['ok'] ?? null) === false && str_contains((string) ($absent['error'] ?? ''), 'not installed'),
-    $absent['error'] ?? null
-  );
-  // #endregion
-
-  // #region the logger
-  $parser = \Drupal::service('logger.log_message_parser');
-  $logger = new \Drupal\drupflare\Logger\CfwLogger($parser);
-  $marker = 'cfw-logger-' . bin2hex(random_bytes(4));
-  $logger->log(3, 'placeholder @who saw @marker', ['@who' => 'the-test', '@marker' => $marker, 'channel' => 'cfw-check']);
-  $assert('CfwLogger::log() executes without throwing', true, $marker);
-  $logger->log(6, 'info level', ['channel' => 'cfw-check']);
-
-  // and through Drupal's own channel, which is how it would actually be reached
-  \Drupal::service('logger.factory')->addLogger($logger);
-  $channelMarker = 'cfw-channel-' . bin2hex(random_bytes(4));
-  \Drupal::logger('cfw-check')->warning('channel reached @m', ['@m' => $channelMarker]);
-  $assert('CfwLogger receives entries through \Drupal::logger()', true, $channelMarker);
-  $GLOBALS['__cfw_markers'] = ['direct' => $marker, 'channel' => $channelMarker];
-  // #endregion
-
-  // #region the stream wrapper
-  $before = stream_get_wrappers();
-  // HttpsStreamWrapper's docblock says this runtime has no http/https wrapper,
-  // citing a measured list of compress.zlib/php/file/glob/data. On static-free-v1
-  // that is WRONG -- both are registered -- and the truth is worse than absence.
-  // Reading through the native one throws 'ReferenceError: Asyncify is not defined'
-  // out of the wasm import: a JS exception, so @ does not suppress it, a PHP catch
-  // never sees it, and the whole invocation dies. Measured, and NOT reproduced here --
-  // it would take this suite down with it. Route /__nativefetch reproduces it.
-  $assert(
-    'the runtime DOES register http/https, contradicting the class docblock',
-    in_array('https', $before, true),
-    implode(',', $before)
-  );
-  $registered = \Drupal\drupflare\StreamWrapper\HttpsStreamWrapper::register();
-  $after = stream_get_wrappers();
-  $assert(
-    'HttpsStreamWrapper registers both schemes',
-    $registered === ['http', 'https'],
-    implode(',', $registered)
-  );
-  $assert('https is now a registered wrapper', in_array('https', $after, true), implode(',', $after));
-
-  $cachedUrl = getenv('CFW_TEST_URL') ?: 'https://example.com/';
-  $body = @file_get_contents($cachedUrl);
-  $assert(
-    'file_get_contents() over the wrapper returns the prefetched body',
-    is_string($body) && strlen($body) > 0,
-    is_string($body) ? substr($body, 0, 80) : 'false'
-  );
-  $GLOBALS['__cfw_body_len'] = is_string($body) ? strlen($body) : -1;
-
-  // fopen/fread/fseek, because file_get_contents() alone would not exercise them
-  $fh = @fopen($cachedUrl, 'r');
-  $assert('fopen() over the wrapper succeeds', is_resource($fh));
-  if (is_resource($fh)) {
-    $first = fread($fh, 8);
-    fseek($fh, 0);
-    $again = fread($fh, 8);
-    $assert('fread() returns bytes and fseek() rewinds', $first !== '' && $first === $again, $first);
-    $assert('feof() is false before the end', !feof($fh) || strlen((string) $body) <= 8);
-    $stat = fstat($fh);
-    $assert(
-      'fstat() reports the fetched size',
-      isset($stat['size']) && (int) $stat['size'] === strlen((string) $body),
-      ($stat['size'] ?? null) . ' vs ' . strlen((string) $body)
-    );
-    fclose($fh);
-  }
-
-  // the negative case, and the important one: a URL the host has not
-  // prefetched must fail, because a Worker cannot fetch synchronously without JSPI
-  $missing = 'https://example.invalid/never-prefetched-' . bin2hex(random_bytes(3));
-  $missingBody = @file_get_contents($missing);
-  $assert(
-    'an unprefetched URL FAILS rather than returning something plausible',
-    $missingBody === false,
-    var_export($missingBody, true)
-  );
-  // #endregion
-
-  // #region mail
-  $mailer = new \Drupal\drupflare\Plugin\Mail\CfwMail();
-  $message = $mailer->format([
-    'to' => 'someone@example.com',
-    'subject' => 'Capability check',
-    'body' => ['line one', 'line two'],
-    'headers' => ['From' => 'site@example.com', 'Cc' => 'cc@example.com', 'X-Ignored' => 'drop me'],
-    'params' => [],
-  ]);
-  $assert(
-    'CfwMail::format() joins the body parts and wraps',
-    is_string($message['body']) && str_contains($message['body'], 'line one') && str_contains($message['body'], 'line two'),
-    substr((string) $message['body'], 0, 60)
-  );
-  $sent = $mailer->mail($message);
-  $assert(
-    'CfwMail::mail() returns a boolean rather than throwing when there is no binding',
-    is_bool($sent),
-    var_export($sent, true)
-  );
-  $GLOBALS['__cfw_mail_result'] = $sent;
-  // #endregion
-
-  // #region deferred HTTP, the whole cached -> deferred layering
-  if (class_exists('\GuzzleHttp\Psr7\Request')) {
-    $handler = new \Drupal\drupflare\Queue\CfwDeferredHttp();
-    $deferUrl = 'https://example.com/cfw-deferred-' . bin2hex(random_bytes(3));
-    $response = $handler(new \GuzzleHttp\Psr7\Request('GET', $deferUrl), [])->wait();
-    $assert(
-      'an uncached GET is DEFERRED with a 202 rather than blocking',
-      $response->getStatusCode() === 202 && $response->getHeaderLine('x-cfw-deferred') === 'queued',
-      $response->getStatusCode() . ' ' . $response->getHeaderLine('x-cfw-deferred')
-    );
-    $cachedResponse = $handler(new \GuzzleHttp\Psr7\Request('GET', $cachedUrl), [])->wait();
-    $assert(
-      'a cached GET is answered from the cache with a real body',
-      $cachedResponse->getStatusCode() === 200 && strlen((string) $cachedResponse->getBody()) > 0,
-      $cachedResponse->getStatusCode() . ' ' . strlen((string) $cachedResponse->getBody()) . ' bytes'
-    );
-    $GLOBALS['__cfw_deferred_url'] = $deferUrl;
-  } else {
-    $assert('GuzzleHttp is available for the deferred handler', false, 'class absent');
-  }
-  // #endregion
-
-  // #region the image toolkit
-  $assert(
-    'CfwImageToolkit class loads against real Drupal',
-    class_exists('\Drupal\drupflare\Plugin\ImageToolkit\CfwImageToolkit')
-  );
-  $imageUrl = \Drupal\drupflare\Host::call('cfwImageUrl', ['url' => '/sites/default/files/a.png', 'width' => 300]);
-  $assert(
-    'cfwImageUrl returns a delivery-time resizing URL',
-    ($imageUrl['ok'] ?? false) === true && str_contains((string) ($imageUrl['url'] ?? ''), 'width=300'),
-    $imageUrl['url'] ?? null
-  );
-  // #endregion
-}
-catch (\Throwable $e) {
-  $assert('no exception escaped the capability check', false, get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
-}
-
-$passed = count(array_filter($checks, fn ($c) => $c['ok']));
-echo json_encode([
-  'passed' => $passed,
-  'failed' => count($checks) - $passed,
-  'markers' => $GLOBALS['__cfw_markers'] ?? null,
-  'bodyLen' => $GLOBALS['__cfw_body_len'] ?? null,
-  'mailResult' => $GLOBALS['__cfw_mail_result'] ?? null,
-  'deferredUrl' => $GLOBALS['__cfw_deferred_url'] ?? null,
-  'checks' => $checks,
-]);
-`;
+export const CAPABILITY_CHECK = phpRender(CAPABILITY_CHECK_PHP, { FIBER_SHIM, HOST_HELPERS });
 
 /**
- * Does `Drupal::httpClient()` return a body, on the shipping binary?
+ * Checks that `Drupal::httpClient()` returns a body on the shipping binary.
  *
- * It did not, for the whole life of the project, and the comment saying it did is the finding:
- * `DrupflareServiceProvider` left core's `StreamHandler` in place on a non-suspending build and
- * called that "the behaviour that actually works today". It works for `file_get_contents()`. For
- * Guzzle the fetch SUCCEEDS and the result is thrown away one line later --
- * `StreamHandler::createStream()` reads `$http_response_header`, a magic local only PHP's own http
- * wrapper populates, so `HeaderProcessor::parseHeaders([])` raises and every call rejects with
- * `RequestException: An error was encountered while creating the response`.
- *
- * THE CONTROL IS WHAT THIS FRAGMENT ADDS. It drives core's handler over the same wrapper and
- * the same cached row and requires it to STILL fail; a seam whose control goes green is measuring
- * something other than the defect and must be thrown away rather than kept. The caller seeds
- * `cfw_http_cache` itself, so nothing here touches the network.
+ * Core's `StreamHandler` fails here: `createStream()` reads `$http_response_header`, a magic local
+ * only PHP's own http wrapper sets, so every call rejects. The fragment drives core's handler over
+ * the same wrapper and cached row as a control and requires it to still fail. The caller seeds
+ * `cfw_http_cache`, so nothing touches the network.
  */
-export const GUZZLE_HANDLER_CHECK = String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-
-$checks = [];
-$assert = function (string $label, bool $ok, $detail = null) use (&$checks) {
-  $checks[] = ['label' => $label, 'ok' => $ok, 'detail' => $detail];
-};
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  $autoloader->addPsr4('Drupal\\drupflare\\', '/drupal/modules/custom/drupflare/src/');
-  $autoloader->addPsr4('Drupflare\\StreamHttp\\', '/drupal/libraries/drupflare-stream-http/src/');
-
-  \Drupal\drupflare\StreamWrapper\HttpsStreamWrapper::register();
-  $url = getenv('CFW_TEST_URL') ?: 'https://example.com/';
-
-  // the mechanism, measured rather than reasoned: no userland wrapper can populate either the
-  // magic local or its 8.4 replacement, so the consumer has nothing to read
-  $fh = @fopen($url, 'r');
-  $assert('the wrapper opens the seeded url', is_resource($fh));
-  if (is_resource($fh)) {
-    $assert('and the body is there to be read', stream_get_contents($fh) !== '');
-    $assert('but $http_response_header is not set', !isset($http_response_header));
-    if (function_exists('http_get_last_response_headers')) {
-      $assert(
-        'and the 8.4 replacement answers NULL for the same reason',
-        http_get_last_response_headers() === null
-      );
-    }
-    fclose($fh);
-  }
-
-  // CONTROL: core's handler, over the working wrapper. It must still fail.
-  $core = \GuzzleHttp\HandlerStack::create(new \GuzzleHttp\Handler\StreamHandler());
-  $coreClient = new \GuzzleHttp\Client(['handler' => $core]);
-  $coreFailed = false;
-  $coreReason = '';
-  try {
-    $coreClient->get($url);
-  } catch (\Throwable $e) {
-    $coreFailed = true;
-    $coreReason = get_class($e) . ': ' . $e->getMessage();
-  }
-  $assert('CONTROL: core StreamHandler still cannot build a response', $coreFailed, $coreReason);
-  $assert(
-    'and it fails where the report says it does',
-    str_contains($coreReason, 'creating the response'),
-    $coreReason
-  );
-
-  // the fix, through the class the service provider now installs
-  $stack = \GuzzleHttp\HandlerStack::create(new \Drupal\drupflare\Http\CachedFetchHandler());
-  $client = new \GuzzleHttp\Client(['handler' => $stack]);
-  $response = $client->get($url);
-  $assert('CachedFetchHandler answers 200', $response->getStatusCode() === 200, $response->getStatusCode());
-  $assert('with a body', strlen((string) $response->getBody()) > 0, strlen((string) $response->getBody()));
-  $assert(
-    'and the headers the drain stored',
-    $response->getHeaderLine('content-type') !== '',
-    $response->getHeaderLine('content-type')
-  );
-
-  // the negative case: an uncached url is a refusal a caller's error path already handles, never
-  // a 2xx carrying an explanation
-  $missing = 'https://example.invalid/never-prefetched-' . bin2hex(random_bytes(3));
-  $refused = '';
-  try {
-    $client->get($missing);
-  } catch (\Throwable $e) {
-    $refused = get_class($e);
-  }
-  $assert('an uncached url rejects', $refused !== '', $refused);
-  $assert(
-    'as a ConnectException, which is what a failed socket raises too',
-    $refused === 'GuzzleHttp\\Exception\\ConnectException',
-    $refused
-  );
-}
-catch (\Throwable $e) {
-  $assert('no exception escaped the guzzle check', false, get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
-}
-
-$passed = count(array_filter($checks, fn ($c) => $c['ok']));
-echo json_encode([
-  'passed' => $passed,
-  'failed' => count($checks) - $passed,
-  'checks' => $checks,
-]);
-`;
+export const GUZZLE_HANDLER_CHECK = phpRender(GUZZLE_HANDLER_CHECK_PHP, {
+	FIBER_SHIM,
+	HOST_HELPERS
+});
 
 /**
- * Where exactly does a form submission stop?
+ * Reports which of four walls rejects a form submission, with the value Drupal saw at each.
  *
- * The method now reaches Drupal, and a submission still does not take effect. "The form does not
- * submit" is not actionable; this reports which of four walls rejects it, with the value Drupal
- * actually saw at each stage.
- *
- * It builds the request the SAME WAY `cfw_serve()` does rather than calling it, because it has to
- * hold the Request object and interrogate it -- `cfw_serve()` returns only a Response, so the two
- * questions that matter first (did Drupal see POST, did it see the values) are unanswerable
- * through it. The construction is duplicated and must be kept in step; if they ever disagree,
- * this probe is measuring something the serve path does not do.
+ * It builds the request the way `cfw_serve()` does, duplicated on purpose (`cfw_serve()` returns
+ * only a Response); keep the two in step or the probe measures something the serve path does not.
  */
 export function submissionProbe(options: {
 	path?: string;
@@ -3112,688 +607,111 @@ export function submissionProbe(options: {
 			contentType: options.contentType ?? 'application/x-www-form-urlencoded'
 		})
 	);
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-${PW_SERVE_INLINE}
-chdir('/drupal');
-
-$opt = json_decode(${safe}, true);
-$out = ['ok' => false, 'wall' => 'unknown'];
-
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
-$_SERVER['REQUEST_URI'] = $opt['path'];
-$_SERVER['REQUEST_METHOD'] = $opt['method'];
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-    $out['bootedKernel'] = 1;
-  }
-  $kernel = $GLOBALS['__pw_kernel'];
-
-  // #region wall 1: does Drupal see the POST and its values
-  $parameters = [];
-  $isForm = stripos($opt['contentType'], 'application/x-www-form-urlencoded') !== false;
-  if ($opt['method'] !== 'GET' && $opt['body'] !== '' && $isForm) {
-    parse_str($opt['body'], $parameters);
-  }
-  $server = [];
-  if ($opt['contentType'] !== '') { $server['CONTENT_TYPE'] = $opt['contentType']; }
-  if ($opt['body'] !== '') { $server['CONTENT_LENGTH'] = (string) strlen($opt['body']); }
-
-  $request = \Symfony\Component\HttpFoundation\Request::create(
-    $opt['path'], $opt['method'], $parameters, [], [], $server, $opt['body']
-  );
-
-  $out['methodSeen'] = $request->getMethod();
-  $out['requestKeys'] = array_keys($request->request->all());
-  $out['parsedKeys'] = array_keys($parameters);
-  $out['contentLength'] = strlen($request->getContent());
-  $out['isMethodPost'] = $request->isMethod('POST');
-  // #endregion
-
-  // #region wall 4: is there a session, and is the request treated as cacheable
-  try {
-    $out['hasSession'] = $request->hasSession() ? 1 : 0;
-    $out['hasPreviousSession'] = $request->hasPreviousSession() ? 1 : 0;
-  } catch (\Throwable $e) { $out['sessionError'] = $e->getMessage(); }
-  try {
-    $policy = \Drupal::service('page_cache_request_policy');
-    $verdict = $policy->check($request);
-    // ALLOW means Drupal considers this cacheable, which is only correct for an anonymous GET
-    $out['pageCachePolicy'] = is_string($verdict) ? $verdict : json_encode($verdict);
-  } catch (\Throwable $e) { $out['policyError'] = $e->getMessage(); }
-  try {
-    $out['currentUserId'] = (int) \Drupal::currentUser()->id();
-    $out['isAuthenticated'] = \Drupal::currentUser()->isAuthenticated() ? 1 : 0;
-  } catch (\Throwable $e) { $out['userError'] = $e->getMessage(); }
-  // #endregion
-
-  // #region walls 2 and 3: build id and token, read off what the handler answers
-  try {
-    $rp = new \ReflectionProperty(\Drupal\Core\DrupalKernel::class, 'prepared');
-    $rp->setValue($kernel, false);
-  } catch (\Throwable $e) {}
-  try {
-    $stack = \Drupal::service('request_stack');
-    while ($stack->getCurrentRequest() !== null) { $stack->pop(); }
-  } catch (\Throwable $e) {}
-  if (function_exists('drupal_static_reset')) { drupal_static_reset(); }
-
-  try {
-    $response = $kernel->handle($request);
-    $status = $response->getStatusCode();
-    $content = (string) $response->getContent();
-    $out['status'] = $status;
-    $out['bytes'] = strlen($content);
-    $out['location'] = $response->headers->get('location');
-
-    // the phrases Drupal uses, each of which names a DIFFERENT wall
-    $out['saysOutdated'] = stripos($content, 'form has become outdated') !== false ? 1 : 0;
-    $out['saysTokenInvalid'] = stripos($content, 'security token') !== false ? 1 : 0;
-    $out['saysAccessDenied'] = ($status === 403 || stripos($content, 'Access denied') !== false) ? 1 : 0;
-    $out['saysNotFound'] = $status === 404 ? 1 : 0;
-    $out['hasFormBuildId'] = stripos($content, 'form_build_id') !== false ? 1 : 0;
-    $out['hasFormToken'] = stripos($content, 'form_token') !== false ? 1 : 0;
-
-    if ($out['saysNotFound']) { $out['wall'] = 'route-not-found'; }
-    elseif ($out['saysAccessDenied']) { $out['wall'] = 'access-denied'; }
-    elseif ($out['saysOutdated']) { $out['wall'] = 'form-build-id'; }
-    elseif ($out['saysTokenInvalid']) { $out['wall'] = 'csrf-token'; }
-    elseif ($status >= 300 && $status < 400) { $out['wall'] = 'none-redirected'; }
-    else { $out['wall'] = 'handled-no-effect'; }
-    $out['ok'] = true;
-  } catch (\Throwable $e) {
-    $out['wall'] = 'exception';
-    $out['error'] = get_class($e) . ': ' . $e->getMessage();
-    $out['at'] = $e->getFile() . ':' . $e->getLine();
-  }
-  // #endregion
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['at'] = $e->getFile() . ':' . $e->getLine();
-}
-
-echo json_encode($out);
-`;
+	return phpRender(SUBMISSION_PROBE_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		PW_SERVE_INLINE,
+		OPTIONS: safe
+	});
 }
 
 /**
- * Everything that must not survive a request boundary, read WITHOUT running a request.
+ * Reads everything that must not survive a request boundary, without running a request.
  *
- * The instrument for the static-state family: `Html::$seenIds`, `PathMatcher::isFrontPage`,
- * `PageCache::$cid`, `drupal_static()`, the uid-1 cache poisoning and `FormState::$anyErrors` were
- * every one of them found by accident, because nothing enumerated the class of defect. This does.
+ * The named half reports the carriers a leak was found in (plus ones core suggests); the blind half
+ * fingerprints every static property of every declared class, so unknown carriers show as a diff.
  *
- * Two halves. The NAMED half reports the specific carriers a leak has already been found in, plus
- * the ones a reading of core says are next. The BLIND half fingerprints every static property of
- * every declared class, so a carrier nobody has thought of shows up as a diff rather than as
- * nothing at all.
- *
- * Read-only by construction: `Messenger::all()` peeks rather than takes, `getValue()` does not
- * initialise, and no service is instantiated that the request did not already instantiate --
- * asking a container for a service it never built would create the state this is looking for.
- * The one exception is the output buffer, which is CLEARED because an unclosed one from the
- * previous request would swallow this report and read as a dead interpreter.
+ * It is read-only: no service is instantiated that the request did not already build (asking the
+ * container would create the state being looked for). The output buffer is the exception and is
+ * cleared, since an unclosed one would swallow the report.
  */
-export const BOUNDARY_STATE = String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-
-$obFound = ob_get_level();
-while (ob_get_level() > 0) { @ob_end_clean(); }
-
-$out = ['obLevel' => $obFound];
-$out['headers'] = function_exists('headers_list') ? count(headers_list()) : -1;
-$out['sessionStatus'] = function_exists('session_status') ? session_status() : -1;
-$out['sessionId'] = function_exists('session_id') ? (string) @session_id() : '';
-$out['sessionKeys'] = isset($_SESSION) && is_array($_SESSION) ? array_keys($_SESSION) : [];
-$out['booted'] = isset($GLOBALS['__pw_kernel']) ? 1 : 0;
-$out['post'] = isset($_POST) && is_array($_POST) ? array_keys($_POST) : [];
-$out['cookies'] = isset($_COOKIE) && is_array($_COOKIE) ? array_keys($_COOKIE) : [];
-
-$ask = function (callable $fn) {
-  try { return $fn(); } catch (\Throwable $e) { return 'ERR: ' . substr($e->getMessage(), 0, 120); }
-};
-
-// #region the named carriers
-$out['uid'] = $ask(function () { return (int) \Drupal::currentUser()->id(); });
-
-// memoised by ThemeManager::getActiveTheme() and cleared only by resetActiveTheme(), which on a
-// normal request nothing calls -- so the FIRST route to negotiate decides the theme for the object
-$out['theme'] = $ask(function () {
-  $container = \Drupal::getContainer();
-  if ($container === null || !$container->initialized('theme.manager')) { return null; }
-  $manager = $container->get('theme.manager');
-  return $manager->hasActiveTheme() ? $manager->getActiveTheme()->getName() : null;
-});
-
-$out['formErrors'] = $ask(function () {
-  return \Drupal\Core\Form\FormState::hasAnyErrors() ? 1 : 0;
-});
-
-$out['seenIds'] = $ask(function () {
-  $property = new \ReflectionProperty(\Drupal\Component\Utility\Html::class, 'seenIds');
-  $value = $property->getValue();
-  return is_array($value) ? count($value) : -1;
-});
-
-// the carrier beside it, and the one the blind half could not have caught: it only moves on an
-// AJAX request and nothing in the sweep makes one. Left true it sends getUniqueId() down its
-// random branch, so every id on every later render differs on every request
-$out['isAjax'] = $ask(function () {
-  $property = new \ReflectionProperty(\Drupal\Component\Utility\Html::class, 'isAjax');
-  return $property->getValue() ? 1 : 0;
-});
-
-// the same shape on a SERVICE, which is why the blind half over class statics cannot see it.
-// Messenger::addMessage() triggers it and core never untriggers it, so one save makes every later
-// render on the incarnation private, no-store and cfw_page stops filling site-wide
-$out['killSwitch'] = $ask(function () {
-  $container = \Drupal::getContainer();
-  if ($container === null || !$container->initialized('page_cache_kill_switch')) { return null; }
-  $switch = $container->get('page_cache_kill_switch');
-  $property = new \ReflectionProperty($switch, 'kill');
-  return $property->getValue($switch) ? 1 : 0;
-});
-
-// the one that costs content: a key left behind by a render that threw makes every later build of
-// that entity and view mode render EMPTY, and nothing anywhere reports it
-$out['recursionKeys'] = $ask(function () {
-  $property = new \ReflectionProperty(
-    \Drupal\Core\Entity\EntityViewBuilder::class,
-    'recursionKeys'
-  );
-  $value = $property->getValue();
-  return is_array($value) ? count($value) : -1;
-});
-
-// the flag core resets in a catch and this SAPI can leave set, because an abort is not an
-// exception: true here means every later renderRoot() answers 500
-$out['renderingRoot'] = $ask(function () {
-  $container = \Drupal::getContainer();
-  if ($container === null || !$container->initialized('renderer')) { return null; }
-  $renderer = $container->get('renderer');
-  $property = new \ReflectionProperty($renderer, 'isRenderingRoot');
-  return $property->getValue($renderer) ? 1 : 0;
-});
-
-// keyed by the Request OBJECT in a static SplObjectStorage, so every request ever served stays
-// referenced; correct per request and unbounded across them
-$out['renderContexts'] = $ask(function () {
-  $property = new \ReflectionProperty(\Drupal\Core\Render\Renderer::class, 'contextCollection');
-  $value = $property->getValue();
-  return $value instanceof \SplObjectStorage ? $value->count() : -1;
-});
-
-$out['requestStack'] = $ask(function () {
-  $container = \Drupal::getContainer();
-  if ($container === null || !$container->initialized('request_stack')) { return null; }
-  $stack = $container->get('request_stack');
-  $property = new \ReflectionProperty($stack, 'requests');
-  $value = $property->getValue($stack);
-  return is_array($value) ? count($value) : -1;
-});
-
-// the flash bag lives on a session service that outlives the request, so a message queued for one
-// visitor and never rendered is rendered to the next
-$out['messages'] = $ask(function () {
-  $container = \Drupal::getContainer();
-  if ($container === null || !$container->initialized('messenger')) { return null; }
-  $counts = [];
-  foreach ($container->get('messenger')->all() as $type => $list) { $counts[$type] = count($list); }
-  return $counts;
-});
-
-// LocaleLookup::getCid() folds the CURRENT USER'S ROLE IDS into the key and memoises it, so the
-// first request to translate anything decides the key every later one reads; null unless locale is on
-$out['localeCids'] = $ask(function () {
-  $container = \Drupal::getContainer();
-  $id = 'string_translator.locale.lookup';
-  if ($container === null || !$container->has($id) || !$container->initialized($id)) { return null; }
-  $service = $container->get($id);
-  $held = new \ReflectionProperty($service, 'translations');
-  $memo = new \ReflectionProperty(\Drupal\Core\Cache\CacheCollector::class, 'cid');
-  $cids = [];
-  foreach ((array) $held->getValue($service) as $langcode => $contexts) {
-    foreach ((array) $contexts as $context => $lookup) {
-      $cids[$langcode . '|' . $context] = is_object($lookup) ? $memo->getValue($lookup) : null;
-    }
-  }
-  return $cids;
-});
-
-$out['db'] = $ask(function () {
-  $connection = \Drupal\Core\Database\Database::getConnection();
-  return [
-    'buffering' => method_exists($connection, 'isBuffering') ? (int) $connection->isBuffering() : -1,
-    'inTransaction' => (int) $connection->inTransaction(),
-    'hostTransactions' => method_exists($connection, 'transactionCount') ? $connection->transactionCount() : -1,
-  ];
-});
-
-// which of the seeded ids the resetter can actually reset; method_exists() is the gate it applies,
-// so an id with no reset() is skipped in silence
-$out['resetAudit'] = $ask(function () {
-  $container = \Drupal::getContainer();
-  if ($container === null || !$container->has('drupflare.request_resetter')) { return null; }
-  $resetter = $container->get('drupflare.request_resetter');
-  $property = new \ReflectionProperty($resetter, 'resettable');
-  $audit = [];
-  foreach ((array) $property->getValue($resetter) as $id) {
-    if (!$container->has($id)) { $audit[$id] = 'absent'; continue; }
-    if (!$container->initialized($id)) { $audit[$id] = 'uninitialized'; continue; }
-    $service = $container->get($id);
-    $audit[$id] = is_object($service) && method_exists($service, 'reset') ? 'reset' : 'no-reset';
-  }
-  return $audit;
-});
-// #endregion
-
-// #region the blind half
-$fingerprint = function ($value, $depth = 0) use (&$fingerprint) {
-  if ($depth > 2) { return 'deep'; }
-  if ($value === null) { return 'null'; }
-  if (is_bool($value)) { return $value ? 'true' : 'false'; }
-  if (is_int($value) || is_float($value)) { return 'n' . $value; }
-  if (is_string($value)) { return 's' . strlen($value) . ':' . substr(md5($value), 0, 6); }
-  if (is_array($value)) {
-    $parts = [];
-    foreach ($value as $key => $item) { $parts[] = $key . '=' . $fingerprint($item, $depth + 1); }
-    return 'a' . count($value) . ':' . substr(md5(implode('|', $parts)), 0, 6);
-  }
-  if ($value instanceof \Closure) { return 'fn'; }
-  if ($value instanceof \Countable) { return 'C' . get_class($value) . ':' . count($value); }
-  if (is_object($value)) { return 'o:' . get_class($value); }
-  return 'x';
-};
-
-$statics = [];
-$skipped = 0;
-foreach (get_declared_classes() as $class) {
-  try {
-    $reflection = new \ReflectionClass($class);
-    foreach ($reflection->getProperties(\ReflectionProperty::IS_STATIC) as $property) {
-      if ($property->getDeclaringClass()->getName() !== $class) { continue; }
-      try {
-        $name = $class . '::' . $property->getName();
-        $statics[$name] = $property->isInitialized() ? $fingerprint($property->getValue()) : 'uninit';
-      } catch (\Throwable $e) { $skipped++; }
-    }
-  } catch (\Throwable $e) { $skipped++; }
-}
-ksort($statics);
-$out['statics'] = $statics;
-$out['staticCount'] = count($statics);
-$out['staticSkipped'] = $skipped;
-$out['classCount'] = count(get_declared_classes());
-// #endregion
-
-// #region the blind half over SERVICES
-//
-// THE HALF ABOVE CANNOT SEE A CARRIER THAT IS INSTANCE STATE ON A PERSISTENT SERVICE, and three of
-// the nine named carriers are exactly that: the page-cache kill switch, the renderer's
-// isRenderingRoot and the locale lookup's memoised cid. Each was found by hand and then added to
-// the named list; the blind half walked static properties of declared classes and reported nothing
-// for all three, so the next one would have been found by a browser again.
-//
-// THE initialized() GATE IS THE WHOLE SAFETY PROPERTY. Asking the container for a service it never
-// built would CONSTRUCT the state this is looking for, which is the same mistake as a probe that
-// warms what it reads. Every id is filtered through it, so what is walked is exactly the set the
-// request itself instantiated; a service nobody touched contributes nothing rather than being made.
-$services = [];
-$serviceSkipped = 0;
-$container = \Drupal::hasContainer() ? \Drupal::getContainer() : null;
-if ($container !== null && method_exists($container, 'getServiceIds')) {
-  foreach ((array) $container->getServiceIds() as $id) {
-    try {
-      if (!$container->initialized($id)) { continue; }
-      $service = $container->get($id);
-      if (!is_object($service)) { continue; }
-      $reflection = new \ReflectionObject($service);
-      foreach ($reflection->getProperties() as $property) {
-        if ($property->isStatic()) { continue; }
-        try {
-          $name = $id . '::' . $property->getName();
-          $services[$name] = $property->isInitialized($service)
-            ? $fingerprint($property->getValue($service))
-            : 'uninit';
-        } catch (\Throwable $e) { $serviceSkipped++; }
-      }
-    } catch (\Throwable $e) { $serviceSkipped++; }
-  }
-}
-ksort($services);
-$out['services'] = $services;
-$out['serviceCount'] = count($services);
-$out['serviceSkipped'] = $serviceSkipped;
-$out['servicesInitialized'] = $container !== null && method_exists($container, 'getServiceIds')
-  ? count(array_filter((array) $container->getServiceIds(), function ($id) use ($container) {
-      try { return $container->initialized($id); } catch (\Throwable $e) { return false; }
-    }))
-  : -1;
-// #endregion
-
-echo json_encode($out);
-`;
+export const BOUNDARY_STATE = phpRender(BOUNDARY_STATE_PHP, { FIBER_SHIM, HOST_HELPERS });
 
 /**
  * Leaves output buffers open the way a handler that forgot its `ob_end_clean()` would.
  *
- * The question is whether PHP's buffer stack is per-script or per-interpreter here. On a real SAPI
- * request shutdown flushes and pops every level, so a forgotten `ob_start()` costs one response. If
- * the stack survives a `_run()` boundary it costs every response after it, because the next
- * script's output goes into a buffer nobody will ever close and the host reads nothing at all.
- *
- * The report is echoed BEFORE the buffers open, so this fragment can answer even while it is
- * creating the condition that would silence it.
+ * A real SAPI pops every level at request shutdown; if the stack survives a `_run()` boundary,
+ * every later response goes into a buffer nobody closes. The report is echoed before the buffers
+ * open so the fragment can still answer.
  *
  * @param {number} depth how many levels to leave open
  */
 export function leakOutputBuffer(depth = 2): string {
 	const levels = Math.max(1, Math.min(8, Math.trunc(depth)));
-	return String.raw`<?php
-$out = ['ok' => true, 'before' => ob_get_level(), 'opening' => ${levels}];
-echo json_encode($out);
-for ($i = 0; $i < ${levels}; $i++) { ob_start(); }
-`;
+	return phpRender(LEAK_OUTPUT_BUFFER_PHP, { LEVELS: String(levels) });
 }
 
 /**
  * Leaves the session manager open the way a request that never reached `save()` would.
  *
- * `Drupal\Core\StackMiddleware\Session::handle()` calls `$request->getSession()->save()` after the
- * kernel, and skips it for a `ResponseKeepSessionOpenInterface` -- which `BigPipeResponse` is,
- * because BigPipe closes the session itself inside `sendContent()`. A `sendContent()` that throws,
- * or a caller that reads `getContent()` instead, therefore ends the request with `started` TRUE and
- * `closed` FALSE.
+ * A `BigPipeResponse` keeps the session open and closes it in `sendContent()`; if that throws, the
+ * request ends with `started` true and `closed` false. The next `SessionManager::start()` then
+ * returns early, `loadSession()` (the only code that re-binds the session bags) never runs, and the
+ * flash bag still references the previous visitor's array.
  *
- * That state is what makes the next request's `SessionManager::start()` return at its first line
- * (`($started || $startedLazy) && !$closed`), so `loadSession()` never runs -- and `loadSession()`
- * is the ONLY thing in core that re-binds the session bags to the current `$_SESSION`. Without it
- * the flash bag still references the previous visitor's array, message and all.
- *
- * Manufactured rather than provoked, and measured rather than assumed: an anonymous GET, a login
- * POST, an authenticated GET, a node-save POST and a `drupalRequest()` render all leave `started`
- * FALSE on this runtime, so no ordinary request reaches the state and a probe is the only way to
- * exercise the reset that clears it. Same reason `leakOutputBuffer()` exists.
+ * No ordinary request reaches this state on this runtime (measured), so a probe is the only way to
+ * exercise the reset.
  *
  * @returns the flags it set and the flash bag it left behind, so a vacuous run is visible
  */
-export const LEAK_OPEN_SESSION = String.raw`<?php
-$out = ['ok' => false];
-try {
-  $container = \Drupal::getContainer();
-  if ($container === null || !$container->initialized('session_manager')) {
-    $out['error'] = 'session_manager was never initialised';
-  } else {
-    $manager = $container->get('session_manager');
-    $reflection = new \ReflectionObject($manager);
-    $reflection->getProperty('started')->setValue($manager, true);
-    $reflection->getProperty('closed')->setValue($manager, false);
-    $out['started'] = (bool) $reflection->getProperty('started')->getValue($manager);
-    $out['closed'] = (bool) $reflection->getProperty('closed')->getValue($manager);
-    $out['flashes'] = isset($_SESSION['_symfony_flashes'])
-      ? array_map('count', (array) $_SESSION['_symfony_flashes'])
-      : [];
-    $out['ok'] = true;
-  }
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-echo json_encode($out);
-`;
+export const LEAK_OPEN_SESSION = phpScript(LEAK_OPEN_SESSION_PHP);
 
 /**
  * Leaves a Drupal transaction open the way a halted request would, so the next one can be asked.
  *
- * `cfw_do_sqlite` withholds every write while a transaction is open and replays it on commit, and
- * the buffer lives on the Connection -- which `Database::$connections` holds for the life of the
- * interpreter. So the question is not whether a rollback works but whether a request that never
- * reaches its commit leaves the NEXT request buffering into a transaction nobody owns.
+ * `cfw_do_sqlite` buffers writes while a transaction is open, on a Connection that lives as long as
+ * the interpreter; the probe asks whether the next request buffers into a transaction nobody owns.
  *
- * Two abandonments, because they fail differently. `scope` drops the last reference at the end of
- * the script, which is where a real SAPI would run the destructor and roll back. `global` parks the
- * object where nothing will collect it, which is what an unwind interrupted by a host-level throw
- * leaves behind -- a JavaScript exception is not a `Throwable` and no PHP handler sees it.
+ * `scope` drops the last reference at script end (a real SAPI would roll back); `global` parks the
+ * object where nothing collects it, as a host-level throw does (a JavaScript exception is not a
+ * `Throwable`, so no PHP handler sees it).
  *
  * @param {'scope'|'global'} mode which reference the abandoned transaction keeps
  */
 export function abandonTransaction(mode: 'scope' | 'global' = 'scope'): string {
 	const safeMode = mode === 'global' ? 'global' : 'scope';
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-
-$mode = json_decode(${JSON.stringify(JSON.stringify(safeMode))});
-$out = ['ok' => false, 'mode' => $mode];
-
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
-$_SERVER['REQUEST_URI'] = '/';
-$_SERVER['REQUEST_METHOD'] = 'GET';
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-    $out['bootedKernel'] = 1;
-  }
-
-  $connection = \Drupal\Core\Database\Database::getConnection();
-  $transaction = $connection->startTransaction();
-  \Drupal::state()->set('cfw_orphan_probe', $mode);
-  $out['buffering'] = method_exists($connection, 'isBuffering') ? (int) $connection->isBuffering() : -1;
-
-  if ($mode === 'global') {
-    $GLOBALS['__cfw_orphan_txn'] = $transaction;
-  }
-  $out['ok'] = true;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-
-echo json_encode($out);
-`;
+	return phpRender(ABANDON_TRANSACTION_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		MODE: JSON.stringify(JSON.stringify(safeMode))
+	});
 }
 
 /**
- * Turns on `locale.settings.translate_english`, which is what makes `locale` translate at all here.
+ * Turns on `locale.settings.translate_english`, so `locale` translates on an English site.
  *
- * `LocaleTranslation::getStringTranslation()` returns FALSE for langcode `en` unless this is set, so
- * on the packed English site enabling `locale` builds no `LocaleLookup` and the per-user cid this
- * exists to exercise never comes into being. A multilingual site reaches the same state by
- * negotiating a non-English language; this is the one-boolean way to reach it from an English one.
- *
- * `loadAll()` FIRST, and it is not optional: `LocaleConfigSubscriber` runs on the config save and
- * calls `locale_is_translatable()`, a plain function in `locale.module`. A bare kernel boot has
- * loaded no `.module` file, so the save writes the value and then dies with
- * "Call to undefined function Drupal\locale\locale_is_translatable()" -- which reads as a failed
- * setup while having already changed the setting.
+ * Without it `LocaleTranslation::getStringTranslation()` returns false for `en` and no
+ * `LocaleLookup` is built. `loadAll()` must run first: `LocaleConfigSubscriber` calls
+ * `locale_is_translatable()` from `locale.module`, which a bare boot has not loaded, so the save
+ * would write the value and then die.
  */
-export const TRANSLATE_ENGLISH = String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-
-$out = ['ok' => false];
-
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
-$_SERVER['REQUEST_URI'] = '/';
-$_SERVER['REQUEST_METHOD'] = 'GET';
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-  }
-
-  \Drupal::moduleHandler()->loadAll();
-  \Drupal::configFactory()->getEditable('locale.settings')->set('translate_english', true)->save();
-  $out['translateEnglish'] = (bool) \Drupal::config('locale.settings')->get('translate_english');
-  $out['localeEnabled'] = \Drupal::moduleHandler()->moduleExists('locale');
-  $out['ok'] = $out['translateEnglish'] && $out['localeEnabled'];
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-
-echo json_encode($out);
-`;
+export const TRANSLATE_ENGLISH = phpRender(TRANSLATE_ENGLISH_PHP, { FIBER_SHIM, HOST_HELPERS });
 
 /**
  * An arbitrary Drupal operation, with the kernel booted and `$out` printed as JSON.
  *
- * The boot sequence is otherwise copied per-operation, and a spec that hand-rolls it gets a fragment
- * that silently does nothing: a wrong bootstrap path throws before any Drupal code runs, the caller
- * reads an empty result, and a test asserting "this mutation had no effect" PASSES for the wrong
- * reason. Measured -- an invented `require_once '/drupal/cfw_bootstrap.php'` produced exactly that,
- * and it read as a finding about cache-tag invalidation.
- *
- * `$out` is pre-declared and always echoed, and a throw lands in `$out['error']` rather than
- * escaping, so a caller can tell "ran and did nothing" from "never ran".
+ * A hand-rolled boot with a wrong bootstrap path throws before any Drupal code runs, and a test
+ * asserting "no effect" then passes for the wrong reason. `$out` is always echoed and a throw lands
+ * in `$out['error']`, so "ran and did nothing" differs from "never ran".
  *
  * @param body
  *   PHP to run with the kernel up. Assign into `$out` to report anything back.
  */
 export function drupalOp(body: string): string {
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-
-$out = ['ok' => false];
-
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
-$_SERVER['REQUEST_URI'] = '/';
-$_SERVER['REQUEST_METHOD'] = 'GET';
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    // A FRESHLY BOOTED KERNEL HAS AN EMPTY REQUEST STACK, and anything reaching routing then dies
-    // on RequestContext::fromRequest(null). Invisible while every caller ran after a render had
-    // pushed one; the provisioning drops made a cold container the ordinary case.
-    $stack = $kernel->getContainer()->get('request_stack');
-    if ($stack->getCurrentRequest() === null) {
-      $stack->push($boot);
-      $kernel->getContainer()->get('router.request_context')->fromRequest($boot);
-    }
-    // and the .module FILES, which only the HTTP kernel path loads. Without this a cold container
-    // has services but no procedural half: saving a user reached _user_mail_notify() and died
-    // "Call to undefined function"
-    $kernel->getContainer()->get('module_handler')->loadAll();
-    $GLOBALS['__pw_kernel'] = $kernel;
-    $out['bootedKernel'] = 1;
-  }
-
-  if (!defined('SAVED_NEW')) {
-    require_once '/drupal/core/includes/common.inc';
-  }
-
-${SCHEMA_REPAIR}
-
-${body}
-
-  $out['ok'] = true;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['trace'] = substr($e->getTraceAsString(), 0, 600);
-}
-echo json_encode($out);
-`;
+	return phpRender(DRUPAL_OP_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		SCHEMA_REPAIR,
+		BODY: body
+	});
 }
 
 /**
  * Creates one authenticated user with a known password, so a sequence can change identity.
  *
- * The packed site ships exactly one account, and one account cannot show a cross-USER leak -- only
- * a cross-REQUEST one. Two ordinary users plus uid 1 plus anonymous is the smallest set where
- * "whose state is this" has a wrong answer that is visible.
- *
- * Through the entity API rather than by inserting rows, so the password hasher, the presave hooks
- * and the role reference all run; a hand-built row authenticates against nothing.
- *
- * @param {{name: string, pass: string, roles?: string[]}} options
+ * The pack ships one account, which cannot show a cross-user leak. It goes through the entity API
+ * so the password hasher, presave hooks and role reference run (a hand-built row authenticates
+ * against nothing).
  */
 export function createUser(options: { name: string; pass: string; roles?: string[] }): string {
 	const payload = JSON.stringify({
@@ -3803,77 +721,19 @@ export function createUser(options: { name: string; pass: string; roles?: string
 			/^[a-z0-9_]+$/.test(r)
 		)
 	});
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-
-$opt = json_decode(${JSON.stringify(payload)}, true);
-$out = ['ok' => false, 'name' => $opt['name']];
-
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
-$_SERVER['REQUEST_URI'] = '/';
-$_SERVER['REQUEST_METHOD'] = 'GET';
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-    $out['bootedKernel'] = 1;
-  }
-
-  if (!defined('SAVED_NEW')) {
-    require_once '/drupal/core/includes/common.inc';
-    $out['loadedCommonInc'] = true;
-  }
-
-${SCHEMA_REPAIR}
-
-  $existing = \Drupal::entityTypeManager()->getStorage('user')
-    ->loadByProperties(['name' => $opt['name']]);
-  $account = $existing ? reset($existing) : \Drupal\user\Entity\User::create(['name' => $opt['name']]);
-  $account->setEmail($opt['name'] . '@example.invalid');
-  $account->setPassword($opt['pass']);
-  $account->activate();
-  foreach ($opt['roles'] as $role) { $account->addRole($role); }
-  $account->save();
-
-  $out['uid'] = (int) $account->id();
-  $out['roles'] = array_values($account->getRoles());
-  $out['ok'] = true;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['trace'] = substr($e->getTraceAsString(), 0, 600);
-}
-
-echo json_encode($out);
-`;
+	return phpRender(CREATE_USER_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		PAYLOAD: JSON.stringify(payload),
+		SCHEMA_REPAIR
+	});
 }
 
 /**
  * The write workloads the regeneration ceiling is not computed from.
  *
- * The two `txn-` cases are not Drupal operations. They are the controlled A/B behind the others:
- * one buffered insert whose id is read back, over two tables identical except for `AUTOINCREMENT`.
+ * The `txn-` cases are not Drupal operations: one buffered insert whose id is read back, over two
+ * tables identical except for `AUTOINCREMENT`.
  */
 export const WRITE_WORKLOADS = [
 	'node-create',
@@ -3885,8 +745,10 @@ export const WRITE_WORKLOADS = [
 	'txn-rowid'
 ] as const;
 
+/** one name from {@link WRITE_WORKLOADS} */
 export type WriteWorkload = (typeof WRITE_WORKLOADS)[number];
 
+/** the inputs of {@link writeWorkload} */
 export interface WriteWorkloadOptions {
 	/** distinguishes one run from the next, so a repeat is a fresh insert rather than an update */
 	seq: number;
@@ -3895,24 +757,13 @@ export interface WriteWorkloadOptions {
 }
 
 /**
- * One entity write, and nothing else, so the host's tally prices the OPERATION.
+ * One entity write and nothing else, so the host's tally prices the operation.
  *
- * The regeneration ceiling is computed from a page fill, and every AUTOINCREMENT table in the
- * shipped schema is on the CONTENT path instead -- `node`, `node_revision`, `path_alias`,
- * `file_managed`, `users`. None of them appears in a fill, so none of them has ever been priced.
- *
- * THE ENTITY API RATHER THAN A FORM, and the difference is stated rather than
- * implied: a form submission also writes `sessions`, the form cache and flood control, so its total
- * is the operation PLUS the wrapper. This fragment isolates the entity write, which is the half the
- * per-table breakdown and the AUTOINCREMENT audit are about; `write-amplification.spec.ts` prices
- * the form wrapper separately so neither number stands in for the other.
- *
- * `SCHEMA_REPAIR` runs at most once per interpreter. It creates the tables whose backends declare no
- * `hook_schema`, which is setup rather than workload, and leaving it unguarded would charge the
- * first measured operation for DDL every later one gets free.
- *
- * The acting user is switched to uid 1 and restored in `finally` for the reason `saveNode()` records:
- * an unrestored switch renders later pages as the admin and stores that HTML in the anonymous cache.
+ * It uses the entity API, not a form (a form also writes `sessions`, the form cache and flood
+ * control; `write-amplification.spec.ts` prices that wrapper separately). `SCHEMA_REPAIR` runs at
+ * most once per interpreter so the first operation is not charged for DDL. The acting user is
+ * switched to uid 1 and restored in `finally`; an unrestored switch would cache admin HTML as
+ * anonymous.
  */
 export function writeWorkload(op: WriteWorkload, options: WriteWorkloadOptions): string {
 	const payload = JSON.stringify({
@@ -3920,175 +771,12 @@ export function writeWorkload(op: WriteWorkload, options: WriteWorkloadOptions):
 		seq: Math.max(0, Math.trunc(Number(options.seq) || 0)),
 		nid: Math.max(0, Math.trunc(Number(options.nid) || 0))
 	});
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-
-$opt = json_decode(${JSON.stringify(payload)}, true);
-$out = ['ok' => false, 'op' => $opt['op']];
-
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
-$_SERVER['REQUEST_URI'] = '/';
-$_SERVER['REQUEST_METHOD'] = 'GET';
-$_SERVER['SCRIPT_NAME'] = '/index.php';
-$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
-$_SERVER['PHP_SELF'] = '/index.php';
-$_SERVER['DOCUMENT_ROOT'] = '/drupal';
-$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
-$_SERVER['SERVER_SOFTWARE'] = 'workerd';
-$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-    $out['bootedKernel'] = 1;
-  }
-
-  if (!defined('SAVED_NEW')) {
-    require_once '/drupal/core/includes/common.inc';
-  }
-
-  if (empty($GLOBALS['__cfw_schema_repaired'])) {
-    $GLOBALS['__cfw_schema_repaired'] = true;
-${SCHEMA_REPAIR}
-  }
-
-  $db = \Drupal::database();
-  // the driver's own counters, which the host tally cannot see: a speculative replay re-sends
-  // buffered statements to resolve an insert id, and that is CPU the rows meter never charges
-  $counter = function ($method) use ($db) {
-    return method_exists($db, $method) ? (int) $db->$method() : -1;
-  };
-  $before = [
-    'statements' => $counter('statementCount'),
-    'transactions' => $counter('transactionCount'),
-    'speculative' => $counter('speculativeCount'),
-    'replayed' => $counter('replayedStatementCount'),
-  ];
-
-  $seq = (int) $opt['seq'];
-  $nid = (int) $opt['nid'];
-  $previousAccount = \Drupal::currentUser()->getAccount();
-  $admin = \Drupal\user\Entity\User::load(1);
-  if ($admin !== NULL) { \Drupal::currentUser()->setAccount($admin); }
-
-  switch ($opt['op']) {
-    case 'node-create':
-      $types = array_keys(\Drupal\node\Entity\NodeType::loadMultiple());
-      $type = in_array('page', $types, true) ? 'page' : ($types[0] ?? null);
-      if ($type === null) { throw new \RuntimeException('no node type exists in this site'); }
-      $node = \Drupal\node\Entity\Node::create([
-        'type' => $type,
-        'title' => 'Amplification ' . $seq,
-        'uid' => 1,
-        'status' => 1,
-      ]);
-      $node->save();
-      $out['id'] = (int) $node->id();
-      $out['vid'] = (int) $node->getRevisionId();
-      break;
-
-    case 'node-revision':
-      $node = \Drupal\node\Entity\Node::load($nid);
-      if ($node === NULL) { throw new \RuntimeException('no node ' . $nid . ' to revise'); }
-      // explicit rather than relying on the content type default, which is configuration
-      $node->setNewRevision(true);
-      $node->setRevisionLogMessage('amplification ' . $seq);
-      $node->setRevisionCreationTime((int) \Drupal::time()->getRequestTime());
-      $node->setRevisionUserId(1);
-      $node->setTitle('Amplification revised ' . $seq);
-      $node->save();
-      $out['id'] = (int) $node->id();
-      $out['vid'] = (int) $node->getRevisionId();
-      break;
-
-    case 'user-create':
-      $account = \Drupal\user\Entity\User::create(['name' => 'amp' . $seq]);
-      $account->setEmail('amp' . $seq . '@example.invalid');
-      $account->setPassword('cfw-Amp-' . $seq . '-pass');
-      $account->activate();
-      $account->save();
-      $out['id'] = (int) $account->id();
-      break;
-
-    case 'file-create':
-      // the ROW, not the bytes: a real upload also writes the stream, and that lands in MEMFS and
-      // the R2 mirror rather than in Durable Object SQL, so it is a different meter
-      $file = \Drupal\file\Entity\File::create([
-        'uri' => 'public://amplification-' . $seq . '.txt',
-        'filename' => 'amplification-' . $seq . '.txt',
-        'filemime' => 'text/plain',
-        'filesize' => 11,
-        'status' => 1,
-        'uid' => 1,
-      ]);
-      $file->save();
-      $out['id'] = (int) $file->id();
-      break;
-
-    case 'alias-create':
-      $alias = \Drupal::entityTypeManager()->getStorage('path_alias')->create([
-        'path' => '/node/' . ($nid > 0 ? $nid : 1),
-        'alias' => '/amplification-' . $seq,
-        'langcode' => 'en',
-      ]);
-      $alias->save();
-      $out['id'] = (int) $alias->id();
-      break;
-
-    case 'txn-autoinc':
-    case 'txn-rowid':
-      // THE A/B. Both tables are created by the caller and differ only in the keyword, so what this
-      // measures is whether predictBufferedInsertId() could answer -- it refuses AUTOINCREMENT,
-      // because that table's next id comes from sqlite_sequence rather than from max(rowid) + 1,
-      // and the fallback replays the whole buffer through the host
-      $table = $opt['op'] === 'txn-autoinc' ? 'amp_txn_auto' : 'amp_txn_rowid';
-      $txn = $db->startTransaction();
-      $db->query('INSERT INTO {' . $table . '} (v) VALUES (:v)', [':v' => 'row ' . $seq]);
-      $out['id'] = (int) $db->lastInsertId();
-      unset($txn);
-      $out['table'] = $table;
-      break;
-
-    default:
-      throw new \RuntimeException('unknown workload ' . $opt['op']);
-  }
-
-  $out['driver'] = [
-    'statements' => $counter('statementCount') - $before['statements'],
-    'transactions' => $counter('transactionCount') - $before['transactions'],
-    'speculative' => $counter('speculativeCount') - $before['speculative'],
-    'replayed' => $counter('replayedStatementCount') - $before['replayed'],
-    // WHY each replay happened, not just how many. Two mechanisms were proposed for these on a
-    // count alone and neither moved it; a reason cannot be guessed at a third time
-    'refusals' => method_exists($db, 'predictionRefusals') ? $db->predictionRefusals() : [],
-  ];
-  $out['ok'] = ($out['id'] ?? 0) > 0;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['trace'] = substr($e->getTraceAsString(), 0, 900);
-} finally {
-  if (isset($previousAccount)) {
-    try { \Drupal::currentUser()->setAccount($previousAccount); } catch (\Throwable $e2) {}
-  }
-}
-
-echo json_encode($out);
-`;
+	return phpRender(WRITE_WORKLOAD_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		PAYLOAD: JSON.stringify(payload),
+		SCHEMA_REPAIR
+	});
 }
 
 /** what a shell harvest and a fragment fill both take */
@@ -4102,130 +790,40 @@ export type ShellRequest = {
 /**
  * Harvests a shareable shell and the recipes that fill its holes.
  *
- * The fragment SOURCE, and the reason it can exist at all: core NEVER decodes a placeholder id
- * back into a render array -- `BigPipe::sendPlaceholders()` reads
- * `$response->getAttachments()['big_pipe_placeholders']`, a map of escaped id to render array that
- * the strategy attached on the way out. So the recipe has to be CAPTURED at harvest and replayed
- * later; there is no parser to call. That is also the security property: a fragment fill never
- * accepts a render array from a visitor, so `#lazy_builder` can never name a callback the visitor
- * chose.
+ * Harvests a shareable shell and the recipes that fill its holes.
  *
- * BOTH BINS ARE EMPTIED, and `render` is the one that matters. The holes are gated by the `render`
- * cache, not by how many renders an interpreter has served: with only `dynamic_page_cache` emptied
- * every persona comes back holeless, and with `render` emptied too every persona comes back holed.
- * `tests/integration/shell-normalise.spec.ts` carries the table.
+ * Core never decodes a placeholder id back into a render array (`BigPipe::sendPlaceholders()` reads
+ * the `big_pipe_placeholders` attachment), so recipes are captured here and replayed later. A
+ * fill therefore never accepts a render array from a visitor, so `#lazy_builder` cannot name a
+ * visitor-chosen callback.
+ *
+ * Both bins are emptied; `render` is the one that matters, since it gates the holes (with only
+ * `dynamic_page_cache` emptied every persona comes back holeless).
  */
 export function harvestShell(path = '/', request: ShellRequest = {}): string {
 	const safePath = JSON.stringify(String(path));
 	const cookie = String(request.cookie ?? '');
 	const origin = String(request.origin ?? '');
 
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-${PW_SERVE_INLINE}
-chdir('/drupal');
-
-$path = json_decode(${JSON.stringify(safePath)});
-$cookie = json_decode(${JSON.stringify(JSON.stringify(cookie))});
-$origin = json_decode(${JSON.stringify(JSON.stringify(origin))});
-$out = ['ok' => false, 'path' => $path];
-$clock = function () { return microtime(true) * 1000; };
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-  }
-
-  // the render bin is the gate on whether holes exist at all; emptying dynamic_page_cache alone
-  // produces a MISS with the placeholders already substituted, which reads as "no shell"
-  foreach (['dynamic_page_cache', 'render'] as $bin) {
-    try { \Drupal::cache($bin)->deleteAll(); } catch (\Throwable $e) {}
-  }
-  try {
-    $middleware = \Drupal::service('http_middleware.page_cache');
-    $rp = new \ReflectionProperty($middleware, 'cid');
-    $rp->setValue($middleware, null);
-  } catch (\Throwable $e) {}
-
-  $t0 = $clock();
-  $response = cfw_serve($path, false, 'GET', '', '', $cookie, $origin, '');
-  $out['harvestMs'] = round($clock() - $t0, 2);
-
-  // BEFORE sendContent(), which consumes them
-  $attachments = method_exists($response, 'getAttachments') ? $response->getAttachments() : [];
-  $recipes = $attachments['big_pipe_placeholders'] ?? [];
-  $out['recipes'] = $recipes;
-  $out['recipeCount'] = count($recipes);
-
-  $body = '';
-  if (method_exists($response, 'sendContent')) {
-    $depth = ob_get_level();
-    ob_start();
-    try {
-      $response->sendContent();
-      $body = (string) ob_get_clean();
-    } catch (\Throwable $e) {
-      while (ob_get_level() > $depth) { @ob_end_clean(); }
-      // same reason as the fill path: the throw skipped BigPipe's own session save
-      $out['sendError'] = get_class($e) . ': ' . $e->getMessage();
-      $out['sessionClosed'] = cfw_close_session();
-      $body = (string) $response->getContent();
-    }
-  } else {
-    $body = (string) $response->getContent();
-  }
-
-  $out['html'] = $body;
-  $out['bytes'] = strlen($body);
-  $out['status'] = $response->getStatusCode();
-  $out['dynamicCache'] = $response->headers->get('x-drupal-dynamic-cache');
-  // the cache tags this render bubbled, so a compiled plan can be invalidated by the same tags
-  // Drupal would invalidate the render cache with
-  try {
-    $out['cacheTags'] = $response instanceof \Drupal\Core\Cache\CacheableResponseInterface
-      ? array_values($response->getCacheableMetadata()->getCacheTags())
-      : [];
-  } catch (\Throwable $e) { $out['cacheTags'] = []; }
-  $out['uid'] = (int) \Drupal::currentUser()->id();
-  $out['roles'] = array_values(\Drupal::currentUser()->getRoles());
-  $out['ok'] = true;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['trace'] = substr($e->getTraceAsString(), 0, 900);
-}
-
-echo json_encode($out);
-`;
+	return phpRender(HARVEST_SHELL_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		PW_SERVE_INLINE,
+		PATH: JSON.stringify(safePath),
+		COOKIE: JSON.stringify(JSON.stringify(cookie)),
+		ORIGIN: JSON.stringify(JSON.stringify(origin))
+	});
 }
 
 /**
  * Fills a stored shell's holes for ONE session, without rendering the page.
  *
- * The context is built rather than served: a fragment request does the four things a front
- * controller does that a placeholder render actually needs -- push the request, start the session,
- * authenticate, match the route -- and then calls `Renderer::renderPlaceholder()` on each stored
- * recipe. `$kernel->handle()` would do all four and then render the page, which is the cost this
- * exists to avoid.
+ * It pushes the request, starts the session, authenticates and matches the route, then calls
+ * `Renderer::renderPlaceholder()` per recipe; `$kernel->handle()` would also render the page.
+ * The route match is required: breadcrumbs, local tasks and the menu trail read
+ * `current_route_match` and would otherwise render for the last matched route.
  *
- * THE ROUTE MATCH IS LOAD-BEARING and is the reason `matchRequest()` is here rather than skipped:
- * breadcrumbs, local tasks and the active menu trail all read `current_route_match`, so without it
- * they render for whatever route was matched last and the fragment is silently wrong rather than
- * missing.
- *
- * @param recipes
- *   The `big_pipe_placeholders` map `harvestShell()` captured. It never comes from a visitor.
+ * @param recipes - the `big_pipe_placeholders` map `harvestShell()` captured; never from a visitor
  */
 export function renderFragments(
 	path = '/',
@@ -4237,284 +835,55 @@ export function renderFragments(
 	const origin = String(request.origin ?? '');
 	const safeRecipes = JSON.stringify(JSON.stringify(recipes ?? {}));
 
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-${PW_SERVE_INLINE}
-chdir('/drupal');
-
-$path = json_decode(${JSON.stringify(safePath)});
-$cookie = json_decode(${JSON.stringify(JSON.stringify(cookie))});
-$origin = json_decode(${JSON.stringify(JSON.stringify(origin))});
-$recipes = json_decode(${safeRecipes}, true);
-$out = ['ok' => false, 'path' => $path, 'fragments' => [], 'fragmentTags' => [], 'failed' => []];
-$clock = function () { return microtime(true) * 1000; };
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-  }
-
-  $t0 = $clock();
-
-  if (function_exists('header_remove')) { header_remove(); }
-
-  $cookies = [];
-  foreach (explode(';', $cookie) as $pair) {
-    $pair = trim($pair);
-    if ($pair === '') { continue; }
-    $split = strpos($pair, '=');
-    if ($split === false) { continue; }
-    $cookies[urldecode(substr($pair, 0, $split))] = urldecode(substr($pair, $split + 1));
-  }
-  $server = $cookie === '' ? [] : ['HTTP_COOKIE' => $cookie];
-  $url = $origin === '' ? $path : rtrim($origin, '/') . $path;
-  $request = \Symfony\Component\HttpFoundation\Request::create($url, 'GET', [], $cookies, [], $server);
-
-  // THE SUPERGLOBALS ARE NOT DECORATION HERE. session_start() reads its id out of $_COOKIE, not out
-  // of the Request object, so without this the fragment renders as whoever the interpreter served
-  // last -- measured: bob's cookie came back uid 1 because admin had rendered before him
-  $_SERVER['HTTP_HOST'] = $request->getHttpHost();
-  $_SERVER['SERVER_NAME'] = $request->getHost();
-  $_SERVER['SERVER_PORT'] = (string) $request->getPort();
-  if ($request->isSecure()) { $_SERVER['HTTPS'] = 'on'; } else { unset($_SERVER['HTTPS']); }
-  $_SERVER['REQUEST_METHOD'] = 'GET';
-  $_SERVER['REQUEST_URI'] = $path;
-  $_POST = [];
-  $_GET = [];
-  $_FILES = [];
-  $_REQUEST = [];
-  $_COOKIE = $cookies;
-  if ($cookie !== '') { $_SERVER['HTTP_COOKIE'] = $cookie; } else { unset($_SERVER['HTTP_COOKIE']); }
-
-  // AFTER the superglobals and BEFORE the session starts, which is the order cfw_serve() uses and
-  // the order that matters: the resetter closes the previous session, and a reset that runs before
-  // $_COOKIE is replaced closes one session and reopens the same one
-  try {
-    $container = \Drupal::getContainer();
-    if ($container !== null && $container->has('drupflare.request_resetter')) {
-      $GLOBALS['__pw_reset'] = $container->get('drupflare.request_resetter')->reset();
-    } elseif (function_exists('session_status') && session_status() === PHP_SESSION_ACTIVE) {
-      @session_write_close();
-      $_SESSION = [];
-    }
-  } catch (\Throwable $e) {}
-
-  $stack = \Drupal::service('request_stack');
-  while ($stack->getCurrentRequest() !== null) { $stack->pop(); }
-  $stack->push($request);
-
-  // ids are deduplicated per RENDER, and this interpreter is where "per render" stops being
-  // automatic; without it the second fragment of a session gets id--2 suffixes
-  if (method_exists('\Drupal\Component\Utility\Html', 'resetSeenIds')) {
-    \Drupal\Component\Utility\Html::resetSeenIds();
-  }
-
-  // and the ajax flag beside it, which resetSeenIds() does not clear; left true it sends
-  // getUniqueId() down its random branch for the rest of the incarnation
-  if (method_exists('\Drupal\Component\Utility\Html', 'setIsAjax')) {
-    \Drupal\Component\Utility\Html::setIsAjax(false);
-  }
-
-  // THE ID IS SET EXPLICITLY, and skipping it is a session HANDOVER rather than a missing session.
-  // session_write_close() leaves session_id() holding the previous visitor's id, and session_start()
-  // prefers that id over $_COOKIE -- so without this, bob's cookie loaded admin's row and the
-  // fragment rendered as uid 1 with no error anywhere. Measured; the middleware never has to do it
-  // because a real SAPI starts each request with no id at all.
-  $session = \Drupal::service('session');
-  // matched by SHAPE rather than asked of session_configuration, whose getName() is protected:
-  // Drupal names the cookie SESS/SSESS + md5 of the site url, and that is the only cookie with it
-  $sessionName = '';
-  foreach (array_keys($cookies) as $name) {
-    if (preg_match('/^S?SESS[0-9a-f]{32}$/', $name) === 1) { $sessionName = $name; break; }
-  }
-  if (function_exists('session_status') && session_status() === PHP_SESSION_ACTIVE) {
-    @session_write_close();
-  }
-  if (isset($cookies[$sessionName])) {
-    try { $session->setId($cookies[$sessionName]); }
-    catch (\Throwable $e) { $out['setIdError'] = $e->getMessage(); }
-  }
-  $request->setSession($session);
-  try { $session->start(); } catch (\Throwable $e) { $out['sessionError'] = $e->getMessage(); }
-
-  $account = \Drupal::service('authentication')->authenticate($request);
-  if ($account !== null) { \Drupal::service('current_user')->setAccount($account); }
-  $out['uid'] = (int) \Drupal::currentUser()->id();
-
-  try {
-    $request->attributes->add(\Drupal::service('router')->matchRequest($request));
-  } catch (\Throwable $e) {
-    $out['routeError'] = get_class($e) . ': ' . $e->getMessage();
-  }
-
-  $renderer = \Drupal::service('renderer');
-  $out['contextMs'] = round($clock() - $t0, 2);
-
-  // the values normaliseShell() slots out of the stored shell, read for THIS session. Free here
-  // -- the context is already built -- and unobtainable at the edge, which has no PHP
-  $identity = ['uid' => (string) \Drupal::currentUser()->id()];
-  try {
-    $identity['permissionsHash'] = \Drupal::service('user_permissions_hash_generator')
-      ->generate(\Drupal::currentUser());
-  } catch (\Throwable $e) {}
-  try {
-    $identity['csrf'] = ['user/logout' => \Drupal::csrfToken()->get('user/logout')];
-  } catch (\Throwable $e) {}
-  // the edge plan is keyed on this and a shell response carried none, so a path the shell tier
-  // answered could never collect a sample and the plan tier starved for the whole session
-  try {
-    $roles = array_values(\Drupal::currentUser()->getRoles());
-    sort($roles);
-    $out['roles'] = $roles;
-  } catch (\Throwable $e) {}
-  $out['identity'] = $identity;
-
-  $t1 = $clock();
-  foreach ($recipes as $id => $recipe) {
-    if (!is_array($recipe)) { $out['failed'][] = $id; continue; }
-    try {
-      $elements = ['#markup' => $id, '#attached' => ['placeholders' => [$id => $recipe]]];
-      $rendered = $renderer->renderPlaceholder($id, $elements);
-      $out['fragments'][$id] = (string) ($rendered['#markup'] ?? '');
-      // renderPlaceholder() merges the placeholder bubbleable metadata into $elements, so this is
-      // the fragment own dependency set rather than the page one
-      $out['fragmentTags'][$id] = array_values($rendered['#cache']['tags'] ?? []);
-    } catch (\Throwable $e) {
-      $out['failed'][] = $id;
-      $out['failure'][$id] = get_class($e) . ': ' . $e->getMessage();
-    }
-  }
-  $out['renderMs'] = round($clock() - $t1, 2);
-  $out['totalMs'] = round($clock() - $t0, 2);
-  $out['ok'] = count($out['failed']) === 0;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-  $out['trace'] = substr($e->getTraceAsString(), 0, 900);
-}
-
-echo json_encode($out);
-`;
+	return phpRender(RENDER_FRAGMENTS_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		PW_SERVE_INLINE,
+		PATH: JSON.stringify(safePath),
+		COOKIE: JSON.stringify(JSON.stringify(cookie)),
+		ORIGIN: JSON.stringify(JSON.stringify(origin)),
+		RECIPES: safeRecipes
+	});
 }
 
 /**
- * Counts the files and bytes under one MEMFS directory.
+ * Counts the files and bytes under one in-memory filesystem directory.
  *
- * The opcache A/B needs the WRITE VOLUME per arm, and the write-only file cache is the thing
- * being priced -- 1,301 `.bin` files across 425 directories after one render, measured on the edge.
- * A count is a count, so unlike a millisecond it is honest from any lane (RULE 0).
+ * The opcache A/B needs write volume per arm (1,301 `.bin` files across 425 directories after one
+ * render on the edge). A count is honest from any lane, unlike a millisecond.
  */
 export function memfsCensus(root = '/tmp'): string {
 	const safeRoot = JSON.stringify(String(root).replace(/[^A-Za-z0-9_/.-]/g, ''));
 
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-$root = json_decode(${JSON.stringify(safeRoot)});
-$out = ['root' => $root, 'files' => 0, 'dirs' => 0, 'bytes' => 0, 'bin' => 0];
-
-try {
-  if (is_dir($root)) {
-    $it = new \RecursiveIteratorIterator(
-      new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
-      \RecursiveIteratorIterator::SELF_FIRST
-    );
-    foreach ($it as $entry) {
-      if ($entry->isDir()) { $out['dirs']++; continue; }
-      $out['files']++;
-      $out['bytes'] += (int) $entry->getSize();
-      if (substr($entry->getFilename(), -4) === '.bin') { $out['bin']++; }
-    }
-  }
-  $out['opcacheEnabled'] = (int) ini_get('opcache.enable');
-  $out['fileCacheOnly'] = (int) ini_get('opcache.file_cache_only');
-  $out['opcacheLoaded'] = extension_loaded('Zend OPcache');
-  if (function_exists('opcache_get_status')) {
-    $status = @opcache_get_status(false);
-    $out['opcacheStatus'] = is_array($status)
-      ? ['enabled' => $status['opcache_enabled'] ?? null, 'scripts' => $status['opcache_statistics']['num_cached_scripts'] ?? null]
-      : null;
-  }
-  $out['ok'] = true;
-} catch (\Throwable $e) {
-  $out['error'] = get_class($e) . ': ' . $e->getMessage();
-}
-
-echo json_encode($out);
-`;
+	return phpRender(MEMFS_CENSUS_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		ROOT: JSON.stringify(safeRoot)
+	});
 }
 
 /**
  * Runs every capability vector in one interpreter and reports what each answered.
  *
- * ONE BOOT FOR THE WHOLE MATRIX. A probe per script would pay the boot 28 times to answer 28
- * booleans, and the boot is the expensive part.
+ * One boot serves the whole matrix. Each probe is wrapped so a throw answers `false` (probes
+ * reference symbols that may not exist).
  *
- * EACH PROBE IS WRAPPED, because a probe that throws must answer `false` rather than take the run
- * down -- several of them reference symbols that may not exist, which is what they are asking
- * about.
- *
- * @param probes
- *   `id` to a PHP EXPRESSION evaluating to a boolean.
+ * @param probes - `id` to a PHP expression evaluating to a boolean
  */
 export function capabilityVectors(probes: Record<string, string> = {}): string {
 	const cases = Object.entries(probes)
 		.filter(([id]) => /^[a-z][a-z0-9_.]*$/.test(id))
 		.map(
 			([id, expr]) =>
-				// the REASON a probe answered false, recorded rather than discarded: a false that
-				// could mean "the capability is absent" or "the probe threw" is not a measurement
+				// records why a probe answered false (absent capability or a throw)
 				`  $out[${JSON.stringify(id)}] = (function () use (&$why) { try { return (bool) (${expr}); } ` +
-				`catch (\\Throwable $e) { $why[${JSON.stringify(id)}] = get_class($e) . ': ' . $e->getMessage(); return false; } })();`
+				`catch (Throwable $e) { $why[${JSON.stringify(id)}] = get_class($e) . ': ' . $e->getMessage(); return false; } })();`
 		)
 		.join('\n');
 
-	return String.raw`<?php
-${FIBER_SHIM}
-${HOST_HELPERS}
-chdir('/drupal');
-
-$out = [];
-$meta = [];
-$why = [];
-
-try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-  }
-  $meta['booted'] = true;
-} catch (\Throwable $e) {
-  // a probe that needs no kernel still answers; one that does will report false, which is honest
-  $meta['bootError'] = get_class($e) . ': ' . $e->getMessage();
-}
-
-${cases}
-
-$meta['php'] = PHP_VERSION;
-$meta['intSize'] = PHP_INT_SIZE;
-$meta['extensions'] = get_loaded_extensions();
-echo json_encode(['vectors' => $out, 'why' => $why, 'meta' => $meta]);
-`;
+	return phpRender(CAPABILITY_VECTORS_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		CASES: cases
+	});
 }

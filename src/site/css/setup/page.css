@@ -1,0 +1,96 @@
+:root {
+	color-scheme: light dark;
+}
+body {
+	margin: 0;
+	min-height: 100vh;
+	display: grid;
+	place-items: center;
+	font:
+		16px/1.5 system-ui,
+		-apple-system,
+		'Segoe UI',
+		sans-serif;
+}
+main {
+	max-width: 34rem;
+	padding: 2rem;
+}
+h1 {
+	font-size: 1.4rem;
+	margin: 0 0 0.5rem;
+}
+p {
+	margin: 0 0 1rem;
+	opacity: 0.8;
+}
+label {
+	display: block;
+	margin: 0 0 0.75rem;
+	font-size: 0.9rem;
+}
+input {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	margin-top: 0.25rem;
+	padding: 0.5rem;
+	font: inherit;
+	border: 1px solid currentColor;
+	border-radius: 0.25rem;
+	background: transparent;
+	color: inherit;
+}
+button {
+	padding: 0.6rem 1.2rem;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+	border: 1px solid currentColor;
+	border-radius: 0.25rem;
+	background: transparent;
+	color: inherit;
+}
+button[disabled] {
+	opacity: 0.5;
+	cursor: progress;
+}
+pre {
+	overflow-x: auto;
+	padding: 0.75rem;
+	border-radius: 0.25rem;
+	font-size: 0.8rem;
+	background: rgba(127, 127, 127, 0.15);
+}
+.out:empty {
+	display: none;
+}
+.warn {
+	font-size: 0.85rem;
+	opacity: 0.7;
+}
+.cred {
+	display: flex;
+	gap: 0.5rem;
+	align-items: end;
+	margin: 0 0 0.75rem;
+}
+.cred label {
+	flex: 1;
+	margin: 0;
+}
+.cred input {
+	font-family: ui-monospace, monospace;
+	font-size: 0.85rem;
+}
+.alert {
+	padding: 0.75rem;
+	border: 2px solid #b45309;
+	border-radius: 0.25rem;
+	margin: 0 0 1rem;
+	opacity: 1;
+}
+a.off {
+	pointer-events: none;
+	opacity: 0.4;
+}

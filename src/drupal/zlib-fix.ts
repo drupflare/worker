@@ -1,17 +1,16 @@
+/**
+ * Replaces `ext-zlib` with fflate so the six gz* functions Drupal reaches survive a
+ * `WITH_ZLIB=0` build.
+ *
+ * Not `CompressionStream`: it is a stream and PHP's gz* functions are synchronous (`ASYNCIFY=0`,
+ * so a host function returning a Promise hands PHP an object it can only stringify).
+ * @module
+ */
 import { deflateSync, gunzipSync, gzipSync, inflateSync, unzlibSync, zlibSync } from 'fflate';
 import { deflateSync as nodeDeflate, inflateSync as nodeInflate } from 'node:zlib';
-import { base64ToBytes, bytesToBase64 } from '../db/file-store.js';
-
-/**
- * Replaces `ext-zlib` with fflate, so the six gz* functions Drupal reaches survive
- * a build compiled with `WITH_ZLIB=0`.
- *
- * Not `CompressionStream`: workerd has it and it is the obvious candidate,
- * but it is a stream and PHP's gz* functions are synchronous. The shipping build
- * sets `ASYNCIFY=0`, so PHP cannot await anything, and a host function that
- * returned a Promise would hand PHP an object it can only stringify. fflate's
- * sync API is the only shape that fits.
- */
+import { base64ToBytes, bytesToBase64 } from '../db/file-store';
+import { ZLIB_FIX_PHP } from '../site/generated/assets';
+import { errorMessage } from '../util/errors';
 
 /** the Module key the PHP half resolves through `vrzno_env()` */
 export const ZLIB_BRIDGE = 'cfwZlib';
@@ -19,9 +18,7 @@ export const ZLIB_BRIDGE = 'cfwZlib';
 /**
  * The container each PHP function wants, named the way the request carries it.
  *
- * gzip is RFC1952, zlib is RFC1950, raw is a bare RFC1951 deflate stream. The
- * three are not interchangeable: `gzuncompress()` on gzip bytes fails, which is
- * how a wrong mapping would show up.
+ * gzip is `RFC1952`, zlib `RFC1950`, raw a bare `RFC1951` stream; they are not interchangeable.
  */
 export type ZlibOp = 'gzip' | 'gunzip' | 'zlib' | 'unzlib' | 'deflate' | 'inflate';
 
@@ -35,36 +32,16 @@ export type ZlibRequest = {
 };
 
 /**
- * The two ops a preset dictionary may be used with, and it is TWO rather than six.
- *
- * MEASURED, and the measurement chose the implementation. `node:zlib` honours `{ dictionary }`
- * inside workerd -- 51 bytes to 15 on the probe input, `78bb` plus the dictionary's adler32 in the
- * header -- so the capability costs no bundle bytes at all. `fflate` honours it too and its output
- * is byte-identical, but the two differ on the case that matters: given the WRONG dictionary,
- * `node:zlib` answers "Bad dictionary" and fflate returns plausible garbage that decompressed
- * cleanly ("g else entirelyg else entirely..."). Silent corruption of a content-addressed frame is
- * the failure this capability exists to enable a store to avoid, so the dictionary path goes
- * through `node:zlib`. The six ops with no dictionary stay on fflate untouched.
- *
- * gzip is excluded because RFC1952 has no header field to signal a preset dictionary: fflate emits
- * an ordinary gzip stream and `zlib.gunzipSync` answers "invalid distance too far back", so the
- * frame is readable by nothing else.
- *
- * RAW deflate is excluded for the same reason as fflate. It interoperates fine, but a raw stream
- * has no header, so there is nowhere to put the dictionary checksum and a wrong dictionary is
- * undetectable. Six bytes of header is not worth that.
+ * The ops a preset dictionary may be used with: zlib only, because gzip has no header field for
+ * one and a raw stream has no dictionary checksum. They run on `node:zlib`, not fflate: given a
+ * wrong dictionary it answers "Bad dictionary" where fflate returns plausible garbage.
  */
 export const DICTIONARY_OPS = ['zlib', 'unzlib'] as const;
 
 /** what it gets back */
 export type ZlibReply = { ok: true; b64: string } | { ok: false; error: string };
 
-/**
- * PHP's level to fflate's.
- *
- * PHP accepts -1 for "the library default", which zlib defines as 6. fflate has
- * no such sentinel, so -1 has to be resolved here rather than passed through.
- */
+/** PHP's level to fflate's; -1 (library default) resolves to 6 because fflate has no sentinel */
 export function zlibLevel(level: unknown): 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 {
 	const n = Number(level);
 	if (!Number.isFinite(n) || n === -1) return 6;
@@ -73,15 +50,10 @@ export function zlibLevel(level: unknown): 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 }
 
 /**
- * One compression or decompression, decoded.
+ * One compression or decompression, decoded (exported so the gate can drive every op).
  *
- * Exported so the gate can drive every op without a Durable Object.
- *
- * `mtime: 0` is load-bearing. fflate stamps the current time into the gzip
- * header by default, which makes `gzencode()` non-reproducible for identical
- * input; zlib writes 0 there. Measured on PHP 8.5.7, native `gzencode()` emits
- * header bytes 1f 8b 08 00 00 00 00 00 02 13 and fflate emitted a live mtime in
- * bytes 4-7 until this was set.
+ * `mtime: 0` is load-bearing: fflate stamps the time into the gzip header while zlib writes 0, so
+ * `gzencode()` would not be reproducible.
  *
  * @internal
  */
@@ -95,9 +67,7 @@ export function zlibApply(
 		if (!(DICTIONARY_OPS as readonly string[]).includes(op)) {
 			throw new Error(`op '${op}' does not carry a preset dictionary`);
 		}
-		// node:zlib rather than fflate, and see DICTIONARY_OPS for why: only this one verifies the
-		// dictionary's checksum, and a store that cannot tell a wrong dictionary from a right one
-		// has no way to notice it corrupted itself
+		// node:zlib rather than fflate: only it verifies the dictionary checksum
 		const out =
 			op === 'zlib'
 				? nodeDeflate(bytes, { dictionary, level: zlibLevel(level) })
@@ -125,10 +95,8 @@ export function zlibApply(
 /**
  * The whole host side, as a pure function over the decoded request.
  *
- * A failure is a reply rather than a throw, because the PHP functions this backs
- * return FALSE on bad input and do not raise. `gzuncompress()` on a truncated
- * string is a normal outcome for Drupal: `UrlHelper::uncompressQueryParameter()`
- * calls it on user-supplied base64 and tests the return value.
+ * A failure is a reply, not a throw: the PHP functions return false on bad input (Drupal calls
+ * `gzuncompress()` on user-supplied base64).
  *
  * @internal
  */
@@ -142,8 +110,8 @@ export function zlibHostCall(req: ZlibRequest): ZlibReply {
 			dict === '' ? undefined : base64ToBytes(dict)
 		);
 		return { ok: true, b64: bytesToBase64(out) };
-	} catch (e: any) {
-		return { ok: false, error: String(e?.message ?? e) };
+	} catch (e) {
+		return { ok: false, error: errorMessage(e) };
 	}
 }
 
@@ -151,17 +119,13 @@ export function zlibHostCall(req: ZlibRequest): ZlibReply {
 export type ZlibBinary = Record<string, unknown>;
 
 /**
- * Installs the bridge on the PHP Module.
- *
- * Masked, like the SQL bridge in `@drupflare/durabledb`. fflate's sync deflate is
- * a long JavaScript frame under the PHP stack, which is exactly the window a
- * slice interrupt must not try to suspend across.
+ * Installs the bridge on the PHP Module, masked like the SQL bridge (a slice interrupt must not
+ * suspend across fflate's long synchronous frame).
  *
  * @param binary
  *   The instantiated PHP module.
  * @param withMask
- *   The mask wrapper; injected rather than imported so the gate can assert that
- *   the call really happens inside it.
+ *   The mask wrapper; injected so the gate can assert the call happens inside it.
  */
 export function installZlib(binary: ZlibBinary, withMask: <R>(fn: () => R) => R): ZlibBinary {
 	binary[ZLIB_BRIDGE] = (json: string) =>
@@ -169,8 +133,8 @@ export function installZlib(binary: ZlibBinary, withMask: <R>(fn: () => R) => R)
 			let req: ZlibRequest;
 			try {
 				req = JSON.parse(json) as ZlibRequest;
-			} catch (e: any) {
-				const why = String(e?.message ?? e);
+			} catch (e) {
+				const why = errorMessage(e);
 				return JSON.stringify({ ok: false, error: `unparseable request: ${why}` });
 			}
 			return JSON.stringify(zlibHostCall(req));
@@ -179,213 +143,11 @@ export function installZlib(binary: ZlibBinary, withMask: <R>(fn: () => R) => R)
 }
 
 /**
- * The PHP half: the six gz* functions, the three encoding constants, and `cfw_zlib_dict()`.
+ * The PHP half: the six gz* functions, the encoding constants and `cfw_zlib_dict()`.
  *
- * Defined only when the bridge resolves. Returning FALSE
- * from every call on a host with no bridge would let `AssetDumper` write a
- * zero-byte `.gz` next to a real `.css` and serve it as gzip, which is a broken
- * site that looks fine in the logs. An undefined function is loud, and a build
- * that has no bridge has no database either.
- *
- * Which functions: every zlib call site in Drupal 11.4.5 outside tests, found by
- * grep over the whole tree: `Asset\AssetDumper::dump()` calls
- * `gzencode($data, 9, FORCE_GZIP)`; `Component\Utility\UrlHelper` calls
- * `gzcompress()` and `@gzuncompress()`. `gzdecode`, `gzdeflate` and `gzinflate`
- * are carried because they are the inverses of the three that are reached and a
- * codec that can encode a form it cannot decode is a defect, not a saving.
- *
- * What is not covered, all three out of reach of a synchronous
- * bridge or off the served path: `gzopen()` and the rest of the stream family
- * (`pear/archive_tar`, the update manager's tarballs), `gzencode`/`gzdecode` in
- * `symfony/http-kernel`'s profiler storage, and the `compress.zlib://` stream
- * wrapper named by `Core\Command\DbImportCommand`. A stream wrapper is a
- * separate mechanism from a function, and none of the three runs while a page is
- * being served.
- *
- * `cfw_zlib_dict()` IS DECLARED OUTSIDE THE EXTENSION GUARD, and that is the whole reason the
- * fragment is now in two blocks. The shipping binary DOES load ext-zlib -- measured, it is one of
- * the 25 extensions `get_loaded_extensions()` reports -- so everything under
- * `!extension_loaded('zlib')` is inert on the edge and exists for a `WITH_ZLIB=0` build. A
- * dictionary is not something ext-zlib provides at any version, so a capability declared under
- * that guard would have been a function nothing could ever reach.
+ * The gz* functions are defined only when the bridge resolves (a stub returning false would let
+ * `AssetDumper` serve a zero-byte `.gz` as gzip). Stream functions and `compress.zlib://` are not
+ * covered. `cfw_zlib_dict()` sits outside the extension guard: the shipping binary loads ext-zlib,
+ * which has no dictionary support.
  */
-export const ZLIB_FIX = String.raw`
-// NO eval(), unlike mb-fix. A conditional declaration colliding with an internal function is
-// deferred to runtime, so this compiles clean on a build that HAS zlib and the branch simply
-// does not run -- verified with php -l plus a run on a host with the extension loaded. Plain
-// PHP is what lets tests/node/php-fragments.spec.ts see inside the body at all.
-
-// FIRST BLOCK: the bridge itself plus the one capability ext-zlib does not have. Nothing here
-// collides with an internal function, so it is declared on every build.
-if (!function_exists('cfw_zlib_dict')) {
-	$__cfw_zlib = function_exists('vrzno_env') ? vrzno_env('${ZLIB_BRIDGE}') : null;
-	if ($__cfw_zlib !== null) {
-		$GLOBALS['__cfw_zlib'] = $__cfw_zlib;
-
-		/**
-		 * Runs one op over the bridge.
-		 *
-		 * @return array
-		 *   ['ok' => true, 'data' => string] or ['ok' => false, 'error' => string].
-		 */
-		function cfw_zlib($op, $data, $level = -1, $dict = '') {
-			$fn = $GLOBALS['__cfw_zlib'];
-			$reply = json_decode(
-				$fn(json_encode([
-					'op' => $op,
-					'b64' => base64_encode((string) $data),
-					'level' => $level,
-					'dict' => base64_encode((string) $dict),
-				])),
-				true
-			);
-			if (!is_array($reply) || ($reply['ok'] ?? false) !== true) {
-				$why = is_array($reply) ? (string) ($reply['error'] ?? 'no reason given') : 'unreadable reply';
-				return ['ok' => false, 'error' => $why];
-			}
-			$out = base64_decode((string) ($reply['b64'] ?? ''), true);
-			if ($out === false) { return ['ok' => false, 'error' => 'reply was not base64']; }
-			return ['ok' => true, 'data' => $out];
-		}
-
-		/**
-		 * Raises the diagnostic ext-zlib raises, then answers FALSE like it does.
-		 */
-		function cfw_zlib_fail($name, $reason) {
-			trigger_error($name . '(): ' . $reason, E_USER_WARNING);
-			return false;
-		}
-
-		/**
-		 * Compresses or decompresses against a preset dictionary.
-		 *
-		 * NOT shaped like a gz* function: PHP has never had a dictionary
-		 * parameter on gzcompress(), so widening one of those signatures would make a host-only
-		 * argument look like part of the language. function_exists('cfw_zlib_dict') is the feature
-		 * test a caller uses.
-		 *
-		 * $op is 'zlib' to compress and 'unzlib' to decompress; the output is an ordinary zlib
-		 * stream with FDICT set. gzip and the raw pair are refused, because neither has anywhere
-		 * to record the dictionary's checksum -- so a wrong dictionary would decode to plausible
-		 * garbage instead of failing.
-		 *
-		 * @return string|false
-		 *   The bytes, or FALSE with an E_USER_WARNING, matching the gz* functions.
-		 */
-		function cfw_zlib_dict($op, $data, $dict, $level = -1) {
-			if ($op !== 'zlib' && $op !== 'unzlib') {
-				return cfw_zlib_fail(
-					'cfw_zlib_dict',
-					"op '" . $op . "' takes no preset dictionary; use zlib to compress or unzlib to decompress"
-				);
-			}
-			if ((string) $dict === '') {
-				return cfw_zlib_fail('cfw_zlib_dict', 'the dictionary is empty');
-			}
-			$r = cfw_zlib($op, $data, $level, $dict);
-			return $r['ok'] ? $r['data'] : cfw_zlib_fail('cfw_zlib_dict', $r['error']);
-		}
-	}
-}
-
-// SECOND BLOCK: the six names ext-zlib owns. Inert wherever the extension is loaded, which
-// includes the shipping binary.
-if (!extension_loaded('zlib') && !function_exists('cfw_zlib_installed')) {
-	$__cfw_zlib = function_exists('vrzno_env') ? vrzno_env('${ZLIB_BRIDGE}') : null;
-	if ($__cfw_zlib !== null) {
-		$GLOBALS['__cfw_zlib'] = $__cfw_zlib;
-
-		// ext-zlib declares these, so they vanish with it. FORCE_GZIP is read by AssetDumper and
-		// would be an Error("Undefined constant") without this line.
-		if (!defined('ZLIB_ENCODING_RAW')) { define('ZLIB_ENCODING_RAW', -15); }
-		if (!defined('ZLIB_ENCODING_DEFLATE')) { define('ZLIB_ENCODING_DEFLATE', 15); }
-		if (!defined('ZLIB_ENCODING_GZIP')) { define('ZLIB_ENCODING_GZIP', 31); }
-		if (!defined('FORCE_DEFLATE')) { define('FORCE_DEFLATE', 15); }
-		if (!defined('FORCE_GZIP')) { define('FORCE_GZIP', 31); }
-
-		function cfw_zlib_installed() { return true; }
-
-		/**
-		 * Refuses a level outside -1..9, with the ValueError ext-zlib throws.
-		 */
-		function cfw_zlib_level($name, $level) {
-			if ($level < -1 || $level > 9) {
-				throw new ValueError($name . "(): Argument #2 (\$level) must be between -1 and 9");
-			}
-			return $level;
-		}
-
-		/**
-		 * The container an encoding names.
-		 *
-		 * All three encoders accept all three encodings and emit that container -- measured on
-		 * 8.5.7, gzcompress(x, 9, ZLIB_ENCODING_GZIP) is byte-identical to
-		 * gzencode(x, 9, FORCE_GZIP) -- so the three share one mapping.
-		 */
-		function cfw_zlib_encoding($name, $encoding) {
-			if ($encoding === 31) { return 'gzip'; }
-			if ($encoding === 15) { return 'zlib'; }
-			if ($encoding === -15) { return 'deflate'; }
-			throw new ValueError(
-				$name .
-					"(): Argument #3 (\$encoding) must be one of ZLIB_ENCODING_RAW, ZLIB_ENCODING_GZIP, or ZLIB_ENCODING_DEFLATE"
-			);
-		}
-
-		/**
-		 * Applies $max_length the way zlib does, which is NOT a truncation.
-		 *
-		 * Measured: gzuncompress(gzcompress('hello world'), 5) is FALSE, not 'hello'. zlib fails
-		 * the inflate when its output buffer is too small, so a cap below the payload is a data
-		 * error rather than a short read. 0 means no cap.
-		 */
-		function cfw_zlib_cap($name, $data, $max_length) {
-			if ($max_length > 0 && strlen($data) > $max_length) {
-				return cfw_zlib_fail($name, 'data error');
-			}
-			return $data;
-		}
-
-		// the encoding defaults are spelled as ints rather than as the constants defined above, so
-		// the signature does not depend on when a define() ran
-		function gzencode($data, $level = -1, $encoding = 31) {
-			$op = cfw_zlib_encoding('gzencode', $encoding);
-			cfw_zlib_level('gzencode', $level);
-			$r = cfw_zlib($op, $data, $level);
-			return $r['ok'] ? $r['data'] : cfw_zlib_fail('gzencode', $r['error']);
-		}
-
-		function gzcompress($data, $level = -1, $encoding = 15) {
-			$op = cfw_zlib_encoding('gzcompress', $encoding);
-			cfw_zlib_level('gzcompress', $level);
-			$r = cfw_zlib($op, $data, $level);
-			return $r['ok'] ? $r['data'] : cfw_zlib_fail('gzcompress', $r['error']);
-		}
-
-		function gzdeflate($data, $level = -1, $encoding = -15) {
-			$op = cfw_zlib_encoding('gzdeflate', $encoding);
-			cfw_zlib_level('gzdeflate', $level);
-			$r = cfw_zlib($op, $data, $level);
-			return $r['ok'] ? $r['data'] : cfw_zlib_fail('gzdeflate', $r['error']);
-		}
-
-		function gzdecode($data, $max_length = 0) {
-			$r = cfw_zlib('gunzip', $data);
-			if (!$r['ok']) { return cfw_zlib_fail('gzdecode', 'data error'); }
-			return cfw_zlib_cap('gzdecode', $r['data'], $max_length);
-		}
-
-		function gzuncompress($data, $max_length = 0) {
-			$r = cfw_zlib('unzlib', $data);
-			if (!$r['ok']) { return cfw_zlib_fail('gzuncompress', 'data error'); }
-			return cfw_zlib_cap('gzuncompress', $r['data'], $max_length);
-		}
-
-		function gzinflate($data, $max_length = 0) {
-			$r = cfw_zlib('inflate', $data);
-			if (!$r['ok']) { return cfw_zlib_fail('gzinflate', 'data error'); }
-			return cfw_zlib_cap('gzinflate', $r['data'], $max_length);
-		}
-	}
-}
-`;
+export const ZLIB_FIX = ZLIB_FIX_PHP;

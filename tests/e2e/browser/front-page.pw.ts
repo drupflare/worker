@@ -1,4 +1,4 @@
-import { expect, gotoPage, SITE_NAME, test } from './utils/fixtures.js';
+import { expect, gotoPage, SITE_NAME, test } from './utils/fixtures';
 
 test('the front page renders a real Drupal page', async ({ page }) => {
 	await gotoPage(page, '/');

@@ -1,4 +1,4 @@
-import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures.js';
+import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures';
 
 // unique per run: a vocabulary and a user account are both created once and refused the second
 // time, so fixed names make a re-run against a warm state directory fail for the wrong reason

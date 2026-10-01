@@ -23,9 +23,9 @@ import { freshSite, inObject, markProvisioned, provisionedSite } from '../helper
  * These drive the Durable Object directly. The PHP side (`firstRunConfig`) needs a booted kernel and
  * is covered by `php -l` plus the deployed acceptance; what is asserted here is the route contract,
  * which is where both defects lived.
+ *
+ * The DO route the worker maps `/firstrun` onto.
  */
-
-/** the DO route the worker maps `/firstrun` onto */
 const URL_BASE = 'https://do.local/__firstrun';
 
 describe('a password may not travel in a query string', () => {

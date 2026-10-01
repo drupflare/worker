@@ -1,6 +1,6 @@
 import { chromium } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
-import { ADMIN_PASS, ADMIN_USER, BASE_URL, OWNER_TOKEN_FILE, SITE, SITE_NAME } from './fixtures.js';
+import { ADMIN_PASS, ADMIN_USER, BASE_URL, OWNER_TOKEN_FILE, SITE, SITE_NAME } from './fixtures';
 
 /**
  * Brings the site the browser lane navigates to a state where a browser has something to look at.
@@ -8,9 +8,9 @@ import { ADMIN_PASS, ADMIN_USER, BASE_URL, OWNER_TOKEN_FILE, SITE, SITE_NAME } f
  * The same stages `tests/e2e/README.md` documents for the HTTP lane -- migrate, first run, warm --
  * plus one the HTTP lane never needed: visitor registration, without which `/user/register` is an
  * access-denied page rather than a form.
+ *
+ * How long a caller waits out a supervised restart; measured at 15-25 s for `wrangler dev`.
  */
-
-/** how long a caller waits out a supervised restart; measured at 15-25 s for `wrangler dev` */
 const RESTART_WAIT_S = 60;
 
 const call = async (path: string, init?: RequestInit): Promise<globalThis.Response> => {

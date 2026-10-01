@@ -16,9 +16,9 @@ import {
  * Shared rather than copied into seven spec files, which is how harnesses drift. Real: storage,
  * alarms, `caches.default`, the FIFO gate, the front Worker, the packed migration chunks. Not
  * real: `php._run()`, stubbed by `stubRender()`.
+ *
+ * The `ctx.storage.sql` surface, same shape `drupal-schema.ts` declares.
  */
-
-/** the `ctx.storage.sql` surface, same shape `drupal-schema.ts` declares */
 export type Sql = {
 	exec: (
 		text: string,
@@ -130,7 +130,7 @@ export type ServeDo = {
 	/** when the resident interpreter booted; the young-interpreter hold reads it */
 	phpBootedAt?: number;
 	/** the end of that hold, or null */
-	backgroundHold: () => number | null;
+	backgroundHold: () => number | undefined;
 	/** stub for a parked HTTP yield; see `parkFetchDep` on the object */
 	parkFetchDep?: typeof fetch;
 	/** how the last parked render went, which is how a spec tells a park from a fall-through */
@@ -253,7 +253,7 @@ export type ServeDo = {
 	tableNames: () => string[];
 	provisionLane: (
 		lane: number,
-		cursor: import('../../src/ops/replica-restore').ProvisionCursor | null,
+		cursor: import('../../src/ops/replica-restore').ProvisionCursor | undefined,
 		budget?: number
 	) => Promise<import('../../src/ops/replica-restore').ProvisionOutcome>;
 	snapshotRows: (
@@ -284,21 +284,13 @@ export type ServeDo = {
 		path: string,
 		cookie: string,
 		origin: string
-	) => Promise<{
-		html: string;
-		holes: number;
-		verified: import('../../src/site-do').ShellVerdict;
-	} | null>;
+	) => Promise<import('../../src/do/types').ShellAssembly | undefined>;
 	seedShellFrom: (
 		path: string,
 		cookie: string,
 		origin: string
-	) => Promise<{
-		html: string;
-		holes: number;
-		verified: import('../../src/site-do').ShellVerdict;
-	} | null>;
-	lastCron?: Record<string, unknown>;
+	) => Promise<import('../../src/do/types').ShellAssembly | undefined>;
+	lastCron?: import('../../src/util/types').Stamped<Record<string, unknown>>;
 	shellVerified: (path: string, hash: string, uid: string, harvestedAt: number) => boolean;
 	/** the git tier: the remote list, the API, the sync engine and the alarm's poll */
 	handleGit: (url: URL, deliverBase?: string) => Promise<Response>;
@@ -363,7 +355,7 @@ export type ServeDo = {
 	/** the per-table write tally, armed by assigning `emptyTally()` and read back in place */
 	writeTally?: import('../../src/db/write-tally').WriteTally;
 	/** the synchronous fast lane; a spec drives it directly to read the tier it chose */
-	serveFromStorage: (url: URL) => Response | null;
+	serveFromStorage: (url: URL) => Response | undefined;
 	/** the in-memory attempt log `/__capability` reports; refusals carry their reason */
 	mails?: Array<{
 		to: unknown;
@@ -372,7 +364,7 @@ export type ServeDo = {
 		transport: string | null;
 		refusal?: string;
 	}>;
-	lastMailDrain?: Record<string, unknown>;
+	lastMailDrain?: import('../../src/util/types').Stamped<Record<string, unknown>>;
 	adoptSettings: () => Promise<void>;
 	handle: (request: Request, url: URL) => Promise<Response>;
 	degradation: (nowMs?: number) => import('../../src/ops/degrade').Degradation;
@@ -383,13 +375,13 @@ export type ServeDo = {
 		answerable: boolean;
 		how: string;
 	};
-	invalidateOnCoreUpgrade: () => { deleted: number } | null;
+	invalidateOnCoreUpgrade: () => { deleted: number } | undefined;
 	queueHttp: (url: string, method?: string, body?: string) => void;
 	httpCacheGet: (
 		url: string,
 		method?: string,
 		body?: string
-	) => { status: number; headers: Record<string, string>; body: string } | null;
+	) => { status: number; headers: Record<string, string>; body: string } | undefined;
 	countOrNull: (table: string) => number | null;
 	drainHttpQueue: (limit?: number) => Promise<{
 		drained: Record<string, unknown>[];

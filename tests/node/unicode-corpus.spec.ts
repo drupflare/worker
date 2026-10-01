@@ -93,8 +93,7 @@ describeIfPhp('the Unicode corpus artifact', () => {
 	 *
 	 * What matters is that the tables agree with a real mbstring. If two mbstring releases ever DO
 	 * disagree about a codepoint, that shows up here as a data difference, which is the finding.
-	 */
-	/**
+	 *
 	 * `titleExtra` IS NOT THIS MACHINE'S TO ANSWER, and comparing it here nearly shipped a wrong
 	 * table.
 	 *

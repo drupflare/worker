@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { siteDoText } from '../helpers/source';
 
 /**
  * `system.mail` must never name a plugin the site does not have.
@@ -30,7 +31,7 @@ const SIBLING = process.env.DRUPFLARE_SRC ?? '../drupflare';
 const MODULE = resolve(ROOT, SIBLING);
 
 describe('the settings override', () => {
-	const source = readFileSync(resolve(ROOT, 'src', 'site-do.ts'), 'utf8');
+	const source = siteDoText();
 
 	it('no longer forces the mail interface', () => {
 		expect(source).not.toContain("$config['system.mail']['interface']['default']");

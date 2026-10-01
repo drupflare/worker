@@ -183,7 +183,7 @@ async function imagedSite(name: string) {
 				new Request('https://do.local/__heap', { headers: { 'x-cfw-owner': 'test' } })
 			)
 		).json()) as { latest: { id?: number } | null };
-		(site as unknown as { php: unknown }).php = null;
+		(site as unknown as { php: unknown }).php = undefined;
 		return status.latest;
 	});
 	// the precondition, asserted rather than assumed: a spec that silently ran without an image
@@ -229,7 +229,7 @@ describe('a module install converges, on a site with a heap image', () => {
 				// serve and warns on one that has not, so comparing across the drop the installs
 				// perform would report that flip as a row the install added
 				await site.fillOne('/', ['page', 'dynamic_page_cache']);
-				(site as unknown as { php: unknown }).php = null;
+				(site as unknown as { php: unknown }).php = undefined;
 				const stale = (await site.runJson(STALE_CRON)) as Payload;
 				const before = await readReport(site);
 				const enabled = (await (

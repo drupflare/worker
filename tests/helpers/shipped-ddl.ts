@@ -9,9 +9,9 @@
  * same shape -- an index added upstream fails there rather than silently invalidating a factor.
  *
  * Not a `.spec.ts`, so vitest does not collect it, and `tests/**` is excluded from coverage.
+ *
+ * One table as it ships: the CREATE TABLE, then every CREATE INDEX on it.
  */
-
-/** one table as it ships: the CREATE TABLE, then every CREATE INDEX on it */
 export type ShippedTable = { table: string; ddl: string[] };
 
 /**

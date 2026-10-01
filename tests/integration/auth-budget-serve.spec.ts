@@ -21,9 +21,7 @@ import { SESSION_COOKIE, provisionedNamedSite } from '../helpers/serve-do';
  * safe request falls through as anonymous, a spent unsafe one is refused by name with a retry time.
  * The source-index assertions stay where they are; they cover ordering, which running one request
  * cannot.
- */
-
-/**
+ *
  * The spend record the front worker reads before deciding, written where it reads it.
  *
  * Priming the EDGE record rather than the object's `authSpend` is deliberate: the first

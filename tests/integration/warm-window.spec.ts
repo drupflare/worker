@@ -38,9 +38,7 @@ import {
  *   - **The gate label is asserted.** Each fill runs inside `gate.run(..., 'window')`, so the
  *     gate's own order log shows the window entries -- which is how "the window does not race the
  *     alarm chain for the interpreter" is stated without timing.
- */
-
-/**
+ *
  * Opens a window and narrows the result.
  *
  * `runFillWindow()` returns a discriminated union -- a window that never opened has no outcomes

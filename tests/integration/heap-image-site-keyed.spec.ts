@@ -30,7 +30,7 @@ async function provisioned(): Promise<DurableObjectStub> {
 	// assertion below fails on a missing image rather than on a stale one
 	await inObject(stub, (site) => {
 		(site as any).env = { ...(site as any).env, HEAP_IMAGE: '1' };
-		(site as any).php = null;
+		(site as any).php = undefined;
 	});
 	return stub;
 }
@@ -81,8 +81,8 @@ describe('a heap image is keyed on the site as well as the pack', () => {
 
 			// a boot now refuses rather than restoring a kernel that predates the install
 			const restored = await inObject(stub, async (site) => {
-				(site as any).php = null;
-				(site as any).heapRestoreCursor = null;
+				(site as any).php = undefined;
+				(site as any).heapRestoreCursor = undefined;
 				const { binary } = await (site as any).ensurePhp();
 				return (site as any).tryRestoreHeap(binary);
 			});
@@ -107,7 +107,7 @@ describe('a heap image is keyed on the site as well as the pack', () => {
 
 			await addModule(stub, 'search');
 			await inObject(stub, (site) => {
-				(site as any).php = null;
+				(site as any).php = undefined;
 			});
 			await arm(stub);
 			await driveAlarms(stub, (site) => (site as any).metaGet('heap_image_gen') !== first, 8);

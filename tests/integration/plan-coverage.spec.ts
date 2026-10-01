@@ -257,7 +257,7 @@ describe.skipIf(!MEASURING)('how much of the authenticated surface a compiled pl
 				const rows: Payload[] = [];
 				let done = 0;
 				for (const { spec, concrete } of targets) {
-					if (done > 0 && done % DROP_EVERY === 0) site.php = null;
+					if (done > 0 && done % DROP_EVERY === 0) site.php = undefined;
 					done++;
 					try {
 						const compile = async () =>
@@ -342,7 +342,7 @@ describe.skipIf(!MEASURING)('how much of the authenticated surface a compiled pl
 				}
 
 				// #region the three tiers, one clock
-				site.php = null;
+				site.php = undefined;
 				// an anonymous plan for the same path the HIT answers, so the two are comparable
 				const fill = await site.fillOne('/', ['page', 'dynamic_page_cache']);
 				const anonPlan = () =>

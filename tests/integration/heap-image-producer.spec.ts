@@ -97,7 +97,7 @@ async function provisioned(): Promise<DurableObjectStub> {
 		throw new Error(`setup left ${dropped.left} snapshots after dropping ${dropped.n}`);
 	}
 	await inObject(stub, (site) => {
-		(site as any).php = null;
+		(site as any).php = undefined;
 	});
 	return stub;
 }
@@ -134,8 +134,8 @@ describe('the alarm produces this site one heap image', () => {
 
 			// the point of all of it -- a cold boot now restores instead of refusing
 			const restored = await inObject(stub, async (site) => {
-				(site as any).php = null;
-				(site as any).heapRestoreCursor = null;
+				(site as any).php = undefined;
+				(site as any).heapRestoreCursor = undefined;
 				await (site as any).fillOne('/');
 				return (site as any).heapRestore;
 			});
@@ -152,13 +152,13 @@ describe('the alarm produces this site one heap image', () => {
 			// dropped the interpreter to get a clean one moved its differing share 0.7 -> 0.534
 			const stub = await provisioned();
 			await inObject(stub, (site) => (site as any).fillOne('/'));
-			const before = await inObject(stub, (site) => (site as any).php !== null);
+			const before = await inObject(stub, (site) => (site as any).php !== undefined);
 			expect(before).toBe(true);
 
 			await arm(stub);
 			await runDurableObjectAlarm(stub);
 
-			expect(await inObject(stub, (site) => (site as any).php !== null)).toBe(true);
+			expect(await inObject(stub, (site) => (site as any).php !== undefined)).toBe(true);
 			expect((await heapStatus(stub)).latest).toBe(null);
 		},
 		TIMEOUT
@@ -174,7 +174,7 @@ describe('the alarm produces this site one heap image', () => {
 			expect(first.latest).not.toBe(null);
 
 			await inObject(stub, (site) => {
-				(site as any).php = null;
+				(site as any).php = undefined;
 			});
 			await arm(stub);
 			await driveAlarms(stub, () => false, 4);
@@ -198,7 +198,7 @@ describe('the alarm produces this site one heap image', () => {
 			const mine = (await heapStatus(stub)).latest.id;
 
 			await inObject(stub, (site) => {
-				(site as any).php = null;
+				(site as any).php = undefined;
 			});
 			await arm(stub);
 			await driveAlarms(stub, () => false, 4);
@@ -228,7 +228,7 @@ describe('the alarm produces this site one heap image', () => {
 			});
 			await inObject(stub, (site) => call(site, '/__migrate?all=1&prefill=0'));
 			await inObject(stub, (site) => {
-				(site as any).php = null;
+				(site as any).php = undefined;
 			});
 			const out = (await inObject(stub, (site) => (site as any).snapshotStep())) as Record<
 				string,
@@ -253,7 +253,7 @@ describe('the alarm produces this site one heap image', () => {
 				(site as any).env = { ...(site as any).env, HEAP_SNAPSHOT: '0' };
 				return (site as any).snapshotStep();
 			});
-			expect(out).toBe(null);
+			expect(out).toBeUndefined();
 		},
 		TIMEOUT
 	);
@@ -266,7 +266,7 @@ describe('the alarm produces this site one heap image', () => {
 				(site as any).env = { ...(site as any).env, HEAP_IMAGE: '0' };
 				return (site as any).snapshotStep();
 			});
-			expect(out).toBe(null);
+			expect(out).toBeUndefined();
 		},
 		TIMEOUT
 	);
@@ -288,11 +288,11 @@ describe('the alarm produces this site one heap image', () => {
 			await inObject(stub, (site) => call(site, '/__migrate?all=1&prefill=0'));
 			await inObject(stub, (site) => (site as any).fillOne('/'));
 			await inObject(stub, (site) => {
-				(site as any).php = null;
+				(site as any).php = undefined;
 			});
 			// no `HEAP_IMAGE` assignment anywhere: this is the shipping configuration
 			const out = await inObject(stub, (site) => (site as any).snapshotStep());
-			expect(out).toBe(null);
+			expect(out).toBeUndefined();
 			expect((await heapStatus(stub)).latest).toBe(null);
 		},
 		TIMEOUT
@@ -326,7 +326,7 @@ describe('the alarm produces this site one heap image', () => {
 					site.ctx.storage as unknown as { deleteAlarm(): Promise<void> }
 				).deleteAlarm();
 				return {
-					php: (site as any).php !== null,
+					php: (site as any).php !== undefined,
 					outcome: (site as any).lastAlarmOutcome,
 					imaged: (site as any).metaGet('heap_image_gen'),
 					queued: (site as any).queueDepth(),

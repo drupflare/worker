@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CASES, report, type Arm } from '../../scripts/measure/abi-speed.js';
+import { CASES, report, type Arm } from '../../scripts/measure/abi-speed';
 
 /** the reporting arithmetic; taking the baseline by NAME makes the self-control unable to fail */
 

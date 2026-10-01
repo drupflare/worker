@@ -110,7 +110,7 @@ describe('a shell seeds itself, so assembly survives an invalidation', () => {
 				const anon = await site.seedShellFrom('/', '', ORIGIN);
 				return { anon, rows: shellCount(site) };
 			});
-			expect(seen.anon).toBeNull();
+			expect(seen.anon).toBeUndefined();
 			expect(seen.rows).toBe(0);
 		},
 		REQUEST_TIMEOUT

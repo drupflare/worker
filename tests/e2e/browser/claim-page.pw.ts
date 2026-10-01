@@ -1,5 +1,5 @@
 import { setupHtml } from '../../../src/ops/setup-page.ts';
-import { expect, test } from './utils/fixtures.js';
+import { expect, test } from './utils/fixtures';
 
 /**
  * The claim page's script, run in a real engine against a stubbed `/firstrun`.

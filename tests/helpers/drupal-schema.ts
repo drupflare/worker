@@ -9,9 +9,7 @@ import { env } from 'cloudflare:workers';
  *
  * Not a `.spec.ts`, so vitest does not collect it as a suite, and `tests/helpers/**` is excluded
  * from coverage.
- */
-
-/**
+ *
  * The subset of Drupal's schema the GC passes touch, with the indexes that matter.
  *
  * Indexes are included: rows written is the free plan's binding meter and DO

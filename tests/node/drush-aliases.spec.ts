@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DRUSH_ALIASES } from '../../src/ui/admin.js';
+import { DRUSH_ALIASES } from '../../src/ui/admin';
 
 /**
  * The alias map exists twice and this is what keeps the copies equal.

@@ -77,7 +77,7 @@ function laneFor(path: string, lanes: number) {
 	return chooseTarget({
 		site: SITE,
 		method: 'GET',
-		affinity: affinityKey({ session: null, address: null, pathname: path }),
+		affinity: affinityKey({ pathname: path }),
 		replicas: lanes,
 		pathname: '/serve'
 	});
@@ -96,7 +96,7 @@ describe('a lane that cannot serve is invisible to the visitor', () => {
 			const decision = chooseTarget({
 				site: SITE,
 				method: 'GET',
-				affinity: affinityKey({ session: null, address: null, pathname: '/serve' }),
+				affinity: affinityKey({ pathname: '/serve' }),
 				replicas: 3,
 				pathname: '/serve'
 			});
@@ -149,7 +149,7 @@ describe('a lane that cannot serve is invisible to the visitor', () => {
 			const decision = chooseTarget({
 				site: SITE,
 				method: 'POST',
-				affinity: affinityKey({ session: null, address: null, pathname: '/serve' }),
+				affinity: affinityKey({ pathname: '/serve' }),
 				replicas: 3,
 				pathname: '/serve',
 				writeForward: false
@@ -288,7 +288,7 @@ describe('a refusal the interpreter swallowed', () => {
 		// patched on the instance so the wrapper under test is the real one; a request that records
 		// a refusal and then answers an error is the shape Drupal produces and no fixture can
 		const inner = site as unknown as {
-			route: (r: Request) => Promise<Response>;
+			handle: (r: Request) => Promise<Response>;
 			replicaRefusals: unknown[];
 			replicaRefusalsTotal: number;
 			replicaGuard: { didMutate: () => boolean } | null;
@@ -296,7 +296,7 @@ describe('a refusal the interpreter swallowed', () => {
 		// a lane that rendered has a guard installed; `replicaHandoff()` reads `didMutate()` off it
 		// and fails CLOSED when there is none, which is right and is not the case under test
 		inner.replicaGuard = { didMutate: () => false };
-		inner.route = async () => {
+		inner.handle = async () => {
 			// RECORDED THE WAY THE REAL BRIDGE RECORDS IT: push, bump the monotonic total, and cap
 			// the ring at 20. The first version of this fixture pushed only, so it could not have
 			// produced the saturation defect below however many times it ran
@@ -381,8 +381,8 @@ describe('a refusal the interpreter swallowed', () => {
 		async () => {
 			const lane = namedSite(replicaName(SITE, 2));
 			const out = await inObject(lane, async (site: ServeDo) => {
-				const inner = site as unknown as { route: (r: Request) => Promise<Response> };
-				inner.route = async () => new Response('a real fault', { status: 500 });
+				const inner = site as unknown as { handle: (r: Request) => Promise<Response> };
+				inner.handle = async () => new Response('a real fault', { status: 500 });
 				const res = await site.fetch(new Request('https://do.local/__serve?path=/genuine'));
 				return res.status;
 			});
@@ -513,8 +513,6 @@ describe('a lane count survives the isolate that learned it', () => {
 				site: SITE,
 				method: 'GET',
 				affinity: affinityKey({
-					session: null,
-					address: null,
 					pathname: pathOnALane(3)
 				}),
 				replicas: Math.max(0, believedLanes(SITE, Date.now())),
@@ -553,7 +551,7 @@ describe('a lane count survives the isolate that learned it', () => {
 			expect(believedLanes(SITE, Date.now())).toBe(4);
 			// the second cold isolate in the colo reads the cache, not KV
 			resetLaneBeliefs();
-			await primeLanes(caches.default, origin, SITE, null);
+			await primeLanes(caches.default, origin, SITE, undefined);
 			expect(believedLanes(SITE, Date.now())).toBe(4);
 			await env.CONFIG_KV.delete(lanesKvKey(SITE));
 		},
@@ -591,8 +589,8 @@ describe('a lane count survives the isolate that learned it', () => {
 	it('round-trips the pointer, and reads a bare count from before the epoch as epoch 0', () => {
 		expect(parseLanesPointer(formatLanesPointer(7, 5))).toEqual({ lanes: 7, epoch: 5 });
 		expect(parseLanesPointer('3')).toEqual({ lanes: 3, epoch: 0 });
-		expect(parseLanesPointer('three')).toBeNull();
-		expect(parseLanesPointer(null)).toBeNull();
+		expect(parseLanesPointer('three')).toBeUndefined();
+		expect(parseLanesPointer(null)).toBeUndefined();
 	});
 
 	it(
@@ -603,7 +601,7 @@ describe('a lane count survives the isolate that learned it', () => {
 				markProvisioned(site);
 				const s = site as unknown as {
 					noteLaneServing(lane: number): void;
-					lanesPublished: Promise<unknown> | null;
+					lanesPublished?: Promise<unknown>;
 				};
 				s.noteLaneServing(2);
 				await s.lanesPublished;

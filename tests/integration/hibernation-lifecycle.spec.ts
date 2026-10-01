@@ -8,7 +8,7 @@ import {
 	type ResidencyState
 } from '../../src/ops/hibernation';
 import tcpSource from '../../src/ops/tcp.ts?raw';
-import siteDoSource from '../../src/site-do.ts?raw';
+import { siteDoFiles } from '../helpers/source-raw';
 
 /**
  * Whether the object leaves anything open that would keep it billed while idle.
@@ -20,9 +20,9 @@ import siteDoSource from '../../src/site-do.ts?raw';
  *
  * COST correctness, not runtime correctness. Every assertion here is about a meter rather than about
  * a response, which is why they sit apart from the serving specs.
+ *
+ * A `setTimeout` inside a PHP fragment is a string, not a timer this runtime ever arms.
  */
-
-/** a `setTimeout` inside a PHP fragment is a string, not a timer this runtime ever arms */
 function timersOutsidePhp(source: string): string[] {
 	const found: string[] = [];
 	const lines = source.split('\n');
@@ -47,7 +47,10 @@ describe('what the object leaves open when it goes idle', () => {
 	 * duration it did not need, which shows up on an invoice weeks later rather than in a test.
 	 */
 	it('arms no timer anywhere in the Durable Object', () => {
-		expect(timersOutsidePhp(siteDoSource)).toEqual([]);
+		const found = siteDoFiles().flatMap(({ file, text }) =>
+			timersOutsidePhp(text).map((hit) => `${file}:${hit}`)
+		);
+		expect(found).toEqual([]);
 	});
 
 	/**

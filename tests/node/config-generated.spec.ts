@@ -1,14 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readModulesConfig, readQuotasConfig, renderModules } from '../../scripts/gen-config.js';
-import { censusPackages } from '../../scripts/install-census.js';
-import { PREFILL_PATHS } from '../../scripts/lift-prefill.js';
-import { FREE_QUOTAS } from '../../scripts/measure/free-envelope.js';
-import { TRAFFIC_MIX } from '../../scripts/measure/verdict-math.js';
-import { CRON_HOOKS, KNOWN_CRON_HOOKS } from '../../src/ops/cron.js';
-import { SHIPPING_PACK_CONTRIB, moduleTable } from '../../src/ops/module-table.js';
-import { MODULE_TIER_NOTES } from '../../src/ops/module-tiers.js';
+import { readModulesConfig, readQuotasConfig, renderModules } from '../../scripts/gen-config';
+import { censusPackages } from '../../scripts/install-census';
+import { PREFILL_PATHS } from '../../scripts/lift-prefill';
+import { FREE_QUOTAS } from '../../scripts/measure/free-envelope';
+import { TRAFFIC_MIX } from '../../scripts/measure/verdict-math';
+import { CRON_HOOKS, KNOWN_CRON_HOOKS } from '../../src/ops/cron';
+import { SHIPPING_PACK_CONTRIB, moduleTable } from '../../src/ops/module-table';
+import { MODULE_TIER_NOTES } from '../../src/ops/module-tiers';
 
 /**
  * `config/modules.yml` is the declaration; `src/ops/generated/modules.ts` is what the edge reads.

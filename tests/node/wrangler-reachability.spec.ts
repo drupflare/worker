@@ -19,9 +19,9 @@ import { describe, expect, it } from 'vitest';
  * component correct". These assertions ask it automatically.
  *
  * Node lane, because workerd cannot read a file.
+ *
+ * JSONC: strip line comments before parsing, which is why this cannot just be `import`.
  */
-
-/** JSONC: strip line comments before parsing, which is why this cannot just be `import` */
 function readJsonc(path: string): Record<string, unknown> {
 	const raw = readFileSync(path, 'utf8');
 	const stripped = raw

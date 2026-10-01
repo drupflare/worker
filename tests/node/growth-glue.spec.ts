@@ -17,7 +17,7 @@ import {
 	SUBARRAY_LIMIT,
 	TUNED_GLUE,
 	variantPath
-} from '../../scripts/measure/growth-glue.js';
+} from '../../scripts/measure/growth-glue';
 
 /**
  * The heap-growth rewrite, and the guard that stops it becoming a silent no-op.

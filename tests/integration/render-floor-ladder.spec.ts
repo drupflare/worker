@@ -237,7 +237,7 @@ describe.skipIf(!MEASURING)('where an admin render spends its time and memory', 
 					await inObject(freshSite(), async (site: ServeDo) => {
 						await claimSite(site, 'cfw-Ladder-Pass-5521');
 						const jar = await loginJar(site, 'admin', 'cfw-Ladder-Pass-5521', origin);
-						(site as unknown as { php: unknown }).php = null;
+						(site as unknown as { php: unknown }).php = undefined;
 						takeSpareMemory();
 						await site.runJson(renderFragments(path, {}, { cookie: jar, origin }));
 						const booted = await heapBytes(site);

@@ -92,6 +92,8 @@ type Scan = {
 		violations: { file: string; imports: string[] }[];
 		unclassified: string[];
 		stale: string[];
+		staleDirectories: string[];
+		redundant: string[];
 		unclassifiedRoutes: string[];
 		staleRoutes: string[];
 	};
@@ -200,6 +202,8 @@ describe('the CMS boundary holds', () => {
 		expect(b.unclassified, 'add these to scripts/qa/cms-boundary.ts').toEqual([]);
 		expect(b.unclassifiedRoutes, 'add these to ROUTE_SIDES').toEqual([]);
 		expect(b.stale).toEqual([]);
+		expect(b.staleDirectories).toEqual([]);
+		expect(b.redundant, 'the directory already gives these their side').toEqual([]);
 		expect(b.staleRoutes).toEqual([]);
 	});
 

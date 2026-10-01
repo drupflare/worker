@@ -10,9 +10,9 @@ import type { ServeDo } from './serve-do';
  * make every form spec agree with each other and with nothing else.
  *
  * Not a `.spec.ts`, so vitest does not collect it, and `tests/**` is excluded from coverage.
+ *
+ * What `renderPage()`'s PHP prints, as far as a form spec reads it.
  */
-
-/** what `renderPage()`'s PHP prints, as far as a form spec reads it */
 export type FormResult = Record<string, unknown>;
 
 /** one render through the real serve path */

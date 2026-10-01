@@ -1,4 +1,4 @@
-import { BASE_URL, expect, ownerToken, signInToSurface, SITE, test } from './utils/fixtures.js';
+import { BASE_URL, expect, ownerToken, signInToSurface, SITE, test } from './utils/fixtures';
 
 /**
  * Single sign-on, driven the way a person does it: through a real browser, against a real provider.

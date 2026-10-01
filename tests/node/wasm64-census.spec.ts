@@ -17,9 +17,9 @@ import {
  * its own conclusion, because a bound that could only ever say "fits" would be decoration. The
  * section walker is exercised against a module built here rather than against the shipping binary,
  * so a failure names the parser instead of the artifact.
+ *
+ * LEB128, unsigned, which is how every length and index in a wasm module is encoded.
  */
-
-/** LEB128, unsigned, which is how every length and index in a wasm module is encoded */
 function leb(n: number): number[] {
 	const out: number[] = [];
 	do {

@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BATCHABLE, CROSSING_NAMES } from '../../src/ops/crossings';
 import { REPLICA_SAFE_CAPABILITIES } from '../../src/ops/replica';
+import { siteDoText } from '../helpers/source';
 
 /**
  * Serving a public file off the Worker, which is the only structural serving lever.
@@ -76,8 +77,9 @@ describe('and the cost the binding does NOT bring with it', () => {
 		// MEASURED: the mirror queue entry is one row per fill, 9 to 10, against the regeneration
 		// meter this project calls the tighter of the two by 12x. With no public hostname the
 		// visitor still reaches the Worker, so that row buys nothing at all
-		const site = readFileSync(resolve(ROOT, 'src', 'site-do.ts'), 'utf8');
-		expect(site).toContain("this.mirrorBucket() && this.publicFilesOrigin() !== ''");
+		expect(siteDoText()).toMatch(
+			/(?:this|site)\.mirrorBucket\(\) && (?:this|site)\.publicFilesOrigin\(\) !== ''/
+		);
 	});
 
 	it('stores the queue WITHOUT ROWID, so it is one row and not two', () => {

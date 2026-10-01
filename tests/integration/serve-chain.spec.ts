@@ -61,9 +61,9 @@ import {
  * Once it started answering `migrating` instead, 16 assertions in this file were reading the
  * first-run placeholder while claiming to measure a MISS. First-run behaviour is
  * `serve-provision.spec.ts`.
+ *
+ * The wrangler.jsonc default: what a MISS may spend rendering for the visitor.
  */
-
-/** the wrangler.jsonc default: what a MISS may spend rendering for the visitor */
 const BUDGET_MS = 10000;
 
 /** what `estimateRenderMs()` returns with no interpreter, and with one but no measured render */
@@ -508,7 +508,7 @@ describe('a MISS on a warm object renders inline for the visitor', () => {
 			// fillOne directly, not serveDirect: with no interpreter the SERVE path refuses to
 			// render inline at all (see the test above), so the boot-inclusive shape only happens
 			// on the alarm path, which is exactly where it was measured
-			site.php = null;
+			site.php = undefined;
 			const filled = await site.fillOne('/');
 			return {
 				filled,
@@ -735,7 +735,7 @@ describe('a path that can never render is retried and then dropped', () => {
 	it('strikeFillHead on an empty queue is a no-op, not a throw', async () => {
 		const stub = await provisionedSite();
 		const struck = await inObject(stub, (site) => site.strikeFillHead('nothing queued'));
-		expect(struck).toBeNull();
+		expect(struck).toBeUndefined();
 	});
 });
 
@@ -970,14 +970,6 @@ describe('the render origin is pinned, not believed', () => {
 	});
 
 	/**
-	 * A LOCAL ORIGIN IS USED BUT NEVER PINNED.
-	 *
-	 * Used, because `wrangler dev` on `localhost:8787` should render links to `localhost:8787` and
-	 * not to port 80. Not pinned, because every spec in this file reaches the object over
-	 * `do.local` -- so a pin would mean the first suite run against a persisted object fixed a real
-	 * site's canonical URL to a developer's laptop, permanently and invisibly.
-	 */
-	/**
 	 * WHO THE RENDER WAS FOR, which is a different question from what the request carried.
 	 *
 	 * Every other clause in the `cacheable` predicate reasons about the REQUEST. `uid` is Drupal's
@@ -1106,6 +1098,14 @@ describe('the render origin is pinned, not believed', () => {
 		expect(out[0]?.clientIp).toBe('');
 	});
 
+	/**
+	 * A LOCAL ORIGIN IS USED BUT NEVER PINNED.
+	 *
+	 * Used, because `wrangler dev` on `localhost:8787` should render links to `localhost:8787` and
+	 * not to port 80. Not pinned, because every spec in this file reaches the object over
+	 * `do.local` -- so a pin would mean the first suite run against a persisted object fixed a real
+	 * site's canonical URL to a developer's laptop, permanently and invisibly.
+	 */
 	it('uses a local origin without pinning it', async () => {
 		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {

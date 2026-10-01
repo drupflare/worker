@@ -23,6 +23,9 @@ import {
 const SHIPPING_CODE = [
 	'src/site.ts',
 	'src/site-do.ts',
+	'src/do/**',
+	'src/site/**',
+	'src/util/**',
 	'src/runtime/**',
 	'src/db/**',
 	'src/drupal/**',

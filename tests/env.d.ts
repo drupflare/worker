@@ -39,3 +39,11 @@ declare module '*?raw' {
 	const src: string;
 	export default src;
 }
+
+/** the one `import.meta.glob` shape `tests/helpers/source-raw.ts` uses, since `vite/client` is not in `types` */
+interface ImportMeta {
+	glob(
+		pattern: string | string[],
+		options: { query: '?raw'; import: 'default'; eager: true }
+	): Record<string, string>;
+}

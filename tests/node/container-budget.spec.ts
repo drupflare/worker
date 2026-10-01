@@ -7,7 +7,7 @@ import {
 	budgetedRuntimeMs,
 	resolveInstance,
 	spend
-} from '../../scripts/measure/container-budget.js';
+} from '../../scripts/measure/container-budget';
 
 const HOUR = 3_600_000;
 

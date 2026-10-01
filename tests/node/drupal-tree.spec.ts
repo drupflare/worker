@@ -165,6 +165,8 @@ describe('phpstan resolves against that tree and not a separate copy of Drupal',
 	});
 
 	it('takes pw_bench_* from the real definitions rather than a stub that could drift', () => {
-		expect(NEON).toContain('assets/probe/pw-probe.php');
+		expect(readFileSync(join(ROOT, 'phpstan-scripts.neon'), 'utf8')).toContain(
+			'assets/probe/pw-probe.php'
+		);
 	});
 });

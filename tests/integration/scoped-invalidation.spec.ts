@@ -22,7 +22,7 @@ type Site = {
 	ensureServeTables: () => void;
 	nowMs: () => number;
 	indexPageTags: (path: string, tags: unknown) => void;
-	pathsForTags: (tags: readonly string[]) => string[] | null;
+	pathsForTags: (tags: readonly string[]) => string[] | undefined;
 	purgeForTags: (
 		tags: readonly string[],
 		reason?: string,
@@ -30,7 +30,7 @@ type Site = {
 	) => Record<string, unknown>;
 	notePendingTags: (tags: readonly string[]) => void;
 	pendingTags: () => string[];
-	drainPendingTags: () => { tags: number; purged: number } | null;
+	drainPendingTags: () => { tags: number; purged: number } | undefined;
 };
 
 /** stores a page with a declared tag set, the way a fill does */
@@ -103,7 +103,7 @@ describe('a scoped purge removes the dependent pages and nothing else', () => {
 				const result = site.purgeForTags(['node:1'], 'cachetags', { bump: false });
 				return { scopedTo, result, remaining: paths(site) };
 			});
-			expect(out.scopedTo).toBeNull();
+			expect(out.scopedTo).toBeUndefined();
 			expect((out.result as Record<string, unknown>).scoped).toBe(false);
 			expect(out.remaining).toEqual([]);
 		},
@@ -134,7 +134,7 @@ describe('a scoped purge removes the dependent pages and nothing else', () => {
 				store(site, '/node/1', ['node:1']);
 				return site.pathsForTags([]);
 			});
-			expect(answer).toBeNull();
+			expect(answer).toBeUndefined();
 		},
 		TIMEOUT
 	);
@@ -157,7 +157,7 @@ describe('the pending set is durable, so a dead invocation still purges', () => 
 				return { owed, drained, remaining: paths(site), after: site.pendingTags() };
 			});
 			expect(out.owed).toEqual(['node:1']);
-			expect(out.drained).not.toBeNull();
+			expect(out.drained).toBeDefined();
 			expect(out.remaining).toEqual(['/about']);
 			// and it is forgotten, so the next boot does not purge again
 			expect(out.after).toEqual([]);
@@ -174,7 +174,7 @@ describe('the pending set is durable, so a dead invocation still purges', () => 
 				site.ensureServeTables();
 				return site.drainPendingTags();
 			});
-			expect(drained).toBeNull();
+			expect(drained).toBeUndefined();
 		},
 		TIMEOUT
 	);

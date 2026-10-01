@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { bodyOf, siteDoText } from '../helpers/source';
 
 /**
  * The things that held bytes for the life of an incarnation with nothing to stop them.
@@ -17,7 +18,7 @@ import { describe, expect, it } from 'vitest';
  * rather than the code.
  */
 
-const SOURCE = readFileSync(resolve(import.meta.dirname, '../../src/site-do.ts'), 'utf8');
+const SOURCE = siteDoText();
 
 describe('the mail attempt log', () => {
 	// `src/site-do.ts` loads a wasm module at module scope, so the node lane cannot import from it
@@ -39,7 +40,7 @@ describe('the mail attempt log', () => {
 
 	it('is called at BOTH push sites, the refusal and the success', () => {
 		// the refusal path pushes from inside a closure and was the easier one to miss
-		const calls = SOURCE.match(/trimMails\(this\.mails/g) ?? [];
+		const calls = SOURCE.match(/trimMails\((?:this|site)\.mails/g) ?? [];
 		expect(calls.length).toBe(2);
 	});
 });
@@ -56,12 +57,12 @@ describe('the replica refusal window', () => {
 		);
 		expect(SOURCE).toContain('self.replicaRefusalsTotal += 1');
 		// and nothing reports the window as if it were the total
-		expect(SOURCE).not.toContain('refusals: this.replicaRefusals.length');
+		expect(SOURCE).not.toMatch(/refusals: (?:this|site)\.replicaRefusals\.length/);
 	});
 });
 
 describe('the outbound drain', () => {
-	const drain = /async drainHttpQueue\([\s\S]*?\n\t\}/.exec(SOURCE)?.[0] ?? '';
+	const drain = bodyOf(SOURCE, 'drainHttpQueue');
 
 	it('was found in the source at all, or the rest asserts nothing', () => {
 		expect(drain).toBeTruthy();
@@ -74,7 +75,7 @@ describe('the outbound drain', () => {
 		// while its own comment said the batch "is chunked rather than opened all at once"
 		const prepare = drain.slice(0, drain.indexOf('i += 6'));
 		expect(
-			prepare.includes('this.performOutbound('),
+			/(?:this|site)\.performOutbound\(/.test(prepare),
 			'a fetch is started in the preparation loop again, so the whole queue opens at once'
 		).toBe(false);
 	});
@@ -90,15 +91,13 @@ describe('the outbound drain', () => {
 
 describe('the memory tripwire', () => {
 	it('samples the whole isolate rather than a sub-term that saturates', () => {
-		const observe =
-			/observe\(outcomes: \(Payload \| null\)\[\]\): Observation \{[\s\S]*?rowsRing/.exec(
-				SOURCE
-			)?.[0];
-		expect(observe, 'observe() not found').toBeTruthy();
+		const body = bodyOf(SOURCE, 'observe');
+		const observe = body.slice(0, body.indexOf('rowsRing') + 'rowsRing'.length);
+		expect(body.includes('rowsRing'), 'observe() not found').toBe(true);
 		// it read `lazy.resident`, which `LAZY_FS_BUDGET_BYTES` caps and which saturates -- measured
 		// 4,193,165 of 4,194,304 on a deployed object. Four rising readings of THAT cannot happen,
 		// which is the same objection the comment there raised against linear memory
-		expect(observe).toContain('this.isolateNow()');
+		expect(observe).toMatch(/\b(?:this|site)\.isolateNow\(\)/);
 		expect(observe).not.toContain('lazy.resident > 0');
 	});
 

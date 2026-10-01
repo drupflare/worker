@@ -140,7 +140,7 @@ describe('a primary records what a replica would have to replay', () => {
 				return { sealed: await site.sealGeneration(), log: await log(site) };
 			});
 
-			expect(out.sealed).toBeNull();
+			expect(out.sealed).toBeUndefined();
 			expect(out.log.records).toEqual([]);
 		},
 		TIMEOUT
@@ -164,7 +164,7 @@ describe('a primary records what a replica would have to replay', () => {
 
 			// the commit sequence moved and nothing was recorded: a replica logging its own writes
 			// is a replication loop
-			expect(out.sealed).toBeNull();
+			expect(out.sealed).toBeUndefined();
 			expect(out.log.records).toEqual([]);
 		},
 		TIMEOUT

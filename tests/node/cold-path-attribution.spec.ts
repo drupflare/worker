@@ -33,9 +33,9 @@ import { BOOT_PHASES } from '../../src/drupal/site-php';
  * experience ENTIRELY by serving the previous generation. Making 45% of an invisible cost smaller
  * is worth less than making a visible one disappear, which is the reasoning that demoted B2 in the
  * first place -- now with the fraction attached.
+ *
+ * Cumulative object-only cpuTime, ms, median of n=3 on a deployed worker.
  */
-
-/** cumulative object-only cpuTime, ms, median of n=3 on a deployed worker */
 const CUMULATIVE: Record<string, number> = {
 	autoload: 451,
 	'kernel-new': 466,

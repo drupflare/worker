@@ -44,9 +44,9 @@ function corruptedChunkBytes(length: number): Uint8Array {
  *
  * It is NOT a substitute for the platform limits, which only a deployed object can confirm. Those
  * are asserted as constants, not re-measured here.
+ *
+ * The `ctx.storage.sql` shape, over node:sqlite.
  */
-
-/** the `ctx.storage.sql` shape, over node:sqlite */
 function makeSql(db: DatabaseSync): HeapSql {
 	return {
 		exec(query, ...bindings) {
@@ -213,9 +213,9 @@ describe('a heap survives a round trip through SQLite', () => {
 		expect(() => readHeapSnapshot(sql)).toThrow(/digest mismatch/);
 	});
 
-	it('returns null when nothing has been stored', () => {
-		expect(readHeapSnapshot(sql)).toBeNull();
-		expect(latestSnapshotMeta(sql)).toBeNull();
+	it('returns undefined when nothing has been stored', () => {
+		expect(readHeapSnapshot(sql)).toBeUndefined();
+		expect(latestSnapshotMeta(sql)).toBeUndefined();
 	});
 
 	// #region the stored chunks are deflated

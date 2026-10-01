@@ -24,9 +24,9 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * is the evidence that holds.
  *
  * Needs the interpreter, so it is in `ARTIFACT_SPECS`.
+ *
+ * Composer spells an extension `ext-<lowercased module name>`.
  */
-
-/** composer spells an extension `ext-<lowercased module name>` */
 const extName = (module: string) => `ext-${module.toLowerCase()}`;
 
 /** loaded modules no composer package requires by these names */

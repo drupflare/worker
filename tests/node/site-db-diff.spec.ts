@@ -11,9 +11,9 @@ import { compareSiteDbs } from '../../scripts/diff-site-db';
  * assertions here are mostly negative: the gate must go red on a database that diverged. A gate that
  * only ever reports green is indistinguishable from no gate, and that is the state `site.sqlite` was
  * already in.
+ *
+ * The minimum shape the comparison reads: tables, config, core.extension, key_value.
  */
-
-/** the minimum shape the comparison reads: tables, config, core.extension, key_value */
 function fixture(opts: {
 	tables?: string[];
 	config?: string[];

@@ -662,7 +662,7 @@ describe('a database update run over an enabled module', () => {
 			);
 			expect(((await enabled.json()) as Record<string, unknown>)['ok']).toBe(true);
 			// a fresh interpreter, which is what an alarm-driven unit meets
-			site.php = null;
+			site.php = undefined;
 			const unit = (await site.runJson(
 				updbUnit({ kind: 'flush', step: 'cache_flush' })
 			)) as Record<string, unknown>;
@@ -747,7 +747,7 @@ describe('installed module files are read on first open, not at boot', () => {
 				installedAt
 			);
 			const first = await site.runJson(read);
-			site.php = null;
+			site.php = undefined;
 			const reboot = await site.runJson(read);
 			return { first, reboot };
 		});

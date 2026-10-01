@@ -38,9 +38,9 @@ import {
  *
  * The restore is driven by constructing the migrator against `site.sql`, because no route drives one
  * yet. What is under test is the gate, not the route.
+ *
+ * The object's own storage, narrowed; `ServeDo` declares `sql` but not the transaction seam.
  */
-
-/** the object's own storage, narrowed; `ServeDo` declares `sql` but not the transaction seam */
 function seams(site: ServeDo): { sql: SqlLike; storage: StorageLike } {
 	return {
 		sql: site.sql as unknown as SqlLike,

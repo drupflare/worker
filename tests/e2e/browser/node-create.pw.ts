@@ -1,4 +1,4 @@
-import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures.js';
+import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures';
 
 test('an admin creates a node and the saved node renders', async ({ page }) => {
 	const title = `Browser Lane Node ${Date.now().toString(36)}`;

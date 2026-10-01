@@ -189,7 +189,7 @@ describe('the hook list the object schedules from', () => {
 					const hooks = (site as any).lastCronHooks;
 					if (Array.isArray(hooks)) seen.push(hooks);
 				}
-				return { seen, cron: (site as any).lastCron };
+				return { seen, cron: (site as any).lastCron?.value };
 			});
 
 			expect(out.seen.length, 'the alarm never asked for a hook list').toBeGreaterThan(1);
@@ -220,7 +220,7 @@ describe('the hook list the object schedules from', () => {
 					await site.storage.put('cronLastRunMs', Date.now() - 60 * 60 * 1000);
 					await site.storage.setAlarm(Date.now() + 1);
 					await site.alarm();
-					const last = (site as any).lastCron;
+					const last = (site as any).lastCron?.value;
 					if (Array.isArray(last?.ran)) seen.push(...last.ran);
 				}
 				return seen;

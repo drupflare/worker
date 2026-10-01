@@ -11,9 +11,9 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
 /**
  * WHICH statements a warm render sends, not how many. Three arms, two paths; the table each run
  * reproduces is in the report, and each case asserts a shape rather than a value that moves.
+ *
+ * Both halves: the census sees only Drupal's statements, the host writes through `this.sql`.
  */
-
-/** both halves: the census sees only Drupal's statements, the host writes through `this.sql` */
 type FillWrites = { statements: number; rowsWritten: number; byTable: Record<string, number> };
 
 type Reading = {

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { packVersionsHash } from '../../scripts/pack-hash.js';
+import { packVersionsHash } from '../../scripts/pack-hash';
 import { artifactGate } from './helpers/artifact-gate';
 
 /**

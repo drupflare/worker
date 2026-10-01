@@ -15,9 +15,9 @@ import {
  * `degrade.spec.ts` proves the arithmetic. This proves the object CONSULTS it, which is the half
  * that was missing for the whole health layer and for seven of eleven KV levers. A ladder nothing
  * reads is a chart, not a failback.
+ *
+ * Puts today's row counter at a chosen fraction of the daily allowance.
  */
-
-/** puts today's row counter at a chosen fraction of the daily allowance */
 function spendRows(site: ServeDo, fraction: number): void {
 	seedDailyRows(site, Math.ceil(dailyLimit('rows-written') * fraction));
 }
@@ -297,7 +297,7 @@ describe('invalidating the version-pinned caches', () => {
 			return { first: first?.deleted ?? -1, second };
 		});
 		expect(out.first).toBe(2);
-		expect(out.second, 'a warm object must not re-read meta on every request').toBeNull();
+		expect(out.second, 'a warm object must not re-read meta on every request').toBeUndefined();
 	});
 });
 

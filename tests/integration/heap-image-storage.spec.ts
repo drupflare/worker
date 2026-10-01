@@ -43,7 +43,7 @@ async function imagedSite(): Promise<Imaged> {
 		// below would fail on a missing image rather than on the codec
 		(site.env as Record<string, unknown>).HEAP_IMAGE = '1';
 		(site.env as Record<string, unknown>).HEAP_SNAPSHOT = '1';
-		(site as { php: unknown }).php = null;
+		(site as { php: unknown }).php = undefined;
 	});
 	const out = (await inObject(stub, (site: ServeDo) =>
 		(site as unknown as { snapshotStep(): Promise<unknown> }).snapshotStep()
@@ -149,9 +149,11 @@ describe('the heap image chunk codec, on a real image', () => {
 			// it IS the byte-identity assertion; a right-length wrong-content restore cannot pass
 			const back = await inObject(m.stub, (site: ServeDo) => {
 				const r = readHeapSnapshot(site.sql as never);
-				return r === null ? null : { length: r.heap.length, byteLength: r.meta.byteLength };
+				return r === undefined
+					? undefined
+					: { length: r.heap.length, byteLength: r.meta.byteLength };
 			});
-			expect(back).not.toBeNull();
+			expect(back).toBeDefined();
 			expect(back!.length).toBe(back!.byteLength);
 		},
 		TIMEOUT

@@ -129,9 +129,9 @@ describe('the host drives the PHP half', () => {
 
 	it('emits PHP that parses and names all three health classes', () => {
 		const php = runHealthSelfTest({ bridge_installed: 1 });
-		expect(php).toContain('Health\\\\BootSelfTest');
-		expect(php).toContain('Health\\\\TripwireRegistry');
-		expect(php).toContain('Health\\\\HealthLedger');
+		expect(php).toContain('use Drupal\\drupflare\\Health\\BootSelfTest;');
+		expect(php).toContain('use Drupal\\drupflare\\Health\\TripwireRegistry;');
+		expect(php).toContain('use Drupal\\drupflare\\Health\\HealthLedger;');
 		// no kernel boot: the observation is supplied, which is what keeps this unit cheap
 		expect(php).not.toContain('DrupalKernel');
 	});

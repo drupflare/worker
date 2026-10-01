@@ -289,14 +289,6 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 	);
 
 	/**
-	 * The general close for a `#[Hook]` class added after the bake.
-	 *
-	 * `DrupalKernel::getContainerCacheKey()` never moves when a sibling module changes, so the packed
-	 * container compiles the hook away and `hasImplementations()` answers false while the class loads
-	 * fine. The step drops the row; this asserts the row is gone and that a boot afterwards rebuilds
-	 * one rather than serving a site with no container at all.
-	 */
-	/**
 	 * The pack's own container for a module set it baked, so an update needs no rebuild.
 	 *
 	 * Measured 2026-09-25 on a deployed site: after a driver-pack update the rebuilding fill completed
@@ -368,12 +360,12 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 					encounters: { cold: number };
 					ensurePhp(): Promise<unknown>;
 				};
-				s.php = null;
+				s.php = undefined;
 				const before = s.encounters.cold;
 				const [a, b] = await Promise.all([s.ensurePhp(), s.ensurePhp()]);
 				const shared = a === b;
 				// THE CONTROL: one after another is two boots, so the counter can see a second one
-				s.php = null;
+				s.php = undefined;
 				await s.ensurePhp();
 				return {
 					together: s.encounters.cold - before - 1,
@@ -388,6 +380,14 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 		TIMEOUT
 	);
 
+	/**
+	 * The general close for a `#[Hook]` class added after the bake.
+	 *
+	 * `DrupalKernel::getContainerCacheKey()` never moves when a sibling module changes, so the packed
+	 * container compiles the hook away and `hasImplementations()` answers false while the class loads
+	 * fine. The step drops the row; this asserts the row is gone and that a boot afterwards rebuilds
+	 * one rather than serving a site with no container at all.
+	 */
 	it(
 		'drops a compiled container no packed variant matches, and rebuilds it inside the step',
 		async () => {

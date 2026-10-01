@@ -28,7 +28,7 @@ const dir = mkdtempSync(join(tmpdir(), 'cfw-xmlwriter-'));
 const POLYFILL_AS_PROBE = XMLWRITER_FIX.replace(
 	"!class_exists('XMLWriter', false)",
 	'true'
-).replace('class XMLWriter {', 'class CfwXmlWriterProbe {');
+).replace(/class XMLWriter\b/, 'class CfwXmlWriterProbe');
 
 function phpHasXmlWriter(): boolean {
 	try {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CACHE_TIERS } from '../../src/ops/cache-tiers.js';
+import { CACHE_TIERS } from '../../src/ops/cache-tiers';
 import { ENDPOINT, SITE, e2eGate, serve } from './helpers/endpoint';
 
 /**

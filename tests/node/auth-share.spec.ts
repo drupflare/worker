@@ -10,7 +10,7 @@ import {
 	tierOf,
 	type AuthIndex,
 	type RouteRow
-} from '../../scripts/measure/auth-share.js';
+} from '../../scripts/measure/auth-share';
 
 /**
  * The classification, driven over a fixture. No real module is in this repo, so what is covered is the

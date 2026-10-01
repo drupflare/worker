@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { siteDoText } from '../helpers/source';
 
 /**
  * Every KV write must go through the counted handle: the next `put` written against `ctx.storage`
@@ -42,9 +43,10 @@ describe('the rows meter can see every storage write', () => {
 	});
 
 	it('still wraps the raw handle exactly once, so the proxy is actually installed', () => {
-		const text = readFileSync('src/site-do.ts', 'utf8');
+		const text = siteDoText();
 		expect(text).toContain('countingStorage(this.ctx.storage,');
-		// the field, not the raw handle, is what the rest of the file reaches for
-		expect(text.match(/this\.storage\./g)?.length ?? 0).toBeGreaterThan(20);
+		// the field, not the raw handle, is what the rest of the object reaches for (`site` in a
+		// function moved out of the class)
+		expect(text.match(/\b(?:this|site)\.storage\./g)?.length ?? 0).toBeGreaterThan(20);
 	});
 });

@@ -10,9 +10,9 @@ import { artifactGate } from './helpers/artifact-gate';
  * value, and it was the half nothing ran. `container-cid.spec.ts` demonstrated the cost of getting
  * this wrong twice over: it gated on a bare `existsSync`, so it skipped in every lane including the
  * release one, and the drift it guards shipped.
+ *
+ * A path no checkout has, so the missing branch is reached without touching a real artifact.
  */
-
-/** a path no checkout has, so the missing branch is reached without touching a real artifact */
 const ABSENT = 'assets/drupal-pf/a-file-no-lane-builds.json';
 
 /** present on every machine and in CI, so the satisfied branch is reached the same way */

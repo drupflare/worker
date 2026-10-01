@@ -6,9 +6,9 @@
  * thinks it measures is the most expensive kind of wrong here.
  *
  * Not a `.spec.ts`, so vitest does not collect it, and `tests/**` is excluded from coverage.
+ *
+ * The flag DrupflareServiceProvider reads, plus the symbol an Asyncify build would provide.
  */
-
-/** the flag DrupflareServiceProvider reads, plus the symbol an Asyncify build would provide */
 export const SUSPEND_PROBE = String.raw`<?php
 $hasEnv = function_exists('vrzno_env');
 echo json_encode([

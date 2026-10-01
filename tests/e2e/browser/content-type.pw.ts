@@ -1,4 +1,4 @@
-import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures.js';
+import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures';
 
 /**
  * Building a content type and putting a field on it, which is the first thing anyone does.

@@ -153,15 +153,6 @@ export function maskNonces(pair: Pair<string>): Pair<string> {
 	return out;
 }
 
-/**
- * Collapses the named origins to one token, so two renders at different hosts can be compared.
- *
- * Taken as an argument rather than inferred: the packed artifact was rendered on the build machine
- * at `http://localhost` and a live render uses the site's own origin, and a pattern loose enough to
- * find both would also mask a URL that legitimately changed. Measured after `/__assemble` was given
- * the request origin, the front page differs from the pack by exactly the origin string and nothing
- * else.
- */
 /** every loopback origin a document names; a loopback origin can only be a harness */
 export function loopbackOrigins(html: string): string[] {
 	return [
@@ -183,6 +174,15 @@ export function longestFirst(origins: string[]): string[] {
 	return [...new Set(origins.filter(Boolean))].sort((a, b) => b.length - a.length);
 }
 
+/**
+ * Collapses the named origins to one token, so two renders at different hosts can be compared.
+ *
+ * Taken as an argument rather than inferred: the packed artifact was rendered on the build machine
+ * at `http://localhost` and a live render uses the site's own origin, and a pattern loose enough to
+ * find both would also mask a URL that legitimately changed. Measured after `/__assemble` was given
+ * the request origin, the front page differs from the pack by exactly the origin string and nothing
+ * else.
+ */
 export function maskOrigins(pair: Pair<string>, origins: string[]): Pair<string> {
 	let out = pair;
 	for (const origin of origins) {

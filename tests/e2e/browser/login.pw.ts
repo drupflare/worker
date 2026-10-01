@@ -1,4 +1,4 @@
-import { ADMIN_PASS, ADMIN_USER, expect, gotoPage, logoutLink, test } from './utils/fixtures.js';
+import { ADMIN_PASS, ADMIN_USER, expect, gotoPage, logoutLink, test } from './utils/fixtures';
 
 test('the login form renders and logs uid 1 in', async ({ page }) => {
 	await gotoPage(page, '/user/login');

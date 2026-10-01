@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { siteDoText, sourceOf } from '../helpers/source';
 
 /**
  * `PACK_INDEX_BYTES` against the artifact it was measured from.
@@ -23,7 +24,6 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const INDEX = resolve(ROOT, 'assets/drupal-pf/core.pf.json');
-const SITE_DO = readFileSync(resolve(ROOT, 'src/site-do.ts'), 'utf8');
 
 /** what was on disk when the retention reading was taken */
 const MEASURED_JSON_BYTES = 1_324_155;
@@ -34,7 +34,7 @@ const MEASURED_RATIO = MEASURED_RETAINED / MEASURED_JSON_BYTES;
 
 describe('the pack index constant', () => {
 	it('is the value the retention reading produced', () => {
-		expect(SITE_DO).toContain(
+		expect(sourceOf('src/do/lazy-mount.ts')).toContain(
 			`const PACK_INDEX_BYTES = ${MEASURED_RETAINED.toLocaleString('en-US').replace(/,/g, '_')};`
 		);
 	});
@@ -42,9 +42,11 @@ describe('the pack index constant', () => {
 	it('is counted into the isolate total and into what /serve-stats reports', () => {
 		// both, because a total the guard reads and a figure an operator reads that disagree is how
 		// a measured number gets quoted against the wrong budget
-		expect(SITE_DO).toContain('lazy.resident + (lazy.blob > 0 ? PACK_INDEX_BYTES : 0)');
-		expect(SITE_DO).toContain(
-			'index: lazyMountBytes(this.mountInfo).blob > 0 ? PACK_INDEX_BYTES : 0'
+		const source = siteDoText();
+		expect(source).toContain('lazy.resident + (lazy.blob > 0 ? PACK_INDEX_BYTES : 0)');
+		// the receiver is `this` in the class and `site` in a function moved out of it
+		expect(source).toMatch(
+			/index: lazyMountBytes\((?:this|site)\.mountInfo\)\.blob > 0 \? PACK_INDEX_BYTES : 0/
 		);
 	});
 

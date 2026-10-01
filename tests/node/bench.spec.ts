@@ -20,9 +20,9 @@ import {
  * The 2.8x dispersion is not illustrative. It is the range of marginal render cost measured across
  * real objects, and it is why the theme-reset sweep would have published 2.7x the true figure if
  * nobody had paired.
+ *
+ * The four samples that must not be enough, whatever they say.
  */
-
-/** the four samples that must not be enough, whatever they say */
 const TOO_FEW = [10, 10, 10, 10];
 
 describe('summarise refuses what RULE 0 refuses', () => {

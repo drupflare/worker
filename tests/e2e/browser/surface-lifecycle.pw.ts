@@ -6,7 +6,7 @@ import {
 	signInToSurface,
 	SITE,
 	test
-} from './utils/fixtures.js';
+} from './utils/fixtures';
 
 /**
  * The `/_cfw` surface, driven the way an operator drives it.

@@ -6,9 +6,7 @@ import type { Transport } from './lifecycle';
  * `lifecycle.ts` covers getting a site to exist. Everything here is what an owner does to a site
  * that already exists, which is where the interesting defects are -- a site is provisioned once and
  * operated for years.
- */
-
-/**
+ *
  * The gap a deferred `/enable` needs before its retry.
  *
  * Dropping the interpreter frees nothing until the module is COLLECTED, and the collection does not

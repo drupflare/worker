@@ -319,7 +319,7 @@ describe('a contended site grows its own pool', () => {
 				};
 			});
 
-			expect(out.steps.every((s) => s === null)).toBe(true);
+			expect(out.steps.every((s) => s === undefined)).toBe(true);
 			expect(out.provisioned).toBe(null);
 			// an idle tick must not charge a row to record that it was idle
 			expect(out.windows === '' || out.windows === null).toBe(true);
@@ -466,7 +466,6 @@ describe('a cached page advertises the pool too', () => {
  * attempts on four separate sites, each one answering `torn copy` at chunk 0 with `copied: 0`.
  */
 describe('a copy interrupted by the primary', () => {
-	/** what the alarm chain does between two invocations of a bounded copy */
 	/**
 	 * A commit the way a real one lands: the sequence AND the record it leaves behind.
 	 *
@@ -475,6 +474,8 @@ describe('a copy interrupted by the primary', () => {
 	 * sequence without writing anything replicable, and a lane copied at the sequence then landed
 	 * one ahead of the log and was withdrawn as out of order on its first record. A bare bump moves
 	 * nothing a replica can observe, so as a fixture it had stopped describing a commit at all.
+	 *
+	 * What the alarm chain does between two invocations of a bounded copy.
 	 */
 	async function commitOnPrimary(primary: string): Promise<number> {
 		return inObject(namedSite(primary), (site) => {

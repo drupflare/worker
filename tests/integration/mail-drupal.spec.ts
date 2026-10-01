@@ -10,9 +10,7 @@ import { stubFetch } from '../helpers/stub-fetch';
  * checkout. This one boots Drupal and submits a real form, so it needs `assets/drupal-pf`, which a
  * clean checkout cannot build -- it is on `ARTIFACT_SPECS` and runs in the release lane. Keeping it
  * in the same file would have excluded all twelve from the gate to satisfy one.
- */
-
-/**
+ *
  * Drupal's OWN mail path, which is the half `callMail()` cannot reach.
  *
  * Every test above invokes the host binding directly, so they prove the TRANSPORT works. They cannot
@@ -21,7 +19,7 @@ import { stubFetch } from '../helpers/stub-fetch';
  * every assertion in this file and still drop every password reset a visitor asked for.
  *
  * So this drives the flow a visitor actually performs and asserts the message reached the durable
- * queue. `SETTINGS_OVERRIDE` forces `interface.default` to `cfw_mail`; point it back at `php_mail`
+ * queue. `drupflare_install()` sets `interface.default` to `cfw_mail`; point it back at `php_mail`
  * and this is the test that goes red.
  */
 describe('the path a visitor takes, not the one a test can call', () => {

@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { frontText } from '../helpers/source';
 
 /**
  * The front worker hands the object's body straight through rather than buffering it.
@@ -22,10 +21,8 @@ import { describe, expect, it } from 'vitest';
  * deferred KV write or a plan compile reads the body without consuming the one going out.
  */
 
-const ROOT = resolve(import.meta.dirname, '..', '..');
-
 describe('the response the front worker returns', () => {
-	const source = readFileSync(resolve(ROOT, 'src', 'site.ts'), 'utf8');
+	const source = frontText();
 
 	it('passes the object body as a stream', () => {
 		expect(source).toContain('return new Response(res.body, { status: res.status, headers });');

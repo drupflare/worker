@@ -1,4 +1,4 @@
-import { expect, gotoPage, loginAsAdmin, SITE_NAME, test } from './utils/fixtures.js';
+import { expect, gotoPage, loginAsAdmin, SITE_NAME, test } from './utils/fixtures';
 
 /**
  * A config form, saved through the UI rather than through `/sql`.

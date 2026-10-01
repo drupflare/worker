@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -35,8 +35,12 @@ function externalSpecifiers(): { file: string; spec: string }[] {
 			}
 			if (!full.endsWith('.ts')) continue;
 			const src = readFileSync(full, 'utf8');
-			for (const m of src.matchAll(/from\s+'(\.\.\/\.\.\/[^']+)'/g)) {
-				out.push({ file: full.slice(ROOT.length + 1), spec: m[1] ?? '' });
+			for (const m of src.matchAll(/from\s+'(\.\.?\/[^']+)'/g)) {
+				const spec = m[1] ?? '';
+				// resolved against the importing file, since `src/do/routes/` reaches `src/` by `../../`
+				if (relative(join(ROOT, 'src'), resolve(dirname(full), spec)).startsWith('..')) {
+					out.push({ file: full.slice(ROOT.length + 1), spec });
+				}
 			}
 		}
 	};

@@ -11,6 +11,7 @@ import {
 	withImportedMemory,
 	withInitialPages
 } from '../../scripts/measure/initial-memory.ts';
+import { sourceOf } from '../helpers/source';
 import { artifactGate } from './helpers/artifact-gate';
 
 /**
@@ -118,7 +119,7 @@ describe.skipIf(artifactGate([PRISTINE_WASM]))('the binaries on disk', () => {
 
 	// the host builds the memory the binary imports, so the two figures disagreeing is a LinkError on every boot
 	it('matches the memory the host creates for a boot', () => {
-		const host = readFileSync(resolve(ROOT, 'src/site-do.ts'), 'latin1');
+		const host = sourceOf('src/do/isolate.ts');
 		const initial = /INTERPRETER_MEMORY = \{ initial: (\d+),/.exec(host)?.[1];
 		expect(Number(initial)).toBe(INITIAL_PAGES);
 		expect(pagesIn(TUNED_WASM)).toBe(Number(initial));

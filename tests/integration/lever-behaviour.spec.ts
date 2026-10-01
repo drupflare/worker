@@ -69,9 +69,7 @@ import {
  * nothing in `src/`. It could not have worked: the clock does not advance across a synchronous
  * `php._run()`, so wall clock cannot bound a batch from inside one, and the fill loop says so in a
  * comment. Removed 2026-09-08 rather than wired, because the guard it configured cannot exist.
- */
-
-/**
+ *
  * What an alarm has to be told not to do first.
  *
  * The producer takes a heap image once per pack generation and RETURNS from the firing, so a spec
@@ -421,9 +419,9 @@ describe('PREFILL decides whether a site starts warm', () => {
 			markProvisioned(site);
 			const out = await (
 				site as unknown as {
-					prefillServingTable(asked: string | null): Promise<Record<string, unknown>>;
+					prefillServingTable(asked?: string): Promise<Record<string, unknown>>;
 				}
-			).prefillServingTable(null);
+			).prefillServingTable(undefined);
 			// the off arm returns before it would have created the table, so the read makes it
 			site.ensureServeTables();
 			const rows = site.sql
@@ -608,7 +606,6 @@ describe('REPLICA_COUNT and WRITE_FORWARD move which object answers', () => {
 
 	const SITE = 'cfw.local';
 
-	/** a session value whose affinity hashes off the primary at this pool size */
 	/**
 	 * A visitor path that routes off the primary, which is what decides the lane for a session.
 	 *
@@ -622,7 +619,7 @@ describe('REPLICA_COUNT and WRITE_FORWARD move which object answers', () => {
 			const at = chooseTarget({
 				site: SITE,
 				method: 'GET',
-				affinity: affinityKey({ session: 'a-session', address: null, pathname }),
+				affinity: affinityKey({ session: 'a-session', pathname }),
 				replicas,
 				pathname: '/serve'
 			});
@@ -943,9 +940,9 @@ describe('FILL_SETTLE_MS holds background PHP off a young interpreter', () => {
 	});
 	it('holds until the boot plus the window, and never without a boot or a window', () => {
 		expect(backgroundPhpHold(1_000, 5_000, 60_000)).toBe(61_000);
-		expect(backgroundPhpHold(1_000, 61_000, 60_000)).toBeNull();
-		expect(backgroundPhpHold(undefined, 5_000, 60_000)).toBeNull();
-		expect(backgroundPhpHold(1_000, 5_000, 0)).toBeNull();
+		expect(backgroundPhpHold(1_000, 61_000, 60_000)).toBeUndefined();
+		expect(backgroundPhpHold(undefined, 5_000, 60_000)).toBeUndefined();
+		expect(backgroundPhpHold(1_000, 5_000, 0)).toBeUndefined();
 	});
 });
 

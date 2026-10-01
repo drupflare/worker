@@ -299,7 +299,7 @@ describe('the primary acts on a repair', () => {
 					(site as unknown as { inflightPeak: number }).inflightPeak = 6;
 					const step = (await (
 						site as unknown as { autoScaleStep(): Promise<unknown> }
-					).autoScaleStep()) as { autoScale?: { lane?: number } } | null;
+					).autoScaleStep()) as { autoScale?: { lane?: number } } | undefined;
 					if (typeof step?.autoScale?.lane === 'number') lanes.push(step.autoScale.lane);
 				}
 				return lanes;
@@ -320,7 +320,7 @@ describe('the primary acts on a repair', () => {
 				role(site, 'primary');
 				site.enqueueLaneRepair(3);
 				// a budget of one row cannot finish, so the repair is still owed
-				await site.provisionLane(3, null, 1);
+				await site.provisionLane(3, undefined, 1);
 				return site.laneRepairQueue();
 			});
 			expect(queue).toEqual([3]);

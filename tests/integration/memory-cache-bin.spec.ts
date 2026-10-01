@@ -415,7 +415,7 @@ describe.skipIf(FROM_SOURCE)('what an interpreter drop costs each arm', () => {
 					await site.fillOne('/user/login', ['page', 'dynamic_page_cache']);
 					await site.fillOne('/user/password', ['page', 'dynamic_page_cache']);
 					// THE DROP: exactly what an eviction does to the static store, and nothing else
-					(site as unknown as { php: unknown }).php = null;
+					(site as unknown as { php: unknown }).php = undefined;
 					return realRender(site, '/user/password');
 				});
 

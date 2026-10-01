@@ -15,9 +15,9 @@ import { createHash } from 'node:crypto';
  * not an assertion about a Drupal lifecycle: a cache hit and a cache miss produce identical bytes,
  * so a stage that cannot report row counts, statement counts and whether the interpreter booted
  * cannot tell the two apart.
+ *
+ * One request against the site under test; the caller owns the origin and the site name.
  */
-
-/** one request against the site under test; the caller owns the origin and the site name */
 export type Transport = (path: string, init?: RequestInit) => Promise<Response>;
 
 /** the `/serve-stats` migration cursor, which is the durable answer to "is this site migrated" */

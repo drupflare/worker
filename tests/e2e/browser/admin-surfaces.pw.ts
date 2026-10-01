@@ -1,4 +1,4 @@
-import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures.js';
+import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures';
 
 /**
  * The admin pages a site owner actually opens, checked for a page that answers 200 and threw.

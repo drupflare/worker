@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
-import { DRUPLICON_PNG_BASE64 } from '../../fixtures/png.js';
-import { BASE_URL, expect, gotoPage, loginAsAdmin, SITE, test } from './utils/fixtures.js';
+import { DRUPLICON_PNG_BASE64 } from '../../fixtures/png';
+import { BASE_URL, expect, gotoPage, loginAsAdmin, SITE, test } from './utils/fixtures';
 
 /**
  * An image through Drupal's own upload form, and what an edit does to the cache around it.

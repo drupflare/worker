@@ -43,7 +43,7 @@ describe('the cold-encounter rate, wired', () => {
 					(site as unknown as { coldEncounterRate(): Rate }).coldEncounterRate();
 
 				// the migrate already entered the interpreter, so start from a known drop
-				(site as unknown as { php: unknown }).php = null;
+				(site as unknown as { php: unknown }).php = undefined;
 				const before = rate();
 
 				await site.runJson('<?php echo json_encode(["a" => 1]);');
@@ -51,7 +51,7 @@ describe('the cold-encounter rate, wired', () => {
 				await site.runJson('<?php echo json_encode(["a" => 2]);');
 				const afterWarm = rate();
 
-				(site as unknown as { php: unknown }).php = null;
+				(site as unknown as { php: unknown }).php = undefined;
 				await site.runJson('<?php echo json_encode(["a" => 3]);');
 				const afterDrop = rate();
 				return { before, afterBoot, afterWarm, afterDrop };

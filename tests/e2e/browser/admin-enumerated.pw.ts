@@ -1,4 +1,4 @@
-import { BASE_URL, SITE, expect, gotoPage, loginAsAdmin, test } from './utils/fixtures.js';
+import { BASE_URL, SITE, expect, gotoPage, loginAsAdmin, test } from './utils/fixtures';
 
 /**
  * The admin surface driven by ENUMERATION rather than by hand.

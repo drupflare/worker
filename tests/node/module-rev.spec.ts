@@ -34,9 +34,9 @@ import {
  * Two properties carry the design. A blob already present costs nothing, which is what makes history
  * affordable against the row meter. And a blob whose bytes do not hash to the name it was sent under
  * is REFUSED, which is what stops a manifest naming content nobody reviewed.
+ *
+ * The `exec(text, ...params)` shape over a node handle, which is what `RevSql` narrows to.
  */
-
-/** the `exec(text, ...params)` shape over a node handle, which is what `RevSql` narrows to */
 function open(): RevSql & { close(): void } {
 	const db = new DatabaseSync(':memory:');
 	return {

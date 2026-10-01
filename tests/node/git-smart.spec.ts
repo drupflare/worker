@@ -203,7 +203,7 @@ describe('the ref advertisement', () => {
 		expect(refSha(ad, 'main')).toBe(repos.get('single:second'));
 		expect(refSha(ad, 'refs/heads/main')).toBe(repos.get('single:second'));
 		expect(refSha(ad, repos.get('single:first') as string)).toBe(repos.get('single:first'));
-		expect(refSha(ad, 'no-such-branch')).toBeNull();
+		expect(refSha(ad, 'no-such-branch')).toBeUndefined();
 	});
 
 	it('lists branches without the refs prefix and leaves tags out', () => {

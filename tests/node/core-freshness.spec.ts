@@ -20,9 +20,9 @@ import { SHIPPED_CORE_VERSION } from '../../src/ops/shipped-lock';
  * `<supported_branches>` is still the newest thing on that branch, so a check that only compares
  * versions calls it current -- while it actually means no future fix, security included, will ever
  * be published for it.
+ *
+ * Shaped like `updates.drupal.org/release-history/drupal/current`, trimmed to what is read.
  */
-
-/** shaped like `updates.drupal.org/release-history/drupal/current`, trimmed to what is read */
 function feed(options: {
 	branches: string;
 	releases: Array<{ version: string; type?: string; status?: string; date?: number }>;

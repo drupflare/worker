@@ -16,9 +16,7 @@ import { transportFor } from './helpers/lifecycle';
  *
  * SKIP LOCALLY, FAIL IN CI, the same asymmetry as the rest of this lane: a developer with no rig
  * running should not see red, and a CI run that quietly skipped is indistinguishable from a pass.
- */
-
-/**
+ *
  * The worker under test, through the transport that waits out a restart.
  *
  * Every call here used a bare `fetch()` and the lane paid for it: a Durable Object reset restarts

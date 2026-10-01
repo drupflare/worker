@@ -24,13 +24,6 @@ afterEach(() => {
 	globalThis.fetch = realFetch;
 });
 
-/**
- * Replaces outbound fetch for this test; the object shares the isolate, so it sees this.
- *
- * Filtered by host for the reason `http-queue.spec.ts` gives: an object queued in an earlier test
- * arms an alarm at +1 ms and the runtime fires it whenever it likes, so a global spy really does see
- * another object's drain.
- */
 /** one `Host::call('cfwMail', ...)`, encoded the way the PHP side encodes it */
 function callMail(site: ServeDo, payload: Record<string, unknown>): Record<string, unknown> {
 	const binary: Record<string, (json: string) => string> = {};

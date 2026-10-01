@@ -41,9 +41,9 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
  * worker.
  *
  * MILLISECONDS ARE THEREFORE NOT ASSERTED. Counts and bytes are what this lane can measure honestly.
+ *
+ * The Durable Object isolate limit; a platform figure rather than a budget chosen here.
  */
-
-/** the Durable Object isolate limit; a platform figure rather than a budget chosen here */
 const ISOLATE_LIMIT = 128 * 1_048_576;
 
 async function armProfile(mode: string) {
@@ -173,8 +173,8 @@ describe('the pack arm, which ships a baked cache as a second layer', () => {
 		).toThrow();
 	});
 
-	it('writes a descriptor the mount reads, and null when nothing was baked', () => {
-		expect(serialiseOpcachePack(null)).toContain('| null = null;');
+	it('writes a descriptor the mount reads, and undefined when nothing was baked', () => {
+		expect(serialiseOpcachePack(undefined)).toContain('| undefined = undefined;');
 		const written = serialiseOpcachePack({ systemId: ID, files: 3, bytes: 9, source: 'd:k' });
 		expect(written).toContain(`systemId: '${ID}'`);
 		expect(written).toContain(`source: 'd:k'`);
@@ -201,7 +201,7 @@ describe('the pack arm, which ships a baked cache as a second layer', () => {
 		const pack = { source: 'a:1' };
 		expect(opcachePackState(pack, 'pack', true, 'a:1')).toBe('usable');
 		expect(opcachePackState(pack, 'pack', true, 'b:1')).toBe('stale');
-		expect(opcachePackState(null, 'pack', true, 'a:1')).toBe('none');
+		expect(opcachePackState(undefined, 'pack', true, 'a:1')).toBe('none');
 		expect(opcachePackState(pack, 'off', true, 'a:1')).toBe('none');
 		expect(opcachePackState(pack, 'pack', false, 'a:1')).toBe('none');
 	});

@@ -1,4 +1,4 @@
-import { expect, gotoPage, test } from './utils/fixtures.js';
+import { expect, gotoPage, test } from './utils/fixtures';
 
 /**
  * The regression this lane was built for.

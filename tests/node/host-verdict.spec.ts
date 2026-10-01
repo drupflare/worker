@@ -30,9 +30,9 @@ import {
  * Every case below is a shape the runner can emit, including the ones a real run is unlikely to
  * reach: a cell where drupflare loses, a generator-bound cell, an empty matrix, a partial workload
  * set. A predicate that only holds on the happy result is not a predicate.
+ *
+ * A Summary with the fields the verdict reads, and defaults for the rest.
  */
-
-/** a Summary with the fields the verdict reads, and defaults for the rest */
 function summary(p50: number, p95 = p50, over: Partial<Summary> = {}): Summary {
 	return {
 		workload: 'anon-cached',

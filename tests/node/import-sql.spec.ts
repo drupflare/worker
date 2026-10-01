@@ -33,9 +33,7 @@ import { SqlMigrator, readMigrateCursor } from '../../src/db/migrate-sql';
  *
  * Against a real engine via `node:sqlite`, for the same reason `heap-snapshot-sql.spec.ts` is: bound
  * parameters, `RETURNING id` and row ordering are engine behaviour, and each has produced a defect here.
- */
-
-/**
+ *
  * The workerd storage surface over a real SQLite, matching `storageOver()` in `migrate-sql.spec.ts`.
  *
  * `transactionSync` is SAVEPOINT because that is the semantic `ctx.storage.transactionSync()` has, and
@@ -189,7 +187,7 @@ describe('storing a dump, and replaying it through the EXISTING migrator loader'
 		// a half-overwritten database
 		const huge = `INSERT INTO t VALUES ('${'a'.repeat(DO_SQLITE_MAX_STATEMENT_CHARS)}');`;
 		expect(() => store(huge, { generation: 'g' })).toThrow(/over the 100000/);
-		expect(latestImport(sql)).toBeNull();
+		expect(latestImport(sql)).toBeUndefined();
 	});
 
 	it('reports the newest import', () => {
@@ -200,8 +198,8 @@ describe('storing a dump, and replaying it through the EXISTING migrator loader'
 		expect(latest?.statements).toBe(2);
 	});
 
-	it('returns null when nothing has been imported', () => {
-		expect(latestImport(sql)).toBeNull();
+	it('returns undefined when nothing has been imported', () => {
+		expect(latestImport(sql)).toBeUndefined();
 	});
 
 	it('does NOT offer a torn import as a restore point', () => {

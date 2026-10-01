@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-	extractSlots,
-	measureClass,
-	type Entity
-} from '../../scripts/measure/route-class-naming.js';
-import { compilePlan } from '../../src/ops/render-plan.js';
+import { extractSlots, measureClass, type Entity } from '../../scripts/measure/route-class-naming';
+import { compilePlan } from '../../src/ops/render-plan';
 
 /**
  * The instrument's own guard, not a guard on its verdict.

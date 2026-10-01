@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
-import { BASE_URL, expect, gotoPage, SITE, test } from './utils/fixtures.js';
-import { callJson } from './utils/global-setup.js';
+import { BASE_URL, expect, gotoPage, SITE, test } from './utils/fixtures';
+import { callJson } from './utils/global-setup';
 
 /**
  * Whether `ASSET_AGGREGATES=1` leaves the page DRESSED.
@@ -19,9 +19,9 @@ import { callJson } from './utils/global-setup.js';
  * Provisioning a second `wrangler dev` also put two interpreters and a browser on one CI runner,
  * which is where the lane died: a message-less `[ERROR]` after the second worker's `/firstrun`, then
  * `fetch failed` on every later call to it.
+ *
+ * Every aggregate URL the rendered document names, read off the DOM rather than off the source.
  */
-
-/** every aggregate URL the rendered document names, read off the DOM rather than off the source */
 async function aggregateUrls(page: Page): Promise<string[]> {
 	const out: string[] = [];
 	for (const link of await page.locator('link[rel="stylesheet"][href^="/agg/"]').all()) {

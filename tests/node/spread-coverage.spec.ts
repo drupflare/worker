@@ -12,16 +12,16 @@ import { affinityKey, chooseTarget } from '../../src/ops/replica-routing';
  * cannot.
  *
  * Node lane: it imports a script from `scripts/`.
+ *
+ * The lane the shipping router would actually choose for an authenticated request to `path`.
  */
-
-/** the lane the shipping router would actually choose for an authenticated request to `path` */
 function laneFor(path: string, lanes: number): number {
 	return chooseTarget({
 		site: 'm1',
 		method: 'GET',
 		replicas: lanes,
 		pathname: '/serve',
-		affinity: affinityKey({ session: 's', address: null, pathname: path })
+		affinity: affinityKey({ session: 's', pathname: path })
 	}).lane;
 }
 

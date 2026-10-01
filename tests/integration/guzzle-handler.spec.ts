@@ -20,9 +20,9 @@ import { freshSite, inObject, provisionedSite, type ServeDo } from '../helpers/s
  * the same wrapper and the same row and requires it to still fail. Remove `CachedFetchHandler` and
  * this file goes red on the fix assertions while the control stays green; if the control ever goes
  * green the seam has stopped measuring the defect.
+ *
+ * The fragment's own default, the same one `CAPABILITY_CHECK` uses; `CFW_TEST_URL` overrides it.
  */
-
-/** the fragment's own default, the same one `CAPABILITY_CHECK` uses; `CFW_TEST_URL` overrides it */
 const URL_UNDER_TEST = 'https://example.com/';
 const BODY = '{"advisories":[]}';
 

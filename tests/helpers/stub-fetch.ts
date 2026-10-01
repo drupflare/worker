@@ -10,6 +10,12 @@ import { afterEach } from 'vitest';
  *
  * The real `fetch` is captured at module load and restored in an `afterEach` registered here, so a
  * spec that imports this cannot forget to put it back.
+ *
+ * Replaces outbound fetch for this test; the object shares the isolate, so it sees this.
+ *
+ * Filtered by account for the reason `http-queue.spec.ts` gives: an object queued in an earlier test
+ * arms an alarm at +1 ms and the runtime fires it whenever it likes, so a global spy really does see
+ * another object's drain.
  */
 const realFetch = globalThis.fetch;
 

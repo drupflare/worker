@@ -81,7 +81,7 @@ describe('renderPage threads the request', () => {
 		expect(php).toContain('multipart/form-data');
 		expect(php).toContain('$uploads = [];');
 		// an unchosen file part must not read as an upload
-		expect(php).toContain('if ($filename === "") { continue; }');
+		expect(php).toMatch(/if \(\$filename === ''\) \{\s*continue;\s*\}/);
 	});
 
 	/**
@@ -94,10 +94,10 @@ describe('renderPage threads the request', () => {
 	 */
 	it('builds the absolute URL from the origin the host supplied', () => {
 		const php = renderPage('/node/1', [], false, { origin: 'https://example.test' });
-		expect(php).toContain('$url = $origin === "" ? $path : rtrim($origin, "/") . $path;');
+		expect(php).toContain("$url = $origin === '' ? $path : rtrim($origin, '/') . $path;");
 		expect(php).toContain('$origin = json_decode("\\"https://example.test\\"");');
 		// the superglobals follow the request, so nothing can read a host the request disagrees with
-		expect(php).toContain('$_SERVER["HTTP_HOST"] = $request->getHttpHost();');
+		expect(php).toContain("$_SERVER['HTTP_HOST'] = $request->getHttpHost();");
 		expect(php).not.toContain("$_SERVER['HTTP_HOST'] = 'localhost';");
 	});
 
@@ -112,7 +112,7 @@ describe('renderPage threads the request', () => {
 		expect(php).toContain('application/x-www-form-urlencoded');
 		expect(php).toContain('$isForm');
 		// a GET never parses a body, whatever was sent
-		expect(php).toContain('if ($method !== "GET" && $body !== "" && $isForm)');
+		expect(php).toContain("if ($method !== 'GET' && $body !== '' && $isForm)");
 	});
 
 	it('sets the content headers so Symfony sees a real submission', () => {

@@ -109,7 +109,7 @@ async function provision(site: ServeDo): Promise<string> {
 	// what provisioning leaves is a drop: the claim and the login above are install residue, and the
 	// serving incarnation starts from a fresh boot. Dropped here rather than relied on, because the
 	// login render itself grows a fresh interpreter by several rungs of the growth ladder
-	site.php = null;
+	site.php = undefined;
 	return (lines.find((l) => /^S?SESS/.test(l))?.split(';')[0] ?? '').trim();
 }
 
@@ -164,7 +164,7 @@ describe('a cold object is safe on its FIRST authenticated request', () => {
 				// real eviction, which this harness cannot force. The distinction matters: it does
 				// NOT model losing `this.migrated` and the other in-memory flags
 				await site.runJson(renderPage('/', [], false, { cookie: jar }));
-				site.php = null;
+				site.php = undefined;
 				return firstAuthenticatedRender(site, jar);
 			});
 
@@ -187,14 +187,6 @@ describe('a cold object is safe on its FIRST authenticated request', () => {
 	);
 });
 
-/**
- * An authenticated request is never answered "warming", because nothing can warm it.
- *
- * The chain renders anonymously and does not queue a session's request, so a 503 telling a logged-in
- * visitor to retry for a fill promises work nobody is doing. `unfillable` carries `authenticated`,
- * which lifts both refusals the chain would otherwise make: the cold one and the over-budget one.
- * A real claimed site and a real session, because an unclaimed one answers its claim page first.
- */
 /**
  * A host call must not leave its argument behind.
  *
@@ -230,6 +222,14 @@ echo json_encode(['ok' => $ok]);
 	);
 });
 
+/**
+ * An authenticated request is never answered "warming", because nothing can warm it.
+ *
+ * The chain renders anonymously and does not queue a session's request, so a 503 telling a logged-in
+ * visitor to retry for a fill promises work nobody is doing. `unfillable` carries `authenticated`,
+ * which lifts both refusals the chain would otherwise make: the cold one and the over-budget one.
+ * A real claimed site and a real session, because an unclaimed one answers its claim page first.
+ */
 describe('an authenticated request is never answered warming', () => {
 	it(
 		'renders inline over budget, where an anonymous request is diverted',
@@ -261,7 +261,7 @@ describe('an authenticated request is never answered warming', () => {
 				// what `/__migrate` and `/__firstrun` leave behind, and what an eviction leaves. Both plan
 				// profiles boot inline today, so this passes without `authenticated` in `unfillable`; it
 				// is what fails the day a profile stops booting
-				site.php = null;
+				site.php = undefined;
 				return serveDirect(site, '/admin/content', '', { headers: { cookie: jar } });
 			});
 			expect(out.status).not.toBe(503);
@@ -417,7 +417,7 @@ describe('the interpreter recycle', () => {
 				} catch (e) {
 					thrown = String((e as Error)?.message ?? e);
 				}
-				const dropped = site.php === null;
+				const dropped = site.php === undefined;
 				inst.php._run = real;
 
 				const after = Number((await stats(site)).trappedRuns ?? 0);
@@ -456,7 +456,13 @@ describe('the interpreter recycle', () => {
 				// linear memory stays under the default 112 MiB; only the isolate threshold moves
 				site.env = { ...site.env, ISOLATE_ABOVE_BYTES: String(64 * MIB) };
 				const dropped = site.recycleIfOversized('alarm');
-				return { linear, kept, dropped, gone: site.php === null, last: site.lastRecycle };
+				return {
+					linear,
+					kept,
+					dropped,
+					gone: site.php === undefined,
+					last: site.lastRecycle
+				};
 			});
 
 			expect(out.linear).toBeLessThan(112 * MIB);
@@ -482,7 +488,7 @@ describe('the interpreter recycle', () => {
 			const out = await inObject(freshSite(), async (site: ServeDo) => {
 				const jar = await provision(site);
 				site.sql.exec('DELETE FROM cache_container');
-				site.php = null;
+				site.php = undefined;
 				await site.runJson(renderPage('/', [], false, { cookie: jar }));
 				const rebuilt = site.recycleIfOversized('request');
 				const last = site.lastRecycle;
@@ -751,7 +757,7 @@ describe('the interpreters an isolate holds', () => {
 		expect(both.linearBytes - before.linearBytes).toBe(3072);
 
 		// a dropped interpreter leaves the registry at the end of that invocation
-		noteResident('residency-a', null);
+		noteResident('residency-a', undefined);
 		noteResident('residency-b', undefined);
 		const after = isolateResidency();
 		expect(after.interpreters).toBe(before.interpreters);
@@ -763,7 +769,7 @@ describe('the interpreters an isolate holds', () => {
 		const php = { binary: { wasmMemory: { buffer: new ArrayBuffer(4096) } } };
 		noteResident('residency-wasm', php);
 		expect(isolateResidency().linearBytes - before.linearBytes).toBe(4096);
-		noteResident('residency-wasm', null);
+		noteResident('residency-wasm', undefined);
 	});
 
 	it('keeps one id for the life of the isolate', () => {
@@ -899,19 +905,19 @@ describe('an interpreter kept across an eviction', () => {
 			await next.fetch(new Request('https://do.local/__serve-stats'));
 			return { php: next.php, last: next.lastRetention };
 		});
-		expect(out.php).toBeNull();
+		expect(out.php).toBeUndefined();
 		expect(out.last).toEqual(expect.objectContaining({ adopted: false, reason: 'stale' }));
 	}, 900_000);
 
 	it('keeps nothing once the interpreter was dropped', async () => {
 		const out = await inObject(freshSite(), async (site) => {
 			await booted(site);
-			site.php = null;
+			site.php = undefined;
 			const next = successor(site);
 			await next.fetch(new Request('https://do.local/__serve-stats'));
 			return { php: next.php, last: next.lastRetention ?? null };
 		});
-		expect(out.php).toBeNull();
+		expect(out.php).toBeUndefined();
 		expect(out.last).toBeNull();
 	}, 900_000);
 
@@ -924,14 +930,14 @@ describe('an interpreter kept across an eviction', () => {
 			await next.fetch(new Request('https://do.local/__serve-stats'));
 			return { php: next.php, last: next.lastRetention ?? null };
 		});
-		expect(out.php).toBeNull();
+		expect(out.php).toBeUndefined();
 		expect(out.last).toBeNull();
 	}, 900_000);
 });
 
 describe('a boot after a drop instantiates into the dropped memory instead of beside it', () => {
 	type Internals = {
-		php: { binary?: { wasmMemory?: WebAssembly.Memory } } | null;
+		php?: { binary?: { wasmMemory?: WebAssembly.Memory } };
 		ensurePhp(): Promise<unknown>;
 		runJson(code: string): Promise<Record<string, unknown>>;
 		oversized(): boolean;
@@ -950,7 +956,9 @@ describe('a boot after a drop instantiates into the dropped memory instead of be
 				await s.runJson(
 					`<?php $GLOBALS['cfw_reuse_marker'] = 1; echo json_encode(['ok' => true]);`
 				);
-				s.php = null;
+				// the first boot may itself reuse a spare an earlier case in this isolate dropped
+				const reusedBefore = s.heapsReused ?? 0;
+				s.php = undefined;
 				await s.ensurePhp();
 				const second = memoryOf(s);
 				const state = await s.runJson(
@@ -963,7 +971,7 @@ describe('a boot after a drop instantiates into the dropped memory instead of be
 					imported: first instanceof WebAssembly.Memory,
 					same: first !== undefined && first === second,
 					carried: state.carried,
-					reused: s.heapsReused ?? 0,
+					reused: (s.heapsReused ?? 0) - reusedBefore,
 					oversized: s.oversized()
 				};
 			});
@@ -999,7 +1007,7 @@ describe('a boot after a drop instantiates into the dropped memory instead of be
 				const first = await s.runJson(
 					`<?php echo json_encode(['ok' => is_file('/drupal/index.php')]);`
 				);
-				s.php = null;
+				s.php = undefined;
 				await s.ensurePhp();
 				const second = await s.runJson(
 					`<?php echo json_encode(['ok' => strlen(file_get_contents('/drupal/core/lib/Drupal.php')) > 1000]);`

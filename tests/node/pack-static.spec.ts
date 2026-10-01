@@ -16,9 +16,9 @@ const PACKER = join(ROOT, 'scripts/pack-static.ts');
  * that a RE-RUN is a no-op. The second matters because the output is a served directory rather than
  * a single artifact: a copy that re-writes 4,028 files every build churns mtimes, and one that never
  * prunes serves a deleted file forever under a live URL.
+ *
+ * Every fixture file as [path under the drupal root, contents, mtime in whole seconds].
  */
-
-/** every fixture file as [path under the drupal root, contents, mtime in whole seconds] */
 const FIXTURE: [string, string, number][] = [
 	['core/misc/drupal.js', 'window.Drupal = {};\n', 1700000001],
 	['core/misc/favicon.ico', 'icon-bytes', 1700000002],

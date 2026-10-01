@@ -30,9 +30,7 @@ import {
  * Artifact-free: the manifest check and the migrator are both replaced, so this runs on
  * a clean checkout with no packed chunks. What it asserts is the DECISION, which is host logic;
  * whether a real chunk replays is `serve-migration.spec.ts`, which is artifact-gated.
- */
-
-/**
+ *
  * The fake the decision tests drive, so no packed chunk is needed to observe a step.
  *
  * `done` stays false in every use: a finished step calls `prefillServingTable()`, which is a real
@@ -169,7 +167,7 @@ describe('the marker is what separates a provisioning alarm from an ordinary one
 			return { checked, step };
 		});
 		expect(out.checked).toBe(0);
-		expect(out.step).toBeNull();
+		expect(out.step).toBeUndefined();
 	});
 
 	it('an alarm on a site a visitor asked for does', async () => {
@@ -185,9 +183,9 @@ describe('the marker is what separates a provisioning alarm from an ordinary one
 			return { checked, step };
 		});
 		expect(out.checked).toBe(1);
-		// false manifest, so still null -- a deploy that ships no chunks must not throw and stop
+		// false manifest, so still undefined -- a deploy that ships no chunks must not throw and stop
 		// the chain from re-arming
-		expect(out.step).toBeNull();
+		expect(out.step).toBeUndefined();
 	});
 
 	it('steps the migration once the marker and a manifest are both there', async () => {
@@ -197,7 +195,7 @@ describe('the marker is what separates a provisioning alarm from an ordinary one
 			await site.requestProvision();
 			return { step: await site.migrateStepIfPending(), steps };
 		});
-		expect(out.step).not.toBeNull();
+		expect(out.step).not.toBeUndefined();
 		expect(out.step).toHaveProperty('migrate');
 		expect(out.steps).toHaveLength(1);
 	});
@@ -232,7 +230,7 @@ describe('the marker is what separates a provisioning alarm from an ordinary one
 		});
 		expect(out.serve.cache).toBe('MISS');
 		expect(out.serve.migrate).toBeNull();
-		expect(out.step).toBeNull();
+		expect(out.step).toBeUndefined();
 		expect(out.checked).toBe(0);
 	});
 });

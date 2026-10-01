@@ -106,7 +106,7 @@ $out = [
 ];`);
 
 async function cold(site: ServeDo, path: string | null): Promise<Census> {
-	site.php = null;
+	site.php = undefined;
 	if (path !== null) {
 		const page = (await site.runJson(renderPage(path, [], false, {}))) as { status?: number };
 		if (page.status !== 200) throw new Error(`${path} answered ${page.status}`);

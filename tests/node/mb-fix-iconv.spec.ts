@@ -110,7 +110,6 @@ namespace Symfony\\Polyfill\\Iconv {
 	}
 }
 namespace {
-	use Symfony\\Polyfill\\Iconv\\Iconv;
 ${ICONV_STRRPOS}
 	// symfony/polyfill-iconv v1.37.0 Iconv.php:495, verbatim
 	function upstream_strrpos($haystack, $needle, $encoding = null) {

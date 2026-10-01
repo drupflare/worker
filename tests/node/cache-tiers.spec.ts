@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CACHE_TIERS, isCacheTier } from '../../src/ops/cache-tiers.js';
+import { CACHE_TIERS, isCacheTier } from '../../src/ops/cache-tiers';
+import { frontFiles, siteDoFiles, sourceOf } from '../helpers/source';
 
 /**
  * The `x-cfw-cache` contract, guarded against the source rather than against a hand-written list.
@@ -11,12 +10,15 @@ import { CACHE_TIERS, isCacheTier } from '../../src/ops/cache-tiers.js';
  * seven values and none of them.
  */
 
-const ROOT = resolve(import.meta.dirname, '../..');
 // `page-memo.ts` joined when the MEM headers moved there: the hit path used to assemble them per
 // request and now the store path does it once, so the only `'x-cfw-cache': 'MEM'` in the tree is
 // in that file. The scan reads the source rather than a list precisely so a move like that is
 // caught, and it was -- as `MEM is declared and nothing emits it`
-const SOURCES = ['src/site.ts', 'src/site-do.ts', 'src/ops/page-memo.ts'];
+const SOURCES = [
+	...frontFiles(),
+	...siteDoFiles(),
+	{ file: 'src/ops/page-memo.ts', text: sourceOf('src/ops/page-memo.ts') }
+];
 const LITERAL = /'x-cfw-cache':\s*'([A-Z]+)'/g;
 const SET_CALL = /set\('x-cfw-cache',\s*'([A-Z]+)'\)/g;
 // `pageResponse()` takes the tier as an argument, so those never appear as a header literal
@@ -29,8 +31,7 @@ const PAGE_RESPONSE_TERNARY = /pageResponse\(\s*\w+,\s*[^,]*?\?\s*'([A-Z]+)'\s*:
 
 function tiersInSource(): Map<string, string[]> {
 	const found = new Map<string, string[]>();
-	for (const file of SOURCES) {
-		const text = readFileSync(resolve(ROOT, file), 'utf8');
+	for (const { file, text } of SOURCES) {
 		for (const re of [LITERAL, SET_CALL, PAGE_RESPONSE, TERNARY, PAGE_RESPONSE_TERNARY]) {
 			re.lastIndex = 0;
 			for (const m of text.matchAll(re)) {
@@ -81,14 +82,18 @@ describe('the generation header', () => {
 	 * "0 is not greater than 0" rather than "the header is missing".
 	 */
 	it('is set on every response that names a cache tier', () => {
-		const text = readFileSync(resolve(ROOT, 'src/site-do.ts'), 'utf8');
-		const blocks = text.split(/'x-cfw-cache':/).slice(1);
+		const blocks = siteDoFiles().flatMap(({ file, text }) =>
+			text
+				.split(/'x-cfw-cache':/)
+				.slice(1)
+				.map((block) => ({ file, block }))
+		);
 		expect(blocks.length).toBeGreaterThan(2);
-		for (const block of blocks) {
+		for (const { file, block } of blocks) {
 			const window = block.slice(0, 600);
 			// not anchored, so a tier picked by a ternary still names itself in the failure
 			const tier = /'([A-Z]+)'/.exec(block.slice(0, 200))?.[1] ?? '?';
-			expect(window, `the ${tier} response omits x-cfw-generation`).toContain(
+			expect(window, `the ${tier} response in ${file} omits x-cfw-generation`).toContain(
 				'x-cfw-generation'
 			);
 		}

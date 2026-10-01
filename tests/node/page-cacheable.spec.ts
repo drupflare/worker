@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { siteDoText } from '../helpers/source';
 
 /** at `max_age` 0 Drupal emits `private, no-store` and `cfw_page` never fills; fix it at the source */
 
@@ -91,11 +92,14 @@ describe('what a render has to NOT say for a page to be stored', () => {
 	 * carries. `refused` is not exported -- it is one line inside the Durable Object, which the node
 	 * lane cannot import -- so the source is the seam.
 	 */
-	const SOURCE = readFileSync(resolve(ROOT, 'src', 'site-do.ts'), 'utf8');
+	const SOURCE = siteDoText();
 	const literal = /const refused = \/(.+?)\/([a-z]*)\.test\(/.exec(SOURCE);
 
 	it('finds the refusal literal in fillOne, which is what makes the cases below mean anything', () => {
-		expect(literal, 'no `const refused = /.../.test(` in src/site-do.ts').not.toBeNull();
+		expect(
+			literal,
+			'no `const refused = /.../.test(` in src/site-do.ts or src/do'
+		).not.toBeNull();
 	});
 
 	const refuses = (cacheControl: string) =>

@@ -20,9 +20,9 @@ import {
  * package publishes rather than a copy of them.
  *
  * Not a `.spec.ts`, so vitest does not collect it, and `tests/**` is excluded from coverage.
+ *
+ * The server half of a mock connection, driven by the spec.
  */
-
-/** the server half of a mock connection, driven by the spec */
 export type MockServerEnd = {
 	readLine(timeoutMs?: number): Promise<string>;
 	/**

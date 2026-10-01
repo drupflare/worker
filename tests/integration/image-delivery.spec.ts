@@ -208,7 +208,7 @@ describe('a public file is served by the front worker', () => {
 		await get('/sites/default/files/styles/thumbnail/public/a.png', spy.namespace);
 		await get('/sites/default/files/..%2F..%2Fsettings.php.txt', spy.namespace);
 		expect(fileReads(spy.seen)).toEqual([]);
-		expect(publicFileUri('POST', '/sites/default/files/a.png')).toBeNull();
+		expect(publicFileUri('POST', '/sites/default/files/a.png')).toBeUndefined();
 		expect(publicFileUri('GET', '/sites/default/files/a.png')).toBe('public://a.png');
 	});
 });
@@ -251,11 +251,11 @@ describe('a delivered module asset is served by the front worker', () => {
 	});
 
 	it('refuses a climbing or doubled path and a write method', () => {
-		expect(moduleAssetPath('GET', '/modules/a/../../settings.css')).toBeNull();
-		expect(moduleAssetPath('GET', '/modules/a/%2e%2e/b.css')).toBeNull();
-		expect(moduleAssetPath('GET', '/modules//a.css')).toBeNull();
-		expect(moduleAssetPath('GET', '/modules/a%00.css')).toBeNull();
-		expect(moduleAssetPath('POST', '/modules/a/b.css')).toBeNull();
+		expect(moduleAssetPath('GET', '/modules/a/../../settings.css')).toBeUndefined();
+		expect(moduleAssetPath('GET', '/modules/a/%2e%2e/b.css')).toBeUndefined();
+		expect(moduleAssetPath('GET', '/modules//a.css')).toBeUndefined();
+		expect(moduleAssetPath('GET', '/modules/a%00.css')).toBeUndefined();
+		expect(moduleAssetPath('POST', '/modules/a/b.css')).toBeUndefined();
 		expect(moduleAssetPath('GET', '/modules/a/b.css')).toBe('modules/a/b.css');
 	});
 });

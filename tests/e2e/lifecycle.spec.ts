@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { FALLBACK_ORIGIN } from '../../src/ops/site-origin.js';
+import { FALLBACK_ORIGIN } from '../../src/ops/site-origin';
 import { ENDPOINT, e2eGate } from './helpers/endpoint';
 import {
 	assemble,

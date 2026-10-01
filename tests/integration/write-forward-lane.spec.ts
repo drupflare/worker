@@ -114,7 +114,7 @@ describe('a lane lands its writes on the primary', () => {
 				return lane.flushForward();
 			});
 
-			expect(out).toBeNull();
+			expect(out).toBeUndefined();
 		},
 		TIMEOUT
 	);
@@ -169,7 +169,7 @@ describe('a lane lands its writes on the primary', () => {
 				lane.ensureServeTables();
 				return lane.flushForward();
 			});
-			expect(out).toBeNull();
+			expect(out).toBeUndefined();
 		},
 		TIMEOUT
 	);

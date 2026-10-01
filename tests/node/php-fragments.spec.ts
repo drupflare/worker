@@ -3,11 +3,12 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { settingsOverride } from '../../src/do/settings';
 import { cronHookList, runCronHook, runCronQueue } from '../../src/drupal/cron-php';
 import { CURL_FIX } from '../../src/drupal/curl-fix';
 import { FIBER_SHIM } from '../../src/drupal/fiber-shim';
 import { ICONV_FIX } from '../../src/drupal/iconv-fix';
-import { MB_ASCII } from '../../src/drupal/mb-fix';
+import { MB_ASCII, MB_FIX, MB_SANITIZE } from '../../src/drupal/mb-fix';
 import { OPENSSL_FIX } from '../../src/drupal/openssl-fix';
 import {
 	abandonTransaction,
@@ -42,18 +43,24 @@ import { UNICODE_TABLES } from '../../src/drupal/unicode-tables';
 import { UPDB_VERIFY, updbPlan, updbUnit } from '../../src/drupal/updb-php';
 import { XMLWRITER_FIX } from '../../src/drupal/xmlwriter-fix';
 import { ZLIB_FIX } from '../../src/drupal/zlib-fix';
+import {
+	DIAG_BRIDGE_PHP,
+	DIAG_EXEC_COUNTERS_PHP,
+	DIAG_EXTENSIONS_PHP,
+	DIAG_NATIVE_FETCH_PHP
+} from '../../src/site/generated/assets';
+import { hoistUses, phpRender, phpScript, phpWhen } from '../../src/util/php';
 
-/** repo root, so the text guard below reads the real sources rather than a copy */
+/** repo root, so the file guards below read the real sources rather than a copy */
 const ROOT = new URL('../..', import.meta.url).pathname;
 
 /**
  * Every PHP fragment this project generates, run through `php -l`.
  *
- * These three modules are mostly `String.raw` blocks holding PHP source, and the failure mode is
- * specific: an edit that breaks the PHP without breaking the JavaScript. It has happened twice
- * here already, both times a backtick inside a PHP comment terminating the template literal
- * early -- once in `site-php` and once in `updb-php`. Nothing in the workers lane can catch that,
- * because a truncated fragment is still a perfectly good string.
+ * The PHP lives in `src/site/php/**` and reaches the modules through `src/site/generated/assets.ts`,
+ * so two things are linted: each file on its own, and each composition the modules build from them.
+ * A file can parse while a composition does not (a token left in a statement position, two shims
+ * declaring one name), and the reverse.
  *
  * `php -l` is the cheapest real check that exists for it, so it lives in the `node` project where
  * a PHP binary is reachable. It is a syntax gate, not a behaviour gate -- it proves the fragment
@@ -131,7 +138,7 @@ const FRAGMENTS: Array<[string, string]> = [
 		(phase) => [`bootPhase_${phase}`, bootPhaseFragment(phase)] as [string, string]
 	),
 	// the static-state sweep's instruments; BOUNDARY_STATE carries a recursive closure and nested
-	// reflection, which is exactly the shape a truncated raw block leaves still parseable
+	// reflection
 	['BOUNDARY_STATE', BOUNDARY_STATE],
 	['abandonTransaction_scope', abandonTransaction('scope')],
 	['abandonTransaction_global', abandonTransaction('global')],
@@ -145,16 +152,11 @@ const FRAGMENTS: Array<[string, string]> = [
 	['cronHookList', cronHookList()],
 	['runCronHook', runCronHook('system')],
 	['runCronQueue', runCronQueue('my_queue', 3)],
-	// prefixed with the tag the way `src/site-do.ts` runs it, since it is a bare fragment. It is
-	// worth linting where MB_FIX is not: MB_FIX's body is inside an eval(), so `php -l` sees a
-	// string literal, whereas this one is plain PHP and a parse error in it is really caught here
+	// prefixed with the tag the way `src/site-do.ts` runs it, since it is a bare fragment
 	['ZLIB_FIX', `<?php ${ZLIB_FIX}`],
-	// same reason as ZLIB_FIX: no eval(), so php -l sees the body. It carries a
-	// backtick-free comment -- a backtick inside a String.raw block
-	// truncates the template literal and this fragment hit that while being written
 	['ICONV_FIX', `<?php ${ICONV_FIX}`],
-	// same shape again: no eval(), so php -l reads the eight curl_* declarations and the
-	// ~17 constants. It is the fragment that made CurlShim reachable at all
+	// php -l reads the eight curl_* declarations and the ~17 constants. It is the fragment that
+	// made CurlShim reachable at all
 	['CURL_FIX', `<?php ${CURL_FIX}`],
 	// openssl_sign takes its signature BY REFERENCE and openssl_verify returns a tri-state,
 	// so a signature typo here is a silently wrong verdict rather than a parse error
@@ -162,18 +164,41 @@ const FRAGMENTS: Array<[string, string]> = [
 	// same shape again, and it is the only fragment declaring a CLASS conditionally
 	// (SodiumException), which php -l checks here and nothing else would
 	['SODIUM_FIX', `<?php ${SODIUM_FIX}`],
-	// the biggest conditional class here, and it hit the backtick trap on its FIRST write --
-	// two of them in one docblock, which truncated the literal and left valid JavaScript
-	// behind. `xmlwriter-parity.spec.ts` proves it matches libxml; this proves it parses
+	// the biggest conditional class here; `xmlwriter-parity.spec.ts` proves it matches libxml and
+	// this proves it parses
 	['XMLWRITER_FIX', `<?php ${XMLWRITER_FIX}`],
 	['STANDIN_FIX', `<?php ${STANDIN_FIX}`],
-	// the half of MB_FIX that is NOT inside its eval(), and the only half php -l can
-	// read. Both bodies carry regexes with backslash escapes, which is exactly the
-	// shape that survives a botched unescaping as valid JS and broken PHP
+	// both carry regexes with backslash escapes, the shape that survives a botched unescaping
 	['MB_ASCII', `<?php ${MB_ASCII}`],
-	// generated, and the reason it is plain PHP rather than an eval(): a table emitted by a
-	// script is exactly where a stray quote in a key lands, and php -l is what catches it
-	['UNICODE_TABLES', `<?php ${UNICODE_TABLES}`]
+	['MB_SANITIZE', `<?php ${MB_SANITIZE}`],
+	// the wrappers declare every mb_* name, so this is the only way to lint them on a build that
+	// carries mbstring: the `if` the composition wraps them in keeps the declarations conditional
+	['MB_FIX', `<?php ${MB_FIX}`],
+	// a table emitted by a script is exactly where a stray quote in a key lands, and php -l is what
+	// catches it
+	['UNICODE_TABLES', `<?php ${UNICODE_TABLES}`],
+	// the text appended to settings.php, with every token filled; settings.php supplies the
+	// variables it reads, so php -l is all that can run on it
+	[
+		'settingsOverride',
+		`<?php${settingsOverride({
+			origin: JSON.stringify('https://x.dev'),
+			argon2: true,
+			memoryBins: "['dynamic_page_cache']",
+			memoryItems: 500,
+			lane: 3,
+			lanes: 8,
+			packageAutoload: "$class_loader->addPsr4('Pkg\\\\', $app_root . '/libraries/pkg/');",
+			deploymentEnv: "$settings['DRUPAL_ENV_X'] = 'a';"
+		})}`
+	],
+	['DIAG_BRIDGE', phpScript(DIAG_BRIDGE_PHP)],
+	['DIAG_EXTENSIONS', phpScript(DIAG_EXTENSIONS_PHP)],
+	['DIAG_EXEC_COUNTERS', phpScript(DIAG_EXEC_COUNTERS_PHP)],
+	[
+		'DIAG_NATIVE_FETCH',
+		phpRender(DIAG_NATIVE_FETCH_PHP, { TARGET: JSON.stringify('https://x/') })
+	]
 ];
 
 // A MISSING PHP BINARY MUST NOT SILENTLY PASS THIS FILE. A local developer without php should not
@@ -202,110 +227,33 @@ describe.skipIf(!php)('every generated PHP fragment is parseable PHP', () => {
 	});
 
 	it('catches a broken fragment, so the gate is not vacuous', () => {
-		// the negative control: this is what a backtick-truncated String.raw block looks like
 		expect(lint('control', '<?php function broken( {')).not.toBe('');
 	});
 });
 
-describe('no backtick may appear inside a String.raw PHP block', () => {
-	/**
-	 * The guard `php -l` cannot be.
-	 *
-	 * A backtick in a PHP comment ends the template literal early, and `php -l` does NOT catch it:
-	 * the TRUNCATED fragment is usually still valid PHP, so the syntax gate above passes and the
-	 * defect ships. It has happened four times -- `site-php`, `updb-php`, and twice in one session
-	 * in `files-php` and `enable-php`, the second written minutes after I put a warning comment
-	 * about the trap into the first.
-	 *
-	 * The fourth broke the JAVASCRIPT rather than only the PHP, so `tsc` caught it -- luck, not
-	 * design, since it depends on whether the remaining text happens to parse as TypeScript.
-	 *
-	 * This checks COMMENT LINES ONLY, and `backtickedComments()` below records why the two wider
-	 * rules I tried first were both wrong. It is a lint on writing habit rather than a structural
-	 * proof, which is the strongest thing available without parsing TypeScript.
-	 */
-	const SOURCES = [
-		'src/drupal/site-php.ts',
-		'src/drupal/cron-php.ts',
-		'src/drupal/updb-php.ts',
-		'src/drupal/files-php.ts',
-		'src/drupal/enable-php.ts',
-		'src/drupal/mb-fix.ts'
-	];
+const PHP_DIR = join(ROOT, 'src/site/php');
+const PHP_FILES = readdirSync(PHP_DIR, { recursive: true, encoding: 'utf8' })
+	.filter((f) => f.endsWith('.php'))
+	.sort();
 
-	/**
-	 * Comment lines carrying a backtick.
-	 *
-	 * The rule is narrow, after two wider ones were wrong. The first version tracked
-	 * "inside a raw block" with a flag and flagged `site-php.ts:704`, which is `? String.raw\`` --
-	 * a LEGITIMATE nested literal inside a `${...}` interpolation. My second keyed on the
-	 * backtick's position and flagged every block opening, because the opening delimiter is
-	 * `String.raw\`<?php` and text does follow it. It also flagged an ordinary TS template literal
-	 * (`RangeError(\`unknown boot phase: ${phase}\`)`), which is correct code.
-	 *
-	 * That is the real lesson: a stray backtick and a real delimiter are textually identical, so no
-	 * position rule can separate them without parsing TypeScript. What CAN be separated is the
-	 * place the defect actually occurs. All four occurrences -- `site-php`, `updb-php`, and twice in
-	 * one session in `files-php` and `enable-php` -- were a backticked identifier inside a `//`
-	 * comment written in PHP style. So the check is exactly that, and it is worth having because a
-	 * comment never needs a backtick: single quotes read the same and cannot end a literal.
-	 *
-	 * A TS-level `//` comment with a backtick would be a false positive here. There are none today,
-	 * and the fix if one appears is to quote it rather than to loosen this.
-	 */
-	function backtickedComments(source: string): string[] {
-		const offences: string[] = [];
-		for (const [index, line] of source.split('\n').entries()) {
-			const trimmed = line.trim();
-			if (!trimmed.startsWith('//') && !trimmed.startsWith('#')) continue;
-			if (trimmed.includes('`')) offences.push(`${index + 1}: ${trimmed}`);
-		}
-		return offences;
-	}
+/**
+ * Files that declare a name an extension owns, so a top-level declaration is a compile error on a
+ * build carrying that extension. They are linted inside the `if` the composition wraps them in.
+ */
+const WRAPPED = new Set(['mb/fix.php']);
 
-	it.each(SOURCES)('%s has no backticked comment', (relative) => {
-		const source = readFileSync(join(ROOT, relative), 'utf8');
-		expect(backtickedComments(source)).toEqual([]);
+describe.skipIf(!php)('every file under src/site/php is parseable PHP', () => {
+	it('found the files, so this cannot pass by linting nothing', () => {
+		expect(PHP_FILES.length).toBeGreaterThanOrEqual(40);
 	});
 
-	it('the detector actually fires, so a green result means something', () => {
-		// without this, the six assertions above would pass on any input -- including a detector
-		// that always returns []. Which is not hypothetical here: two earlier versions of this
-		// check were wrong in opposite directions, one silent and one flagging correct code.
-		const backtick = String.fromCharCode(96);
-
-		// the shape that shipped four times
-		expect(backtickedComments(`// see ${backtick}update${backtick} for why`)).toHaveLength(1);
-		expect(
-			backtickedComments(`  # php hash comment with ${backtick}x${backtick}`)
-		).toHaveLength(1);
-
-		// every legal shape must stay silent, or the guard gets deleted for crying wolf
-		expect(backtickedComments(`/** uses ${backtick}Foo${backtick} */`)).toEqual([]);
-		expect(backtickedComments(` * a doc line with ${backtick}Bar${backtick}`)).toEqual([]);
-		expect(backtickedComments(`\t\t? String.raw${backtick}`)).toEqual([]);
-		expect(backtickedComments(`export const A = String.raw${backtick}<?php`)).toEqual([]);
-		// an ordinary TS template literal, which version two of this check wrongly flagged
-		expect(
-			backtickedComments(`throw new RangeError(${backtick}bad \${x}${backtick});`)
-		).toEqual([]);
-		expect(backtickedComments('// a plain comment with no backtick')).toEqual([]);
-	});
-});
-
-describe('every PHP-carrying module still parses as TypeScript', () => {
-	const dir = join(ROOT, 'src/drupal');
-	const modules = readdirSync(dir)
-		.filter((f) => f.endsWith('.ts'))
-		.filter((f) => readFileSync(join(dir, f), 'utf8').includes('String.raw'));
-
-	it('found the modules to check, so this cannot pass by checking nothing', () => {
-		expect(modules.length).toBeGreaterThanOrEqual(5);
-	});
-
-	it.each(modules)('%s imports', async (file) => {
-		const mod = await import(`../../src/drupal/${file}`);
-		expect(Object.keys(mod).length).toBeGreaterThan(0);
+	it.each(PHP_FILES)('%s', (file) => {
+		const source = readFileSync(join(PHP_DIR, file), 'utf8');
+		expect(source.startsWith('<?php\n'), `${file} must open with a <?php line`).toBe(true);
+		const body = WRAPPED.has(file)
+			? hoistUses(`<?php\n${phpWhen('true', source.slice('<?php\n'.length))}`)
+			: source;
+		expect(lint(file.replaceAll('/', '_'), body)).toBe('');
 	});
 });
 
@@ -325,15 +273,12 @@ describe('every PHP-carrying module still parses as TypeScript', () => {
  * thing that let the lock defect ship.
  */
 describe('no PHP fragment derives a deadline from a clock that reads 0', () => {
-	const dir = join(ROOT, 'src/drupal');
-	const modules = readdirSync(dir).filter((f) => f.endsWith('.ts'));
-
 	/** a deadline: the clock with something added to it, or the clock inside a loop condition */
 	const DEADLINE = [
 		/microtime\s*\([^)]*\)\s*[*/]?\s*[\d.]*\s*\+/,
 		/\+\s*[\d.]+\s*[*/]?\s*[\d.]*\s*;?\s*\/\/\s*deadline/i,
 		/while\s*\([^)]*microtime/,
-		// a call, not the degraded declaration standin-fix.ts puts under the same name
+		// a call, not the degraded declaration standin-fix.php puts under the same name
 		/(?<!function\s+)usleep\s*\(/,
 		/set_time_limit\s*\(/
 	];
@@ -348,15 +293,15 @@ describe('no PHP fragment derives a deadline from a clock that reads 0', () => {
 		'microtime(true) * 1000 - $t0'
 	];
 
-	it('found the modules to scan, so this cannot pass by scanning nothing', () => {
-		expect(modules.length).toBeGreaterThanOrEqual(5);
+	it('found the files to scan, so this cannot pass by scanning nothing', () => {
+		expect(PHP_FILES.length).toBeGreaterThanOrEqual(40);
 	});
 
-	it.each(modules)('%s', (file) => {
-		const source = readFileSync(join(dir, file), 'utf8');
+	it.each(PHP_FILES)('%s', (file) => {
+		const source = readFileSync(join(PHP_DIR, file), 'utf8');
 		const offenders: string[] = [];
 		for (const [index, line] of source.split('\n').entries()) {
-			// a comment ABOUT the hazard is not the hazard, and this file is full of them
+			// a comment ABOUT the hazard is not the hazard, and these files are full of them
 			const code = line.replace(/^\s*(\/\/|\*|#).*$/, '');
 			if (MEASUREMENT.some((allowed) => code.includes(allowed))) continue;
 			if (DEADLINE.some((re) => re.test(code)))
@@ -390,7 +335,7 @@ describe('the Fiber stand-in', () => {
 			updbUnit()
 		]) {
 			expect(fragment).toContain(FIBER_SHIM);
-			expect(fragment.split('class PhpWasmSyncFiber {').length - 1).toBe(
+			expect(fragment.match(/class PhpWasmSyncFiber\b/g)?.length).toBe(
 				fragment.split(FIBER_SHIM).length - 1
 			);
 		}

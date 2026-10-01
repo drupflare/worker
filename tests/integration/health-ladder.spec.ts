@@ -11,13 +11,13 @@ import {
 
 /**
  * The health layer, driven through a REAL Durable Object rather than as pure functions.
+ *
+ * The supervisor surface on the instance; `ServeDo` predates it.
  */
-
-/** the supervisor surface on the instance; `ServeDo` predates it */
 type HealthDo = ServeDo & {
 	alarm: () => Promise<unknown>;
 	supervise: (outcomes: unknown[]) => { code: string; severity: string; context: string }[];
-	medianRenderBytes: (path: string) => number | null;
+	medianRenderBytes: (path: string) => number | undefined;
 	noteRenderBytes: (path: string, bytes: number) => void;
 	metaGet: (key: string, fallback?: string | null) => string | null;
 	metaSet: (key: string, value: unknown) => void;
@@ -281,11 +281,11 @@ describe('the size-anomaly baseline is previous renders, not the row just writte
 	it('returns null below three samples, so the second render is never an anomaly', async () => {
 		await inObject(freshSite(), (site) => {
 			const h = health(site);
-			expect(h.medianRenderBytes('/a')).toBe(null);
+			expect(h.medianRenderBytes('/a')).toBeUndefined();
 			h.noteRenderBytes('/a', 1000);
-			expect(h.medianRenderBytes('/a')).toBe(null);
+			expect(h.medianRenderBytes('/a')).toBeUndefined();
 			h.noteRenderBytes('/a', 1000);
-			expect(h.medianRenderBytes('/a')).toBe(null);
+			expect(h.medianRenderBytes('/a')).toBeUndefined();
 			h.noteRenderBytes('/a', 1000);
 			expect(h.medianRenderBytes('/a')).toBe(1000);
 		});

@@ -109,7 +109,7 @@ interface Status {
 	chunks: number;
 	statements: number;
 	rows: number;
-	cursor: Cursor | null;
+	cursor?: Cursor;
 	done: boolean;
 	started: boolean;
 }
@@ -117,7 +117,7 @@ interface Status {
 // the module is untyped JS, so results crossing back get a named shape here
 const asStep = (r: unknown): StepResult => r as StepResult;
 const asStatus = (r: unknown): Status => r as Status;
-const asCursor = (r: unknown): Cursor | null => r as Cursor | null;
+const asCursor = (r: unknown): Cursor | undefined => r as Cursor | undefined;
 
 /** array index that fails loudly instead of widening; noUncheckedIndexedAccess is on */
 function at<T>(list: T[], i: number): T {
@@ -463,7 +463,7 @@ describeIfPacked('the cursor table', () => {
 		const { sql } = freshMigrator();
 		ensureMigrateTable(sql);
 		ensureMigrateTable(sql);
-		expect(asCursor(readMigrateCursor(sql))).toBeNull();
+		expect(asCursor(readMigrateCursor(sql))).toBeUndefined();
 		expect(
 			Number(at(sql.exec(`SELECT COUNT(*) AS c FROM ${MIGRATE_TABLE}`).toArray(), 0).c)
 		).toBe(0);
@@ -502,7 +502,7 @@ describeIfPacked('status before anything runs', () => {
 describeIfPacked('one chunk per step, and the cursor advances exactly once', () => {
 	let first: StepResult;
 	let second: StepResult;
-	let cursor: Cursor | null;
+	let cursor: Cursor | undefined;
 
 	beforeAll(async () => {
 		const { sql, migrator } = freshMigrator();
@@ -786,7 +786,7 @@ describeIfPacked('runAll is the paid-plan shape and produces the same end state'
 describeIfPacked('a failed chunk rolls back whole, records the failure, and retries', () => {
 	let db: DatabaseSync;
 	let error: unknown;
-	let cursor: Cursor | null;
+	let cursor: Cursor | undefined;
 	let afterFirst = 0;
 	let afterFail = 0;
 	let finished: StepResult;
@@ -864,13 +864,13 @@ describeIfPacked('a failed chunk rolls back whole, records the failure, and retr
 
 describeIfPacked('a mid-flight generation change is refused, not merged', () => {
 	let error: unknown;
-	let cursor: Cursor | null;
+	let cursor: Cursor | undefined;
 
 	beforeAll(async () => {
 		const { sql, migrator } = freshMigrator();
 		await migrator.step();
 		sql.exec(`UPDATE ${MIGRATE_TABLE} SET generation = 'someotherpack' WHERE id = 1`);
-		migrator.manifest = null;
+		migrator.manifest = undefined;
 		error = await rejection(migrator.step());
 		cursor = asCursor(readMigrateCursor(sql));
 	});
@@ -904,7 +904,7 @@ describeIfPacked('a chunk file from a different build is refused', () => {
 describeIfPacked('reset', () => {
 	let db: DatabaseSync;
 	let dropped = 0;
-	let cursor: Cursor | null;
+	let cursor: Cursor | undefined;
 	let leftovers = 0;
 	let redo: StepResult;
 
@@ -932,7 +932,7 @@ describeIfPacked('reset', () => {
 	});
 
 	it('clears the cursor', () => {
-		expect(cursor).toBeNull();
+		expect(cursor).toBeUndefined();
 	});
 
 	it('leaves no source tables behind', () => {

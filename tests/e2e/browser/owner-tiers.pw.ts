@@ -1,4 +1,4 @@
-import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures.js';
+import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures';
 
 /**
  * The lowest of the three drupflare tiers, as a person holding only it sees the admin pages.

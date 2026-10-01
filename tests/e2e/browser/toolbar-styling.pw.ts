@@ -1,4 +1,4 @@
-import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures.js';
+import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures';
 
 /**
  * Whether the admin toolbar arrived DRESSED, which no other lane can see.
@@ -26,9 +26,9 @@ import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures.js';
  * a site with aggregation off and an inline-rendered toolbar, and does not when BigPipe
  * placeholders it -- so that assertion fails on a correctly styled page, which makes it worse than
  * no assertion.
+ *
+ * What SDC generates a library for, and what the pack has to carry beside the manifest.
  */
-
-/** what SDC generates a library for, and what the pack has to carry beside the manifest */
 const COMPONENT_CSS = '/core/modules/navigation/components/toolbar-button/toolbar-button.css';
 
 test('the admin toolbar is styled, not just present', async ({ page }) => {

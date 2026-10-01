@@ -28,7 +28,7 @@ import {
 } from '../../scripts/build-local.ts';
 import { resolvePayloadSource } from '../../scripts/hydrate.ts';
 import { PREFILL_PATHS } from '../../scripts/lift-prefill.ts';
-import { packVersionsHash } from '../../scripts/pack-hash.js';
+import { packVersionsHash } from '../../scripts/pack-hash';
 import {
 	devKeyBase,
 	devLabel,

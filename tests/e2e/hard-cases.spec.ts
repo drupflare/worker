@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { ENDPOINT, SITE, e2eGate, serve } from './helpers/endpoint.js';
+import { ENDPOINT, SITE, e2eGate, serve } from './helpers/endpoint';
 
 /**
  * The three shapes P9 named and the lane never covered: cron firing for real, several visitors at

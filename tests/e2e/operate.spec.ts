@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { FALLBACK_ORIGIN } from '../../src/ops/site-origin.js';
-import { e2eGate, ENDPOINT } from './helpers/endpoint.js';
+import { FALLBACK_ORIGIN } from '../../src/ops/site-origin';
+import { e2eGate, ENDPOINT } from './helpers/endpoint';
 import {
 	invalidate,
 	migrate,
@@ -11,14 +11,14 @@ import {
 	transportFor,
 	warm,
 	type Transport
-} from './helpers/lifecycle.js';
+} from './helpers/lifecycle';
 import {
 	dropInterpreter,
 	enableModule,
 	files,
 	saveNode,
 	type SaveNodeReply
-} from './helpers/operate.js';
+} from './helpers/operate';
 import {
 	ALL_IDS,
 	extractAll,
@@ -29,7 +29,7 @@ import {
 	stripAssetTags,
 	twice,
 	VIEW_DOM_ID
-} from './helpers/twice.js';
+} from './helpers/twice';
 
 /**
  * OPERATING a site, as opposed to provisioning one: content, modules, files, config, and the second

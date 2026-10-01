@@ -13,6 +13,9 @@ import {
 import { affinityKey, chooseTarget } from '../../src/ops/replica-routing';
 import { ensureOwnerToken, type SecretStore } from '../../src/ops/site-secrets';
 import worker, { bodyTooLarge, isNeverDrupal } from '../../src/site';
+import { asGeneration } from '../../src/site/edge-cache';
+import { refuseOversized } from '../../src/site/screen';
+import type { FrontContext } from '../../src/site/types';
 import {
 	inObject,
 	namedSite,
@@ -46,9 +49,9 @@ import {
  *     `/serve-stats` call between two serves -- is a test.
  *
  * `caches.default` is the real Cache API, isolated per test file by the pool's `isolatedStorage`.
+ *
+ * The window the generation pointer is discovered once per, from wrangler.jsonc.
  */
-
-/** the window the generation pointer is discovered once per, from wrangler.jsonc */
 const GEN_BUCKET_MS = 5000;
 
 /**
@@ -119,7 +122,7 @@ describe('an oversized request body never reaches the interpreter', () => {
 				'content-length': String(DEFAULT_MAX_BODY_BYTES)
 			}
 		});
-		expect(bodyTooLarge(at)).toBeNull();
+		expect(bodyTooLarge(at)).toBeUndefined();
 	});
 
 	it('exempts an upload, which is the one shape where size is expected', () => {
@@ -131,14 +134,14 @@ describe('an oversized request body never reaches the interpreter', () => {
 				'content-length': String(64 * 1024 * 1024)
 			}
 		});
-		expect(bodyTooLarge(upload)).toBeNull();
+		expect(bodyTooLarge(upload)).toBeUndefined();
 	});
 
 	it('never refuses a GET, which carries no body to parse', () => {
 		const get = new Request('https://cfw.local/x', {
 			headers: { 'content-length': String(64 * 1024 * 1024) }
 		});
-		expect(bodyTooLarge(get)).toBeNull();
+		expect(bodyTooLarge(get)).toBeUndefined();
 	});
 
 	// a chunked request declares no length; measuring it means consuming it, which is the cost
@@ -149,7 +152,7 @@ describe('an oversized request body never reaches the interpreter', () => {
 			body: 'a=1',
 			headers: { 'content-type': 'application/x-www-form-urlencoded' }
 		});
-		expect(bodyTooLarge(chunked)).toBeNull();
+		expect(bodyTooLarge(chunked)).toBeUndefined();
 	});
 
 	it('takes the limit from MAX_BODY_BYTES, and 0 disables it', () => {
@@ -162,7 +165,7 @@ describe('an oversized request body never reaches the interpreter', () => {
 			}
 		});
 		expect(bodyTooLarge(big, { MAX_BODY_BYTES: 4096 })?.limit).toBe(4096);
-		expect(bodyTooLarge(big, { MAX_BODY_BYTES: 0 })).toBeNull();
+		expect(bodyTooLarge(big, { MAX_BODY_BYTES: 0 })).toBeUndefined();
 
 		// a nonsense value falls back to the default rather than disabling the guard by accident,
 		// which needs a body over the DEFAULT to be visible at all
@@ -176,6 +179,32 @@ describe('an oversized request body never reaches the interpreter', () => {
 		});
 		expect(bodyTooLarge(huge, { MAX_BODY_BYTES: 'lots' })?.limit).toBe(DEFAULT_MAX_BODY_BYTES);
 		expect(bodyTooLarge(huge, { MAX_BODY_BYTES: -5 })?.limit).toBe(DEFAULT_MAX_BODY_BYTES);
+	});
+
+	it('the front worker stage answers 413 for an oversized body and nothing for a small one', () => {
+		const post = (length: number) =>
+			new Request('https://cfw.local/x', {
+				method: 'POST',
+				body: 'a=1',
+				headers: {
+					'content-type': 'application/x-www-form-urlencoded',
+					'content-length': String(length)
+				}
+			});
+		const stage = (request: Request) => refuseOversized({ request, env: {} } as FrontContext);
+		const refused = stage(post(DEFAULT_MAX_BODY_BYTES + 1));
+		expect(refused?.status).toBe(413);
+		expect(refused?.headers.get('x-cfw-body-limit')).toBe(String(DEFAULT_MAX_BODY_BYTES));
+		expect(stage(post(DEFAULT_MAX_BODY_BYTES))).toBeUndefined();
+	});
+});
+
+describe('the generation header reader', () => {
+	it('reads a positive number and refuses anything that is not one', () => {
+		expect(asGeneration('42')).toBe(42);
+		for (const raw of [null, undefined, '', '0', '-3', 'abc', 'Infinity']) {
+			expect(asGeneration(raw), String(raw)).toBeUndefined();
+		}
 	});
 });
 
@@ -1682,7 +1711,6 @@ describe("a reset object is not the visitor's 1101", () => {
 					method: 'GET',
 					affinity: affinityKey({
 						session: 'reset-failover',
-						address: null,
 						pathname: p
 					}),
 					replicas: 4,

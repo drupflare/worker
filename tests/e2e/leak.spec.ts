@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { ENDPOINT, e2eGate } from './helpers/endpoint.js';
+import { ENDPOINT, e2eGate } from './helpers/endpoint';
 import {
 	migrate,
 	newSiteName,
@@ -7,15 +7,15 @@ import {
 	provision,
 	transportFor,
 	type Transport
-} from './helpers/lifecycle.js';
-import { saveNode, serveAs, sessionCookie, type IdentityShot } from './helpers/operate.js';
+} from './helpers/lifecycle';
+import { saveNode, serveAs, sessionCookie, type IdentityShot } from './helpers/operate';
 import {
 	firstDifference,
 	longestFirst,
 	loopbackOrigins,
 	maskNonces,
 	maskOrigins
-} from './helpers/twice.js';
+} from './helpers/twice';
 
 /**
  * Masks the per-render nonces AND every loopback origin the two documents name.

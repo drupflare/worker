@@ -3,9 +3,9 @@ import { existsSync } from 'node:fs';
 /**
  * The reachability gate for specs whose subject is a BUILD ARTIFACT, modelled on
  * `tests/e2e/helpers/endpoint.ts`.
+ *
+ * Every build artifact a spec might depend on, with the command that produces it.
  */
-
-/** every build artifact a spec might depend on, with the command that produces it */
 const PRODUCED_BY: Record<string, string> = {
 	'assets/driver.json': 'bun run assets:driver',
 	'assets/drupal/twig-bake.json': 'bun run assets:twig',

@@ -236,7 +236,7 @@ describe('the determinism budget a replay has to fit in', () => {
 				);
 
 				// the drop the recycle makes, which is the event a ticket has to survive
-				(site as unknown as { php: unknown }).php = null;
+				(site as unknown as { php: unknown }).php = undefined;
 
 				const inMemory = await site.runJson(
 					`<?php echo json_encode(['ticket' => $GLOBALS['cfw_ticket'] ?? null]);`

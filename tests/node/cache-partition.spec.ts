@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { sourceOf } from '../helpers/source';
 
 /**
  * The Workers Cache feature is keyed WITHOUT the host, and this product is multi-tenant by host.
@@ -72,9 +73,9 @@ describe('the shipping configs do not enable an unpartitioned cache', () => {
 		// and an unanchored search ran past it to the NEXT `cacheKey(origin, [` in the file and
 		// asserted against the auth-budget key instead. A source guard has to be anchored on the
 		// thing it names or it silently guards something else.
-		const src = readFileSync('src/site.ts', 'utf8');
+		const src = sourceOf('src/site/edge-cache.ts');
 		const parts = src.match(/const pageKeyUrl =[\s\S]*?cacheKeyUrl\(\s*origin,\s*\[([^\]]*)\]/);
-		expect(parts?.[1], 'pageKeyUrl() not found in src/site.ts').toBeTruthy();
+		expect(parts?.[1], 'pageKeyUrl() not found in src/site/edge-cache.ts').toBeTruthy();
 		const key = parts?.[1] ?? '';
 		expect(
 			key,

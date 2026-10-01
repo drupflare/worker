@@ -1,4 +1,4 @@
-import { ADMIN_USER, expect, gotoPage, loginAsAdmin, test } from './utils/fixtures.js';
+import { ADMIN_USER, expect, gotoPage, loginAsAdmin, test } from './utils/fixtures';
 
 /** the second form that was a white screen; same entity form class as `/user/register` */
 test('the account form renders for uid 1', async ({ page }) => {

@@ -5,9 +5,9 @@
  * without a worker running should not see red, but a CI run that quietly skipped the whole lane
  * is indistinguishable from one that passed, and that is how a lane stops running for months
  * without anyone noticing.
+ *
+ * Where the worker under test is; `bun run dev` serves here by default.
  */
-
-/** where the worker under test is; `bun run dev` serves here by default */
 export const ENDPOINT = (process.env.CFW_E2E_ENDPOINT ?? 'http://127.0.0.1:8787').replace(
 	/\/+$/,
 	''

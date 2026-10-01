@@ -202,14 +202,14 @@ describe('the userland PDO reaches the mounted tree and is required from it', ()
 	it('is required from settings.php, which is the earliest point in a served request', async () => {
 		// Settings::initialize() runs long before any connection is opened; a later hook would be
 		// after the first `new Statement` and the fatal it is there to prevent
-		const source = await readFile(`${ROOT}src/site-do.ts`, 'utf8');
+		const source = await readFile(`${ROOT}src/site/php/settings-override.php`, 'utf8');
 		expect(source).toContain(`require_once $app_root . '/${MOUNTED}'`);
 	});
 
 	it('is required by the live driver suite, which bypasses settings.php entirely', async () => {
 		// DRIVER_LIVE_SUITE constructs the Connection directly, so it inherits nothing from the
 		// served path and needs its own require
-		const source = await readFile(`${ROOT}src/drupal/site-php.ts`, 'utf8');
+		const source = await readFile(`${ROOT}src/site/php/driver-live-suite.php`, 'utf8');
 		expect(source).toContain(`require_once '/drupal/${MOUNTED}'`);
 	});
 });

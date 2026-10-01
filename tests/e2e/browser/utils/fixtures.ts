@@ -9,9 +9,9 @@ import { join } from 'node:path';
  * The console guard is the whole reason this lane exists: `/user/register` and `/user/1/edit` were a
  * white screen on every site ever created and the HTTP lane read both as 200. It is an `auto`
  * fixture so a spec cannot forget it.
+ *
+ * The site name `SITE_ID` pins for a local host; the diagnostic routes take it as `?site=`.
  */
-
-/** the site name `SITE_ID` pins for a local host; the diagnostic routes take it as `?site=` */
 export const SITE = process.env.CFW_BROWSER_SITE ?? 'browser';
 
 export const BASE_URL =

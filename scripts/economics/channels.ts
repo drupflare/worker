@@ -10,6 +10,7 @@
  *   EIA 2025 US generation mix: ~41% gas + 17% coal + 0.7% petroleum = 58.7% fossil
  */
 import { num, sweep } from './args';
+import { IDLE_W } from './energy';
 import { WATER_DIRECT_L_PER_KWH, WATER_INDIRECT_L_PER_KWH } from './fleet';
 import { f, nr, r } from './fmt';
 
@@ -23,7 +24,6 @@ const FOSSIL = 0.587;
 const EMBODIED_KG = 900.0;
 const LIFE_Y = 4.0;
 const SERVER_KG = 21.67;
-const IDLE_W = 135.0;
 const PUE = 1.54;
 const HOURS_Y = 8766.0;
 const DENSITY = num('density', 233.0); // Pantheon-realistic sites per host

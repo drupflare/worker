@@ -1,10 +1,10 @@
 /** What the numbers equate to, at realistic density, with equivalencies. */
 import { num, sweep } from './args';
+import { IDLE_W } from './energy';
 import { f, fr, n, nr, r } from './fmt';
 
 const SITES = sweep('sites', [1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000]);
 
-const IDLE_W = 135.0;
 const PUE = 1.54;
 const G_US = num('grid-us', 384.0);
 const HOURS_Y = 8766.0;

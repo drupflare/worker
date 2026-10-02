@@ -6,6 +6,7 @@
  * Cloudflare emits, divided by every request it serves, charged to us per page view.
  */
 import { num, sweep } from './args';
+import { sharedHostingPublished } from './fleet';
 import { f, fr, nr } from './fmt';
 
 const VIEWS = sweep('views', [10_000, 100_000, 1_000_000]);
@@ -34,9 +35,12 @@ for (const views of VIEWS) {
 console.log(
 	"\nagainst one site's share of a RAM-bound shared host (from fleet.ts, 1,000 sites/host):"
 );
-const SHARED_KWH_SITE = 1823.0 / 1000.0;
+const SHARED_KWH_SITE = sharedHostingPublished(1000, 10_000).kwh / 1000.0;
 const sharedKg = (SHARED_KWH_SITE * G_US) / 1000.0;
 console.log(`  shared hosting   ${fr(sharedKg, 8, 3)} kg CO2e/y per site`);
+console.log(
+	`  attributed carbon crosses it at ${nr(sharedKg / ((12 * REQ_PER_VIEW * gPerReq) / 1000.0), 0)} views/mo`
+);
 for (const views of [10_000, 100_000, 1_000_000]) {
 	const kgY = (views * 12 * REQ_PER_VIEW * gPerReq) / 1000.0;
 	console.log(

@@ -6,12 +6,12 @@
  * than 210,000 web applications" (dev/test/live per site).
  */
 import { num } from './args';
+import { IDLE_W } from './energy';
 import { f, fr, nr, r } from './fmt';
 
 const CONTAINERS = 1_000_000;
 const APPS = 210_000;
 const SITES = 70_000;
-const IDLE_W = 135.0;
 const PUE_COLO = 1.54;
 const HOURS_Y = 8766.0;
 const G_US = num('grid-us', 384.0);

@@ -13,11 +13,11 @@
  * Ember US grid 384 g/kWh. Measured here: VPS 122 req/s anonymous cached at 32 clients on 2 vCPU.
  */
 import { num, sweep } from './args';
+import { CORES, IDLE_W } from './energy';
 import { fr, nr, r } from './fmt';
 
 const SITES = sweep('sites', [1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000]);
 
-const IDLE_W = 135.0;
 const PUE = 1.54;
 const G_US = num('grid-us', 384.0);
 const HOURS_Y = 8766.0;
@@ -26,9 +26,8 @@ const LIFE_Y = 4.0;
 const CAR_T = 4.6;
 const RAM_GB_HOST = 1536.0;
 const RAM_GB_SITE = 1.0;
-const CORES = 128.0;
 const REQ_S_PER_CORE = 122.0 / 2.0; // measured VPS, per vCPU
-const SCALING_EFF = 0.7; // 128 cores do not scale linearly; generous to the opponent
+const SCALING_EFF = 0.7; // the cores of a host do not scale linearly; generous to the opponent
 const PEAK_RATIO = 5.0; // diurnal peak
 const TARGET_UTIL = 0.5; // you size for headroom, not for the peak
 // reassigned below to run the no-CDN arm, so `let` rather than `const`: the Python model mutates

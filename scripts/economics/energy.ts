@@ -6,7 +6,7 @@
  */
 import { pageStoreFraction } from '../measure/render-fraction';
 import { num, sweep } from './args';
-import { fr, l, nr, pctr, r, sfx } from './fmt';
+import { fr, nr, pctr, r } from './fmt';
 
 const VIEWS = sweep('views', [10_000, 100_000, 1_000_000]);
 // every figure and its provenance lives in measured.ts, which also carries the constraint that
@@ -18,15 +18,20 @@ import {
 } from './measured';
 
 // --- sourced inputs -------------------------------------------------------
-const IDLE_W = 135.0; // SPECpower, Dell PowerEdge R6725 (EPYC 9845), active idle, 2025-10
-const PEAK_W = 460.0; // same class under full load; generous, keeps VPS busy-share cheap
-const PUE_COLO = 1.54; // Uptime Institute 2025 weighted average (colo/enterprise is 1.58-1.80)
+// SPECpower_ssj2008 result power_ssj2008-20251021-01543, Dell PowerEdge R6725, AMD EPYC 9845 at
+// 2.10 GHz: 2 chips, 320 cores, 640 hardware threads, 135 W active idle, 711 W at 100% target load
+// https://www.spec.org/power_ssj2008/results/res2025q4/power_ssj2008-20251021-01543.txt
+export const IDLE_W = 135.0;
+export const PEAK_W = 711.0;
+export const CORES = 320.0;
+export const THREADS_PER_HOST = 640;
+export const PUE_COLO = 1.54; // Uptime Institute 2025 weighted average (colo/enterprise is 1.58-1.80)
 export const PUE_HYPER = 1.15; // Uptime 2025 hyperscale band 1.10-1.15; take the WORSE end for us
 const G_PER_KWH_US = num('grid-us', 384.0); // Ember Global Electricity Review 2025, US
 const G_PER_KWH_EU = num('grid-eu', 140.0); // IEA/EEA 2026 forecast, EU
-const HOURS_YEAR = 8766.0;
-const CORES = 128.0; // physical cores on the 2-socket host both sides are modelled on
+export const HOURS_YEAR = 8766.0;
 
+// drupflare's busy core is a physical core: each Workers isolate thread runs on one core
 /** marginal power of one busy core, plus that core's share of idle while it is busy */
 export const W_PER_CORE = (PEAK_W - IDLE_W) / CORES + IDLE_W / CORES;
 
@@ -40,8 +45,7 @@ export function vpsKwhYear(density: number, util: number): number {
 	return ((wattsAt(util) / density) * PUE_COLO * HOURS_YEAR) / 1000.0;
 }
 
-// hardware threads on the modelled host; a node owns vCPU / THREADS_PER_HOST of it
-export const THREADS_PER_HOST = 256;
+// a VPS vCPU is a hardware thread, so a node owns vCPU / THREADS_PER_HOST of the host
 // web pair plus database pair in a region (Acquia HA over two AZs, AWS Drupal reference architecture)
 export const NODES_PER_REGION = 4;
 
@@ -88,14 +92,12 @@ export function productionKwhYear(s: ProductionShape): number {
 	);
 }
 
-/** The floor: one small VPS, 1/100 of a host at 15% utilisation, the worst case for the saving. */
-export const FLOOR_KWH_YEAR = vpsKwhYear(100, 0.15);
+/** a small VPS is two vCPUs, so it owns two hardware threads of the host */
+export const SMALL_VPS_VCPU = 2;
+export const SMALL_VPS_DENSITY = THREADS_PER_HOST / SMALL_VPS_VCPU;
 
-/** Saving of drupflare against an incumbent's yearly kWh, in percent, at a traffic level. */
-export function savingPct(incumbentKwh: number, viewsMonth: number): number {
-	const d = drupflareKwhYear(viewsMonth, pageStoreFraction(viewsMonth), CPU_MS_RENDER);
-	return (1 - d / incumbentKwh) * 100.0;
-}
+/** The floor: one small VPS, two threads of a host at 15% utilisation, the worst case for the saving. */
+export const FLOOR_KWH_YEAR = vpsKwhYear(SMALL_VPS_DENSITY, 0.15);
 
 /** Energy is CPU-seconds actually executed, charged at the host's marginal power per core. */
 export function drupflareKwhYear(viewsMonth: number, renderFrac: number, renderMs: number): number {
@@ -117,41 +119,6 @@ function row(
 }
 
 if (import.meta.main) {
-	const SAVING_VIEWS = [10_000, 100_000, 1_000_000, 10_000_000, 30_000_000];
-	console.log(
-		'production deployments, idle kWh per site-year at colo PUE (derived (modelled))\n'
-	);
-	console.log(
-		`${l('shape', 28)} ${r('regions', 8)} ${r('nodes', 6)} ${r('vCPU', 5)} ${r('util', 5)} ${r('kWh/y', 8)}`
-	);
-	const incumbents: [string, number][] = [];
-	for (const s of PRODUCTION_SHAPES) {
-		const kwh = productionKwhYear(s);
-		incumbents.push([s.name, kwh]);
-		console.log(
-			`${l(s.name, 28)} ${r(s.regions, 8)} ${r(s.regions * s.nodesPerRegion, 6)} ${r(s.vcpu, 5)} ${pctr(s.util, 5, 0)} ${fr(kwh, 8, 1)}`
-		);
-	}
-	incumbents.push(['floor, one small VPS', FLOOR_KWH_YEAR]);
-	console.log(
-		`${l('floor, one small VPS', 28)} ${r(1, 8)} ${r(1, 6)} ${r('1/100', 5)} ${pctr(0.15, 5, 0)} ${fr(FLOOR_KWH_YEAR, 8, 1)}`
-	);
-
-	console.log('\ndrupflare kWh per site-year (derived)');
-	for (const views of SAVING_VIEWS) {
-		const d = drupflareKwhYear(views, pageStoreFraction(views), CPU_MS_RENDER);
-		console.log(`  ${nr(views, 11)} views/mo  ${fr(d, 8, 4)} kWh`);
-	}
-
-	console.log('\nsaving against each incumbent, percent (derived)\n');
-	console.log(`${l('shape', 28)} ${SAVING_VIEWS.map((v) => r(sfx(v, 0), 9)).join(' ')}`);
-	for (const [name, kwh] of incumbents) {
-		console.log(
-			`${l(name, 28)} ${SAVING_VIEWS.map((v) => fr(savingPct(kwh, v), 9, 2)).join(' ')}`
-		);
-	}
-	console.log('');
-
 	console.log('one site, renders from 5 saves a day, VPS idle-dominated\n');
 	console.log(
 		`${r('views/mo', 9)} ${r('VPS/host', 9)} ${r('VPS util', 9)} ${r('VPS kWh/y', 10)} ${r('drupflare', 10)} ${r('saving', 8)}`

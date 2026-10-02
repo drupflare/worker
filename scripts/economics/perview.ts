@@ -9,8 +9,16 @@
  */
 import { model, pageStoreFraction } from '../measure/render-fraction';
 import { TRAFFIC_MIX } from '../measure/verdict-math';
-import { PUE_HYPER, W_PER_CORE } from './energy';
-import { fr, l, r, sfx } from './fmt';
+import {
+	FLOOR_KWH_YEAR,
+	PRODUCTION_SHAPES,
+	PUE_HYPER,
+	SMALL_VPS_DENSITY,
+	W_PER_CORE,
+	productionKwhYear,
+	type ProductionShape
+} from './energy';
+import { energyJ, energyKwh, fr, l, n, nr, pctr, r, sfx } from './fmt';
 import { CACHED_SERVE_TOTAL_MS, JVIEW_CPU_MS, RENDER_WARM_BIN_MS } from './measured';
 
 export const VIEWS = [10_000, 100_000, 1_000_000, 10_000_000, 30_000_000];
@@ -55,7 +63,29 @@ const SCALE = RENDER_WARM_BIN_MS / JVIEW_CPU_MS.bastion.anonMiss;
 const SC = (rigMs: number): number => rigMs * SCALE;
 
 const W = TRAFFIC_MIX;
-const anonShare = W['anon-cached']!.weight + W['anon-miss']!.weight;
+/** anonymous share of the mix; the rest is logged in */
+export const anonShare = W['anon-cached']!.weight + W['anon-miss']!.weight;
+
+/** drupflare's CPU per served class in ms; authMix is the logged-in share of the mix per view, plan holding */
+export const DRUPFLARE_MS = {
+	render: RENDER_WARM_BIN_MS,
+	hit: CACHED_SERVE_TOTAL_MS,
+	authMix:
+		W['auth-front']!.weight * SC(JVIEW_CPU_MS.bastion.authFront) +
+		W['auth-admin']!.weight * SC(JVIEW_CPU_MS.bastion.authAdmin) +
+		W['auth-account']!.weight * SC(JVIEW_CPU_MS.bastion.authAdmin)
+};
+
+/** native CPU per served class on the deployed render's hardware, in ms; authMix is per view of the mix */
+export const NATIVE_MS = {
+	render: SC(JVIEW_CPU_MS.vps.anonMiss),
+	nginxHit: SC(JVIEW_CPU_MS.vps.anonCached),
+	fpmHit: SC(JVIEW_CPU_MS.vpsFpm.anonCached),
+	authMix:
+		W['auth-front']!.weight * SC(JVIEW_CPU_MS.vps.authFront) +
+		W['auth-admin']!.weight * SC(JVIEW_CPU_MS.vps.authAdmin) +
+		W['auth-account']!.weight * SC(JVIEW_CPU_MS.vps.authAccount)
+};
 
 /** per-view energy of one served class, in mJ */
 export const COST = {
@@ -82,7 +112,7 @@ const AUTH_DRUPFLARE_PLANNED = authMj({
 	authAccount: JVIEW_CPU_MS.bastion.authAdmin
 });
 
-/** drupflare, `/user/1` planned, mJ per view on the mix */
+/** drupflare, compiled plan holding on `/user/1`, mJ per view on the mix */
 export function drupflareMjPerView(viewsMonth: number): number {
 	const p = drupflareRenderRate(viewsMonth);
 	return (
@@ -141,6 +171,40 @@ export function opponentMjPerView(o: Opponent, viewsMonth: number): number {
 	return anonShare * opponentAnonMj(o, viewsMonth) + AUTH_OPPONENT;
 }
 
+const J_PER_KWH = 3.6e6;
+
+/** drupflare's whole-year energy for one site on the mix, logged-in views included, in kWh */
+export function drupflareKwhYearOnMix(viewsMonth: number): number {
+	return ((drupflareMjPerView(viewsMonth) / 1000) * viewsMonth * 12) / J_PER_KWH;
+}
+
+/** a deployment's whole-year energy spread over its whole-year views, in joules per view */
+export function joulesPerView(kwhYear: number, viewsMonth: number): number {
+	return (kwhYear * J_PER_KWH) / (viewsMonth * 12);
+}
+
+/** saving of drupflare against an incumbent's whole-year kWh, in percent, on the mix */
+export function savingPct(incumbentKwh: number, viewsMonth: number): number {
+	return (1 - drupflareKwhYearOnMix(viewsMonth) / incumbentKwh) * 100;
+}
+
+/** one row of the headline: per view, all-in, idle included on the conventional side */
+export function headline(viewsMonth: number) {
+	const [matched, peak] = PRODUCTION_SHAPES as [ProductionShape, ProductionShape];
+	const drupflare = joulesPerView(drupflareKwhYearOnMix(viewsMonth), viewsMonth);
+	const production = joulesPerView(productionKwhYear(matched), viewsMonth);
+	const peakSized = joulesPerView(productionKwhYear(peak), viewsMonth);
+	return {
+		drupflare,
+		production,
+		peakSized,
+		productionMultiple: production / drupflare,
+		peakMultiple: peakSized / drupflare,
+		productionSaving: (1 - drupflare / production) * 100,
+		peakSaving: (1 - drupflare / peakSized) * 100
+	};
+}
+
 /**
  * The render rate above which an nginx-hit opponent costs more per anonymous view than drupflare
  * would if it never rendered: where the hit gap (7.4 against 3.0 mJ) is paid back by renders.
@@ -150,6 +214,51 @@ export const BREAK_EVEN_RENDER_RATE =
 
 if (import.meta.main) {
 	const head = `${l('', 42)} ${VIEWS.map((v) => r(sfx(v, 0), 9)).join(' ')}`;
+
+	console.log('headline: energy per view, all-in, idle included (derived (modelled))\n');
+	console.log(
+		`${r('views/mo', 11)} ${r('drupflare', 13)} ${r('production', 13)} ${r('peak-sized', 13)} ${r('prod x', 10)} ${r('prod %', 9)} ${r('peak x', 10)} ${r('peak %', 9)}`
+	);
+	for (const v of VIEWS) {
+		const h = headline(v);
+		console.log(
+			`${nr(v, 11)} ${r(energyJ(h.drupflare), 13)} ${r(energyJ(h.production), 13)} ${r(energyJ(h.peakSized), 13)} ${r(n(h.productionMultiple, 0), 10)} ${fr(h.productionSaving, 9, 4)} ${r(n(h.peakMultiple, 0), 10)} ${fr(h.peakSaving, 9, 4)}`
+		);
+	}
+
+	console.log('\nproduction deployments, idle energy a year at colo PUE (derived (modelled))\n');
+	console.log(
+		`${l('shape', 28)} ${r('regions', 8)} ${r('nodes', 6)} ${r('vCPU', 5)} ${r('util', 5)} ${r('kWh/y', 8)}`
+	);
+	const incumbents: [string, number][] = [];
+	for (const s of PRODUCTION_SHAPES) {
+		const kwh = productionKwhYear(s);
+		incumbents.push([s.name, kwh]);
+		console.log(
+			`${l(s.name, 28)} ${r(s.regions, 8)} ${r(s.regions * s.nodesPerRegion, 6)} ${r(s.vcpu, 5)} ${pctr(s.util, 5, 0)} ${fr(kwh, 8, 1)}`
+		);
+	}
+	incumbents.push(['worst case, one small VPS', FLOOR_KWH_YEAR]);
+	console.log(
+		`${l('worst case, one small VPS', 28)} ${r(1, 8)} ${r(1, 6)} ${r(`1/${SMALL_VPS_DENSITY}`, 5)} ${pctr(0.15, 5, 0)} ${fr(FLOOR_KWH_YEAR, 8, 1)}`
+	);
+
+	console.log('\ndrupflare, one site, whole year on the mix, Wh (derived)');
+	for (const v of VIEWS) {
+		console.log(
+			`  ${nr(v, 11)} views/mo  ${fr(drupflareKwhYearOnMix(v) * 1000, 8, 2)} Wh  (${energyKwh(drupflareKwhYearOnMix(v))})`
+		);
+	}
+
+	console.log('\nsaving against each deployment, percent (derived (modelled))\n');
+	console.log(`${l('shape', 28)} ${VIEWS.map((v) => r(sfx(v, 0), 9)).join(' ')}`);
+	for (const [name, kwh] of incumbents) {
+		console.log(`${l(name, 28)} ${VIEWS.map((v) => fr(savingPct(kwh, v), 9, 4)).join(' ')}`);
+	}
+	console.log('\nper-view energy as prose would quote it');
+	console.log(`  drupflare at 1M: ${energyJ(headline(1_000_000).drupflare)}`);
+	console.log(`  production at 1M: ${energyJ(headline(1_000_000).production)}`);
+	console.log('');
 
 	console.log('table 1: share of views that render, % (derived (modelled))\n');
 	console.log(head);
@@ -173,7 +282,7 @@ if (import.meta.main) {
 	);
 	console.log(head);
 	console.log(
-		`${l('drupflare, /user/1 planned', 42)} ${VIEWS.map((v) => fr(drupflareMjPerView(v), 9, 1)).join(' ')}`
+		`${l('drupflare, compiled plan holding', 42)} ${VIEWS.map((v) => fr(drupflareMjPerView(v), 9, 1)).join(' ')}`
 	);
 	for (const o of OPPONENTS) {
 		console.log(
@@ -192,7 +301,7 @@ if (import.meta.main) {
 		);
 	}
 	console.log(
-		`  logged-in share, mJ per view on the mix: opponent ${AUTH_OPPONENT.toFixed(1)}, drupflare planned ${AUTH_DRUPFLARE_PLANNED.toFixed(1)}`
+		`  logged-in share, mJ per view on the mix: opponent ${AUTH_OPPONENT.toFixed(1)}, drupflare ${AUTH_DRUPFLARE_PLANNED.toFixed(1)}`
 	);
 	console.log(
 		`  an nginx-hit opponent costs more per anonymous view once it renders on more than ${(BREAK_EVEN_RENDER_RATE * 100).toFixed(1)}% of views`
@@ -209,6 +318,6 @@ if (import.meta.main) {
 		`  render: drupflare ${COST.drupflareRender.toFixed(1)} mJ against native ${COST.nativeRender.toFixed(1)} mJ`
 	);
 	console.log(
-		`  logged-in share of the mix, mJ per view: opponent ${AUTH_OPPONENT.toFixed(1)}, drupflare planned ${AUTH_DRUPFLARE_PLANNED.toFixed(1)}`
+		`  logged-in share of the mix, mJ per view: opponent ${AUTH_OPPONENT.toFixed(1)}, drupflare ${AUTH_DRUPFLARE_PLANNED.toFixed(1)}`
 	);
 }

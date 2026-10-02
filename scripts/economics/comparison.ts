@@ -28,8 +28,15 @@ import {
 } from '../measure/free-envelope';
 import { pageStoreFraction } from '../measure/render-fraction';
 import { num, sweep } from './args';
-import { drupflareKwhYear, vpsKwhYear } from './energy';
-import { f, n, nr, r, sfx } from './fmt';
+import {
+	PRODUCTION_SHAPES,
+	SMALL_VPS_DENSITY,
+	THREADS_PER_HOST,
+	productionKwhYear,
+	vpsKwhYear,
+	type ProductionShape
+} from './energy';
+import { asCar, asHome, asServers, f, n, nr, r, sfx } from './fmt';
 import {
 	CACHED_SERVE_TOTAL_MS as CPU_CACHED,
 	RENDER_WARM_BIN_MS as CPU_RENDER,
@@ -37,6 +44,8 @@ import {
 	MJ_RENDER_VPS,
 	SITE_GB
 } from './measured';
+import { drupflareKwhYearOnMix } from './perview';
+
 import { DURABLE_OBJECTS, WORKERS_PAID } from './rates';
 
 const VIEWS = sweep('views', [1_000, 10_000, 100_000, 1_000_000, 10_000_000]);
@@ -155,36 +164,13 @@ function matchedUsdMonth(views: number): number {
 	return MATCHED_REGIONS * vpsUsdMonth(views / MATCHED_REGIONS) + GLOBAL_LB_USD;
 }
 
-const DENSITY = num('density', 100.0);
+const DENSITY = num('density', SMALL_VPS_DENSITY);
 const UTIL = num('vps-util', 0.15);
 const G_PER_KWH = num('grid-us', 384.0);
 const HOME_KWH_Y = 10_791.0; // EIA, average US household purchased electricity
 const CAR_T_Y = 4.6; // EPA, one passenger vehicle
-const SERVER_KG = num('server-kg', 18.0); // MODELLED: a 1U two-socket server, mass only
-const LB_PER_KG = 2.20462;
-
-function asHome(kwhYear: number): string {
-	const years = kwhYear / HOME_KWH_Y;
-	if (years >= 1000) return `${n(years, 0)} US homes for a year`;
-	if (years >= 1) return `${f(years, 1)} US homes for a year`;
-	const days = years * 365.25;
-	if (days >= 1) return `one US home for ${f(days, 1)} days`;
-	return `one US home for ${f(days * 24, 1)} hours`;
-}
-
-function asCar(tonnes: number): string {
-	const cars = tonnes / CAR_T_Y;
-	if (cars >= 1000) return `${n(cars, 0)} cars off the road`;
-	if (cars >= 1) return `${f(cars, 1)} cars off the road`;
-	return `${n(tonnes * 2204.62, 0)} lb CO2e`;
-}
-
-function asEwaste(hosts: number): string {
-	const lb = hosts * SERVER_KG * LB_PER_KG;
-	if (lb >= 2_000_000) return `${n(lb / 2000, 0)} tons of e-waste`;
-	if (lb >= 1) return `${n(lb, 0)} lb of e-waste`;
-	return `${f(lb * 16, 1)} oz of e-waste`;
-}
+const homes = (kwhYear: number) => asHome(kwhYear / HOME_KWH_Y);
+const cars = (tonnes: number) => asCar(tonnes / CAR_T_Y);
 
 function row(sites: number, views: number) {
 	const bill = account(sites, views);
@@ -199,10 +185,7 @@ function row(sites: number, views: number) {
 		1e3 /
 		3.6e6;
 	const savedKwh =
-		sites *
-		(vpsKwhYear(DENSITY, UTIL) +
-			vpsWorkKwh -
-			drupflareKwhYear(views, renderFrac(views), CPU_RENDER));
+		sites * (vpsKwhYear(DENSITY, UTIL) + vpsWorkKwh - drupflareKwhYearOnMix(views));
 	return {
 		bill,
 		vpsMo: sites * vpsUsdMonth(views),
@@ -211,6 +194,13 @@ function row(sites: number, views: number) {
 		savedT: (savedKwh * G_PER_KWH) / 1e6,
 		hosts: sites / DENSITY
 	};
+}
+
+/** what moving sites off a production deployment saves: its whole-year energy against drupflare's */
+function productionRow(shape: ProductionShape, sites: number, views: number) {
+	const savedKwh = sites * (productionKwhYear(shape) - drupflareKwhYearOnMix(views));
+	const hostsPerSite = (shape.regions * shape.nodesPerRegion * shape.vcpu) / THREADS_PER_HOST;
+	return { savedKwh, savedT: (savedKwh * G_PER_KWH) / 1e6, hosts: sites * hostsPerSite };
 }
 
 /** Spelled out below $100,000; a suffix past that, where the digits stop carrying information. */
@@ -339,11 +329,38 @@ table(
 const REF = VIEWS[VIEWS.length - 1]!;
 table(
 	`What that is comparable to, at ${n(REF, 0)} views per site per month`,
-	['sites', 'electricity', 'carbon', 'hardware not built'],
+	['sites', 'electricity', 'carbon', 'servers not built'],
 	SITES.map((st) => {
 		const d = row(st, REF);
-		return [n(st, 0), asHome(d.savedKwh), asCar(d.savedT), asEwaste(d.hosts)];
+		return [n(st, 0), homes(d.savedKwh), cars(d.savedT), asServers(d.hosts)];
 	})
+);
+
+const [PRODUCTION, PEAK] = PRODUCTION_SHAPES as [ProductionShape, ProductionShape];
+
+table(
+	'Energy avoided per year, against production',
+	['views/site/mo', ...siteCols],
+	VIEWS.map((v) => [
+		n(v, 0),
+		...SITES.map((st) => energy(productionRow(PRODUCTION, st, v).savedKwh))
+	])
+);
+
+table(
+	`What that is comparable to against production, at ${n(REF, 0)} views per site per month`,
+	['sites', 'against', 'electricity', 'carbon', 'servers not built'],
+	SITES.flatMap((st) =>
+		(
+			[
+				['production', PRODUCTION],
+				['peak-sized production', PEAK]
+			] as const
+		).map(([name, shape]) => {
+			const d = productionRow(shape, st, REF);
+			return [n(st, 0), name, homes(d.savedKwh), cars(d.savedT), asServers(d.hosts)];
+		})
+	)
 );
 
 if (MD) process.exit(0);

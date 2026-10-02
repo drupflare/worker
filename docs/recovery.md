@@ -37,8 +37,9 @@ The restore is applied on the object's **next** start, not immediately. The book
 **There is no wrangler command and no dashboard button.** PITR is a runtime API only, so an operator
 can reach it only through code running inside the Durable Object.
 
-`GET /pitr` is that code. It is diagnostic-gated, like `/restore`, because scheduling a restore
-overwrites a database.
+`GET /pitr` is that code. It takes the owner token or `PW_DIAGNOSTICS=1`. `/restore` is
+diagnostic-only: a restore body names a state the caller invents, where a `/pitr` bookmark names
+one the platform holds.
 
 | Request                    | Answers                                                 |
 | -------------------------- | ------------------------------------------------------- |
@@ -63,7 +64,8 @@ restore does on the edge still needs a deployed test.
 ## The Export Dump
 
 `GET /export` with `Authorization: Bearer <ownerToken>` dumps the site database as replayable SQL.
-It is one of four routes the owner token reaches without `PW_DIAGNOSTICS=1`.
+It is one of the owner routes, which the owner token reaches without `PW_DIAGNOSTICS=1`;
+`OWNER_ROUTES` in `src/site/routes.ts` is the list.
 
 The dump is produced host-side by `dumpDatabase()` in `src/db/export-sql.ts`, not by PHP. Every value
 is read as `typeof()` plus `hex()` and never as the column, because a Durable Object SQLite integer

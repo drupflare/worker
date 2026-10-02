@@ -203,8 +203,8 @@ Read the result out of `cfw_health`, which is capped at `LEDGER_MAX_ROWS` and in
 | `budget.rows_written`                        | a regression in the meter that binds regeneration                                                                                                                  |
 
 Do not gate on CPU. An absolute figure comes only from `cpuTime` on a deployed version, and the
-platform's reported 400-600 ms spread means a canary window cannot support a boot-time verdict at
-n=1 or n=3.
+platform's reported 400-600 ms spread did not reproduce across 640 requests on a warm object, but
+a canary window of n=1 or n=3 still carries no spread, so it cannot support a boot-time verdict.
 
 An available upgrade must not enter `recordOutcome()`. `src/ops/repair.ts` counts consecutive
 same-code failures toward quarantine and rollback, and an upgrade is not a fault.
@@ -282,7 +282,7 @@ from wrangler.
 - **PHP 8.5 on the edge.** The shipping seam is 8.5. A `cfw-*` deploy once returned 1101 with
   `ExitStatus: Program terminated with exit(-2)`; the cause was opcache, which reads
   `opcache.file_cache` during PHP's module startup, before the mount sequence creates
-  `/tmp/opcache`. `src/site-do.ts:599` sets it to `/tmp`, which emscripten's MEMFS always creates.
+  `/tmp/opcache`. `src/runtime/opcache.ts` sets it to `/tmp`, which emscripten's MEMFS always creates.
   8.5 has rendered on a deployed worker since; the opcache file-cache counts in that comment were
   read off one. Each new build still needs its own deploy to prove it renders; the gate proves the
   bundle builds and fits.

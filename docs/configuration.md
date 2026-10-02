@@ -239,7 +239,7 @@ Over the limit, the edge answers **413 before any Durable Object hop**. `0` disa
 entirely. Raising it trades isolate headroom for larger non-upload submissions; the failure mode of
 too high is an object that runs out of memory mid-parse.
 
-Consumer: `bodyTooLarge()` in `src/site.ts`.
+Consumer: `bodyTooLarge()` in `src/site/guards.ts`.
 
 ### The KV Page Tier
 
@@ -625,6 +625,9 @@ with `PW_DIAGNOSTICS=1` and read it through `/sql`. The proof is no weaker than 
 drangler recover-token https://mysite.example --store
 ```
 
+`--store` saves the recovered token in the system keychain, or in the global config on a machine
+with no keychain.
+
 The client mints a nonce (32 random bytes, base64url, 43 characters) and writes
 `recover:<host>:<sha256 hex of the nonce>` to `CONFIG_KV` with a 60-second TTL, KV's minimum. The
 value is `{"host": "<host>", "exp": <epoch ms>}`. It then posts `{"nonce": "<nonce>"}` to the site. The
@@ -998,7 +1001,7 @@ Cron renders against the site's origin, so links in mail it sends point at the s
 | `SQL_CHUNK_PREFIX`              | `drupal-sql`                          | which asset directory the migration chunks are read from                                          |
 | `MIGRATE_ENGINE`                | `sql`                                 | `sql` replays chunks in JavaScript; `php` needs a `pdo_sqlite` the shipping binary does not carry |
 | `MIGRATE_SELF_DRIVE`            | on                                    | whether a partial migration re-arms its own alarm                                                 |
-| `MIGRATE_CHUNKS_PER_INVOCATION` | 1 on free, all on paid                | chunks replayed per invocation                                                                    |
+| `MIGRATE_CHUNKS_PER_INVOCATION` | 40 on free, all on paid               | chunks replayed per invocation                                                                    |
 
 ### `OPCACHE_MODE`
 
@@ -1875,7 +1878,7 @@ granting the ability to add code to the runtime.
 `withSettings()` is applied in `src/site.ts`, to the front Worker's env, and the object receives its
 own copy of the bindings, so most of them were knobs nothing read: `RENDER_BUDGET_MS`,
 `FILL_BATCH_SIZE`, `HTTP_DRAIN_LIMIT`, `MIRROR_LIMIT`, `LAZY_FS_BUDGET_BYTES`
-and `PREFILL` are read in `src/site-do.ts` and only there. `adoptSettings()` now overlays every name
+and `PREFILL` are read in the object (`src/site-do.ts` and `src/do/levers.ts`) and only there. `adoptSettings()` now overlays every name
 on the allow-list, and is called from `alarm()` as well as `handle()`, because several of them are
 read on the fill chain and an alarm never passes through `handle()`. The fast storage lane adopts
 nothing and must not: it is await-free by construction and reads no lever.
@@ -1986,7 +1989,7 @@ applied it.
 ## Related
 
 - `docs/repository-layout.md` -- every path outside `src/` and how it arrives
-- `docs/building-from-source.md` -- the fifteen steps a source build runs
+- `docs/building-from-source.md` -- the seventeen steps a source build runs
 - `docs/measurement-classes.md` -- which instrument may produce which class of number
 - `docs/recovery.md` -- which primitive answers which failure
 - `docs/external-database.md` -- why the site database lives in the Durable Object

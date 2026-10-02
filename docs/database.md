@@ -74,13 +74,13 @@ object, a password hash and per-row timestamps, so two correct runs differ in th
 while describing the same site. `scripts/diff-site-db.ts` compares the table set, the module set,
 the config names and five row counts.
 
-Measured against the shipped file, a fresh build gives: **41 modules against 41, 175 config
-rows against 175, and every table present.** The differences that remain are these, and each is
-accounted for:
+Measured on 2026-09-09 against the shipped file of that date, a fresh build gave: **41 modules
+against 41, 175 config rows against 175, and every table present.** The differences that remained
+were these, and each was accounted for:
 
 | Difference                           | Direction    | Cause                                                    |
 | ------------------------------------ | ------------ | -------------------------------------------------------- |
-| 4 `drupflare.*` routes, 3 menu links | build only   | the shipped file predates those routes; see below        |
+| 4 `drupflare.*` routes, 3 menu links | build only   | that file predated those routes; see below               |
 | `state:drupflare.router_fingerprint` | build only   | written when the module is enabled                       |
 | `state:twig_extension_hash_prefix`   | shipped only | written by `bun run assets:twig`, a later build step     |
 | `state:system.theme.files`           | shipped only | written on the first request                             |
@@ -90,17 +90,21 @@ accounted for:
 The six lazy bins and the two first-request state rows are named in `diff-site-db.ts` rather than
 tolerated by a wildcard, so a seventh missing table is a failure instead of a rounding error.
 
-## The Shipped File Is Missing Its Own Routes
+## The Router Follows the Driver
 
-The comparison found this. `core.extension` in the shipped database lists `drupflare`, and the
-`router` table carries none of its four routes and none of its three menu links, because the module
-was enabled into the database before those routes existed. `router` is a table that
+The 2026-09-09 comparison found that `core.extension` in the shipped database listed `drupflare`
+while the `router` table carried none of its four routes and none of its three menu links, because
+the module was enabled into the database before those routes existed. `router` is a table that
 `RouteBuilder` writes, not a cache Drupal rebuilds on demand, so the Drupflare admin section,
-Runtime Status and the Operations Terminal answer 404 on every site created from it.
+Runtime Status and the Operations Terminal answered 404 on every site created from it.
 
-Rebuilding the database fixes it for new sites. Existing sites are reached by the
+The database was rebuilt against the current driver on 2026-09-30, which fixed it for new sites.
+`tests/node/driver-pack.spec.ts` now fails when the packed router lacks a route the driver declares
+or carries a permission the driver no longer declares. Existing sites are reached by the
 `router-driver-routes` step in `src/ops/reconcile.ts`, which compares a site's `router` rows against
-`DRIVER_ROUTES` and rebuilds when any are absent.
+`DRIVER_ROUTES` and rebuilds when any are absent. After a rebuild, run `assets:twig`, `assets:core`,
+`assets:pack` and `assets:scrub`, then `assets:container`: a fresh install mints a new
+`twig_extension_hash_prefix` and the pack has to follow it.
 
 ## Changing One Row
 

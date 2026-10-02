@@ -317,7 +317,7 @@ carried across unchanged, and a config change made two steps earlier appeared no
 `migrateSite()` now asks for an unseeded site and throws if the route prefills anyway.
 
 It is the **only optional step**. It binds a port and boots an interpreter, and a busy port must not
-discard fourteen finished steps: a failure here is reported, the build continues, and the run ends
+discard sixteen finished steps: a failure here is reported, the build continues, and the run ends
 naming the file and the command that retries it. An absent `prefill.json` is normal at runtime; the
 first request to each path renders, and misses the prefill hit.
 

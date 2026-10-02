@@ -5,11 +5,12 @@ Every path outside `src/`, how it arrives on a clean clone, and what breaks with
 
 ## Data Risk
 
-`assets/drupal/site.sqlite` is the packed Drupal database and its trim recipe is written down
-nowhere, so the live copy in the tree is canonical and nothing regenerates it. Two other lineages
-exist in the `drupflare-cdn` bucket: `.pack-backup/site.sqlite.bak`, which is the rollback point for
-the current lineage, and an older hand-trimmed artifact from a different one. The SQLite header
-change counter is what orders them.
+`assets/drupal/site.sqlite` is the packed Drupal database. `scripts/drupal/install-site-db.php` builds
+it from nothing (`bun run build:site-db`, with `docs/database.md` as the recipe), and it is tracked,
+so the copy in the tree is the one that ships. Two other lineages exist in the `drupflare-cdn`
+bucket: `.pack-backup/site.sqlite.bak`, which is the rollback point for an earlier lineage, and an
+older hand-trimmed artifact from a different one. The SQLite header change counter is what orders
+them.
 
 `bun run backup:cdn` archives a key's remote bytes to `snapshots/<name>.<sha12>` before replacing
 them, so nothing is lost by replacing one, and records the archive in `cdn-manifest.json` in the same
@@ -19,9 +20,9 @@ size and ETag.
 
 ## `.pack-backup/`
 
-7.2 MB, one file, and it stays. It is the rollback point for the canonical lineage, it is a distinct
-version of an artifact whose trim recipe is written down nowhere, and `bun run bake:pack` **overwrites
-it on its next run** (`scripts/bake-pack.ts:138`, the `snapshot` step). Its content is also in the
+7.2 MB, one file, and it stays. It is the rollback point for an earlier lineage of the packed
+database (7,585,792 bytes, against 5,832,704 for the current one), and `bun run bake:pack`
+**overwrites it on its next run** (`scripts/bake-pack.ts:138`, the `snapshot` step). Its content is also in the
 bucket at `snapshots/site.sqlite.064105ca7223`.
 
 ## Tracked Against Untracked
@@ -34,16 +35,16 @@ instruments. The shape of the table is what is meant to last; the numbers in it 
 
 | path                | size | tracked          | how it arrives on a clean clone                                              | delete?          |
 | ------------------- | ---- | ---------------- | ---------------------------------------------------------------------------- | ---------------- |
-| `src/`              | 2.8M | 132 of 139 files | committed                                                                    | no               |
-| `tests/`            | 3.6M | 297 of 319       | committed                                                                    | no               |
-| `scripts/`          | 1.2M | 123 of 124       | committed                                                                    | no               |
-| `docs/`             | 208K | yes              | committed                                                                    | no               |
-| `assets/`           | 131M | 2 files          | `bun run hydrate`; `bun run build:local` in full                             | no               |
-| `.interp/`          | 149M | no               | `bun install` restores 2 of 3; `bun run hydrate` or `build:local` the rest   | no               |
+| `src/`              | 4.2M | 406 of 407 files | committed                                                                    | no               |
+| `tests/`            | 5.2M | 437 of 437       | committed                                                                    | no               |
+| `scripts/`          | 2.1M | 196 of 196       | committed                                                                    | no               |
+| `docs/`             | 640K | yes              | committed                                                                    | no               |
+| `assets/`           | 133M | 4 files          | `bun run hydrate`; `bun run build:local` in full                             | no               |
+| `.interp/`          | 176M | no               | `bun install` restores 2 of 3; `bun run hydrate` or `build:local` the rest   | no               |
 | `.siblings/`        | --   | no               | `bun run build:local`, only when the modules are not checked out beside this | yes, regenerable |
 | `vendor/`           | 198M | no               | not reproducible; restored from `drupflare-cdn/vendor/`. Not a deploy input  | never            |
 | `drupal-src/`       | 278M | no               | `bun run fetch:drupal`, which `build.yml` also calls                         | yes, regenerable |
-| `experiments/`      | 288K | 59 files         | committed                                                                    | no               |
+| `experiments/`      | 332K | 71 files         | committed                                                                    | no               |
 | `.pack-backup/`     | 7.2M | no               | `bun run bake:pack`                                                          | no               |
 | `.contrib-fixture/` | 38M  | no               | `bun run test:contrib`, and only while it is running                         | no               |
 | `.trim-assets/`     | 37M  | no               | `bash scripts/stage-edge-assets.sh`                                          | yes, regenerable |
@@ -56,8 +57,8 @@ instruments. The shape of the table is what is meant to last; the numbers in it 
 `.wrangler/` is almost the whole checkout. It grows with every dev session and vitest run and nothing
 prunes it, so a working tree measured after a long run is mostly cache. Delete it when disk matters.
 
-`docker/` holds two rigs and they are unrelated. `compose.yml` is the seven-service integration rig
-(GreenMail, Redis, syslog, Gitea, Forgejo, Keycloak, GitLab). `vps.yml` plus `docker/vps/` is the
+`docker/` holds two rigs and they are unrelated. `compose.yml` is the nine-service integration rig
+(GreenMail, Postgres, MySQL, Redis, syslog, Gitea, Forgejo, Keycloak, GitLab). `vps.yml` plus `docker/vps/` is the
 comparison arm: nginx and PHP 8.5 FPM against the same `drupal-src` tree and the same
 `assets/drupal/site.sqlite` this project serves, so a measurement isolates the runtime. Both mount the
 tracked database read-only and copy it, because SQLite writes to the file it reads and a benchmark
@@ -68,10 +69,10 @@ submodule would put a Docker toolchain in a clean clone's dependency path.
 
 ## `experiments/`
 
-59 files, 99,699 bytes, all committed, per `git ls-files experiments`: **49 wrangler configs** -- 47
-under `experiments/wrangler/` and one each in `arena/` and `duration/` -- the
-`experiments/wrangler/README.md`, the two probe seams those directories pair with their configs, two
-binary seams under `binary/`, a loose `probe-o3mbsjlj.ts` at the top, and four data files from the
+71 files, 110,263 bytes, all committed, per `git ls-files experiments`: **61 wrangler configs** -- 59
+under `experiments/wrangler/` and one each in `arena/` and `duration/` -- plus the
+`experiments/wrangler/README.md`, the probe seams those directories pair with their configs, two
+binary seams under `binary/`, a loose `probe-o3mbsjlj.ts` at the top, and the data files from the
 boot-phase sweeps. `CLAUDE.md` keeps them prettier-ignored; they are kept for reproduction and left
 unmaintained.
 
@@ -80,7 +81,7 @@ it regenerates on the next `wrangler dev` and is gitignored.
 
 ## `assets/core/`
 
-24 MB, 4,028 files, produced by `bun run assets:static` from step 13 of the source build. It is the
+24 MB, 4,030 files, produced by `bun run assets:static` from step 13 of the source build. It is the
 browser-fetchable half of the Drupal tree (`css`, `js`, fonts and images under `core/`) copied to
 where Workers Assets serves it at the `/core/**` URLs Drupal already emits.
 
@@ -185,7 +186,7 @@ Three classes:
 | --- | ------------------------------------------------------------------------ | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | the bundle fits the 64 MiB Worker size limit                             | b     | **yes.** `bun run release:check` parses wrangler's printed uncompressed figure and fails over the limit; the release lane runs it. `tests/unit/bundle-size.spec.ts` covers the arithmetic.                                                                                 |
 | 2   | PHP 8.5 ships with nothing dropped to fit                                | b     | **yes, both halves.** `interp.lock.json` and the payload manifest pin the frame's sha256; `tests/integration/loaded-extensions.spec.ts` reads `get_loaded_extensions()` out of the running binary and asserts opcache and lexbor by name, plus the platform map both ways. |
-| 3   | serving 3.0M visits/month, regeneration 9,685 renders/day                | a     | **yes.** `tests/unit/free-envelope.spec.ts` over `scripts/measure/free-envelope.ts`.                                                                                                                                                                                       |
+| 3   | serving 3.0M visits/month, regeneration 50,916 renders/day               | a     | **yes.** `tests/unit/free-envelope.spec.ts` over `scripts/measure/free-envelope.ts`.                                                                                                                                                                                       |
 | 4   | the per-class row cost of a fill                                         | a     | **yes.** `tests/integration/rows-per-fill-audit.spec.ts` drives every class on one object and pins it; three consecutive runs read identical counts.                                                                                                                       |
 | 5   | the first-run migration chunk count                                      | a     | **yes.** `assets/drupal-sql/manifest.json` reports it. The count moves with the packed database, so read the manifest rather than a document.                                                                                                                              |
 | 6   | `assets/driver.json` is the code that executes, and is current           | b     | **yes.** `tests/node/driver-pack.spec.ts`, byte for byte.                                                                                                                                                                                                                  |
@@ -199,12 +200,12 @@ Three classes:
 
 ## Nightly Automation
 
-| lane                                                                    | asserts                   | cost                                            | verdict                                                                                                                                                   |
-| ----------------------------------------------------------------------- | ------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| model figures: free envelope, ceiling arithmetic, rows-per-fill classes | every (a) row             | seconds, hermetic                               | already in the gate; a nightly adds nothing a push does not                                                                                               |
-| artifact figures: payload manifest, frame sizes, chunk count, Twig keys | the (b) rows              | one payload download plus a dry-run, ~3 minutes | built, in the release lane. Worth running nightly against the latest release to catch an asset that has been deleted or replaced                          |
-| CDN backup intact                                                       | 35 live + 6 archived keys | 41 HEADs, no credentials                        | built. `.github/workflows/backup.yml`, nightly at 05:20                                                                                                   |
-| edge figures: `cpuTime`, cold boot, render cost                         | the (c) rows              | a deploy, a tail and a teardown per run         | no. It needs a deploy into an account carrying production workers, and a reported 400-600 ms spread makes an n=1 nightly figure noise reported as a trend |
+| lane                                                                    | asserts                   | cost                                            | verdict                                                                                                                                                      |
+| ----------------------------------------------------------------------- | ------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| model figures: free envelope, ceiling arithmetic, rows-per-fill classes | every (a) row             | seconds, hermetic                               | already in the gate; a nightly adds nothing a push does not                                                                                                  |
+| artifact figures: payload manifest, frame sizes, chunk count, Twig keys | the (b) rows              | one payload download plus a dry-run, ~3 minutes | built, in the release lane. Worth running nightly against the latest release to catch an asset that has been deleted or replaced                             |
+| CDN backup intact                                                       | 35 live + 6 archived keys | 41 HEADs, no credentials                        | built. `.github/workflows/backup.yml`, nightly at 05:20                                                                                                      |
+| edge figures: `cpuTime`, cold boot, render cost                         | the (c) rows              | a deploy, a tail and a teardown per run         | no. It needs a deploy into an account carrying production workers, and an n=1 nightly figure carries no spread, so it reads as a trend when it is one sample |
 
 The recommendation is the split that exists: **push proves the model, the release proves the artifact, and
 nothing automated proves the edge.** The one addition worth making is a nightly re-run of the release

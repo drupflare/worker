@@ -337,3 +337,42 @@ describe('the symmetric, detail and exchange ops', () => {
 		}
 	});
 });
+
+const CERT = `-----BEGIN CERTIFICATE-----
+MIIB8DCCAZagAwIBAgIUX+ElJ+QBbsBUVpUSuVgFPmkYzBkwCgYIKoZIzj0EAwIw
+OjELMAkGA1UEBhMCVVMxFzAVBgNVBAoMDkRydXBmbGFyZSBUZXN0MRIwEAYDVQQD
+DAljZXJ0LnRlc3QwIBcNMjYxMDAyMDEzMzU5WhgPMjEyNjA5MDgwMTMzNTlaMDox
+CzAJBgNVBAYTAlVTMRcwFQYDVQQKDA5EcnVwZmxhcmUgVGVzdDESMBAGA1UEAwwJ
+Y2VydC50ZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7BQIfn4WLFFueAzU
+OMjy6fMshacqFfzDaxiGz3EtemHrqn9hIaaNFthTnoafYlN6ZXG/GUYcZSfRcdUj
+N4phlqN4MHYwHQYDVR0OBBYEFOmQDI0s44MZYUbWlB1xPQH1SVcYMB8GA1UdIwQY
+MBaAFOmQDI0s44MZYUbWlB1xPQH1SVcYMA8GA1UdEwEB/wQFMAMBAf8wIwYDVR0R
+BBwwGoIJY2VydC50ZXN0gg13d3cuY2VydC50ZXN0MAoGCCqGSM49BAMCA0gAMEUC
+IGGYS1dVaQsfrOjtooU1B2yM3Gm8c4+ZoS+cfnb52kSGAiEAvbqP5RDgclKrhKFY
+u8eXEs7QPrr8exh2Einwtt4wrtc=
+-----END CERTIFICATE-----
+`;
+
+describe('x509 parsing', () => {
+	it('reports the subject, issuer, serial and validity of a certificate', () => {
+		const reply = signHostCall({ op: 'x509Parse', key: CERT });
+		expect(reply.ok).toBe(true);
+		const parsed = (reply as { parsed: Record<string, unknown> }).parsed;
+		expect(parsed.name).toBe('/C=US/O=Drupflare Test/CN=cert.test');
+		expect(parsed.subject).toEqual({ C: 'US', O: 'Drupflare Test', CN: 'cert.test' });
+		expect(parsed.issuer).toEqual(parsed.subject);
+		expect(parsed.serialNumberHex).toBe('5FE12527E4016EC054569512B958053E6918CC19');
+		expect(parsed.serialNumber).toBe(
+			BigInt('0x5FE12527E4016EC054569512B958053E6918CC19').toString()
+		);
+		expect(parsed.validFrom_time_t).toBe(Date.parse('2026-10-02T01:33:59Z') / 1000);
+		expect(parsed.validTo_time_t).toBe(Date.parse('2126-09-08T01:33:59Z') / 1000);
+		expect(parsed.extensions).toMatchObject({
+			subjectAltName: expect.stringContaining('DNS:cert.test')
+		});
+	});
+
+	it('answers a malformed certificate with an error rather than throwing', () => {
+		expect(signHostCall({ op: 'x509Parse', key: 'not a certificate' }).ok).toBe(false);
+	});
+});

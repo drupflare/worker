@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
 	isSecretMetaRow,
 	SECRET_META_KEYS,
-	SECRET_META_PREFIXES
+	SECRET_META_PREFIXES,
+	sliceLiteral
 } from '../../../src/db/export-sql';
 
 /**
@@ -72,5 +73,32 @@ describe('a dump withholds every live credential', () => {
 	it('states both halves of the rule, so a reader can audit it', () => {
 		expect(SECRET_META_KEYS.has('site_smtp_settings')).toBe(true);
 		expect([...SECRET_META_PREFIXES]).toEqual(['git_token_', 'git_hooksecret_']);
+	});
+});
+
+describe('cutting a literal to the statement budget', () => {
+	it('cuts hex on byte boundaries and each piece stays a hex literal', () => {
+		const pieces = sliceLiteral(`x'${'ab'.repeat(10)}'`, 10);
+		expect(pieces.every((p) => /^x'([0-9a-f]{2})+'$/.test(p))).toBe(true);
+		expect(pieces.map((p) => p.slice(2, -1)).join('')).toBe('ab'.repeat(10));
+		expect(pieces.length).toBeGreaterThan(1);
+	});
+
+	it('cuts text on whole characters and never between a doubled quote', () => {
+		const text = `'${"it''s a long one"}'`;
+		const pieces = sliceLiteral(text, 6);
+		expect(pieces.length).toBeGreaterThan(1);
+		for (const piece of pieces) {
+			const body = piece.slice(1, -1);
+			expect(body.replace(/''/g, '').includes("'")).toBe(false);
+		}
+		expect(pieces.map((p) => p.slice(1, -1)).join('')).toBe("it''s a long one");
+	});
+
+	it('returns an empty literal as one piece and a bare value whole', () => {
+		expect(sliceLiteral("x''", 10)).toEqual(["x''"]);
+		expect(sliceLiteral("''", 10)).toEqual(["''"]);
+		expect(sliceLiteral('12345678901234567890', 4)).toEqual(['12345678901234567890']);
+		expect(sliceLiteral('NULL', 2)).toEqual(['NULL']);
 	});
 });

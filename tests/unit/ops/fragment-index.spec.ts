@@ -6,6 +6,7 @@ import {
 	pagesWithDirtyFragments,
 	readTagList,
 	shellVerdict,
+	tagChecksum,
 	type FragmentSql
 } from '../../../src/ops/fragment-index';
 
@@ -228,5 +229,24 @@ describe('a shell is dropped when an invalidated tag is on its own bytes', () =>
 		expect(readTagList('')).toBeNull();
 		expect(readTagList('not json')).toBeNull();
 		expect(readTagList('{"tag":1}')).toBeNull();
+	});
+});
+
+describe('the tag checksum', () => {
+	it('sums the counters of the named tags only', () => {
+		const sql = canned({
+			cachetags: [
+				{ tag: 'node:1', invalidations: 3 },
+				{ tag: 'node_list', invalidations: 4 },
+				{ tag: 'config:other', invalidations: 100 }
+			]
+		});
+		expect(tagChecksum(sql, ['node:1', 'node_list'])).toBe(7);
+	});
+
+	it('counts a tag with no row as zero and an empty list as zero', () => {
+		const sql = canned({ cachetags: [{ tag: 'node:1', invalidations: 2 }] });
+		expect(tagChecksum(sql, ['node:1', 'node:9'])).toBe(2);
+		expect(tagChecksum(sql, [])).toBe(0);
 	});
 });

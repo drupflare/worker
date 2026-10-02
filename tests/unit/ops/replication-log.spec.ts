@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
 	applyRecord,
+	landPosition,
+	markInflight,
 	planApply,
 	positionalBindings,
 	positionTrust,
@@ -466,5 +468,25 @@ describe('bindings a replica can actually execute', () => {
 		expect(executed).toHaveLength(1);
 		expect(executed[0]?.params).toEqual(['node_list']);
 		expect(readPosition(spreading).applied).toBe(1);
+	});
+});
+
+describe('the in-flight marker around a bulk load', () => {
+	it('marks the position untrusted until the load lands', () => {
+		const store = seeded(5);
+		markInflight(store, 5, 40);
+		expect(readPosition(store).inflight).toEqual({ from: 5, to: 40 });
+		expect(positionTrust(readPosition(store)).trusted).toBe(false);
+
+		landPosition(store, 40);
+		expect(readPosition(store)).toEqual({ applied: 40, inflight: null });
+		expect(positionTrust(readPosition(store))).toEqual({ trusted: true, validAt: 40 });
+	});
+
+	it('writes the marker and the landing each in one transaction', () => {
+		const store = seeded(0);
+		markInflight(store, 0, 9);
+		landPosition(store, 9);
+		expect(store.txnCount).toBe(2);
 	});
 });

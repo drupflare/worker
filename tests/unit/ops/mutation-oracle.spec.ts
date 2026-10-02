@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+	buildProfile,
+	effectCensus,
+	eligibilityRate,
+	emptyProfile,
 	ineligibleKind,
 	ineligibleSplit,
+	profileIsTrustworthy,
+	recordCapabilities,
+	tableEffect,
 	type Effect,
 	type EffectProfile
 } from '../../../src/ops/mutation-oracle';
@@ -103,5 +110,107 @@ describe('why an ineligible path wrote', () => {
 			profile(COLD_ADVISORIES, { armed: false, wrapped: [] })
 		]);
 		expect(split).toEqual({ bootstrap: 2, intrinsic: 1 });
+	});
+});
+
+describe('what a table write is', () => {
+	it('names the narrow classes and keeps key_value on the safe side', () => {
+		expect(tableEffect('sequences')).toBe('sequence');
+		expect(tableEffect('cfw_mail_queue')).toBe('mail');
+		expect(tableEffect('key_value')).toBe('security-state');
+		expect(tableEffect('key_value_expire')).toBe('security-state');
+		expect(tableEffect('users_field_data')).toBe('session');
+		expect(tableEffect('user__roles')).toBe('session');
+		expect(tableEffect('node_field_data')).toBe('authoritative-sql');
+	});
+});
+
+describe('recording capabilities', () => {
+	it('wraps only mutating cfw functions and counts their calls', () => {
+		const binary: Record<string, unknown> = {
+			cfwMail: () => 'sent',
+			cfwLog: () => undefined,
+			cfwSqlExec: () => '{}',
+			cfwCanSuspend: true,
+			other: () => 1
+		};
+		const sink = new Map<string, number>();
+		expect(recordCapabilities(binary, sink)).toEqual(['cfwMail']);
+		expect((binary.cfwMail as () => string)()).toBe('sent');
+		(binary.cfwMail as () => string)();
+		expect(sink.get('cfwMail')).toBe(2);
+		expect(sink.has('cfwLog')).toBe(false);
+	});
+});
+
+describe('building a profile', () => {
+	const tally = (byTable: Record<string, number>, statementsByTable = byTable) => ({
+		byTable,
+		statementsByTable,
+		statements: 0,
+		rowsWritten: 0
+	});
+
+	it('an empty profile is unarmed and so not trustworthy', () => {
+		const empty = emptyProfile();
+		expect(empty.armed).toBe(false);
+		expect(profileIsTrustworthy(empty)).toBe(false);
+	});
+
+	it('is eligible when nothing but replica-local tables were written', () => {
+		const built = buildProfile(tally({ cache_render: 4, cfw_page: 1 }), new Map(), ['cfwMail']);
+		expect(built).toMatchObject({ replicaEligible: true, armed: true, effects: [] });
+	});
+
+	it('is not armed when nothing was wrapped, even with no effects', () => {
+		const built = buildProfile(tally({}), new Map(), []);
+		expect(built.armed).toBe(false);
+		expect(built.replicaEligible).toBe(true);
+	});
+
+	it('orders effects by count and classifies tables and capabilities', () => {
+		const built = buildProfile(
+			tally(
+				{ sessions: 1, node_field_data: 7, empty: 0 },
+				{ sessions: 1, node_field_data: 7, empty: 1 }
+			),
+			new Map([
+				['cfwMail', 3],
+				['cfwNew', 1]
+			]),
+			['cfwMail']
+		);
+		expect(built.replicaEligible).toBe(false);
+		expect(built.effects.map((e) => [e.effect, e.detail, e.count])).toEqual([
+			['authoritative-sql', 'node_field_data', 7],
+			['mail', 'cfwMail', 3],
+			['unclassified-capability', 'cfwNew', 1],
+			['session', 'sessions', 1]
+		]);
+		expect(built.reasons).toContain('mail: 3 call(s) to cfwMail');
+	});
+});
+
+describe('scoring a set of profiles', () => {
+	it('eligibilityRate scores only armed profiles and counts the rest', () => {
+		const clean = profile([]);
+		const dirty = profile([effect('mail', 'cfwMail')]);
+		const unarmed = profile([], { armed: false, wrapped: [] });
+		expect(eligibilityRate([clean, dirty, unarmed])).toEqual({
+			eligible: 1,
+			total: 2,
+			rate: 0.5,
+			untrustworthy: 1
+		});
+		expect(eligibilityRate([unarmed]).rate).toBe(0);
+	});
+
+	it('effectCensus totals counts per class and skips unarmed profiles', () => {
+		const census = effectCensus([
+			profile([effect('mail', 'cfwMail', 2), effect('session', 'sessions', 1)]),
+			profile([effect('mail', 'cfwMail', 3)]),
+			profile([effect('mail', 'cfwMail', 99)], { armed: false, wrapped: [] })
+		]);
+		expect(census).toEqual({ mail: 5, session: 1 });
 	});
 });

@@ -6,6 +6,7 @@ import {
 	emptyTally,
 	overheadShare,
 	rankTally,
+	readSourceTables,
 	routerRebuildPasses,
 	routerRebuilds,
 	splitChargedRows,
@@ -601,5 +602,22 @@ describe('countingStorage', () => {
 		await h.storage.put('k', 'v');
 		await h.storage.delete('k');
 		expect(h.calls).toEqual(['setAlarm', 'put', 'delete']);
+	});
+});
+
+describe('the tables a read draws from', () => {
+	it('lists every FROM and JOIN source in order', () => {
+		expect(
+			readSourceTables(
+				'SELECT n.nid FROM node_field_data n JOIN "users_field_data" u ON u.uid = n.uid'
+			)
+		).toEqual(['node_field_data', 'users_field_data']);
+	});
+
+	it('answers undefined where it cannot be sure, so the caller replays anyway', () => {
+		expect(readSourceTables('INSERT INTO t VALUES (1)')).toBeUndefined();
+		expect(readSourceTables('WITH c AS (SELECT 1) SELECT * FROM c')).toBeUndefined();
+		expect(readSourceTables('SELECT x FROM (SELECT 1 AS x) s')).toBeUndefined();
+		expect(readSourceTables('SELECT 1')).toBeUndefined();
 	});
 });

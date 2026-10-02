@@ -5,8 +5,10 @@ import {
 	ReplicaRequiresPrimary,
 	authoritativeWrites,
 	classifyCapability,
+	drupalSessionRowId,
 	enforceReadOnly,
 	expiryGcTable,
+	fenceAllows,
 	isProvenRead,
 	isReplicaLocalTable,
 	statementAllowedOnReplica
@@ -421,5 +423,32 @@ describe('an expiry sweep is not an authoritative write', () => {
 				rule.table === 'queue' ? undefined : rule.table
 			);
 		}
+	});
+});
+
+describe('the generation fence', () => {
+	it('allows a replica at or past the required generation', () => {
+		expect(fenceAllows(7, 7)).toBe(true);
+		expect(fenceAllows(8, 7)).toBe(true);
+	});
+
+	it('refuses any lag and any value that is not a finite number', () => {
+		expect(fenceAllows(6, 7)).toBe(false);
+		expect(fenceAllows(Number.NaN, 7)).toBe(false);
+		expect(fenceAllows(7, Number.POSITIVE_INFINITY)).toBe(false);
+	});
+});
+
+describe('the Drupal session row id', () => {
+	it('hashes the cookie value the way Drupal does (golden vector off a deployed site)', async () => {
+		expect(await drupalSessionRowId('78e094846386248b8a5685a8a2dd4568')).toBe(
+			'TIkEn6fkVm-NaFDE5eDlIfIXxgfFJXI2XRRnMxjurwI'
+		);
+	});
+
+	it('is url-safe and unpadded for any input', async () => {
+		const id = await drupalSessionRowId('x');
+		expect(id).toMatch(/^[A-Za-z0-9_-]{43}$/);
+		expect(await drupalSessionRowId('y')).not.toBe(id);
 	});
 });

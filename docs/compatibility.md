@@ -193,7 +193,7 @@ no run asserted it. The website fixtures page reads the same file by the same ru
 - **entity_reference_integrity**
   - install: enabling entity_reference_integrity was refused: Class "Drupal\\entity_reference_integrity\\Controller\\IntegrityReportController" does not exist at /drupal/core/lib/Drupal/Core/Entity/EntityResolverManager.php:136; upstream defect: the routing file names its controller with doubled backslashes inside a single-quoted YAML string, and native PHP 8.5 with the same Composer autoloader refuses the ...
   - container build, anon render, auth render, entity crud, form submit, file rw, queue cron, outbound http, update, cache rebuild, config import, module workflow: blocked by install: enabling entity_reference_integrity was refused: Class "Drupal\\entity_reference_integrity\\Controller\\IntegrityReportController" does not exist at /drupal/core/lib/Drupal/Core/Entity/EntityResolverManager.php:136
-- **migration_example**: needs upgrade: core 8.x does not accept Drupal 11; an upgrade from Drupal 8 is v1.1 work (drangler migrate upgrade)
+- **migration_example**: needs upgrade: core 8.x does not accept Drupal 11; drangler upgrades from Drupal 10 only, so move it from Drupal 8 to 10 first
 - **simple_oauth_21**
   - container build: the container was rebuilt by the enable
   - file rw: a multipart image upload through the media form was stored and read back byte for byte
@@ -211,7 +211,7 @@ no run asserted it. The website fixtures page reads the same file by the same ru
   - update: prepared run rmun5eihh; drained to phase complete, with no unit to run
   - config import: system.site was imported from YAML and read back
   - module workflow: /admin/reports/status, /admin/config
-- **fflch**: needs upgrade: core 9.1.0 does not accept Drupal 11; an upgrade from Drupal 9 is v1.1 work (drangler migrate upgrade)
+- **fflch**: needs upgrade: core 9.1.0 does not accept Drupal 11; drangler upgrades from Drupal 10 only, so move it from Drupal 9 to 10 first
 - **drupalx**
   - install: migrated: native install, database landed through migrate install, profile and custom code uploaded; 71/72 registry packages; 2/2 custom uploaded; 0/0 modules enabled; 1 not enabled on the site, skipped: drupal/ai_provider_amazeeio; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid
   - container build: the container was built on the first boot over the migrated database

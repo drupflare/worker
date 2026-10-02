@@ -36,7 +36,7 @@ export function upgradeNote(core: string): string | null {
 	const route =
 		major === 10
 			? 'drangler plans the 10 -> 11 upgrade'
-			: `an upgrade from Drupal ${major || 'this version'} is v1.1 work (drangler migrate upgrade)`;
+			: `drangler upgrades from Drupal 10 only, so move it from Drupal ${major || 'this version'} to 10 first`;
 	return `needs upgrade: core ${core} does not accept Drupal 11; ${route}`;
 }
 

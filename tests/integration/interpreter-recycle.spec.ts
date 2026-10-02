@@ -582,8 +582,11 @@ describe('the interpreter recycle', () => {
 						})
 					)
 				);
+				const alarmFrom = Date.now();
 				await site.alarm();
+				const alarmTo = Date.now();
 				const first = {
+					alarmMs: alarmTo - alarmFrom,
 					queued: Number(site.queueDepth()),
 					held: JSON.stringify(
 						(site as unknown as { lastAlarmOutcome: unknown }).lastAlarmOutcome
@@ -624,7 +627,12 @@ describe('the interpreter recycle', () => {
 			expect(out.first.mailSent).toBe(1);
 			expect(out.first.mailQueue).toBe(0);
 			expect(out.first.armed).not.toBeNull();
-			expect(Number(out.first.armed)).toBeLessThanOrEqual(out.bootedAt + 60_000);
+			// armed = now() + (hold - now()) with two clock reads inside the firing, so it lands on the
+			// end of the hold plus at most the firing's own duration, and never before it
+			expect(Number(out.first.armed)).toBeGreaterThanOrEqual(out.bootedAt + 60_000);
+			expect(Number(out.first.armed)).toBeLessThanOrEqual(
+				out.bootedAt + 60_000 + out.first.alarmMs
+			);
 			expect(out.settled).toBeGreaterThan(0);
 			expect(out.second.whileYoung).toBe(out.second.queued);
 			expect(out.served.holds).toBeGreaterThanOrEqual(1);

@@ -13,7 +13,7 @@
 <h1>Variable DIAG_BRIDGE_PHP<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">DIAG_BRIDGE_PHP</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;$fn = function_exists(&#39;vrzno_env&#39;) ? vrzno_env(&#39;cfwStats&#39;) : null;\nif ($fn === null) {\n\techo json_encode([&#39;bridge&#39; =&gt; &#39;vrzno_env absent&#39;]);\n\treturn;\n}\n$raw = $fn();\n$decoded = json_decode((string) $raw, true);\necho json_encode([\n\t&#39;bridge&#39; =&gt; is_array($decoded) ? &#39;round-tripped&#39; : &#39;returned nothing usable&#39;,\n\t&#39;sawQueryCount&#39; =&gt; is_array($decoded) &amp;&amp; array_key_exists(&#39;queryCount&#39;, $decoded),\n\t&#39;raw&#39; =&gt; is_string($raw) ? substr($raw, 0, 120) : gettype($raw),\n]);\n&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/site/generated/assets.ts#L119">src/site/generated/assets.ts:119</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/site/generated/assets.ts#L119">src/site/generated/assets.ts:119</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -213,6 +213,99 @@ deployed worker: 60.2 ms for a re-render on a page a content change invalidated,
 of Durable Object time for a cached serve. A page served from the previous generation at the edge
 answers in 12 ms at the median and costs no Durable Object invocation at all.
 
+## Energy Per View
+
+The per-request figures above are per render or per cached serve. A visitor sees a view, and what a
+view costs depends on how often it renders, so this section prices the mix. Everything here is
+`derived (modelled)` unless marked, from `bun scripts/economics/perview.ts`.
+
+### How Often Each Host Renders
+
+The share of views that render, from the render-fraction model: 100 paths, Zipf 1, five saves a day,
+five pages invalidated per ordinary save. A cache with a clock renders each path again every time it
+expires, at every location that holds a copy. drupflare's page store renders when a save invalidates a
+page and never on a clock.
+
+| host shape                            | 10,000 | 100,000 | 1,000,000 | 10,000,000 | 30,000,000 |
+| ------------------------------------- | -----: | ------: | --------: | ---------: | ---------: |
+| stock nginx, 5 min, no purge          | 100.0% |   86.2% |     45.7% |      8.65% |      2.92% |
+| Pantheon recommended, 1 h, one shield |  91.0% |   43.0% |     7.34% |     0.738% |     0.246% |
+| 8-location CDN, 24 h, tag purge       | 100.0% |   27.5% |     3.04% |     0.304% |     0.101% |
+| one shield, 24 h, tag purge           |  33.2% |   3.80% |    0.380% |     0.038% |     0.013% |
+| drupflare page store                  |  7.60% |  0.760% |    0.076% |     0.008% |     0.003% |
+
+Stock nginx caches nothing without configuration and its purge is commercial, so the first row has no
+purge. Pantheon's documentation recommends an hour with an origin shield and calls a lifetime of more
+than a day usually excessive, so 24 h is the longest row. At a million views a month drupflare renders
+5 to 97 times less often than the three shielded or purged shapes, and 601 times less often than stock
+nginx; at 10,000 views the gap is 4.4 to 13 times.
+
+### Energy On The Traffic Mix
+
+`config/traffic.yml` weights 82% anonymous reads of an existing page, 9.5% uncached anonymous views,
+3% signed-in readers, 3% editors in the admin interface and 2.5% signed-in users on their own page.
+Logged-in views are included. A conventional host renders every logged-in view, because its cache is
+bypassed for a session; drupflare answers them from the compiled plan. Millijoules per view, with the
+opponent's figure over drupflare's in brackets. Both sides are priced from CPU time at the same watts
+per core and PUE, with the opponent's CPU scaled to the deployed render, so one instrument charges both.
+
+| host shape                             |        10,000 |        100,000 |    1,000,000 |   10,000,000 |   30,000,000 |
+| -------------------------------------- | ------------: | -------------: | -----------: | -----------: | -----------: |
+| drupflare, `/user/1` planned           |          25.5 |           10.4 |          8.9 |          8.7 |          8.7 |
+| stock VPS, Drupal page cache only      |  34.7 (1.36x) |   26.3 (2.54x) | 25.5 (2.88x) | 25.4 (2.92x) | 25.4 (2.92x) |
+| stock nginx, 5 min, no purge           | 147.1 (5.77x) | 128.4 (12.38x) | 73.9 (8.34x) | 24.0 (2.75x) | 16.2 (1.87x) |
+| Pantheon 1 h shield, origin nginx hit  | 134.9 (5.29x) |   70.3 (6.78x) | 22.2 (2.50x) | 13.3 (1.53x) | 12.6 (1.45x) |
+| one shield, 24 h, tag purge, nginx hit |  57.1 (2.24x) |   17.4 (1.68x) | 12.8 (1.45x) | 12.3 (1.42x) | 12.3 (1.42x) |
+| same, CDN hit costed at 0 (a floor)    |  55.2 (2.17x) |   14.8 (1.43x) | 10.1 (1.14x) |  9.6 (1.10x) |  9.6 (1.10x) |
+
+The `/user/1` page is charged the compiled-plan cost of `/admin/content`. That rests on a measured
+2.3 ms of CPU for the page in plan state, with the plan held on 94% to 99% of views once it had
+converged, at n=2 per cell on `paisley-park`, below the n=5 bar. The first measurement run saw
+`/user/1` render on 57% of views. A plan-tier retry latch is the candidate cause and it is fixed in
+this release (`edgePlanRefused` and `refusedAt` in `src/ops/edge-plan.ts`); whether the fix moves a
+deployed `/user/1` is unmeasured.
+
+### The Two Penalties
+
+drupflare pays two costs that a native host does not.
+
+- A wasm render costs 1.65 times the CPU of a native one, `measured`: 32.5 ms against 19.7 ms for the
+  same page on the same machine. At the same watts that is 248.8 mJ against 150.3 mJ per render.
+- A cached hit costs 7.4 mJ against 3.0 mJ for an nginx hit, `derived` on one CPU basis. A view that
+  reaches drupflare is charged the front Worker and the object, 1.8 ms of CPU, while nginx answers a
+  hit from its own cache.
+
+Rendering less often outweighs both, up to a point the model prices. An nginx-hit opponent costs more
+per anonymous view than drupflare once it renders on more than 3.0% of views, because renders at that
+rate repay the 4.4 mJ gap on the hit. Stock nginx and Pantheon's hour sit above that line at 100,000
+and 1,000,000 views a month, and the mix table above shows the result: 2.5 to 12 times the energy per
+view.
+
+| anonymous views only, mJ per view      | 10,000 | 100,000 | 1,000,000 | 10,000,000 | 30,000,000 |
+| -------------------------------------- | -----: | ------: | --------: | ---------: | ---------: |
+| drupflare                              |  25.79 |    9.27 |      7.62 |       7.46 |       7.45 |
+| stock nginx, 5 min, no purge           | 150.33 |  129.93 |     70.35 |      15.74 |       7.29 |
+| Pantheon 1 h shield, origin nginx hit  | 137.03 |   66.40 |     13.81 |       4.08 |       3.35 |
+| one shield, 24 h, tag purge, nginx hit |  51.93 |    8.59 |      3.55 |       3.05 |       3.01 |
+
+Below that line the penalties win on anonymous views. A shielded host that renders on 0.38% of views
+costs 3.55 mJ per anonymous view against drupflare's 7.62, and it keeps that lead from a million views
+a month up. On the mix drupflare is still ahead, because the logged-in views go the other way: they
+add 9.6 mJ per view to the opponent and 1.9 to drupflare, which renders none of them when the plan
+holds.
+
+### The Tightest Cell
+
+The closest opponent is a shielded 24 h tag-purged cache, which is 1.45 times drupflare's energy per
+view at a million views and 1.42 times from ten million up. A shield collapses the per-location expiry
+to one fill, and a 24 h lifetime with tag purge leaves it almost nothing to render. Two assumptions in
+the model favour that opponent:
+
+- The model has no CDN eviction term. A real cache drops cold pages under memory pressure and each
+  location fills cold, while a page store that persists on disk does not.
+- The opponent's hit is priced as an origin nginx hit, 3.0 mJ, because no source publishes the cost of
+  a CDN hit. Costing the hit at zero is a floor and gives 1.10 to 1.14 times.
+
 ## The Two Hosts
 
 The energy figures above come from one machine and the CPU figures from another, because only one
@@ -613,6 +706,7 @@ bun scripts/measure/vps-energy.ts run --ssh= \
   --ladder=2,4,8 < host > --target= < vps > --target2= < drupflare > --n=5
 bun scripts/measure/render-fraction.ts
 bun scripts/economics/energy.ts
+bun scripts/economics/perview.ts
 bun scripts/economics/fleet.ts
 bun scripts/economics/comparison.ts --crossover
 bun scripts/economics/comparison.ts --sites=426 --views=82160

@@ -34,7 +34,9 @@ function isLocal(target: string): boolean {
 	);
 }
 
-const siteHeaders: Record<string, string> = isLocal(base) ? { host: `${site}.localhost` } : {};
+const hostArg = process.argv.find((a) => a.startsWith('--host='))?.split('=')[1];
+const siteHeaders: Record<string, string> =
+	hostArg !== undefined ? { host: hostArg } : isLocal(base) ? { host: `${site}.localhost` } : {};
 
 const call = (path: string, init?: RequestInit): Promise<Response> =>
 	fetch(`${base}${path}`, {

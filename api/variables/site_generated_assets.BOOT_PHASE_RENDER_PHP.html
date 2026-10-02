@@ -13,7 +13,7 @@
 <h1>Variable BOOT_PHASE_RENDER_PHP<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">BOOT_PHASE_RENDER_PHP</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;\n$GLOBALS[&#39;__pw_kernel&#39;] = $kernel;\n$GLOBALS[&#39;__pw_site_booted&#39;] = true;\n// cfw_serve() hands back a Symfony Response, not a string; treating it as one reported -1 bytes\n// for a render that had in fact succeeded, which is a broken instrument reading as a broken render\n$response = cfw_serve(&#39;/&#39;);\n$body =\n\tis_object($response) &amp;&amp; method_exists($response, &#39;getContent&#39;)\n\t\t? (string) $response-&gt;getContent()\n\t\t: (is_string($response)\n\t\t\t? $response\n\t\t\t: &#39;&#39;);\n$mark[&#39;renderStatus&#39;] =\n\tis_object($response) &amp;&amp; method_exists($response, &#39;getStatusCode&#39;)\n\t\t? $response-&gt;getStatusCode()\n\t\t: null;\n$mark[&#39;renderBytes&#39;] = strlen($body);\n&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/site/generated/assets.ts#L99">src/site/generated/assets.ts:99</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/site/generated/assets.ts#L99">src/site/generated/assets.ts:99</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -377,8 +377,9 @@ comparable, so ordering them as strings orders them in time. Three methods:</p>
 <code>onNextSessionRestoreBookmark()</code> is the undo, so capture it before restarting.</p>
 <p><strong>There is no wrangler command and no dashboard button.</strong> PITR is a runtime API only, so an operator
 can reach it only through code running inside the Durable Object.</p>
-<p><code>GET /pitr</code> is that code. It is diagnostic-gated, like <code>/restore</code>, because scheduling a restore
-overwrites a database.</p>
+<p><code>GET /pitr</code> is that code. It takes the owner token or <code>PW_DIAGNOSTICS=1</code>. <code>/restore</code> is
+diagnostic-only: a restore body names a state the caller invents, where a <code>/pitr</code> bookmark names
+one the platform holds.</p>
 <div class="table"><table>
 <thead>
 <tr>
@@ -412,7 +413,8 @@ the beginning of time. <code>/pitr</code> refuses an all-zero bookmark by VALUE 
 restore does on the edge still needs a deployed test.</p>
 <h2 id="the-export-dump">The Export Dump</h2>
 <p><code>GET /export</code> with <code>Authorization: Bearer &lt;ownerToken&gt;</code> dumps the site database as replayable SQL.
-It is one of four routes the owner token reaches without <code>PW_DIAGNOSTICS=1</code>.</p>
+It is one of the owner routes, which the owner token reaches without <code>PW_DIAGNOSTICS=1</code>;
+<code>OWNER_ROUTES</code> in <code>src/site/routes.ts</code> is the list.</p>
 <p>The dump is produced host-side by <code>dumpDatabase()</code> in <code>src/db/export-sql.ts</code>, not by PHP. Every value
 is read as <code>typeof()</code> plus <code>hex()</code> and never as the column, because a Durable Object SQLite integer
 read loses precision above 2^53 and a <code>hex()</code> of an integer never passes its digits through a double.

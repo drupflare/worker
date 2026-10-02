@@ -381,9 +381,9 @@ row, and <code>cache_data</code> at three.</p>
 object, a password hash and per-row timestamps, so two correct runs differ in thousands of bytes
 while describing the same site. <code>scripts/diff-site-db.ts</code> compares the table set, the module set,
 the config names and five row counts.</p>
-<p>Measured against the shipped file, a fresh build gives: <strong>41 modules against 41, 175 config
-rows against 175, and every table present.</strong> The differences that remain are these, and each is
-accounted for:</p>
+<p>Measured on 2026-09-09 against the shipped file of that date, a fresh build gave: <strong>41 modules
+against 41, 175 config rows against 175, and every table present.</strong> The differences that remained
+were these, and each was accounted for:</p>
 <div class="table"><table>
 <thead>
 <tr>
@@ -395,7 +395,7 @@ accounted for:</p>
 <tbody><tr>
 <td>4 <code>drupflare.*</code> routes, 3 menu links</td>
 <td>build only</td>
-<td>the shipped file predates those routes; see below</td>
+<td>that file predated those routes; see below</td>
 </tr>
 <tr>
 <td><code>state:drupflare.router_fingerprint</code></td>
@@ -425,15 +425,19 @@ accounted for:</p>
 </tbody></table></div>
 <p>The six lazy bins and the two first-request state rows are named in <code>diff-site-db.ts</code> rather than
 tolerated by a wildcard, so a seventh missing table is a failure instead of a rounding error.</p>
-<h2 id="the-shipped-file-is-missing-its-own-routes">The Shipped File Is Missing Its Own Routes</h2>
-<p>The comparison found this. <code>core.extension</code> in the shipped database lists <code>drupflare</code>, and the
-<code>router</code> table carries none of its four routes and none of its three menu links, because the module
-was enabled into the database before those routes existed. <code>router</code> is a table that
+<h2 id="the-router-follows-the-driver">The Router Follows the Driver</h2>
+<p>The 2026-09-09 comparison found that <code>core.extension</code> in the shipped database listed <code>drupflare</code>
+while the <code>router</code> table carried none of its four routes and none of its three menu links, because
+the module was enabled into the database before those routes existed. <code>router</code> is a table that
 <code>RouteBuilder</code> writes, not a cache Drupal rebuilds on demand, so the Drupflare admin section,
-Runtime Status and the Operations Terminal answer 404 on every site created from it.</p>
-<p>Rebuilding the database fixes it for new sites. Existing sites are reached by the
+Runtime Status and the Operations Terminal answered 404 on every site created from it.</p>
+<p>The database was rebuilt against the current driver on 2026-09-30, which fixed it for new sites.
+<code>tests/node/driver-pack.spec.ts</code> now fails when the packed router lacks a route the driver declares
+or carries a permission the driver no longer declares. Existing sites are reached by the
 <code>router-driver-routes</code> step in <code>src/ops/reconcile.ts</code>, which compares a site&#39;s <code>router</code> rows against
-<code>DRIVER_ROUTES</code> and rebuilds when any are absent.</p>
+<code>DRIVER_ROUTES</code> and rebuilds when any are absent. After a rebuild, run <code>assets:twig</code>, <code>assets:core</code>,
+<code>assets:pack</code> and <code>assets:scrub</code>, then <code>assets:container</code>: a fresh install mints a new
+<code>twig_extension_hash_prefix</code> and the pack has to follow it.</p>
 <h2 id="changing-one-row">Changing One Row</h2>
 <p>Rebuilding is preferred. A surgical edit is still sometimes right, and two rules apply.</p>
 <p><strong>Find every cached copy of what you are editing.</strong> A <code>config</code> row usually has a serialized twin in

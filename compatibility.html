@@ -1111,7 +1111,7 @@ no run asserted it. The website fixtures page reads the same file by the same ru
 <li>container build, anon render, auth render, entity crud, form submit, file rw, queue cron, outbound http, update, cache rebuild, config import, module workflow: blocked by install: enabling entity_reference_integrity was refused: Class &quot;Drupal\entity_reference_integrity\Controller\IntegrityReportController&quot; does not exist at /drupal/core/lib/Drupal/Core/Entity/EntityResolverManager.php:136</li>
 </ul>
 </li>
-<li><strong>migration_example</strong>: needs upgrade: core 8.x does not accept Drupal 11; an upgrade from Drupal 8 is v1.1 work (drangler migrate upgrade)</li>
+<li><strong>migration_example</strong>: needs upgrade: core 8.x does not accept Drupal 11; drangler upgrades from Drupal 10 only, so move it from Drupal 8 to 10 first</li>
 <li><strong>simple_oauth_21</strong><ul>
 <li>container build: the container was rebuilt by the enable</li>
 <li>file rw: a multipart image upload through the media form was stored and read back byte for byte</li>
@@ -1133,7 +1133,7 @@ no run asserted it. The website fixtures page reads the same file by the same ru
 <li>module workflow: /admin/reports/status, /admin/config</li>
 </ul>
 </li>
-<li><strong>fflch</strong>: needs upgrade: core 9.1.0 does not accept Drupal 11; an upgrade from Drupal 9 is v1.1 work (drangler migrate upgrade)</li>
+<li><strong>fflch</strong>: needs upgrade: core 9.1.0 does not accept Drupal 11; drangler upgrades from Drupal 10 only, so move it from Drupal 9 to 10 first</li>
 <li><strong>drupalx</strong><ul>
 <li>install: migrated: native install, database landed through migrate install, profile and custom code uploaded; 71/72 registry packages; 2/2 custom uploaded; 0/0 modules enabled; 1 not enabled on the site, skipped: drupal/ai_provider_amazeeio; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid</li>
 <li>container build: the container was built on the first boot over the migrated database</li>

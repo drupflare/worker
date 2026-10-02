@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">ReconcileStep</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#describe">describe</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#freshkernel">freshKernel</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#id">id</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#recurring">recurring</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#since">since</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#php-1">php</a><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">host</span><span class="tsd-signature-symbol">:</span> <a href="ops_reconcile.ReconcileHost.html" class="tsd-signature-type tsd-kind-interface">ReconcileHost</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#sql-1">sql</a><span class="tsd-signature-symbol">?</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">sql</span><span class="tsd-signature-symbol">:</span> <a href="ops_reconcile.ReconcileSql.html" class="tsd-signature-type tsd-kind-interface">ReconcileSql</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">host</span><span class="tsd-signature-symbol">:</span> <a href="ops_reconcile.ReconcileHost.html" class="tsd-signature-type tsd-kind-interface">ReconcileHost</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#verdict-1">verdict</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">sql</span><span class="tsd-signature-symbol">:</span> <a href="ops_reconcile.ReconcileSql.html" class="tsd-signature-type tsd-kind-interface">ReconcileSql</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">host</span><span class="tsd-signature-symbol">:</span> <a href="ops_reconcile.ReconcileHost.html" class="tsd-signature-type tsd-kind-interface">ReconcileHost</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_reconcile.StepVerdict.html" class="tsd-signature-type tsd-kind-type-alias">StepVerdict</a><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/reconcile.ts#L67">src/ops/reconcile.ts:67</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/reconcile.ts#L67">src/ops/reconcile.ts:67</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -43,7 +43,7 @@
 <h3 class="tsd-anchor-link" id="describe"><span>describe</span><a href="#describe" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">describe</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/reconcile.ts#L77">src/ops/reconcile.ts:77</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/reconcile.ts#L77">src/ops/reconcile.ts:77</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="freshkernel"><code class="tsd-tag">Optional</code><span>fresh<wbr/>Kernel</span><a href="#freshkernel" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">freshKernel</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
@@ -51,14 +51,14 @@
 kernel boots from needs it (dropping one beside an uncollected heap resets the object).</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/reconcile.ts#L88">src/ops/reconcile.ts:88</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/reconcile.ts#L88">src/ops/reconcile.ts:88</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="id"><span>id</span><a href="#id" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">id</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>stable forever; it is what a site records as done</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/reconcile.ts#L74">src/ops/reconcile.ts:74</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/reconcile.ts#L74">src/ops/reconcile.ts:74</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="recurring"><code class="tsd-tag">Optional</code><span>recurring</span><a href="#recurring" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">recurring</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
@@ -66,14 +66,14 @@ kernel boots from needs it (dropping one beside an uncollected heap resets the o
 routes). Retiring such a step strands every site reconciled against an older pack.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/reconcile.ts#L72">src/ops/reconcile.ts:72</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/reconcile.ts#L72">src/ops/reconcile.ts:72</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="since"><span>since</span><a href="#since" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">since</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>the pack version this step was introduced at</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/reconcile.ts#L76">src/ops/reconcile.ts:76</a></li></ul></aside></section></section></details>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/reconcile.ts#L76">src/ops/reconcile.ts:76</a></li></ul></aside></section></section></details>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Methods"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="methods-1">Methods<a href="#methods-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
@@ -91,7 +91,7 @@ routes). Retiring such a step strands every site reconciled against an older pac
 <li><span><span class="tsd-kind-parameter">host</span>: <a href="ops_reconcile.ReconcileHost.html" class="tsd-signature-type tsd-kind-interface">ReconcileHost</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/reconcile.ts#L83">src/ops/reconcile.ts:83</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/reconcile.ts#L83">src/ops/reconcile.ts:83</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="sql"><code class="tsd-tag">Optional</code><span>sql</span><a href="#sql" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -107,7 +107,7 @@ routes). Retiring such a step strands every site reconciled against an older pac
 <li><span><span class="tsd-kind-parameter">host</span>: <a href="ops_reconcile.ReconcileHost.html" class="tsd-signature-type tsd-kind-interface">ReconcileHost</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/reconcile.ts#L81">src/ops/reconcile.ts:81</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/reconcile.ts#L81">src/ops/reconcile.ts:81</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="verdict"><span>verdict</span><a href="#verdict" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -123,7 +123,7 @@ routes). Retiring such a step strands every site reconciled against an older pac
 <li><span><span class="tsd-kind-parameter">host</span>: <a href="ops_reconcile.ReconcileHost.html" class="tsd-signature-type tsd-kind-interface">ReconcileHost</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../types/ops_reconcile.StepVerdict.html" class="tsd-signature-type tsd-kind-type-alias">StepVerdict</a></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/reconcile.ts#L79">src/ops/reconcile.ts:79</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/reconcile.ts#L79">src/ops/reconcile.ts:79</a></li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -747,7 +747,7 @@ rebuilt. Measured: all five pages came back byte-identical to the previous artif
 carried across unchanged, and a config change made two steps earlier appeared nowhere in the output.
 <code>migrateSite()</code> now asks for an unseeded site and throws if the route prefills anyway.</p>
 <p>It is the <strong>only optional step</strong>. It binds a port and boots an interpreter, and a busy port must not
-discard fourteen finished steps: a failure here is reported, the build continues, and the run ends
+discard sixteen finished steps: a failure here is reported, the build continues, and the run ends
 naming the file and the command that retries it. An absent <code>prefill.json</code> is normal at runtime; the
 first request to each path renders, and misses the prefill hit.</p>
 <p>To produce or refresh it on its own:</p>

@@ -680,7 +680,7 @@ functional regression.</p>
 <p>Over the limit, the edge answers <strong>413 before any Durable Object hop</strong>. <code>0</code> disables the guard
 entirely. Raising it trades isolate headroom for larger non-upload submissions; the failure mode of
 too high is an object that runs out of memory mid-parse.</p>
-<p>Consumer: <code>bodyTooLarge()</code> in <code>src/site.ts</code>.</p>
+<p>Consumer: <code>bodyTooLarge()</code> in <code>src/site/guards.ts</code>.</p>
 <h3 id="the-kv-page-tier">The KV Page Tier</h3>
 <p><code>PAGE_KV</code> is a cross-colo tier between the edge cache and the Durable Object, on for both plans
 whenever the namespace is bound. It still costs one Worker request, since the Worker has to run to
@@ -1156,7 +1156,9 @@ cross-site request carries it, including a top-level link.</p>
 <p>The owner token is shown once, at the claim. <code>POST /recover-token</code> gives it back to anyone who can
 write the deployment&#39;s <code>CONFIG_KV</code> namespace, which means anyone who can already redeploy the worker
 with <code>PW_DIAGNOSTICS=1</code> and read it through <code>/sql</code>. The proof is no weaker than the token.</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> recover-token</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://mysite.example</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --store</span></span></code></pre><p>The client mints a nonce (32 random bytes, base64url, 43 characters) and writes
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> recover-token</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://mysite.example</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --store</span></span></code></pre><p><code>--store</code> saves the recovered token in the system keychain, or in the global config on a machine
+with no keychain.</p>
+<p>The client mints a nonce (32 random bytes, base64url, 43 characters) and writes
 <code>recover:&lt;host&gt;:&lt;sha256 hex of the nonce&gt;</code> to <code>CONFIG_KV</code> with a 60-second TTL, KV&#39;s minimum. The
 value is <code>{&quot;host&quot;: &quot;&lt;host&gt;&quot;, &quot;exp&quot;: &lt;epoch ms&gt;}</code>. It then posts <code>{&quot;nonce&quot;: &quot;&lt;nonce&gt;&quot;}</code> to the site. The
 nonce appears only in that body; KV, wrangler&#39;s argv and the logs see its hash.</p>
@@ -1720,7 +1722,7 @@ daily rows. Lowering it is the fastest way to burn the meter that binds regenera
 </tr>
 <tr>
 <td><code>MIGRATE_CHUNKS_PER_INVOCATION</code></td>
-<td>1 on free, all on paid</td>
+<td>40 on free, all on paid</td>
 <td>chunks replayed per invocation</td>
 </tr>
 </tbody></table></div>
@@ -2912,7 +2914,7 @@ granting the ability to add code to the runtime.</p>
 <code>withSettings()</code> is applied in <code>src/site.ts</code>, to the front Worker&#39;s env, and the object receives its
 own copy of the bindings, so most of them were knobs nothing read: <code>RENDER_BUDGET_MS</code>,
 <code>FILL_BATCH_SIZE</code>, <code>HTTP_DRAIN_LIMIT</code>, <code>MIRROR_LIMIT</code>, <code>LAZY_FS_BUDGET_BYTES</code>
-and <code>PREFILL</code> are read in <code>src/site-do.ts</code> and only there. <code>adoptSettings()</code> now overlays every name
+and <code>PREFILL</code> are read in the object (<code>src/site-do.ts</code> and <code>src/do/levers.ts</code>) and only there. <code>adoptSettings()</code> now overlays every name
 on the allow-list, and is called from <code>alarm()</code> as well as <code>handle()</code>, because several of them are
 read on the fill chain and an alarm never passes through <code>handle()</code>. The fast storage lane adopts
 nothing and must not: it is await-free by construction and reads no lever.</p>
@@ -3002,7 +3004,7 @@ applied it.</p>
 <h2 id="related">Related</h2>
 <ul>
 <li><code>docs/repository-layout.md</code> -- every path outside <code>src/</code> and how it arrives</li>
-<li><code>docs/building-from-source.md</code> -- the fifteen steps a source build runs</li>
+<li><code>docs/building-from-source.md</code> -- the seventeen steps a source build runs</li>
 <li><code>docs/measurement-classes.md</code> -- which instrument may produce which class of number</li>
 <li><code>docs/recovery.md</code> -- which primitive answers which failure</li>
 <li><code>docs/external-database.md</code> -- why the site database lives in the Durable Object</li>

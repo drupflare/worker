@@ -524,8 +524,8 @@ reason to abort, and never as health data.</p>
 </tr>
 </tbody></table></div>
 <p>Do not gate on CPU. An absolute figure comes only from <code>cpuTime</code> on a deployed version, and the
-platform&#39;s reported 400-600 ms spread means a canary window cannot support a boot-time verdict at
-n=1 or n=3.</p>
+platform&#39;s reported 400-600 ms spread did not reproduce across 640 requests on a warm object, but
+a canary window of n=1 or n=3 still carries no spread, so it cannot support a boot-time verdict.</p>
 <p>An available upgrade must not enter <code>recordOutcome()</code>. <code>src/ops/repair.ts</code> counts consecutive
 same-code failures toward quarantine and rollback, and an upgrade is not a fault.</p>
 <h2 id="trust">Trust</h2>
@@ -644,7 +644,7 @@ the PHP version and the OS.</li>
 <li><strong>PHP 8.5 on the edge.</strong> The shipping seam is 8.5. A <code>cfw-*</code> deploy once returned 1101 with
 <code>ExitStatus: Program terminated with exit(-2)</code>; the cause was opcache, which reads
 <code>opcache.file_cache</code> during PHP&#39;s module startup, before the mount sequence creates
-<code>/tmp/opcache</code>. <code>src/site-do.ts:599</code> sets it to <code>/tmp</code>, which emscripten&#39;s MEMFS always creates.
+<code>/tmp/opcache</code>. <code>src/runtime/opcache.ts</code> sets it to <code>/tmp</code>, which emscripten&#39;s MEMFS always creates.
 8.5 has rendered on a deployed worker since; the opcache file-cache counts in that comment were
 read off one. Each new build still needs its own deploy to prove it renders; the gate proves the
 bundle builds and fits.</li>

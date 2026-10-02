@@ -309,20 +309,21 @@
 <p>Every path outside <code>src/</code>, how it arrives on a clean clone, and what breaks without it. Sizes are
 <code>du -sh</code> on a development machine.</p>
 <h2 id="data-risk">Data Risk</h2>
-<p><code>assets/drupal/site.sqlite</code> is the packed Drupal database and its trim recipe is written down
-nowhere, so the live copy in the tree is canonical and nothing regenerates it. Two other lineages
-exist in the <code>drupflare-cdn</code> bucket: <code>.pack-backup/site.sqlite.bak</code>, which is the rollback point for
-the current lineage, and an older hand-trimmed artifact from a different one. The SQLite header
-change counter is what orders them.</p>
+<p><code>assets/drupal/site.sqlite</code> is the packed Drupal database. <code>scripts/drupal/install-site-db.php</code> builds
+it from nothing (<code>bun run build:site-db</code>, with <code>docs/database.md</code> as the recipe), and it is tracked,
+so the copy in the tree is the one that ships. Two other lineages exist in the <code>drupflare-cdn</code>
+bucket: <code>.pack-backup/site.sqlite.bak</code>, which is the rollback point for an earlier lineage, and an
+older hand-trimmed artifact from a different one. The SQLite header change counter is what orders
+them.</p>
 <p><code>bun run backup:cdn</code> archives a key&#39;s remote bytes to <code>snapshots/&lt;name&gt;.&lt;sha12&gt;</code> before replacing
 them, so nothing is lost by replacing one, and records the archive in <code>cdn-manifest.json</code> in the same
 run, so the manifest is the only file left to commit. It refuses for a tracked file with uncommitted
 changes, where the bytes going up are recorded nowhere. <code>bun run backup:verify</code> compares every key by
 size and ETag.</p>
 <h2 id="pack-backup"><code>.pack-backup/</code></h2>
-<p>7.2 MB, one file, and it stays. It is the rollback point for the canonical lineage, it is a distinct
-version of an artifact whose trim recipe is written down nowhere, and <code>bun run bake:pack</code> <strong>overwrites
-it on its next run</strong> (<code>scripts/bake-pack.ts:138</code>, the <code>snapshot</code> step). Its content is also in the
+<p>7.2 MB, one file, and it stays. It is the rollback point for an earlier lineage of the packed
+database (7,585,792 bytes, against 5,832,704 for the current one), and <code>bun run bake:pack</code>
+<strong>overwrites it on its next run</strong> (<code>scripts/bake-pack.ts:138</code>, the <code>snapshot</code> step). Its content is also in the
 bucket at <code>snapshots/site.sqlite.064105ca7223</code>.</p>
 <h2 id="tracked-against-untracked">Tracked Against Untracked</h2>
 <p>A deploy reads <code>src/</code>, <code>assets/</code> and <code>.interp/</code>. The rest of the untracked bulk is build input,
@@ -341,42 +342,42 @@ instruments. The shape of the table is what is meant to last; the numbers in it 
 </thead>
 <tbody><tr>
 <td><code>src/</code></td>
-<td>2.8M</td>
-<td>132 of 139 files</td>
+<td>4.2M</td>
+<td>406 of 407 files</td>
 <td>committed</td>
 <td>no</td>
 </tr>
 <tr>
 <td><code>tests/</code></td>
-<td>3.6M</td>
-<td>297 of 319</td>
+<td>5.2M</td>
+<td>437 of 437</td>
 <td>committed</td>
 <td>no</td>
 </tr>
 <tr>
 <td><code>scripts/</code></td>
-<td>1.2M</td>
-<td>123 of 124</td>
+<td>2.1M</td>
+<td>196 of 196</td>
 <td>committed</td>
 <td>no</td>
 </tr>
 <tr>
 <td><code>docs/</code></td>
-<td>208K</td>
+<td>640K</td>
 <td>yes</td>
 <td>committed</td>
 <td>no</td>
 </tr>
 <tr>
 <td><code>assets/</code></td>
-<td>131M</td>
-<td>2 files</td>
+<td>133M</td>
+<td>4 files</td>
 <td><code>bun run hydrate</code>; <code>bun run build:local</code> in full</td>
 <td>no</td>
 </tr>
 <tr>
 <td><code>.interp/</code></td>
-<td>149M</td>
+<td>176M</td>
 <td>no</td>
 <td><code>bun install</code> restores 2 of 3; <code>bun run hydrate</code> or <code>build:local</code> the rest</td>
 <td>no</td>
@@ -404,8 +405,8 @@ instruments. The shape of the table is what is meant to last; the numbers in it 
 </tr>
 <tr>
 <td><code>experiments/</code></td>
-<td>288K</td>
-<td>59 files</td>
+<td>332K</td>
+<td>71 files</td>
 <td>committed</td>
 <td>no</td>
 </tr>
@@ -468,8 +469,8 @@ instruments. The shape of the table is what is meant to last; the numbers in it 
 </tbody></table></div>
 <p><code>.wrangler/</code> is almost the whole checkout. It grows with every dev session and vitest run and nothing
 prunes it, so a working tree measured after a long run is mostly cache. Delete it when disk matters.</p>
-<p><code>docker/</code> holds two rigs and they are unrelated. <code>compose.yml</code> is the seven-service integration rig
-(GreenMail, Redis, syslog, Gitea, Forgejo, Keycloak, GitLab). <code>vps.yml</code> plus <code>docker/vps/</code> is the
+<p><code>docker/</code> holds two rigs and they are unrelated. <code>compose.yml</code> is the nine-service integration rig
+(GreenMail, Postgres, MySQL, Redis, syslog, Gitea, Forgejo, Keycloak, GitLab). <code>vps.yml</code> plus <code>docker/vps/</code> is the
 comparison arm: nginx and PHP 8.5 FPM against the same <code>drupal-src</code> tree and the same
 <code>assets/drupal/site.sqlite</code> this project serves, so a measurement isolates the runtime. Both mount the
 tracked database read-only and copy it, because SQLite writes to the file it reads and a benchmark
@@ -477,16 +478,16 @@ must not mutate what it measures.</p>
 <p>phasm should not become a submodule. The worker consumes its output rather than its source, and a
 submodule would put a Docker toolchain in a clean clone&#39;s dependency path.</p>
 <h2 id="experiments"><code>experiments/</code></h2>
-<p>59 files, 99,699 bytes, all committed, per <code>git ls-files experiments</code>: <strong>49 wrangler configs</strong> -- 47
-under <code>experiments/wrangler/</code> and one each in <code>arena/</code> and <code>duration/</code> -- the
-<code>experiments/wrangler/README.md</code>, the two probe seams those directories pair with their configs, two
-binary seams under <code>binary/</code>, a loose <code>probe-o3mbsjlj.ts</code> at the top, and four data files from the
+<p>71 files, 110,263 bytes, all committed, per <code>git ls-files experiments</code>: <strong>61 wrangler configs</strong> -- 59
+under <code>experiments/wrangler/</code> and one each in <code>arena/</code> and <code>duration/</code> -- plus the
+<code>experiments/wrangler/README.md</code>, the probe seams those directories pair with their configs, two
+binary seams under <code>binary/</code>, a loose <code>probe-o3mbsjlj.ts</code> at the top, and the data files from the
 boot-phase sweeps. <code>CLAUDE.md</code> keeps them prettier-ignored; they are kept for reproduction and left
 unmaintained.</p>
 <p>The 282 MB of <code>experiments/wrangler/.wrangler</code> miniflare state this section used to describe is gone;
 it regenerates on the next <code>wrangler dev</code> and is gitignored.</p>
 <h2 id="assetscore"><code>assets/core/</code></h2>
-<p>24 MB, 4,028 files, produced by <code>bun run assets:static</code> from step 13 of the source build. It is the
+<p>24 MB, 4,030 files, produced by <code>bun run assets:static</code> from step 13 of the source build. It is the
 browser-fetchable half of the Drupal tree (<code>css</code>, <code>js</code>, fonts and images under <code>core/</code>) copied to
 where Workers Assets serves it at the <code>/core/**</code> URLs Drupal already emits.</p>
 <p>All three PHP packers skip those extensions, correctly, because PHP never opens them. Nothing serves
@@ -603,7 +604,7 @@ Three classes:</p>
 </tr>
 <tr>
 <td>3</td>
-<td>serving 3.0M visits/month, regeneration 9,685 renders/day</td>
+<td>serving 3.0M visits/month, regeneration 50,916 renders/day</td>
 <td>a</td>
 <td><strong>yes.</strong> <code>tests/unit/free-envelope.spec.ts</code> over <code>scripts/measure/free-envelope.ts</code>.</td>
 </tr>
@@ -700,7 +701,7 @@ Three classes:</p>
 <td>edge figures: <code>cpuTime</code>, cold boot, render cost</td>
 <td>the (c) rows</td>
 <td>a deploy, a tail and a teardown per run</td>
-<td>no. It needs a deploy into an account carrying production workers, and a reported 400-600 ms spread makes an n=1 nightly figure noise reported as a trend</td>
+<td>no. It needs a deploy into an account carrying production workers, and an n=1 nightly figure carries no spread, so it reads as a trend when it is one sample</td>
 </tr>
 </tbody></table></div>
 <p>The recommendation is the split that exists: <strong>push proves the model, the release proves the artifact, and

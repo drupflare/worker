@@ -13,7 +13,7 @@
 <h1>Variable RUN_ADVISORY_SCAN_PHP<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">RUN_ADVISORY_SCAN_PHP</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;\nuse Drupal\\drupflare\\Update\\AdvisoryScan;\n\n// __CFW_FIBER_SHIM__\nchdir(&#39;/drupal&#39;);\n\n$out = [&#39;ran&#39; =&gt; false];\n$clock = function () {\n\treturn microtime(true) * 1000;\n};\n$t0 = $clock();\n\ntry {\n\t// __CFW_KERNEL_BOOT__\n\n\t$class = AdvisoryScan::class;\n\tif (!class_exists($class)) {\n\t\t$out[&#39;reason&#39;] = &#39;the drupflare module is not installed&#39;;\n\t} else {\n\t\t$scan = new AdvisoryScan(Drupal::state(), Drupal::service(&#39;keyvalue&#39;));\n\t\t$out[&#39;record&#39;] = $scan-&gt;scan(time());\n\t\t$out[&#39;ran&#39;] = true;\n\t}\n} catch (Throwable $e) {\n\t$out[&#39;error&#39;] = get_class($e) . &#39;: &#39; . $e-&gt;getMessage();\n}\n\n$out[&#39;ms&#39;] = round($clock() - $t0, 2);\necho json_encode($out);\n&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/site/generated/assets.ts#L213">src/site/generated/assets.ts:213</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/site/generated/assets.ts#L213">src/site/generated/assets.ts:213</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">CensusRow</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#category">category</a><span class="tsd-signature-symbol">:</span> <a href="ops_statement-census.CensusCategory.html" class="tsd-signature-type tsd-kind-type-alias">CensusCategory</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#count">count</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#distinctkeys">distinctKeys</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#fingerprint">fingerprint</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#keys">keys</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#name">name</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#resultbytes">resultBytes</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rows">rows</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowsread">rowsRead</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowswritten">rowsWritten</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#subsystem">subsystem</a><span class="tsd-signature-symbol">:</span> <a href="ops_statement-census.Subsystem.html" class="tsd-signature-type tsd-kind-type-alias">Subsystem</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#table">table</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L254">src/ops/statement-census.ts:254</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L254">src/ops/statement-census.ts:254</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -46,68 +46,68 @@
 <div class="tsd-comment tsd-typography"><p>the category of the first occurrence; every later one is <code>duplicate</code></p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L264">src/ops/statement-census.ts:264</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L264">src/ops/statement-census.ts:264</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="count"><span>count</span><a href="#count" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">count</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L258">src/ops/statement-census.ts:258</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L258">src/ops/statement-census.ts:258</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="distinctkeys"><span>distinct<wbr/>Keys</span><a href="#distinctkeys" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">distinctKeys</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>distinct cids, uncapped; <code>count - distinctKeys</code> is the reducible repetition</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L268">src/ops/statement-census.ts:268</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L268">src/ops/statement-census.ts:268</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="fingerprint"><span>fingerprint</span><a href="#fingerprint" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">fingerprint</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L255">src/ops/statement-census.ts:255</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L255">src/ops/statement-census.ts:255</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="keys"><span>keys</span><a href="#keys" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">keys</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div>
 <div class="tsd-comment tsd-typography"><p>distinct first-parameter cids seen under this fingerprint, capped</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L266">src/ops/statement-census.ts:266</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L266">src/ops/statement-census.ts:266</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="name"><span>name</span><a href="#name" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">name</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L256">src/ops/statement-census.ts:256</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L256">src/ops/statement-census.ts:256</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="resultbytes"><span>result<wbr/>Bytes</span><a href="#resultbytes" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">resultBytes</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L262">src/ops/statement-census.ts:262</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L262">src/ops/statement-census.ts:262</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rows"><span>rows</span><a href="#rows" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rows</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L261">src/ops/statement-census.ts:261</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L261">src/ops/statement-census.ts:261</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowsread"><span>rows<wbr/>Read</span><a href="#rowsread" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsRead</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L259">src/ops/statement-census.ts:259</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L259">src/ops/statement-census.ts:259</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowswritten"><span>rows<wbr/>Written</span><a href="#rowswritten" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsWritten</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L260">src/ops/statement-census.ts:260</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L260">src/ops/statement-census.ts:260</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="subsystem"><span>subsystem</span><a href="#subsystem" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">subsystem</span><span class="tsd-signature-symbol">:</span> <a href="ops_statement-census.Subsystem.html" class="tsd-signature-type tsd-kind-type-alias">Subsystem</a></div>
 <div class="tsd-comment tsd-typography"><p>the first occurrence's subsystem, a label only; <a href="ops_statement-census.Census.html#bysubsystem" class="tsd-kind-property">Census.bySubsystem</a> has the split</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L270">src/ops/statement-census.ts:270</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L270">src/ops/statement-census.ts:270</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="table"><span>table</span><a href="#table" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">table</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/ops/statement-census.ts#L257">src/ops/statement-census.ts:257</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/statement-census.ts#L257">src/ops/statement-census.ts:257</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -634,25 +634,126 @@ machine, 33% less. Conditions: RAPL package on <code>paisley-park</code>, idle s
 second, n=6 to 7 rounds per cell, drupflare on a <code>bastion</code> node under a 3-CPU cgroup against the
 shipped nginx and PHP-FPM stack at 3 CPUs.</p>
 <h3 id="what-the-idle-floor-costs">What The Idle Floor Costs</h3>
+<p><code>measured</code>, RAPL, idle windows interleaved with the load windows of each run:</p>
 <div class="table"><table>
 <thead>
 <tr>
-<th>arm</th>
+<th>run</th>
 <th>package</th>
 <th>core</th>
 </tr>
 </thead>
 <tbody><tr>
-<td>idle floor</td>
+<td>per-request run</td>
 <td>18.17 W</td>
 <td>0.15 W</td>
 </tr>
+<tr>
+<td>per-view run, 2026-10-01</td>
+<td>20.65 W (19.65-21.85, n=15)</td>
+<td>0.23 W</td>
+</tr>
 </tbody></table></div>
-<p><strong>RAPL covers the processor package only.</strong> PSU loss, fans, drives and DRAM sit outside its domains,
-so these are a floor on machine energy rather than a total. Bounding the wall draw from a measured
-29.3 W DC floor and an 80 Plus Bronze supply gives 35 to 42 W, depending where a 750 W unit running
-at a few percent load sits on its efficiency curve. A wall meter needs physical access to the host
-and has not been run.</p>
+<p><strong>RAPL covers the processor package only.</strong> PSU loss, the VRM, the GPU, drives, DRAM, the chipset and
+fans sit outside its domains, so these are a floor on machine energy. The whole machine is modelled
+component by component below; a wall meter needs physical access to the host and has not been run.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>component</th>
+<th>watts</th>
+<th>label</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>CPU package at idle</td>
+<td>20.65</td>
+<td><code>measured</code>, RAPL</td>
+</tr>
+<tr>
+<td>CPU at idle, published</td>
+<td>about 40</td>
+<td><code>published</code>, PC Gamer 9900X review, another board</td>
+</tr>
+<tr>
+<td>CPU VRM loss</td>
+<td>12% of package</td>
+<td><code>derived (modelled)</code></td>
+</tr>
+<tr>
+<td>RTX 4070 at idle</td>
+<td>11</td>
+<td><code>measured</code>, <code>nvidia-smi</code></td>
+</tr>
+<tr>
+<td>WD2003FZEX hard drive</td>
+<td>8.1 idle, 1.3 standby</td>
+<td>datasheet figure, fetch failed, <code>unverified</code></td>
+</tr>
+<tr>
+<td>NVMe SSD</td>
+<td>0.05 in its idle state</td>
+<td><code>measured</code>, NVMe Identify power states</td>
+</tr>
+<tr>
+<td>DDR5, chipset, board, fans</td>
+<td>modelled per part</td>
+<td><code>derived (modelled)</code></td>
+</tr>
+<tr>
+<td>PSU efficiency, 20 W to 80 W DC</td>
+<td>62.9% rising to 81.3%</td>
+<td><code>published</code>, Tom&#39;s Hardware, a sibling 750 W unit</td>
+</tr>
+</tbody></table></div>
+<p><code>derived (modelled)</code> from those parts, idle at the wall:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>case</th>
+<th>DC</th>
+<th>AC (wall)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>floor from measured RAPL, disks parked</td>
+<td>46 W</td>
+<td>62 W</td>
+</tr>
+<tr>
+<td>floor from measured RAPL, one disk spun</td>
+<td>53 W</td>
+<td>69 W</td>
+</tr>
+<tr>
+<td>floor at the published 40 W CPU</td>
+<td>69 W</td>
+<td>87 W</td>
+</tr>
+<tr>
+<td>reasonable, disks parked</td>
+<td>75 W</td>
+<td>94 W</td>
+</tr>
+<tr>
+<td>reasonable, every disk spinning</td>
+<td>87 W</td>
+<td>107 W</td>
+</tr>
+</tbody></table></div>
+<p>Spin state during the runs is unknown, so both cases are carried. An earlier bound of 35 to 42 W at
+the wall counted only a measured 29.3 W DC floor and assumed a better PSU efficiency than the measured
+curve gives at this load. Under load, marginal wall energy is about 1.22 times the RAPL figure (PSU
+1.09 between 60 and 80 W DC, VRM 1.12).</p>
+<p><strong>The idle figure does not transfer to a production server, and in this direction that favours the
+conventional host.</strong> This is a desktop: 62 to 107 W at the wall for 24 threads, or 2.6 to 4.5 W per
+thread, with a discrete GPU, two hard drives and a desktop chipset. A production server idles at
+135 W for 256 threads, 0.53 W per thread for the whole machine (SPECpower). So the idle-charged
+figures on this host overstate a production host&#39;s idle per view, and the energy model above uses
+the server figure, not this one. Ratios between arms do transfer, because both stacks run on the same
+processor; the same wasm render takes 1.85 times longer on a deployed EPYC core than on this
+machine&#39;s cores, which is why every Cloudflare figure is priced from <code>cpuTime</code> rather than from these
+joules.</p>
 <p>On Cloudflare the equivalent readings are CPU time rather than joules, taken from <code>cpuTime</code> on a
 deployed worker: 60.2 ms for a re-render on a page a content change invalidated, and 0.42 ms
 of Durable Object time for a cached serve. A page served from the previous generation at the edge

@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">AlarmContext</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#held">held</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#hold">hold</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#info">info</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">AlarmInvocationInfo</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#maxpages">maxPages</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#outcomes">outcomes</a><span class="tsd-signature-symbol">:</span> (<a href="do_types.Payload.html" class="tsd-signature-type tsd-kind-type-alias">Payload</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span>)<span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#reconcileheld">reconcileHeld</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#site">site</a><span class="tsd-signature-symbol">:</span> <a href="../classes/site-do.SitePhpDurableObject.html" class="tsd-signature-type tsd-kind-class">SitePhpDurableObject</a><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/do/alarm/context.ts#L5">src/do/alarm/context.ts:5</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/do/alarm/context.ts#L5">src/do/alarm/context.ts:5</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -41,49 +41,49 @@
 <div class="tsd-comment tsd-typography"><p>whether background PHP waits this firing, so the re-arm lands on the end of the hold</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/do/alarm/context.ts#L17">src/do/alarm/context.ts:17</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/do/alarm/context.ts#L17">src/do/alarm/context.ts:17</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="hold"><code class="tsd-tag">Optional</code><span>hold</span><a href="#hold" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">hold</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>end of the young-interpreter hold on background PHP, or undefined when none applies</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/do/alarm/context.ts#L15">src/do/alarm/context.ts:15</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/do/alarm/context.ts#L15">src/do/alarm/context.ts:15</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="info"><code class="tsd-tag">Optional</code><span>info</span><a href="#info" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">info</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">AlarmInvocationInfo</span></div>
 <div class="tsd-comment tsd-typography"><p>the platform's retry facts for this firing</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/do/alarm/context.ts#L9">src/do/alarm/context.ts:9</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/do/alarm/context.ts#L9">src/do/alarm/context.ts:9</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="maxpages"><span>max<wbr/>Pages</span><a href="#maxpages" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">maxPages</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>the fill batch's page cap</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/do/alarm/context.ts#L13">src/do/alarm/context.ts:13</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/do/alarm/context.ts#L13">src/do/alarm/context.ts:13</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="outcomes"><span>outcomes</span><a href="#outcomes" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">outcomes</span><span class="tsd-signature-symbol">:</span> (<a href="do_types.Payload.html" class="tsd-signature-type tsd-kind-type-alias">Payload</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span>)<span class="tsd-signature-symbol">[]</span></div>
 <div class="tsd-comment tsd-typography"><p>what each page of the fill batch reported</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/do/alarm/context.ts#L11">src/do/alarm/context.ts:11</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/do/alarm/context.ts#L11">src/do/alarm/context.ts:11</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="reconcileheld"><span>reconcile<wbr/>Held</span><a href="#reconcileheld" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">reconcileHeld</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>whether reconciliation deferred a step for the hold instead of finishing it</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/do/alarm/context.ts#L19">src/do/alarm/context.ts:19</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/do/alarm/context.ts#L19">src/do/alarm/context.ts:19</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="site"><span>site</span><a href="#site" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">site</span><span class="tsd-signature-symbol">:</span> <a href="../classes/site-do.SitePhpDurableObject.html" class="tsd-signature-type tsd-kind-class">SitePhpDurableObject</a></div>
 <div class="tsd-comment tsd-typography"><p>the object being fired</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6632cdceeddd1329a8944864f025dc9507c298fc/src/do/alarm/context.ts#L7">src/do/alarm/context.ts:7</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/do/alarm/context.ts#L7">src/do/alarm/context.ts:7</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

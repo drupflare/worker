@@ -3801,6 +3801,16 @@ To change a row, read it out of the build input, insert it, and re-run `bun run 
 `bun run hydrate` from a published release payload. Until one exists, `ARTIFACT_SPECS` in
 `vitest.config.ts` excludes the specs that assert them and the lane prints what it dropped.
 
+**Correction, 2026-10-02 (v1.0.3).** Five statements in this section no longer hold; the table and
+paragraph above are left as written. `src/drupal/*-php.ts` still holds a few `String.raw` blocks, but
+the PHP fragments are real files under `src/site/php/`, packed by `scripts/gen-assets.ts` into
+`src/site/generated/assets.ts`. `src/site-do.ts` was split by concern into `src/do/` and the front
+worker into `src/site/`. The build has no decoder step (`LOCAL_STEPS` in `scripts/build-local.ts` has 17 steps, none of them a decoder).
+`assets/drupal/site.sqlite` has a producer, `scripts/drupal/install-site-db.php` (`bun run
+build:site-db`, `docs/database.md`), and is 5,832,704 bytes. The rig in Verifying the Tree below is
+nine services, not seven: GreenMail, Postgres, MySQL, Redis, syslog, Gitea, Forgejo, Keycloak and
+GitLab CE (`docker/compose.yml`).
+
 ---
 
 ## Verifying the Tree

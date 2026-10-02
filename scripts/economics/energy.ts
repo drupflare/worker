@@ -6,7 +6,7 @@
  */
 import { pageStoreFraction } from '../measure/render-fraction';
 import { num, sweep } from './args';
-import { fr, nr, pctr, r } from './fmt';
+import { fr, l, nr, pctr, r, sfx } from './fmt';
 
 const VIEWS = sweep('views', [10_000, 100_000, 1_000_000]);
 // every figure and its provenance lives in measured.ts, which also carries the constraint that
@@ -37,6 +37,63 @@ export function vpsKwhYear(density: number, util: number): number {
 	return ((wattsAt(util) / density) * PUE_COLO * HOURS_YEAR) / 1000.0;
 }
 
+// hardware threads on the modelled host; a node owns vCPU / THREADS_PER_HOST of it
+export const THREADS_PER_HOST = 256;
+// web pair plus database pair in a region (Acquia HA over two AZs, AWS Drupal reference architecture)
+export const NODES_PER_REGION = 4;
+
+/** An enterprise deployment's shape. `derived (modelled)`: no source sizes a node. */
+export interface ProductionShape {
+	name: string;
+	regions: number;
+	nodesPerRegion: number;
+	vcpu: number;
+	util: number;
+}
+
+/** The shapes the impact document compares against, production first and the worst case last. */
+export const PRODUCTION_SHAPES: ProductionShape[] = [
+	{
+		name: 'latency-matched production',
+		regions: 3,
+		nodesPerRegion: NODES_PER_REGION,
+		vcpu: 4,
+		util: 0.15
+	},
+	{
+		name: 'peak-sized production',
+		regions: 3,
+		nodesPerRegion: NODES_PER_REGION,
+		vcpu: 8,
+		util: 0.1
+	},
+	{
+		name: 'single-region HA',
+		regions: 1,
+		nodesPerRegion: NODES_PER_REGION,
+		vcpu: 4,
+		util: 0.15
+	}
+];
+
+/** Idle-dominated draw of one multi-node deployment: regions x nodes x each node's host share. */
+export function productionKwhYear(s: ProductionShape): number {
+	const nodeShare = s.vcpu / THREADS_PER_HOST;
+	return (
+		(s.regions * s.nodesPerRegion * nodeShare * wattsAt(s.util) * PUE_COLO * HOURS_YEAR) /
+		1000.0
+	);
+}
+
+/** The floor: one small VPS, 1/100 of a host at 15% utilisation, the worst case for the saving. */
+export const FLOOR_KWH_YEAR = vpsKwhYear(100, 0.15);
+
+/** Saving of drupflare against an incumbent's yearly kWh, in percent, at a traffic level. */
+export function savingPct(incumbentKwh: number, viewsMonth: number): number {
+	const d = drupflareKwhYear(viewsMonth, pageStoreFraction(viewsMonth), CPU_MS_RENDER);
+	return (1 - d / incumbentKwh) * 100.0;
+}
+
 /** Energy is CPU-seconds actually executed, charged at the host's marginal power per core. */
 export function drupflareKwhYear(viewsMonth: number, renderFrac: number, renderMs: number): number {
 	const viewsYear = viewsMonth * 12.0;
@@ -59,6 +116,41 @@ function row(
 }
 
 if (import.meta.main) {
+	const SAVING_VIEWS = [10_000, 100_000, 1_000_000, 10_000_000, 30_000_000];
+	console.log(
+		'production deployments, idle kWh per site-year at colo PUE (derived (modelled))\n'
+	);
+	console.log(
+		`${l('shape', 28)} ${r('regions', 8)} ${r('nodes', 6)} ${r('vCPU', 5)} ${r('util', 5)} ${r('kWh/y', 8)}`
+	);
+	const incumbents: [string, number][] = [];
+	for (const s of PRODUCTION_SHAPES) {
+		const kwh = productionKwhYear(s);
+		incumbents.push([s.name, kwh]);
+		console.log(
+			`${l(s.name, 28)} ${r(s.regions, 8)} ${r(s.regions * s.nodesPerRegion, 6)} ${r(s.vcpu, 5)} ${pctr(s.util, 5, 0)} ${fr(kwh, 8, 1)}`
+		);
+	}
+	incumbents.push(['floor, one small VPS', FLOOR_KWH_YEAR]);
+	console.log(
+		`${l('floor, one small VPS', 28)} ${r(1, 8)} ${r(1, 6)} ${r('1/100', 5)} ${pctr(0.15, 5, 0)} ${fr(FLOOR_KWH_YEAR, 8, 1)}`
+	);
+
+	console.log('\ndrupflare kWh per site-year (derived)');
+	for (const views of SAVING_VIEWS) {
+		const d = drupflareKwhYear(views, pageStoreFraction(views), CPU_MS_RENDER);
+		console.log(`  ${nr(views, 11)} views/mo  ${fr(d, 8, 4)} kWh`);
+	}
+
+	console.log('\nsaving against each incumbent, percent (derived)\n');
+	console.log(`${l('shape', 28)} ${SAVING_VIEWS.map((v) => r(sfx(v, 0), 9)).join(' ')}`);
+	for (const [name, kwh] of incumbents) {
+		console.log(
+			`${l(name, 28)} ${SAVING_VIEWS.map((v) => fr(savingPct(kwh, v), 9, 2)).join(' ')}`
+		);
+	}
+	console.log('');
+
 	console.log('one site, renders from 5 saves a day, VPS idle-dominated\n');
 	console.log(
 		`${r('views/mo', 9)} ${r('VPS/host', 9)} ${r('VPS util', 9)} ${r('VPS kWh/y', 10)} ${r('drupflare', 10)} ${r('saving', 8)}`

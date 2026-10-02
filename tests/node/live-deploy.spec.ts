@@ -1,3 +1,5 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import {
 	encodeForm,
@@ -6,10 +8,12 @@ import {
 	hiddenFields,
 	isEmptyInventory,
 	leftovers,
+	provision,
 	quotaExhausted,
 	quotaNotice,
 	ROWS_PER_RUN,
 	sessionFrom,
+	Site,
 	slopeVerdict,
 	textFields
 } from '../../scripts/e2e/live-deploy';
@@ -140,5 +144,80 @@ describe('the free quota', () => {
 
 	it('leaves room for at least one run a day', () => {
 		expect(ROWS_PER_RUN).toBeLessThan(FREE_DAILY_ROWS);
+	});
+});
+
+const RESET_PAGE =
+	'<!doctype html><title>Try Again</title><p>The site restarted while answering this request.</p>';
+
+/** a stand-in site whose /firstrun answers the given statuses in order, then repeats the last */
+async function serveClaims(answers: { status: number; body: string }[]) {
+	let claims = 0;
+	const server = createServer((req, res) => {
+		if (req.url === '/firstrun') {
+			const answer = answers[Math.min(claims++, answers.length - 1)]!;
+			res.writeHead(answer.status).end(answer.body);
+			return;
+		}
+		res.writeHead(200).end('<html>ok</html>');
+	});
+	await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+	const { port } = server.address() as AddressInfo;
+	return {
+		origin: `http://127.0.0.1:${port}`,
+		claims: () => claims,
+		close: () => server.close()
+	};
+}
+
+describe('claiming the site through /firstrun', () => {
+	it('claims with one request when the first answer is 200', async () => {
+		const rig = await serveClaims([{ status: 200, body: '{"ownerToken":"tok"}' }]);
+		const site = new Site(rig.origin);
+		try {
+			expect(await provision(site, 'pw', 0)).toBe('tok');
+			expect(rig.claims()).toBe(1);
+			expect(site.problems).toEqual([]);
+		} finally {
+			rig.close();
+		}
+	});
+
+	it('retries once on the Try Again page and returns the owner token', async () => {
+		const rig = await serveClaims([
+			{ status: 503, body: RESET_PAGE },
+			{ status: 200, body: '{"ownerToken":"tok"}' }
+		]);
+		const site = new Site(rig.origin);
+		try {
+			expect(await provision(site, 'pw', 0)).toBe('tok');
+			expect(rig.claims()).toBe(2);
+			expect(site.problems).toEqual([]);
+		} finally {
+			rig.close();
+		}
+	});
+
+	it('does not retry a second reset, so a persistent one still fails the lane', async () => {
+		const rig = await serveClaims([{ status: 503, body: RESET_PAGE }]);
+		const site = new Site(rig.origin);
+		try {
+			await expect(provision(site, 'pw', 0)).rejects.toThrow(/no JSON/);
+			expect(rig.claims()).toBe(2);
+		} finally {
+			rig.close();
+		}
+	});
+
+	it('does not retry any other 503 and records it as a problem', async () => {
+		const rig = await serveClaims([{ status: 503, body: 'warming' }]);
+		const site = new Site(rig.origin);
+		try {
+			await expect(provision(site, 'pw', 0)).rejects.toThrow();
+			expect(rig.claims()).toBe(1);
+			expect(site.problems.join(' ')).toContain('/firstrun answered 503');
+		} finally {
+			rig.close();
+		}
 	});
 });

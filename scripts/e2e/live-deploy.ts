@@ -345,7 +345,7 @@ async function events(name: string, from: number, to: number): Promise<Event[]> 
 
 type Step = { path: string; status: number; ms: number; note?: string };
 
-class Site {
+export class Site {
 	requests = 0;
 	steps: Step[] = [];
 	problems: string[] = [];
@@ -394,7 +394,7 @@ class Site {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function provision(site: Site, pass: string): Promise<string> {
+export async function provision(site: Site, pass: string, resetWaitMs = 15_000): Promise<string> {
 	// the first request provisions the object; poll until it stops answering 503 while it migrates
 	for (let i = 0; i < 60; i++) {
 		const res = await fetch(new URL('/', site.origin), {
@@ -408,7 +408,7 @@ async function provision(site: Site, pass: string): Promise<string> {
 	const first = await fetch(new URL('/', site.origin), { signal: AbortSignal.timeout(120_000) });
 	if (quotaExhausted(await first.text()))
 		throw new QuotaSkip('the first request reported the quota spent');
-	const claim = await site.hit('/firstrun', {
+	const claimInit = {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },
 		body: JSON.stringify({
@@ -417,7 +417,20 @@ async function provision(site: Site, pass: string): Promise<string> {
 			adminPass: pass,
 			adminMail: 'e2e@example.invalid'
 		})
-	});
+	};
+	let claim = await site.hit('/firstrun', { ...claimInit, expect: [200, 503] });
+	// a killed claim leaves first_run_at unset, so the retry the reset page asks for is safe
+	if (claim.res.status === 503 && /<title>Try Again<\/title>/i.test(claim.body)) {
+		console.error(
+			`RESET: /firstrun hit the Try Again page, retrying once after ${resetWaitMs / 1000} s:${claim.body.replace(/\s+/g, ' ').slice(0, 300)}`
+		);
+		await sleep(resetWaitMs);
+		claim = await site.hit('/firstrun', claimInit);
+	} else if (claim.res.status === 503) {
+		site.problems.push(
+			`POST /firstrun answered 503, expected 200: ${claim.body.slice(0, 160)}`
+		);
+	}
 	if (quotaExhausted(claim.body)) throw new QuotaSkip('/firstrun reported the quota spent');
 	let owner: string | undefined;
 	try {

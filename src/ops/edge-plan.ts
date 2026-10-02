@@ -83,7 +83,9 @@ export const SAMPLES_PER_COMPILE = 3;
  * `/admin/content` on `wrangler dev` is 12.6-17.9 req/s unserved against 221-400 req/s served.
  *
  * It stays bounded, since a page that varies every render would otherwise spend a diff every third
- * render forever.
+ * render forever. A spent key tries again after {@link PLAN_TTL_MS}: a re-proof drops a plan whose
+ * page ticks (a "Member for" line) and each recompile can refuse, so a permanent latch would
+ * eventually stop a page that holds a plan most of the time.
  */
 export const PLAN_COMPILE_ATTEMPTS = 3;
 
@@ -111,6 +113,8 @@ type Entry = {
 	bytes: number;
 	/** compiles the proofs have refused for this key; see {@link PLAN_COMPILE_ATTEMPTS} */
 	refusals?: number;
+	/** when the last refusal was recorded; a spent key tries again {@link PLAN_TTL_MS} after it */
+	refusedAt?: number;
 	/** keyed to one session rather than to a role set; see {@link privatePlanKey} */
 	owned?: boolean;
 	/** whether the cold-isolate tier has already been consulted for this key */
@@ -322,12 +326,16 @@ export function hasEdgePlan(key: string, nowMs: number = Date.now()): boolean {
 }
 
 /**
- * Whether this key has spent its compile attempts and will not try again.
+ * Whether this key has spent its compile attempts and waits {@link PLAN_TTL_MS} before retrying.
  *
  * Reported so a latched refusal differs from sampling on `x-cfw-plan` (an 18x throughput gap).
  */
-export function edgePlanRefused(key: string): boolean {
-	return (store.get(key)?.refusals ?? 0) >= PLAN_COMPILE_ATTEMPTS;
+export function edgePlanRefused(key: string, nowMs: number = Date.now()): boolean {
+	const entry = store.get(key);
+	return (
+		(entry?.refusals ?? 0) >= PLAN_COMPILE_ATTEMPTS &&
+		nowMs - (entry?.refusedAt ?? 0) < PLAN_TTL_MS
+	);
 }
 
 /**
@@ -445,7 +453,10 @@ export function noteEdgeRender(
 		entry.provenUntil = 0;
 		entry.agreed.clear();
 	}
-	if ((entry.refusals ?? 0) >= PLAN_COMPILE_ATTEMPTS) return undefined;
+	if ((entry.refusals ?? 0) >= PLAN_COMPILE_ATTEMPTS) {
+		if (nowMs - (entry.refusedAt ?? 0) < PLAN_TTL_MS) return undefined;
+		entry.refusals = 0;
+	}
 	entry.samples.push(html);
 	entry.witnesses.push(witness);
 	if (entry.samples.length < SAMPLES_PER_COMPILE) return undefined;
@@ -471,6 +482,7 @@ export function noteEdgeRender(
 		!generatorAgrees(plan)
 	) {
 		entry.refusals = (entry.refusals ?? 0) + 1;
+		entry.refusedAt = nowMs;
 		return undefined;
 	}
 	storeEdgePlan(key, plan, nowMs, owned);

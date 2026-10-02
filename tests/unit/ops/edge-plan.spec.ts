@@ -237,6 +237,21 @@ describe('compiling from renders', () => {
 		expect(edgePlanStats().plans).toBe(0);
 	});
 
+	it('lets a spent key try again once the proof window has passed', () => {
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+		const now = Date.now();
+		for (let attempt = 0; attempt < PLAN_COMPILE_ATTEMPTS; attempt++) {
+			feedOneCompile(key, opaquePage, attempt * 10);
+		}
+		expect(edgePlanRefused(key, now)).toBe(true);
+		expect(edgePlanRefused(key, now + PLAN_TTL_MS + 1)).toBe(false);
+		const later = now + PLAN_TTL_MS + 1;
+		expect(noteEdgeRender(key, PATH, staticPage(0), later, COOKIE_A)).toBeUndefined();
+		expect(noteEdgeRender(key, PATH, staticPage(1), later, COOKIE_A)).toBeUndefined();
+		expect(noteEdgeRender(key, PATH, staticPage(1), later, COOKIE_B)).not.toBeUndefined();
+		expect(edgePlanStats().plans).toBe(1);
+	});
+
 	it('lets a page recover from a refusal one unlucky pair produced', () => {
 		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		// one bad pair, which is all a ticking timestamp or a queued message costs

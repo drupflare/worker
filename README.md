@@ -17,602 +17,64 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/drupflare/worker)
 
-**Drupal 11 running on Cloudflare Workers.** No VPS, no container, no origin server. PHP
-8.5 executes as WebAssembly inside a Durable Object, with the Durable Object's own SQLite as
-the database. **8.5 is what ships**, with nothing dropped to fit.
+**Drupal 11 running on Cloudflare Workers.** No VPS, no container, no origin server. PHP 8.5
+executes as WebAssembly inside a Durable Object, with the Durable Object's own SQLite as the
+database. PHP 8.5 is what ships, with no extension dropped to fit.
 
-The interpreter ships as a raw WebAssembly module the platform compiles ahead of time, so startup
-costs a few milliseconds rather than the hundred a compressed frame did. A cold boot is expensive and
-a paid site does not normally pay it: a Durable Object holds its interpreter across an 8-second alarm
-re-arm, measured across 71 consecutive alarms. A quiet free site pays it unless it opts into warming.
-Rows written is the meter that binds, not CPU. See
-[Free vs Paid](#-free-vs-paid).
+The interpreter ships as a raw WebAssembly module that the platform compiles ahead of time, so
+startup costs a few milliseconds where a compressed frame cost about a hundred. A cold boot is
+expensive and a paid site does not normally pay it: a Durable Object holds its interpreter across an
+8-second alarm re-arm, measured across 71 consecutive alarms. A quiet free site pays it unless it
+opts into warming. Rows written is the meter that binds, not CPU. See [Free vs Paid](#free-vs-paid).
 
 A site is one Durable Object by default and does not have to be. `REPLICA_COUNT` gives it read
 replica lanes, each a separate object filled from the primary and kept current by a replication log,
-so an authenticated read workload scales past one thread. See
-[Replica Lanes](#-replica-lanes).
+so an authenticated read workload scales past one thread. See [Replica Lanes](#replica-lanes).
 
 ---
 
-## ⚖️ Drupflare vs a Traditional VPS
+## Table of Contents
 
-Drupflare targets **solo, enterprise, indie and budget-bound sites**, where the cost is the hours rather than the
-hosting bill.
-
-**The claim, stated precisely: Drupflare is faster than a single-region VPS for any visitor who is
-not sitting next to it, and the margin grows with distance.** Traffic-weighted across the workload
-mix, against nginx and PHP-FPM 8.5 serving the same Drupal tree and the same database:
-
-| the visitor is               | ratio      |
-| ---------------------------- | ---------- |
-| in the VPS's own datacenter  | **1.50x**  |
-| on the same continent        | **6.35x**  |
-| one ocean away               | **11.32x** |
-| on the far side of the world | **23.09x** |
-
-Same-datacenter is the VPS at its theoretical best and nobody's real audience. The rest is
-[Geography](#-geography-the-term-localhost-leaves-out). Where Drupflare is slower is under
-[Limitations](#-limitations), and a raw uncached render is one of them.
-
-Every Drupflare figure marked **M** is measured, on deployed Cloudflare infrastructure or on this
-machine, and the column says which. **D** is derived from measured inputs and is arithmetic rather
-than a reading. **L** is a vendor's published list price. **n/m** is not measured, and is stated as a
-range or omitted.
-
-### Against a VPS
-
-`docker/vps.yml` runs nginx 1.29 and PHP 8.5 FPM with opcache and tracing JIT against the **same
-Drupal tree and the same site database** Drupflare serves, so the runtime is the only variable.
-`bun run measure:vps` drives both. The generator's own ceiling on the same machine is 8,308 req/s
-against nginx and 1,231 against the front worker, so it constrains neither arm.
-
-| workload                     | VPS                  | Drupflare            |
-| ---------------------------- | -------------------- | -------------------- |
-| Anonymous cached, p50        | 3 ms                 | **2 ms**             |
-| Anonymous cached, p95        | 49 ms                | **4 ms**             |
-| Anonymous cached, 32 clients | 122 req/s, p50 10 ms | **438 req/s**, 62 ms |
-| Re-render, tag-invalidated   | **24 ms**            | 30 ms                |
-| Re-render, page cache hit    | 24 ms                | **22 ms**            |
-
-An authenticated session is a curve rather than a median: the first three requests render and compile
-a plan, and everything after is answered in the isolate with no Durable Object hop. Converged p50 for
-one session driven sequentially, n=14 per path:
-
-| authenticated path       | VPS   | Drupflare |
-| ------------------------ | ----- | --------- |
-| `/`                      | 11 ms | **5 ms**  |
-| `/admin/content`         | 71 ms | **5 ms**  |
-| `/user/1`                | 56 ms | **5 ms**  |
-| `/admin/structure/types` | 18 ms | **6 ms**  |
-
-Under concurrency Drupflare holds ~312 req/s flat from 4 to 32 clients on both authenticated
-workloads. The VPS peaks at 204 req/s on the front page and 67 on admin, then declines.
-
-Read three things off these tables before drawing a conclusion from them.
-
-**Both arms are on localhost, which is the VPS's best case and not a real one.** A VPS sits in one
-region; Drupflare answers from the visitor's own colo. The network term a real user pays on every
-VPS request is absent from the tables above. It is measured separately in
-[Geography](#-geography-the-term-localhost-leaves-out), and it is the largest term in the
-comparison.
-
-**A re-render is 1.21x on the pages a save invalidates, and Drupflare is faster on the rest.** A save
-purges only the cache entries matching its tags, so every other page re-renders from a warm dynamic
-page cache. The larger ratios elsewhere in this file are a warm-kernel interpreter comparison and a
-both-bins-emptied edge render, which are different workloads on different instruments and do not
-divide into each other. The authenticated rows are not a runtime ratio either: they are a hop that
-does not happen.
-
-**The authenticated arm is one Durable Object with no replica lanes.** A four-lane pool measured
-3.29x on real authenticated renders and none of it is in the numbers above. Bodies agree to within
-10 bytes on the anonymous arms; on the authenticated arms Drupflare serves the larger page
-(103,689 against 96,177 on the front page) and the difference is unexplained.
-
-|                                            | Drupflare                                                                                                   | Traditional VPS                                                      | prov.   |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------- |
-| **Setup, from zero to a rendering site**   | one deploy, no server                                                                                       | provision, webserver, PHP-FPM, MariaDB, TLS, cron, firewall, backups | n/m     |
-| **Local toolchain you must learn first**   | none for deploy; `bun` to develop                                                                           | ddev or Lando, Composer, Drush, ssh, a database client               | n/m     |
-| **Monthly infrastructure**                 | itemised in [The Cost Model](#the-cost-model)                                                               | the same table                                                       | L       |
-| **What "scaling up" means**                | nothing to do; the edge absorbs it                                                                          | resize the box, tune PHP-FPM workers, add a cache layer              | n/m     |
-| **OS patching, PHP upgrades, kernel CVEs** | none exist to patch                                                                                         | yours, forever                                                       | n/m     |
-| **Anonymous page served from**             | edge cache, **~85%** of traffic, **0** Durable Object requests                                              | your box, every request                                              | M edge  |
-| **`page_cache` hit**                       | **1 ms** of Durable Object CPU, 1 statement                                                                 | full LEMP round trip                                                 | M edge  |
-| **`dynamic_page_cache` hit**               | a handful of ms and 6 statements                                                                            | n/m                                                                  | M edge  |
-| **Full uncached render**                   | seconds of Durable Object CPU with both cache bins emptied; the technical report carries the figure         | tens of ms native PHP, warm kernel                                   | M edge  |
-| **Wasm penalty, warm kernel only**         | a same-machine interpreter ratio, not the edge cost above; the technical report carries it                  | 1x by definition                                                     | M local |
-| **Authenticated page, plan hit**           | answered in the front worker with no Durable Object hop; see the curve above                                | tens of ms on a warm PHP-FPM pool                                    | M edge  |
-| **Authenticated read concurrency**         | scales with the replica pool: **1.00 / 2.03 / 3.29x** at 1 / 2 / 4 lanes, on real renders                   | one box, until you resize it                                         | M edge  |
-| **Cold start**                             | over a second; paid absorbs it and free amortises it off the request path                                   | ~0; the box is already running                                       | M edge  |
-| **Free-plan capacity**                     | **~100,000 page views/day** (~3M/month), saturated; every visit costs one Worker request, cached or not     | whatever the box does before it swaps                                | M edge  |
-| **Worker bundle**                          | fits the 64 MiB Worker size limit                                                                           | n/a                                                                  | M local |
-| **First-run migration**                    | chunked, one per invocation on free, each sized to complete on its own                                      | `drush si`, then hope                                                | M local |
-| **When something breaks at 3am**           | a self-repair ladder runs: L0 observe, L1 reset, L2 reconstruct, L3 reconfigure, L4 quarantine, L5 rollback | you, or someone you pay                                              | M built |
-| **Failure detection**                      | **19 tripwires** (12 host, 7 PHP) plus a mandatory boot self-test                                           | uptime ping, if configured                                           | M built |
-
-### The Cost Model
-
-The infrastructure saving is small. The labour saving is the large one.
-
-Infrastructure, for one small content site. Vendor figures are list prices rather than measurements,
-and are marked so:
-
-| line item         | Drupflare free                  | Drupflare paid                 | small VPS                                  | prov. |
-| ----------------- | ------------------------------- | ------------------------------ | ------------------------------------------ | ----- |
-| Compute           | $0.00                           | $5.00 Workers Paid             | $5-12                                      | L     |
-| Database          | $0.00 (the object's own SQLite) | included                       | on the box, or $15+ managed                | L     |
-| Backups           | $0.00                           | included in the plan's storage | ~20% surcharge on the majors               | L     |
-| CDN               | included                        | included                       | $0 with Cloudflare in front, which most do | L     |
-| TLS               | included                        | included                       | $0 via Let's Encrypt, yours to renew       | L     |
-| **Monthly total** | **$0.00**                       | **~$5.00**                     | **~$6-14**                                 |       |
-| **Annual**        | **$0**                          | **~$60**                       | **~$72-168**                               |       |
-
-So paid-vs-VPS is **roughly $12-108/year**, and at the bottom of the market it is close to a wash. The
-row that has no VPS equivalent is the first one: **there is no $0 VPS, and free carries ~3.0M
-visits/month with the same feature set as paid** -- including both performance levers, which default
-on regardless of plan.
-
-What actually differs is the column that cannot be filled in:
-
-| recurring obligation         | Drupflare                                         | VPS                                        |
-| ---------------------------- | ------------------------------------------------- | ------------------------------------------ |
-| OS and kernel CVEs           | nothing to patch                                  | monthly, forever                           |
-| PHP minor and major upgrades | a binary swap, built in CI                        | yours, with a compatibility risk each time |
-| Webserver and PHP-FPM tuning | does not exist                                    | yours                                      |
-| Drupal security releases     | detected on the cron chain, reported by `/health` | yours, on the advisory's schedule          |
-| Backup verification          | export and restore chunked, resumable, rehearsed  | yours to configure, and to test            |
-| Uptime and alerting          | 19 tripwires plus a self-repair ladder            | uptime ping, if configured                 |
-| Traffic spike                | nothing to do                                     | resize, tune, add caching                  |
-
-**Price those at your own rate.** This project states no hourly figure.
-
-Performance, with the full provenance in
-[the report's executive summary](TECHNICAL_REPORT.md#-executive-summary):
-
-|                             | Drupflare                                               | native PHP on a VPS     | prov.   |
-| --------------------------- | ------------------------------------------------------- | ----------------------- | ------- |
-| Cached page (the ~99% case) | **1 ms** DO CPU, 1 statement                            | full LEMP round trip    | M edge  |
-| Re-render, tag-invalidated  | **30 ms**                                               | **24 ms**               | M local |
-| Re-render, page cache hit   | **22 ms**                                               | 24 ms                   | M local |
-| Uncached render, cold bins  | **2,127 ms** DO CPU (n=10); a different cache state     | n/m on this instrument  | M edge  |
-| Wasm penalty, warm kernel   | **3.57x** warm / 3.94x cold, same-machine ratio         | 1x by definition        | M local |
-| Isolate startup             | **5 ms** of a 1,000 ms limit, not billed to the request | n/a; the box is running | M edge  |
-| Cold boot                   | **1,264 ms**, amortised off the request path            | ~0                      | M edge  |
-| Authenticated page          | **208 ms** p50 from a client, both levers on            | tens of ms, warm pool   | M edge  |
-
-The architecture wins by not rendering rather than by rendering faster.
-
-**The two render rows are different workloads on different instruments and must not be divided.**
-The 32/25 pair is one machine, one instrument, with Drupal's `render` and `dynamic_page_cache` bins
-warm on both sides, which is the state a content change produces. The 2,127 ms is the edge billing a
-render with both bins emptied. Dividing an edge cold figure by a local warm one is how an external
-review published a 225x that this project had to retract; the technical report keeps that correction
-at its Provenance section.
-
-Authenticated traffic is the harder case. Shell assembly and a resident interpreter put a logged-in
-page at ~467 ms against 3,391, and a replica pool spreads authenticated reads across objects instead
-of queueing them behind one. A VPS with a warm PHP-FPM pool is still ahead on a single request. What
-it does not have is the concurrency answer: adding lanes is a config change and a provisioning call,
-not a resize.
-
-Write-heavy traffic is a narrow loss. A lane runs a write locally, discards its own effect and
-forwards the statement list to the primary, which sequences it, so the work spreads and only the
-commit serialises. What cannot spread is the class of write that originates a value two objects
-would mint differently; those are refused rather than retried, because a retry cannot repair them.
-
-A raw uncached render is slower than native PHP, by a ratio the technical report keeps current. The
-architecture wins by not rendering: the tiers above answer without one, and where a logged-in visitor
-forces a render, shell assembly cuts the render rather than the boot. What remains slower is listed
-under [Limitations](#-limitations).
-
-### 🌍 Geography, the term localhost leaves out
-
-Every table above gives the VPS a visitor standing in its own datacenter. A real visitor is somewhere
-else, and a single-region VPS answers all of them from one place while Cloudflare answers from the
-colo nearest each. That difference is the largest term in the comparison and it is measured rather
-than argued: `scripts/measure/delay-proxy.mjs` puts a real delaying proxy in front of the VPS arm, so
-its connection pays the network instead of having a number added afterwards.
-
-The injected delays are Azure's published P50 round-trip figures between regions. From US-East:
-West US 69 ms, West Europe 83 ms, Brazil 117 ms, India 198 ms, Australia 201 ms, Southeast Asia
-224 ms.
-
-| injected round trip   | VPS weighted p50 | Drupflare weighted p50 | ratio      |
-| --------------------- | ---------------- | ---------------------- | ---------- |
-| 0 ms, same datacenter | 14.8 ms          | 9.9 ms                 | **1.50x**  |
-| 40 ms, same continent | 56.5 ms          | 8.9 ms                 | **6.35x**  |
-| 82 ms, transatlantic  | 100.2 ms         | 8.9 ms                 | **11.32x** |
-| 200 ms, antipodal     | 218.0 ms         | 9.4 ms                 | **23.09x** |
-
-Traffic-weighted across the workload mix, three replica lanes, `viable: true` with zero regressions
-on all three network arms. Drupflare's figure barely moves, because the term being added is one a
-single-region VPS pays and an edge network does not.
-
-Cloudflare Containers accept a placement constraint, so the same comparison runs on real
-infrastructure rather than an injected delay. The VPS arm was pinned first to western Europe and then
-to eastern North America, same image and same instance type, driven from a US-East client, n=15
-interleaved with the arm order alternating:
-
-| VPS placement         | VPS floor | Drupflare floor |
-| --------------------- | --------- | --------------- |
-| Western Europe        | 174.3 ms  | 82.6 ms         |
-| Eastern North America | 111.7 ms  | 78.0 ms         |
-
-Minima rather than medians, because the client's own round trip is in both and the floor is where it
-shows. Moving the container across the Atlantic costs 62.6 ms on an otherwise identical arm, and a
-same-continent VPS still sits about 34 ms above Drupflare, because a region is not the visitor's own
-colo. Subtracting the shared client round trip leaves figures that agree with the proxy table above,
-which is two instruments reaching the same answer.
-
-The advantage is zero for a visitor in the VPS's own city and largest for one on the other side of
-the world, so a site whose audience sits beside its VPS gains nothing here. There is no single
-worldwide number to quote in place of the rows above: internet penetration is published by region,
-users per region are not, and averaging without that table would invent a figure. The proxy also
-understates the gap, since it delays data rather than the TCP handshake and Drupflare's own arm
-stays on localhost.
+- [Why](#why)
+- [How It Works](#how-it-works)
+- [What It Runs](#what-it-runs)
+- [Getting Started](#getting-started)
+- [Moving a Site In](#moving-a-site-in)
+- [Drupflare vs a Traditional VPS](#drupflare-vs-a-traditional-vps)
+- [Impact](#impact)
+- [Replica Lanes](#replica-lanes)
+- [Free vs Paid](#free-vs-paid)
+- [Administration](#administration)
+- [Configuration](#configuration)
+- [Git Remotes](#git-remotes)
+- [Module Revisions](#module-revisions)
+- [Contrib Modules](#contrib-modules)
+- [Production Codebases](#production-codebases)
+- [Limitations](#limitations)
+- [Project Structure](#project-structure)
+- [Repositories](#repositories)
+- [Testing](#testing)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
 
 ---
 
-## 🧬 Replica Lanes
+## Why
 
-A Durable Object runs one request at a time, and a PHP render holds it for the whole render. A site
-is not confined to one object: a namespace holds unlimited objects, so a site spreads its serving
-path across lanes, each a separate object named `<site>#r<n>`. Only `/serve` spreads. Owner and
-diagnostic routes pin to the primary, so `/export` cannot answer from a lane's copy.
+A small Drupal site is a strange thing to host. It needs a webserver, a PHP runtime, a database, a
+cache, a CDN, backups, and someone to apply security patches, and it serves almost entirely
+anonymous, cacheable traffic. The infrastructure is sized for the 1% of requests that render.
 
-A lane removes queueing rather than service time. A cached page is answered from the edge cache or
-the object's own SQLite without booting PHP, so a site taking 100 req/s of cached traffic queues
-nothing and needs no lane, while a site taking 20 req/s of authenticated renders may need several.
+Drupflare inverts that. The 99% is served from Cloudflare's edge cache, the next slice from a
+Durable Object's SQLite, and only a miss reaches PHP at all. There is nothing to patch at the OS
+level, nothing to keep running, and no origin to go down.
 
-This works because an authenticated GET writes no authoritative state under this SAPI. Measured
-per-table on real renders: no `sessions` row, no `users_field_data.access`, no `flood`. Core
-throttles the access write on `KernelEvents::TERMINATE`, which this SAPI never dispatches. A lane
-does maintain its own copy, sweeping expired rows and applying the primary's replication log, and
-refuses anything authoritative with a 421 that the front worker retries against the primary.
-
-### Scaling
-
-Two quantities carry different claims and are easy to conflate, so both are named here.
-
-**Per object, measured.** One object is one Durable Object, and it serves one request at a time.
-Driven alone on a deployed paid worker, a lane answered **31 authenticated renders per second at a
-p50 of 216 ms**, with 8 concurrent clients and every response reporting `x-cfw-cache: RENDER`. The
-same object answered **268 cached pages per second at a p50 near 20 ms**, reporting
-`x-cfw-cache: HIT`. A render is roughly ten times the work of a cached hit, which is the ratio the
-whole architecture is built around.
-
-**Across a pool, by topology.** Addressing each object directly and summing, a pool reaches
-**1.00 / 1.72 / 3.64 / 7.10 / 15.19x at 1 / 2 / 4 / 8 / 16 lanes**, which is 95% of perfect at
-sixteen. That is a statement about how many objects a site has and what each one serves, not about
-what a visitor gets; the routed figure below is the smaller one and is the one to quote.
-
-**Across a pool, as routed.** Real traffic does not address a lane; it is hashed to one, and the
-primary serves bucket 0 as well as feeding replication. Driven that way against deployed sites with
-authenticated admin pages and a fixed 20 second window per cell:
-
-| lanes | served, 16 clients | p50     | served, 64 clients | p50      |
-| ----- | ------------------ | ------- | ------------------ | -------- |
-| 0     | 62                 | 5969 ms | 98                 | 16048 ms |
-| 1     | 54                 | 7712 ms | 78                 | 33741 ms |
-| 2     | 79                 | 3172 ms | 154                | 10431 ms |
-| 4     | 81                 | 2867 ms | 147                | 6506 ms  |
-| 8     | 128                | 1715 ms | 220                | 6125 ms  |
-| 16    | **294**            | 364 ms  | **445**            | 647 ms   |
-
-Served count rather than a rate, because every cell drives the same window and a rate computed over
-elapsed time charges an arm twice for its own tail. Sixteen lanes serve 4.74x and 4.54x what one
-object serves, and the latency effect is larger than the throughput one: p50 falls 16.4x at 16
-clients and 24.8x at 64.
-
-**Under saturation the baseline is zero.** The table above drives 16 and 64 clients against admin
-pages. Driven instead at 512 concurrent clients over 200 distinct authenticated node pages, same 20
-second window:
-
-| lanes | served, 512 clients | vs one lane |
-| ----- | ------------------- | ----------- |
-| 0     | **0**               | --          |
-| 1     | 426                 | 1.00x       |
-| 2     | 814                 | 1.91x       |
-| 8     | **1,889**           | 4.43x       |
-
-A single object serves nothing at this load; it sheds every request. The 4-lane cell is withheld
-because its site returned a 500 rate the other arms did not reproduce, and the rig was torn down
-before it could be re-driven. The two workloads are not comparable and their numbers must not be
-divided into each other.
-
-**A lane is paid for in rows written.** Every row written on the primary is written again on each
-lane, so a pool of N costs N+1 rows for the same change. Rows written is the meter that bounds
-regeneration, so a pool buys read throughput at a write-amplification cost: an 8-lane pool reaches
-the daily row ceiling nine times sooner than one object. Size a pool against the write rate as well
-as the read rate; it is a lever for read-heavy sites and a penalty on write-heavy ones.
-
-What one lane is worth depends on whether the single object was already saturated. Below saturation
-it loses, 0.87x at 32 clients and 0.98x at 64: routing hashes over two buckets, so the lane takes
-about 60% of the traffic onto an object whose Drupal caches are colder than the primary's while
-adding no parallelism. Above saturation it is the difference between answering and not. At 128
-clients one lane serves 2.06x what no pool serves, and at 512 a single object sheds every request
-while one lane still serves 426. The load for this comes from a Worker rather
-than a laptop, driven through a service binding and fanned out across sub-invocations. A probe that
-holds service time fixed and sweeps only the fan-out puts that generator's own ceiling above 512
-concurrent subrequests, which is what makes the pool rather than the rig the thing being measured.
-
-What the rig does confirm is that the pool is addressed correctly: at 32 lanes all 33 objects answer,
-the distribution across buckets is even, and content writes forward from a lane to the primary
-without collision.
-
-### What a Lane Buys Against a VPS
-
-A VPS has no lane axis. Its ceiling is the cores it was bought with, and raising it means resizing
-the box or putting a load balancer in front of several, with shared session and cache state behind
-them. That is an architecture change, done by hand, and it is the work Drupflare targets rather than
-the hosting bill.
-
-A lane is a Durable Object the primary copies itself into, addressed by a hash of the visitor's
-affinity key. Adding one changes no configuration a site owner writes. The comparison therefore
-splits by traffic shape rather than by hardware:
-
-- **Anonymous cached traffic**, which is most of it, never reaches an object on either side. Drupflare
-  answers from the colo nearest the visitor and a VPS answers from its one region, so the difference
-  is the network term in [Geography](#-geography-the-term-localhost-leaves-out).
-- **Authenticated traffic** is where lanes decide it. A converged session is answered from the
-  compiled plan in the front worker's isolate, and the lanes exist for the requests that miss it.
-
-Economically the two bill on different axes. A VPS bills for its box whether or not anyone visits;
-Hetzner's CX22 is 2 vCPU and 4 GB for EUR 3.79 a month, and DigitalOcean's equivalent is $24.
-Drupflare bills per request and per row written on a $5 Workers Paid plan, which at fleet scale works
-out near $0.028 per site per month. For one busy site the monthly figures are close enough that the
-choice is not about price. For a fleet, or for a site whose traffic is bursty, they are not
-comparable: the VPS is paying for its peak all month.
-
-The goal this section exists to serve is in the roadmap, and it is narrow. Drupflare does not need to
-win a raw uncached render, and it does not; it needs to be the better answer for the traffic a real
-site receives. Where it is slower is listed under
-[Limitations](#-limitations).
-
-### Autoscaling
-
-The primary counts, per alarm window, how many requests waited for its gate. Three consecutive
-windows must all show waiting before a lane is provisioned, and the target is the smallest queue
-depth across those three, one lane per sustained waiter. A burst that clears inside one window
-provisions nothing.
-
-Autoscaling stops at 32 lanes by default. That bound is per-lane idle cost, which is storage plus
-replication catch-up, rather than a throughput limit. `REPLICA_MAX_LANES` moves it and
-`REPLICA_AUTOSCALE=0` turns autoscaling off.
-
-`REPLICA_COUNT` pins a size by hand, up to a hard ceiling of 256 lanes. That ceiling is arithmetic
-rather than policy: a lane mints forwarded row ids from its own residue class modulo the pool's
-partition, and the primary takes class 0, so 256 is the largest pool whose writers all hold a class
-of their own. Past it two writers would mint the same id. Set `REPLICA_COUNT` above the lanes a site
-has actually provisioned and the router hashes over buckets whose objects do not exist, which costs
-a wasted hop and a retry on the primary for each one. All three settings are KV-overridable, so a
-pool can be turned on, resized or turned off without a redeploy.
-
-### How a Lane Is Built
-
-| piece            | what it does                                                                                                                          |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| **Provisioning** | `?action=provision&lane=<n>` on the primary copies itself into a lane, bounded per invocation and resumable by a cursor it hands back |
-| **Restore**      | each chunk carries the table's DDL, so a lane needs no Drupal install of its own                                                      |
-| **Catch-up**     | the lane pulls the primary's replication log on its own alarm and promotes itself through `admissionVerdict()`                        |
-| **Routing**      | a lane is chosen by hashing a stable per-visitor key                                                                                  |
-| **Failover**     | a lane refuses work it may not do with 421 and a retry-safety flag it computes                                                        |
-| **Staleness**    | `REPLICA_LAG_MS` bounds how far behind a serving lane may fall, at 30 s                                                               |
-
-Three refusals hold it up. A torn copy, where table A is at generation 12 and table B at 13, is
-refused and the position stays in flight until a whole consistent copy lands. A lane that has not
-finished cannot pass for one that has, because the first chunk declares which tables the copy will
-deliver and the lane holds the driver to that. And no lane is admitted until `system.private_key`
-arrives from the primary, since two objects each minting their own would issue CSRF tokens the other
-rejects.
-
-### What the Self-Repair Layer Replaces
-
-It is not a monitoring dashboard; it acts. A capped, GC'd health ledger; 12 host tripwires
-(empty render, size anomaly, asyncify called, mask leaked, semaphore dirty, incomplete migration,
-halted updb, pack generation mismatch, memory highwater rising, memory trend rising, ledger
-oversized, image cap projected) plus budget pressure and its forward projection; 7 PHP tripwires (anonymous cache purity,
-missing cache header, leaked transaction, account not restored, over-100 params, over-50-byte LIKE,
-config drift); a mandatory boot self-test; and a repair ladder whose breaker escalates on repeated
-failure and decays on a clean interval.
-
-The tripwires run **on the alarm and never on the request path**. Recording a finding is a row
-write, and rows written is the meter that binds regeneration, so a per-request pass would spend the
-budget it exists to watch. A healthy site writes zero rows here: the repair state is persisted only
-when it changes.
-
-`RepairLadder::maySafelyRepair()` fails closed. It refuses to act while a transaction is open,
-because a repair that runs mid-transaction is worse than the fault it was fixing.
-
-L4 quarantine and L5 rollback act. Three consecutive findings of the same code at `error`
-or above quarantine the site; a different code resets the count, because two unrelated faults are
-not one durable condition. A quarantined site **stops writing and stops filling, and keeps
-serving**, so a visitor sees a stale page rather than an error. For a free host the failure that
-matters is a site that is gone. Rollback additionally requires ten
-consecutive failures and a restore point that exists; with none it refuses by name, because
-reverting to nothing is worse than the fault. Leaving quarantine is an explicit operator act at
-`/health?clear=1`, never automatic.
+The comparison is $5 against a VPS plus CDN, backups, monitoring and patching labour. The labour is
+the part that does not scale down.
 
 ---
 
-## 🆓 Free vs Paid
-
-**The product goal: free and paid are the same host.** Paid buys performance and headroom. It does not
-buy features, and free is not a demo -- both are viable Drupal hosts, or the project has failed.
-
-Free's limits are **aggregate daily budgets**, not the 10 ms per-invocation CPU cap. The cap
-constrains one execution unit; the architecture chooses what an execution unit is. Score any change
-with `bun scripts/measure/free-envelope.ts`, never against a millisecond figure.
-
-### What One Site Gets
-
-Both performance levers are **on by default on paid**, managed or self-managed, where a warm object
-costs $0 marginal. On free, shell assembly is on and warming follows the thermal policy: a site
-rendering more than about 505 pages a day warms itself and a quieter one does not, because a warm
-object spends 10.8% of free's two daily meters. `SITE_WARM=1` on `/settings` forces it, and
-`WARM_INTERVAL_MS=30000` is a cheaper middle point at 2.9%. So the numbers below are what a paid site
-gets, and what a free site gets once it is busy or has opted in.
-
-| authenticated page      |     boot |   render |       total | vs neither |
-| ----------------------- | -------: | -------: | ----------: | ---------: |
-| neither lever           | 1,264 ms | 2,127 ms |    3,391 ms |          - |
-| warm only               |        0 | 2,127 ms |    2,127 ms |       -37% |
-| shell assembly only     | 1,264 ms |  ~467 ms |   ~1,731 ms |       -49% |
-| **both, on by default** |        0 |  ~467 ms | **~467 ms** |   **-86%** |
-
-Every number in that table is derived, and the shipping configuration has since been measured
-directly at 208 ms p50 from a client. The boot saving is a measured subtraction; the render saving
-comes from a measured 4-5 ms against 20-21 ms ratio for a fragment render against the render it
-replaces, and applying that ratio to an edge `cpuTime` figure is an assumption rather than a reading.
-The table is kept because it separates the two levers, which the measured figure does not.
-
-A cached page is **0 ms in every row**: it answers off the object's own SQL without booting PHP, so
-neither lever can make one faster. What they speed up is the tier that always renders, which is the
-logged-in one.
-
-**A "fill" is one page being rendered and stored so the next visitor gets it instantly**, and a save
-is what causes most of them: a content change empties the whole site's page cache, not just the page
-edited, so every page has to be earned back. `PREFILL_ON_SAVE` re-queues the 25 busiest paths
-automatically; the rest fill when somebody asks. So for one site, fills/day is roughly
-`saves/day x 25` plus whatever else gets visited.
-
-| your site                    | saves/day | fills/day | share of free |
-| ---------------------------- | --------: | --------: | ------------: |
-| personal blog, 80 pages      |         1 |       ~55 |            2% |
-| small business, 200 pages    |         2 |      ~150 |            5% |
-| club or nonprofit, 500 pages |         5 |      ~375 |           14% |
-| local news, 1,500 pages      |        20 |    ~1,300 |           47% |
-| busy news, 3,000 pages       |        50 |    ~2,750 |           99% |
-
-In plain terms: **on free you can publish about 50 times a day on a 3,000-page site** before
-regeneration binds, and serve ~3M pageviews/month while doing it. Free's quotas are ACCOUNT-WIDE
-though, so several warm sites on one free account share that; a site that spends its daily meter
-drops back to the slow re-arm on its own and recovers at midnight UTC.
-
-### The Two Ceilings
-
-| ceiling          | what it limits                     | bound by                  | free today                         |
-| ---------------- | ---------------------------------- | ------------------------- | ---------------------------------- |
-| **Serving**      | visits/month that can be answered  | Worker requests, 100k/day | **3.0M/month**, saturated at 1.00x |
-| **Regeneration** | distinct pages re-rendered per day | rows written              | **50,916/day**                     |
-
-Serving has a way out. Pages served from an R2 public bucket on a custom domain are answered
-through the CDN without invoking the Worker. But "requests to static assets are free and unlimited"
-describes **Workers Static Assets**, which are uploaded at deploy time and cannot hold a page rendered
-at runtime; R2 is metered at **10M Class B operations/month**. So the floor is **3.0M -> ~10M
-visits/month, about 3.3x**, plus whatever the CDN absorbs in front of the bucket -- a hit ratio nobody
-has measured. Regeneration then becomes the binding limit, and it decides whether free is a _Drupal_
-host rather than a cache.
-
-> [!IMPORTANT]
-> **No page is served off-Worker today.** The alarm drains both mirrors (files and pages, the latter
-> ordered by view count so a limited budget publishes what actually moves traffic), but the canonical
-> `wrangler.jsonc` declares no R2 binding and no bucket is fronted by a custom domain, so nothing
-> answers a page without the Worker running. Both page tiers, the edge cache and the optional KV
-> tier, cost one Worker request each because the Worker has to run to consult them. The ceiling
-> shipping today is the 3.0M row above, saturated; the floor once pages do move off-Worker is
-> 3.33x, 10M R2 Class B operations/month against 100,000 Worker requests/day.
->
-> **There is no single rows-per-fill figure.** A fill costs 2 to 94 rows depending on what is
-> already warm, so the model names five measured warmth classes rather than averaging them;
-> `ROWS_PER_FILL` in `scripts/measure/free-envelope.ts` carries all five, and `warmthMix` prices a
-> realistic spread. Every figure is counted at the storage handle, so it includes the host's own
-> writes -- notably the `cfw_page` insert that stores the whole rendered page.
-
-### Where the Work Pays
-
-| lever                                                  |      worth | note                                                                                                                                                                                                                          |
-| ------------------------------------------------------ | ---------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Serve cached pages off-Worker (R2 custom domain)       |      ≥3.3x | serving only; the floor is R2's 10M Class B ops/month, the CDN carries the rest                                                                                                                                               |
-| **Null the `page` bin** (8 -> 3 rows, warm fill)       |  **2.67x** | **done.** It duplicated bytes the host already stores in `cfw_page`                                                                                                                                                           |
-| Cut the remaining rows per fill (13 -> 4)              |      3.25x | audit the fill's own bookkeeping; `cfw_page` is now most of what is left                                                                                                                                                      |
-| **Anything boot-directed** (JSPI, heap restore, `-O3`) | **~1.01x** | **saturated for this CEILING**, and that is the whole claim: a 20x cut in boot cost per fill buys 1.1% of the regeneration budget. It says nothing about LATENCY, where holding the object resident removes the boot outright |
-| More slicing / decomposition                           |   negative | alarms are counted DO requests; a 6-way split measured 5,555 -> 4,166 fills/day                                                                                                                                               |
-
-Two levers that look plausible are not levers. Uninstalling `dblog` does not reduce rows per fill:
-measured, zero rows of a fill go to `watchdog`. And past ~85% off-Worker serving the binding meter
-becomes **DO requests**, not rows, so trimming rows per fill beyond that point moves the rows meter and
-does not move the ceiling at all -- a lever the binding meter does not respond to is not a lever.
-
-### The Image Transform Cap
-
-**This applies to `IMAGE_ENGINE=images` only.** The default engine encodes in the Worker and has no
-transform allowance; it spends CPU, which is not a meter this project is bound by.
-
-Cloudflare Images allows 5,000 unique transformations per month on free, and it fails as a **hard
-cap rather than a bill**. Every image style is a transformation, so ten styles over 2,000 images is
-20,000 -- 4x over. It is the only quota here measured per month rather than per day, so it does not
-clear at midnight.
-
-It is **projected rather than counted**, because it is a function of the site's content and
-configuration and both are known in advance. The object multiplies its image styles by its managed
-images on every alarm and records `budget.image_transforms` in the health ledger at 80% of the
-allowance. A warning, never a repair: the remedies are dropping a style, cutting the image count, or
-switching to the default engine, and all three are decisions a human makes. `/health` shows it, and
-`/_cfw` shows the full projection with the largest style count that still fits.
-
-> [!CAUTION]
-> Do not enable the Workers Caching feature. Its cache key does not include the host, and this
-> product is multi-tenant by host; every site serves `/`, so one site's pages would be served to
-> another site's visitors. Cloudflare states it plainly: _"The cache key does not include the host,
-> so a request to `/api/users/42` hits the same cached entry whether it came in through
-> `api.example.com`, `api.example.net`, a service binding, or a `workers.dev` URL."_
->
-> **Zone settings cannot add the host back.** _"No zone configuration for caching applies to Workers
-> Caching. Cache Rules, Cache Response Rules, Page Rules, cache level settings … have no effect on a
-> Worker's cache."_ The zone-level cache-key documentation does put the host in the key, and it
-> describes a different product, so it is not evidence about this one.
->
-> It is also not the serving lever it appears to be. A hit skips Worker execution but is still
-> _"billed at the standard Workers request rate"_, so the 100,000/day meter does not move, and it
-> _"bills requests that are normally free: static asset requests and worker-to-worker invocations"_,
-> making it a net increase. What it saves is CPU, which is not a meter this project is bound by.
->
-> The `caches.default` tier this project does use is a different mechanism and is safe: its key
-> carries both the origin and the site id. `tests/node/cache-partition.spec.ts` holds both halves.
-
----
-
-## 📋 Table of Contents
-
-- [Drupflare vs a Traditional VPS](#️-drupflare-vs-a-traditional-vps)
-- [Replica Lanes](#-replica-lanes)
-- [Free vs Paid](#-free-vs-paid)
-- [Why](#-why)
-- [How It Works](#-how-it-works)
-- [What It Costs](#-what-it-costs)
-- [Getting Started](#-getting-started)
-- [Building From a Clean Clone](#-building-from-a-clean-clone)
-- [Configuration](#-configuration)
-- [Git Remotes](#-git-remotes)
-- [Project Structure](#-project-structure)
-- [Testing](#-testing)
-- [Contributing](#-contributing)
-- [Repositories](#-repositories)
-- [Contrib Modules](#-contrib-modules)
-- [Production Codebases](#️-production-codebases)
-- [Limitations](#-limitations)
-- [Technical Report](#-technical-report)
-
----
-
-## 🎯 Why
-
-A small Drupal site is a strange thing to host. It needs a webserver, a PHP runtime, a
-database, a cache, a CDN, backups, and someone to apply security patches, and it serves
-almost entirely anonymous, cacheable traffic. The infrastructure is sized for the 1% of
-requests that render.
-
-Drupflare inverts that. The 99% is served from Cloudflare's edge cache, the next slice from
-a Durable Object's SQLite, and only a miss reaches PHP at all. There is nothing to
-patch at the OS level, nothing to keep running, and no origin to go down.
-
-The comparison is $5 against a VPS _plus_ CDN, backups, monitoring, and patching labour.
-The labour is the part that does not scale down.
-
----
-
-## ⚙ How It Works
+## How It Works
 
 ```txt
 request
@@ -628,77 +90,92 @@ request
 
 Four things make it work:
 
-1. **A purpose-built PHP wasm binary.** No published php-wasm build can do this. workerd
-   forbids the runtime wasm codegen that emscripten's dynamic linker needs, so every
-   extension Drupal requires is statically linked (`MAIN_MODULE=0`). The toolchain is
+1. **A purpose-built PHP wasm binary.** No published php-wasm build can do this. workerd forbids the
+   runtime wasm codegen that emscripten's dynamic linker needs, so every extension Drupal requires
+   is statically linked (`MAIN_MODULE=0`). The toolchain is
    [`drupflare/phasm`](https://github.com/drupflare/phasm); this repository consumes its output.
-2. **PHP runs _inside_ the Durable Object, not beside it.** `ctx.storage.sql` is synchronous
-   only from within the object, and PHP's database calls are blocking. Any other arrangement
-   cannot connect the two.
+2. **PHP runs inside the Durable Object, not beside it.** `ctx.storage.sql` is synchronous only
+   from within the object, and PHP's database calls are blocking. Any other arrangement cannot
+   connect the two.
 3. **A real Drupal database driver.** `cfw_do_sqlite`, from the
    [`rom`](https://github.com/drupflare/rom) sibling, is a Drupal 11 driver for Durable Object
-   SQLite. Drupal's query builders, schema handling and condition compiler are used unchanged;
-   what is replaced is everything that assumed PDO and a file on disk.
-4. **Divisibility.** A long invocation is a risk on free, and what language a step runs in decides
+   SQLite. Drupal's query builders, schema handling and condition compiler are used unchanged; what
+   is replaced is everything that assumed PDO and a file on disk.
+4. **Divisibility.** A long invocation is a risk on free, and the language a step runs in decides
    whether it can be split at all. First-run migration moved from PHP to JavaScript and from one
    long invocation into chunks, each sized to complete on its own. `assets/drupal-sql/manifest.json`
    carries the current chunk count.
 
 ### Static Assets
 
-Drupal's stylesheets, scripts, fonts and images are served by Workers Assets from `assets/core/`,
-at the `/core/**` URLs Drupal already emits. All three PHP packers skip those extensions because PHP
+Drupal's stylesheets, scripts, fonts and images are served by Workers Assets from `assets/core/`, at
+the `/core/**` URLs Drupal already emits. All three PHP packers skip those extensions because PHP
 never opens them, and nothing serves a file out of the in-memory filesystem over HTTP, so the asset
-layer is the only thing that can answer them. `scripts/pack-static.ts` copies the tree; Workers Assets
-content-hashes, caches and compresses what it serves, and a hit never reaches the Worker, so it costs
-nothing against either free-tier ceiling.
+layer is the only thing that can answer them. `scripts/pack-static.ts` copies the tree. Workers
+Assets content-hashes, caches and compresses what it serves, and a hit never reaches the Worker, so
+it costs nothing against either free-tier ceiling.
 
-**Drupal's own CSS and JS aggregation is off**, because an aggregate has no file to read: a hash
+Drupal's own CSS and JS aggregation is off, because an aggregate has no file to read: a hash
 mismatch 301s and a match sends Drupal's optimiser at a path no pack carries.
 
 The build produces its own aggregates instead. `bun run assets:agg` reads the library definitions
-where the source files do exist and emits one immutable file per library, and `ASSET_AGGREGATES=1`
+where the source files exist and emits one immutable file per library, and `ASSET_AGGREGATES=1`
 substitutes them into a page as it is stored. The substitution is all or nothing per library, so a
-partial match leaves that library's tags alone. It buys render time and a smaller stored page rather
-than Worker requests, since the individual files already cost none.
+partial match leaves that library's tags alone. It buys render time and a smaller stored page, not
+Worker requests, since the individual files already cost none.
 
-`tests/unit/runtime/assets-ignore.spec.ts` holds all three: that no prefilled page references a
-Drupal aggregate, that every `/core/**` URL those pages reference answers 200, and that every
-aggregate URL the substitution emits answers 200.
+`tests/unit/runtime/assets-ignore.spec.ts` holds three properties: no prefilled page references a
+Drupal aggregate, every `/core/**` URL those pages reference answers 200, and every aggregate URL
+the substitution emits answers 200.
+
+### Self-Repair
+
+The self-repair layer acts; it is not a monitoring dashboard. It is a capped, GC'd health ledger; 12
+host tripwires (empty render, size anomaly, asyncify called, mask leaked, semaphore dirty,
+incomplete migration, halted updb, pack generation mismatch, memory highwater rising, memory trend
+rising, ledger oversized, image cap projected) plus budget pressure and its forward projection; 7
+PHP tripwires (anonymous cache purity, missing cache header, leaked transaction, account not
+restored, over-100 params, over-50-byte LIKE, config drift); a mandatory boot self-test; and a
+repair ladder whose breaker escalates on repeated failure and decays on a clean interval.
+
+The tripwires run on the alarm and never on the request path. Recording a finding is a row write,
+and rows written is the meter that binds regeneration, so a per-request pass would spend the budget
+it exists to watch. A healthy site writes zero rows here: the repair state is persisted only when it
+changes.
+
+`RepairLadder::maySafelyRepair()` fails closed. It refuses to act while a transaction is open,
+because a repair that runs mid-transaction is worse than the fault it was fixing.
+
+L4 quarantine and L5 rollback act. Three consecutive findings of the same code at `error` or above
+quarantine the site; a different code resets the count, because two unrelated faults are not one
+durable condition. A quarantined site stops writing and stops filling, and keeps serving, so a
+visitor sees a stale page and not an error. Rollback additionally requires ten consecutive failures
+and a restore point that exists; with none it refuses by name, because reverting to nothing is
+worse than the fault. Leaving quarantine is an explicit operator act at `/health?clear=1`, never
+automatic.
 
 ---
 
-## 💰 What It Costs
+## What It Runs
 
-Measured on deployed infrastructure, per-invocation `cpuTime` read through the Workers
-Observability API.
-
-| meter                        | free-plan ceiling | binds at                                     |
-| ---------------------------- | ----------------- | -------------------------------------------- |
-| **Worker requests**          | 100,000/day       | **~100,000 page views/day** ← the real limit |
-| Durable Object requests      | 100,000/day       | ~588,000 PV/day                              |
-| Rows written                 | 100,000/day       | ~555,000 PV/day                              |
-| Duration, rows read, storage | n/m               | not close                                    |
-
-**Free tier is ~100,000 page views/day (~3M/month) for a well-cached site**, saturated at 1.00x,
-and every meter except Worker requests has roughly 5x headroom.
-
-| artifact             | what it is                                                     | from                              |
-| -------------------- | -------------------------------------------------------------- | --------------------------------- |
-| Worker bundle        | fits the 64 MiB Worker size limit                              | `bun run release:check`           |
-| PHP 8.5, nothing cut | a raw wasm module the platform compiles ahead of time          | `interp.lock.json`                |
-| First-run migration  | chunked and resumable, each batch sized to complete on its own | `assets/drupal-sql/manifest.json` |
-| Static asset tree    | served by Workers Assets, never reaching the Worker            | `assets/core/`                    |
-| Cold boot            | amortised off the request path rather than eliminated          | deployed `cpuTime`                |
+- **Drupal core 11.4.7**, from `SHIPPED_CORE_VERSION` in `src/ops/shipped-lock.ts`, with four
+  contributed modules in the pack: `admin_toolbar`, `ctools`, `pathauto` and `token`.
+- **PHP 8.5** with 27 loaded extensions and stand-ins for curl, openssl, zip, exif, fileinfo and
+  xmlwriter; see [Limitations](#limitations). The interpreter starts at 64 MiB of linear memory, and
+  a boot after a dropped interpreter reuses its memory instead of allocating a second heap.
+- **A database** in the object's own SQLite, created at first boot by replaying the packed
+  `assets/drupal/site.sqlite` through the `cfw_do_sqlite` driver.
+- **Real codebases.** 27 production Drupal codebases pinned in `config/corpus.yml` are scored on 13
+  capabilities; see [Production Codebases](#production-codebases).
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
 - [Bun](https://bun.sh/)
-- **Node 24+** as well; a few scripts need `node:sqlite`, which Bun does not ship
+- Node 24+ as well; a few scripts need `node:sqlite`, which Bun does not ship
 - PHP 8.3+ with `pdo_sqlite` (only to run the database driver's test suite)
 - A Cloudflare account with Durable Objects enabled (available on the free plan)
 
@@ -713,7 +190,7 @@ bun run dev
 ```
 
 `assets/` and `.interp/` are generated and gitignored, so a clean clone has nothing to deploy until
-`bun run hydrate` lands them. See [Building From a Clean Clone](#-building-from-a-clean-clone).
+`bun run hydrate` lands them. See [Building From a Clean Clone](#building-from-a-clean-clone).
 
 Then open it:
 
@@ -722,7 +199,7 @@ open http://localhost:8787/
 ```
 
 The first visit starts the site up, which is [First Boot](#first-boot) below. To replay the whole
-database in one shot instead, which is faster locally:
+database in one shot, which is faster locally:
 
 ```bash
 curl "localhost:8787/migrate?all=1"
@@ -743,26 +220,27 @@ replays the packed database a batch of chunks at a time until the cursor is done
 A browser follows the `<meta http-equiv="refresh">` on that page and lands on the site by itself.
 Every other client gets the same 503 with the one-word body `migrating`.
 
-**Measured on a deployed free worker: the 75-chunk pack replays in 2 invocations, `x-cfw-migrate`
-reading `40/75` on the first poll, and a real Drupal page answers about 6 seconds after the deploy.**
-A 503 in that window means the site is starting, not that the deploy failed.
+Measured on a deployed free worker with the 75-chunk pack of that release, the replay took 2
+invocations, `x-cfw-migrate` read `40/75` on the first poll, and a real Drupal page answered about 6
+seconds after the deploy. A 503 in that window means the site is starting, not that the deploy
+failed.
 
 Free replays `FREE_CHUNKS_PER_INVOCATION` chunks per invocation, which is 40; paid and local replay
-the whole pack in one. Batching is bounded by chunk count rather than by a clock, because the clock
-does not advance across a synchronous replay. The chunk count is whatever
-`assets/drupal-sql/manifest.json` reports, and it moves whenever the packed database does.
+the whole pack in one. Batching is bound by chunk count because the clock does not advance across a
+synchronous replay. The chunk count is whatever `assets/drupal-sql/manifest.json` reports, and it
+moves whenever the packed database does.
 
 ### Claim the Site
 
 The pack ships an installed database, so Drupal's `install.php` never runs and never asks you to
-pick a password. `/firstrun` is what does that, and until it runs, uid 1 carries an empty hash that
-no password can match.
+pick a password. `/firstrun` does that, and until it runs, uid 1 carries an empty hash that no
+password can match.
 
-**An unclaimed site says so.** Once the migration finishes, a browser asking for any HTML page gets
-a one-click claim page instead of the front page: enter a site name, an administrator email and
+An unclaimed site says so. Once the migration finishes, a browser asking for any HTML page gets a
+one-click claim page instead of the front page: enter a site name, an administrator email and
 optionally a password, and the credentials come back in the response. The page carries
 `x-cfw-setup: required` and is never stored. A `curl`, an asset fetch and a POST all fall through to
-the normal path, so nothing but a browser navigation is blocked.
+the normal path, so only a browser navigation is blocked.
 
 To claim it from a terminal instead:
 
@@ -772,15 +250,14 @@ curl -X POST "localhost:8787/firstrun" \
   -d '{"siteName":"My Site","adminMail":"you@example.com"}'
 ```
 
-The response carries `adminPass` and `ownerToken`, **each shown once and stored nowhere**. Save both
+The response carries `adminPass` and `ownerToken`, each shown once and stored nowhere. Save both
 before closing the terminal. Pass `"adminPass":"..."` in the body to choose your own instead of
 taking the minted one. Claiming a site also pins its render origin; see
-[Configuration](#-configuration).
+[Configuration](#configuration).
 
 The body takes `siteName`, `siteMail`, `adminName`, `adminMail`, `adminPass` and `timezone`, all
-optional. A password never travels in a query string: `?pass=` is refused by name rather than
-honoured, because the request line is what `wrangler tail`, observability and every intermediary
-log.
+optional. A password never travels in a query string: `?pass=` is refused by name, because the
+request line is what `wrangler tail`, observability and every intermediary log.
 
 A bare `GET /firstrun` reports whether a site has been claimed without claiming it:
 
@@ -791,29 +268,38 @@ curl "localhost:8787/firstrun"
 Once claimed, `/firstrun` answers 409. Reconfiguring is `POST /firstrun?force=1` with
 `Authorization: Bearer <ownerToken>`, which resets the administrator password.
 
+A claim is one invocation on a site still on the module set the pack baked. A migrated site claims
+in three, each with its own CPU budget: a warm-up that fills the discovery caches, the module
+install, then the claim itself. A CPU kill rolls back every write in its invocation, so a single
+long claim restarted from nothing on each retry.
+
 ### Log In
 
 Log in at `/user/login` as `admin` with the `adminPass` from the claim. That is the Drupal account,
 and it is the only credential that reaches the administrative UI.
 
-**The owner token is a different credential and is not a Drupal login.** It signs in to the `/_cfw`
-pages at `/_cfw/login`, and it is sent as `Authorization: Bearer <ownerToken>` to reach these routes
-directly, without turning on `PW_DIAGNOSTICS`:
+The owner token is a different credential and is not a Drupal login. It signs in to the `/_cfw`
+pages at `/_cfw/login`, and it is sent as `Authorization: Bearer <ownerToken>` to reach the owner
+routes directly, without turning on `PW_DIAGNOSTICS`. These are the ones this page uses:
 
-| route          | what it does                                                   |
-| -------------- | -------------------------------------------------------------- |
-| `/export`      | dumps the site database; the "a customer can leave" property   |
-| `/health`      | the health ledger, the repair state and the budget projections |
-| `/setup/cf`    | connect, inspect or revoke a Cloudflare account for the site   |
-| `/setup/mail`  | onboard a sending domain onto a zone                           |
-| `/setup/oidc`  | set the OpenID Connect issuer and client id                    |
-| `/installable` | whether a package can be installed here                        |
-| `/install`     | fetch a package from a registry and write its files            |
-| `/enable`      | turn an installed module on                                    |
-| `/git`         | remotes, branches, pull requests and the working-tree diff     |
+| route          | what it does                                                        |
+| -------------- | ------------------------------------------------------------------- |
+| `/export`      | dumps the site database; the "a customer can leave" property        |
+| `/health`      | the health ledger, the repair state and the budget projections      |
+| `/settings`    | every runtime lever with its value and source; `PUT` merges a patch |
+| `/setup/cf`    | connect, inspect or revoke a Cloudflare account for the site        |
+| `/setup/mail`  | onboard a sending domain onto a zone                                |
+| `/setup/oidc`  | set the OpenID Connect issuer and client id                         |
+| `/installable` | whether a package can be installed here                             |
+| `/install`     | fetch a package from a registry and write its files                 |
+| `/enable`      | turn an installed module on                                         |
+| `/modify`      | upload a module tree as a revision                                  |
+| `/reconcile`   | what a site still owes the shipping pack, and one step of it        |
+| `/sweep`       | coverage of the site's URLs, and one step of the sweep              |
+| `/git`         | remotes, branches, pull requests and the working-tree diff          |
 
-Without it they answer 401 with a `WWW-Authenticate: Bearer` challenge; a diagnostic route answers
-404 to the same caller.
+`OWNER_ROUTES` in `src/site/routes.ts` is the whole list. Without the token these routes answer 401
+with a `WWW-Authenticate: Bearer` challenge; a diagnostic route answers 404 to the same caller.
 
 Signing in at `/_cfw/login` exchanges the token for a session cookie that page script cannot read and
 that no cross-site request carries. It expires after twelve hours, and `/_cfw/logout` ends it.
@@ -823,8 +309,10 @@ rows it held back. `?secrets=1` carries them: a faithful restore needs the salt,
 one-time login links and form tokens, and a backup kept anywhere else should not have it.
 
 A lost `adminPass` is recovered through Drupal's own password reset, which needs mail configured. A
-lost `ownerToken` is read back by setting `PW_DIAGNOSTICS=1` and calling `POST /firstrun?force=1`,
-which returns the stored token and resets the administrator password at the same time.
+lost `ownerToken` comes back with `drangler recover-token <site> --store`, which proves write access
+to the site's `CONFIG_KV` namespace with a single-use record and receives the stored token;
+`--store` saves it in the system keychain. [`docs/configuration.md`](docs/configuration.md#owner-token-recovery)
+has the protocol.
 
 ### Manage the Site
 
@@ -849,13 +337,14 @@ drangler update --to v0.3.0 # or to a named version
 drangler update my-site     # and then deploy it to an existing worker
 ```
 
-`build`, `dev`, `deploy`, `update` and `migrate install` are the five commands that write; `status`,
-`doctor`, `health`, `config`, `cf`, `secrets`, `validate` and the rest of `migrate` read. Its README
-covers the migration commands in both directions.
+The same CLI claims a site (`site claim`), recovers its owner token (`recover-token`), maps
+hostnames (`domain add`), drives reconciliation and the sweep, uploads module revisions (`modify`)
+and migrates a site in either direction. Its README has the command table and says which commands
+write to a live site.
 
 ### Updating a Deployed Worker
 
-The deploy button creates a repository from this one, so your worker is a copy rather than a fork and
+The deploy button creates a repository from this one, so your worker is a copy and not a fork, and
 the two share no history. Adding this repository as a remote lets you merge later releases into it.
 
 ```bash
@@ -872,8 +361,6 @@ Pushing the result deploys it, if you connected the repository to Cloudflare whe
 Otherwise run `bunx wrangler deploy`, or `drangler update my-site` to update the checkout and deploy
 in one step.
 
-Notes:
-
 - The `git remote add` runs once per clone.
 - Switch to the branch you want to update before merging.
 - `--allow-unrelated-histories` is what lets two repositories with no common commit merge at all.
@@ -883,12 +370,12 @@ Notes:
 git switch -c before-template-merge
 ```
 
-To take a specific release rather than the tip:
+To take a specific release instead of the tip:
 
 ```bash
 git fetch --tags template
 git switch master
-git merge v1.0.1 --allow-unrelated-histories -m "chore: merge template v1.0.1"
+git merge v1.0.3 --allow-unrelated-histories -m "chore: merge template v1.0.3"
 ```
 
 Your own changes are the ones that conflict, and `wrangler.jsonc` is the usual place: it carries the
@@ -901,10 +388,10 @@ the pack reaches existing sites through reconciliation, described next.
 ### Keeping an Existing Site Current
 
 The pack is delivered when a site is provisioned, so a fix that lands inside it reaches new sites on
-its own. Reconciliation carries the same fix to sites that already exist. Each step is an observation
-of the site's end state rather than a script: it is checked before the step runs and again afterwards,
-so a site that already matches is marked done without doing any work, and a step that ran without
-converging is reported rather than assumed.
+its own. Reconciliation carries the same fix to sites that already exist. Each step is an
+observation of the site's end state, not a script: it is checked before the step runs and again
+afterwards, so a site that already matches is marked done without doing any work, and a step that
+ran without converging is reported and not assumed.
 
 The alarm chain drives one step per firing. `drangler reconcile` shows where a site stands and which
 step is stuck, and `--run` takes a step now instead of at the next firing.
@@ -934,118 +421,10 @@ drangler sweep my-site.example       # coverage, and what bounded the last step
 drangler sweep my-site.example --run # take a step now
 ```
 
-### The Admin Surfaces
+### Building From a Clean Clone
 
-Seven pages under `/_cfw`, each one driving machinery that already exists rather than holding its
-own. They take the owner token: sign in at `/_cfw/login`, and any page reached without a session
-redirects there and comes back afterwards.
-
-| page         | path             | what it does                                                                            |
-| ------------ | ---------------- | --------------------------------------------------------------------------------------- |
-| **Limits**   | `/_cfw`          | every metered resource, what spends it, and whether exceeding it bills or stops working |
-| **Extend**   | `/_cfw/extend`   | whether a contrib module installs here, answered against the shipped lock               |
-| **Commands** | `/_cfw/commands` | a Drush-shaped field over the site's operations                                         |
-| **Operate**  | `/_cfw/operate`  | the repair actions: purge, reconcile, sweep, database updates, restart the fill chain   |
-| **Deploy**   | `/_cfw/deploy`   | the provisioning steps, two of which cannot be automated                                |
-| **Git**      | `/_cfw/git`      | remotes, branches, pull requests and the working-tree diff                              |
-| **Access**   | `/_cfw/access`   | the OpenID Connect provider                                                             |
-
-The Commands field takes Drush spellings and resolves them to the operation the site registers, so
-`cache:rebuild`, `cache-rebuild`, `cc` and `cr` are the same command. `en <module>` routes to the
-module installer rather than to the operations registry, and an operation given arguments it cannot
-take is refused by name instead of being truncated to its first word.
-
-```text
-cr                  rebuild the caches
-en webform          install a module
-en webform --dry    check whether it would install, without installing
-status              generation, migration state, queue depth
-```
-
-An operation with no driver is listed and disabled rather than hidden, because a refusal with no
-named alternative is a refusal that gets retried.
-
-Extend checks a package against the shipped lock, installs it, and enables it. Those are three
-separate steps and the page keeps them separate: a check writes nothing, an install fetches the
-package and writes its files, and enabling turns the module on and reboots the interpreter. The same
-three are `/installable`, `/install` and `/enable` for a script.
-
-### Inside Drupal's Own Admin
-
-`/_cfw` is the host's surface and sits outside Drupal. The module adds a second one where a Drupal
-administrator looks first:
-
-| page               | path                              | what it shows                                                    |
-| ------------------ | --------------------------------- | ---------------------------------------------------------------- |
-| **Drupflare**      | `/admin/config/drupflare`         | the section, alongside Drupal's own configuration groups         |
-| **Runtime Status** | `/admin/config/drupflare/runtime` | the replica pool, page tiers, warming, edge plan and write lanes |
-| **Help**           | `/admin/help/topic/drupflare`     | what runs where, and which Drupal assumptions do not hold here   |
-
-Runtime Status reads the same payload `/serve-stats` returns, so the admin page and the host report
-cannot disagree.
-
-### Single Sign-On
-
-The Access page configures an OpenID Connect provider that the host serves at `/oidc`: it performs
-the token exchange and verifies the `id_token` signature before PHP is entered, so a site gets single
-sign-on without installing an OIDC module. An unverified `id_token` is an unauthenticated login, so
-the verification is not optional. A site that prefers `drupal/openid_connect` can use it instead; its
-own client completes the login, with the token request parked and the signature checked over the
-host's crypto.
-
-Single sign-on needs `drupal/externalauth`, which maps the verified identity onto an account. No
-contrib module ships in the packed tree, so install it from the Extend page before the first login.
-
-Set the issuer and client id on the page, and the client secret as the `OIDC_CLIENT_SECRET` binding.
-The redirect URI to register with the provider is shown on the page. Saving verifies the issuer's
-discovery document immediately, so a typo surfaces there rather than at someone's first login.
-
-Writing the provider takes the owner token, not the page's own gate. Whoever sets the issuer decides
-which provider every login on the site authenticates against.
-
-A login is refused when the signature comes from a key outside the provider's JWKS, when the issuer
-does not match, when the audience belongs to another client of the same provider, when the token has
-expired, or when the nonce belongs to a different login. The signing algorithm is taken from the key
-rather than from the token header, and an account is keyed by issuer and subject together.
-
-### URL Routing
-
-**Drupal owns the URL space.** Any path the Worker does not claim is served as a page, so `/`,
-`/user/login`, `/admin` and `/node/1` all work. The Worker's own surfaces live under `/_cfw`, which
-Drupal does not generate; its diagnostic and owner routes are single-segment names like `/health`
-and `/export`.
-
-Which site a request resolves to is decided in [`src/ops/site-id.ts`](src/ops/site-id.ts): a KV
-mapping for the host, then the `SITE_ID` var, then the deployment's primary site, then the hostname
-itself, then `site`. One deployment is one site, so a second domain pointed at the worker reaches the
-site already claimed rather than opening a new one. A host mapped in KV is an alias: its pages,
-redirects and login cookie carry that host (`drangler domain add <host>` writes the mapping and the
-Custom Domain route). On `localhost` the hostname names no site, so it lands on `site`. `?site=` is refused on the public routes, so a
-link cannot choose which site answers; an owner route accepts it because the object checks the token
-itself, and `PW_DIAGNOSTICS=1` accepts it everywhere, which is what `/serve?site=X&path=Y` uses.
-
-### Scripts
-
-| command                      | what it does                                                |
-| ---------------------------- | ----------------------------------------------------------- |
-| `bun run dev`                | local worker with a real Durable Object                     |
-| `bun run deploy`             | deploy to Cloudflare                                        |
-| `bun run test`               | vitest: both projects, **workers inside workerd**           |
-| `bun run test:coverage`      | the same, with merged coverage                              |
-| `bun run test:node`          | only the node project (needs `node:sqlite`, a real PHP)     |
-| `bun run test:php`           | the Drupal database driver suite, under real PHP            |
-| `bun run typecheck`          | all three tsconfig projects; bare `tsc` covers only one     |
-| `bun run check:reachability` | which modules the edge actually imports, and which are dead |
-| `bun run assets:driver`      | repacks `assets/driver.json` from the sibling module repos  |
-| `bun run build`              | hydrate the release payload: what a deploy runs             |
-| `bun run build:local`        | build every generated artifact from source                  |
-| `bun run build:plan`         | what a source build would do, and what tools are missing    |
-| `bun run assets:sql`         | rebuild only the migration chunks                           |
-
-### 🧰 Building From a Clean Clone
-
-`assets/` is generated packs and `.interp/` holds the interpreter. Both are gitignored, so
-a fresh clone has nothing to deploy until one of two routes lands them.
+`assets/` is generated packs and `.interp/` holds the interpreter. Both are gitignored, so a fresh
+clone has nothing to deploy until one of two routes lands them.
 
 ```bash
 bun install     # postinstall restores the interpreter from the CDN, verified by sha256
@@ -1064,16 +443,16 @@ locally, for a commit no release was cut from. `bun run hydrate` takes the paylo
 back to the source route when there is no payload; `--payload-only` forbids the fallback and
 `--from-source` skips straight to it.
 
-The source route runs fifteen steps in one order, each skipped when what it produces is already on
-disk, and together they produce **every artifact a release payload carries**:
+The source route runs seventeen steps in one order, each skipped when what it produces is already
+on disk, and together they produce every artifact a release payload carries:
 
 ```txt
-interpreter → frame → decoder      the three files the binary seam imports
+interpreter → frame                the two files the binary seam needs
 siblings    → driver               the Drupal modules, packed into assets/driver.json
-tree → site → patch                the Drupal tree, installed and patched for wasm
+tree → mount → site → patch        the Drupal tree, with the driver, installed and patched for wasm
 bootstrap → twig → core → pack     the file list, the compiled Twig cache, the per-file pack
-static                             the browser-fetchable half of core/, into assets/core
-sql                                the migration chunks, from the committed site.sqlite
+static → agg                       the browser-fetchable half of core/, and the per-library aggregates
+container → sql                    the packed container row, and the migration chunks
 prefill                            the pages, rendered by a local wrangler dev and lifted back
 ```
 
@@ -1086,22 +465,700 @@ to fail without failing the build.
 
 ---
 
-## 🔧 Configuration
+## Moving a Site In
 
-Every knob is a `vars` entry in `wrangler.jsonc`, and every one has a working default. Eleven of them
-can also be overridden at runtime through the `CONFIG_KV` namespace without a redeploy.
-[`docs/configuration.md`](docs/configuration.md) is the full reference: every variable, its
-default, what reads it, and what breaks when it is wrong. Three vars are covered below, plus the two
-setup flows a new site runs once.
+[`drangler`](https://github.com/drupflare/drangler) reads an existing Drupal site, scores the move
+and carries it over; the worker accepts what it sends.
+
+- **Preview.** `drangler preview --host <ssh target> --root <docroot>` makes a working duplicate of
+  a live site with read-only commands on the old server. It converts a MySQL, MariaDB or PostgreSQL
+  dump to SQLite, carries the public and private files and the code, and reads `$config` literals
+  and `.htaccess` redirects and headers. The duplicate runs on `wrangler dev`, or deploys with
+  `--deploy`.
+- **Drupal 10 sources.** A Drupal 10 site is a migration source that drangler plans onto the Drupal
+  11 pack. A custom install profile travels inside the database, so the site can be claimed.
+- **Registry-first delivery.** `/install` resolves a composer graph: `replace`, stability flags,
+  branch aliases, branch archives, metapackages, virtual packages and `InstalledVersions`.
+  Composer plugins are skipped. `drangler build --project` covers patches and private repositories.
+- **Settings from the old host.** `DRUPAL_ENV_<NAME>` and `DRUPAL_CONFIG` reach PHP, and
+  `RESPONSE_HEADERS` and `REDIRECTS` carry a migrated site's header and redirect rules. See
+  [`docs/configuration.md`](docs/configuration.md#migrated-project-settings).
+- **Hostnames.** One deployment is one site on any number of hostnames; see
+  [URL Routing](#url-routing). `drangler domain add <host>` maps a hostname and adds its Custom
+  Domain route.
+- **Claiming.** A migrated site claims with `POST /firstrun` and `{"migrated": true}`, which mints
+  the owner token and marks the site claimed without changing uid 1, the site name or any mail
+  setting.
+
+---
+
+## Drupflare vs a Traditional VPS
+
+Drupflare targets solo, enterprise, indie and budget-bound sites, where the cost is the hours and not
+the hosting bill.
+
+Drupflare is faster than a single-region VPS for any visitor who is not sitting next to it, and the
+margin grows with distance. Traffic-weighted across the workload mix, against nginx and PHP-FPM 8.5
+serving the same Drupal tree and the same database:
+
+| the visitor is               | ratio      |
+| ---------------------------- | ---------- |
+| in the VPS's own datacenter  | **1.50x**  |
+| on the same continent        | **6.35x**  |
+| one ocean away               | **11.32x** |
+| on the far side of the world | **23.09x** |
+
+Same-datacenter is the VPS at its theoretical best and nobody's real audience. The rest is
+[Geography](#geography). Where Drupflare is slower is under [Limitations](#limitations), and a raw
+uncached render is one of them.
+
+Every Drupflare figure marked **M** is measured, on deployed Cloudflare infrastructure or on this
+machine, and the column says which. **D** is derived from measured inputs and is arithmetic, not a
+reading. **L** is a vendor's published list price. **n/m** is not measured, and is stated as a range
+or omitted.
+
+### Against a VPS
+
+`docker/vps.yml` runs nginx 1.29 and PHP 8.5 FPM with opcache and tracing JIT against the same
+Drupal tree and the same site database Drupflare serves, so the runtime is the only variable.
+`bun run measure:vps` drives both. The generator's own ceiling on the same machine is 8,308 req/s
+against nginx and 1,231 against the front worker, so it constrains neither arm.
+
+| workload                     | VPS                  | Drupflare            |
+| ---------------------------- | -------------------- | -------------------- |
+| Anonymous cached, p50        | 3 ms                 | **2 ms**             |
+| Anonymous cached, p95        | 49 ms                | **4 ms**             |
+| Anonymous cached, 32 clients | 122 req/s, p50 10 ms | **438 req/s**, 62 ms |
+| Re-render, tag-invalidated   | **24 ms**            | 30 ms                |
+| Re-render, page cache hit    | 24 ms                | **22 ms**            |
+
+An authenticated session is a curve and not a median: the first three requests render and compile a
+plan, and everything after is answered in the isolate with no Durable Object hop. Converged p50 for
+one session driven sequentially, n=14 per path:
+
+| authenticated path       | VPS   | Drupflare |
+| ------------------------ | ----- | --------- |
+| `/`                      | 11 ms | **5 ms**  |
+| `/admin/content`         | 71 ms | **5 ms**  |
+| `/user/1`                | 56 ms | **5 ms**  |
+| `/admin/structure/types` | 18 ms | **6 ms**  |
+
+Under concurrency Drupflare holds about 312 req/s flat from 4 to 32 clients on both authenticated
+workloads. The VPS peaks at 204 req/s on the front page and 67 on admin, then declines.
+
+Three caveats apply to these tables.
+
+**Both arms are on localhost, which is the VPS's best case.** A VPS sits in one region; Drupflare
+answers from the visitor's own colo. The network term a real user pays on every VPS request is
+absent from the tables above. [Geography](#geography) measures it, and it is the largest term in the
+comparison.
+
+**A re-render is 1.21x on the pages a save invalidates, and Drupflare is faster on the rest.** A
+save purges only the cache entries matching its tags, so every other page re-renders from a warm
+dynamic page cache. The larger ratios elsewhere in this file are a warm-kernel interpreter
+comparison and a both-bins-emptied edge render, which are different workloads on different
+instruments and do not divide into each other. The authenticated rows are not a runtime ratio
+either: they are a hop that does not happen.
+
+**The authenticated arm is one Durable Object with no replica lanes.** A four-lane pool measured
+3.29x on real authenticated renders and none of it is in the numbers above. Bodies agree to within
+10 bytes on the anonymous arms; on the authenticated arms Drupflare serves the larger page (103,689
+against 96,177 on the front page) and the difference is unexplained.
+
+|                                            | Drupflare                                                                                                   | Traditional VPS                                                      | prov.   |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------- |
+| **Setup, from zero to a rendering site**   | one deploy, no server                                                                                       | provision, webserver, PHP-FPM, MariaDB, TLS, cron, firewall, backups | n/m     |
+| **Local toolchain you must learn first**   | none for deploy; `bun` to develop                                                                           | ddev or Lando, Composer, Drush, ssh, a database client               | n/m     |
+| **Monthly infrastructure**                 | itemised in [The Cost Model](#the-cost-model)                                                               | the same table                                                       | L       |
+| **What "scaling up" means**                | nothing to do; the edge absorbs it                                                                          | resize the box, tune PHP-FPM workers, add a cache layer              | n/m     |
+| **OS patching, PHP upgrades, kernel CVEs** | none exist to patch                                                                                         | yours, forever                                                       | n/m     |
+| **Anonymous page served from**             | edge cache, **~85%** of traffic, **0** Durable Object requests                                              | your box, every request                                              | M edge  |
+| **`page_cache` hit**                       | **1 ms** of Durable Object CPU, 1 statement                                                                 | full LEMP round trip                                                 | M edge  |
+| **`dynamic_page_cache` hit**               | a handful of ms and 6 statements                                                                            | n/m                                                                  | M edge  |
+| **Full uncached render**                   | seconds of Durable Object CPU with both cache bins emptied; the technical report carries the figure         | tens of ms native PHP, warm kernel                                   | M edge  |
+| **Wasm penalty, warm kernel only**         | a same-machine interpreter ratio, not the edge cost above; the technical report carries it                  | 1x by definition                                                     | M local |
+| **Authenticated page, plan hit**           | answered in the front worker with no Durable Object hop; see the curve above                                | tens of ms on a warm PHP-FPM pool                                    | M edge  |
+| **Authenticated read concurrency**         | scales with the replica pool: **1.00 / 2.03 / 3.29x** at 1 / 2 / 4 lanes, on real renders                   | one box, until you resize it                                         | M edge  |
+| **Cold start**                             | over a second; paid absorbs it and free amortises it off the request path                                   | ~0; the box is already running                                       | M edge  |
+| **Free-plan capacity**                     | **~100,000 page views/day** (~3M/month), saturated; every visit costs one Worker request, cached or not     | whatever the box does before it swaps                                | M edge  |
+| **Worker bundle**                          | fits the 64 MiB Worker size limit                                                                           | n/a                                                                  | M local |
+| **First-run migration**                    | chunked, one per invocation on free, each sized to complete on its own                                      | `drush si`, then hope                                                | M local |
+| **When something breaks at 3am**           | a self-repair ladder runs: L0 observe, L1 reset, L2 reconstruct, L3 reconfigure, L4 quarantine, L5 rollback | you, or someone you pay                                              | M built |
+| **Failure detection**                      | **19 tripwires** (12 host, 7 PHP) plus a mandatory boot self-test                                           | uptime ping, if configured                                           | M built |
+
+### The Cost Model
+
+The infrastructure saving is small. The labour saving is the large one.
+
+Infrastructure, for one small content site. Vendor figures are list prices and are marked so:
+
+| line item         | Drupflare free                  | Drupflare paid                 | small VPS                                  | prov. |
+| ----------------- | ------------------------------- | ------------------------------ | ------------------------------------------ | ----- |
+| Compute           | $0.00                           | $5.00 Workers Paid             | $5-12                                      | L     |
+| Database          | $0.00 (the object's own SQLite) | included                       | on the box, or $15+ managed                | L     |
+| Backups           | $0.00                           | included in the plan's storage | ~20% surcharge on the majors               | L     |
+| CDN               | included                        | included                       | $0 with Cloudflare in front, which most do | L     |
+| TLS               | included                        | included                       | $0 via Let's Encrypt, yours to renew       | L     |
+| **Monthly total** | **$0.00**                       | **~$5.00**                     | **~$6-14**                                 |       |
+| **Annual**        | **$0**                          | **~$60**                       | **~$72-168**                               |       |
+
+Paid against a VPS is roughly $12-108 a year, and at the bottom of the market it is close to a wash.
+The row with no VPS equivalent is the first one: there is no $0 VPS, and free carries about 3.0M
+visits a month with the same feature set as paid, including both performance levers, which default
+on regardless of plan. At fleet scale the infrastructure works out near $0.028 per site per month.
+
+The column that cannot be filled in is the difference:
+
+| recurring obligation         | Drupflare                                         | VPS                                        |
+| ---------------------------- | ------------------------------------------------- | ------------------------------------------ |
+| OS and kernel CVEs           | nothing to patch                                  | monthly, forever                           |
+| PHP minor and major upgrades | a binary swap, built in CI                        | yours, with a compatibility risk each time |
+| Webserver and PHP-FPM tuning | does not exist                                    | yours                                      |
+| Drupal security releases     | detected on the cron chain, reported by `/health` | yours, on the advisory's schedule          |
+| Backup verification          | export and restore chunked, resumable, rehearsed  | yours to configure, and to test            |
+| Uptime and alerting          | 19 tripwires plus a self-repair ladder            | uptime ping, if configured                 |
+| Traffic spike                | nothing to do                                     | resize, tune, add caching                  |
+
+Price those at your own rate; this project states no hourly figure.
+
+Performance, with the full provenance in
+[the report's executive summary](TECHNICAL_REPORT.md#-executive-summary):
+
+|                             | Drupflare                                           | native PHP on a VPS     | prov.   |
+| --------------------------- | --------------------------------------------------- | ----------------------- | ------- |
+| Cached page (the ~99% case) | **1 ms** DO CPU, 1 statement                        | full LEMP round trip    | M edge  |
+| Re-render, tag-invalidated  | **30 ms**                                           | **24 ms**               | M local |
+| Re-render, page cache hit   | **22 ms**                                           | 24 ms                   | M local |
+| Uncached render, cold bins  | **2,127 ms** DO CPU (n=10); a different cache state | n/m on this instrument  | M edge  |
+| Wasm penalty, warm kernel   | **3.57x** warm / 3.94x cold, same-machine ratio     | 1x by definition        | M local |
+| Isolate startup             | **5 ms**, not billed to the request                 | n/a; the box is running | M edge  |
+| Cold boot                   | **1,264 ms**, amortised off the request path        | ~0                      | M edge  |
+| Authenticated page          | **208 ms** p50 from a client, both levers on        | tens of ms, warm pool   | M edge  |
+
+The architecture wins by not rendering. The tiers above answer without a render, and where a
+logged-in visitor forces one, shell assembly cuts the render and not the boot.
+
+The two render rows are different workloads on different instruments and must not be divided. The
+30/24 pair is one machine and one instrument, with Drupal's `render` and `dynamic_page_cache` bins
+warm on both sides, which is the state a content change produces. The 2,127 ms is the edge billing a
+render with both bins emptied. Dividing an edge cold figure by a local warm one is how an external
+review published a 225x that this project had to retract; the technical report keeps that correction
+at its Provenance section.
+
+Authenticated traffic is the harder case. Shell assembly and a resident interpreter put a logged-in
+page at about 467 ms against 3,391, and a replica pool spreads authenticated reads across objects
+instead of queueing them behind one. A VPS with a warm PHP-FPM pool is still ahead on a single
+request. Drupflare answers the concurrency question with lanes: adding one is a config change and a
+provisioning call, not a resize.
+
+Write-heavy traffic is a narrow loss. A lane runs a write locally, discards its own effect and
+forwards the statement list to the primary, which sequences it, so the work spreads and only the
+commit serialises. The class of write that originates a value two objects would mint differently
+cannot spread; those are refused, because a retry cannot repair them.
+
+### Geography
+
+Every table above gives the VPS a visitor standing in its own datacenter. A real visitor is
+somewhere else, and a single-region VPS answers all of them from one place while Cloudflare answers
+from the colo nearest each. That difference is the largest term in the comparison. It is measured:
+`scripts/measure/delay-proxy.mjs` puts a real delaying proxy in front of the VPS arm, so its
+connection pays the network instead of having a number added afterwards.
+
+The injected delays are Azure's published P50 round-trip figures between regions. From US-East: West
+US 69 ms, West Europe 83 ms, Brazil 117 ms, India 198 ms, Australia 201 ms, Southeast Asia 224 ms.
+
+| injected round trip   | VPS weighted p50 | Drupflare weighted p50 | ratio      |
+| --------------------- | ---------------- | ---------------------- | ---------- |
+| 0 ms, same datacenter | 14.8 ms          | 9.9 ms                 | **1.50x**  |
+| 40 ms, same continent | 56.5 ms          | 8.9 ms                 | **6.35x**  |
+| 82 ms, transatlantic  | 100.2 ms         | 8.9 ms                 | **11.32x** |
+| 200 ms, antipodal     | 218.0 ms         | 9.4 ms                 | **23.09x** |
+
+Traffic-weighted across the workload mix, three replica lanes, `viable: true` with zero regressions
+on all three network arms. Drupflare's figure barely moves, because the term being added is one a
+single-region VPS pays and an edge network does not.
+
+Cloudflare Containers accept a placement constraint, so the same comparison runs on real
+infrastructure. The VPS arm was pinned first to western Europe and then to eastern North America,
+same image and same instance type, driven from a US-East client, n=15 interleaved with the arm order
+alternating:
+
+| VPS placement         | VPS floor | Drupflare floor |
+| --------------------- | --------- | --------------- |
+| Western Europe        | 174.3 ms  | 82.6 ms         |
+| Eastern North America | 111.7 ms  | 78.0 ms         |
+
+These are minima and not medians, because the client's own round trip is in both and the floor is
+where it shows. Moving the container across the Atlantic costs 62.6 ms on an otherwise identical
+arm, and a same-continent VPS still sits about 34 ms above Drupflare, because a region is not the
+visitor's own colo. Subtracting the shared client round trip leaves figures that agree with the
+proxy table above, so two instruments reach the same answer.
+
+The advantage is zero for a visitor in the VPS's own city and largest for one on the other side of
+the world, so a site whose audience sits beside its VPS gains nothing here. There is no single
+worldwide number to quote in place of the rows above: internet penetration is published by region,
+users per region are not, and averaging without that table would invent a figure. The proxy also
+understates the gap, since it delays data and not the TCP handshake, and Drupflare's own arm stays on
+localhost.
+
+---
+
+## Impact
+
+[`docs/impact.md`](docs/impact.md) prices the energy, carbon and water of a deployment and says how
+far each figure can be trusted. The saving is a total: it compares a deployment's whole year of
+energy, idle included, with Drupflare's whole year for the same site. It is not a claim about the
+efficiency of one view, because most of a conventional deployment's energy is idle power that does
+not depend on views.
+
+Against a production deployment of three regions, each with a high-availability web pair and
+database pair sized at 15% utilisation, one Drupflare site at 1,000,000 views a month draws 18.3 Wh a
+year where the baseline draws 224 kWh, a total saving of 99.99%. The smallest conventional
+deployment, one small VPS, still saves 99.80% at that traffic and 94.24% at 30 million views a
+month. Per request the two runtimes are at parity, so the saving comes from idle nodes and not from
+PHP running faster.
+
+Every figure is derived and modelled, because no source sizes a production node. The page labels
+each one.
+
+---
+
+## Replica Lanes
+
+A Durable Object runs one request at a time, and a PHP render holds it for the whole render. A site
+is not confined to one object: a namespace holds unlimited objects, so a site spreads its serving
+path across lanes, each a separate object named `<site>#r<n>`. Only `/serve` spreads. Owner and
+diagnostic routes pin to the primary, so `/export` cannot answer from a lane's copy.
+
+A lane removes queueing and not service time. A cached page is answered from the edge cache or the
+object's own SQLite without booting PHP, so a site taking 100 req/s of cached traffic queues nothing
+and needs no lane, while a site taking 20 req/s of authenticated renders may need several.
+
+This works because an authenticated GET writes no authoritative state under this SAPI. Measured
+per-table on real renders: no `sessions` row, no `users_field_data.access`, no `flood`. Core
+throttles the access write on `KernelEvents::TERMINATE`, which this SAPI never dispatches. A lane
+maintains its own copy, sweeping expired rows and applying the primary's replication log, and
+refuses anything authoritative with a 421 that the front worker retries against the primary.
+
+### Scaling
+
+Two quantities carry different claims.
+
+**Per object, measured.** One object is one Durable Object, and it serves one request at a time.
+Driven alone on a deployed paid worker, a lane answered 31 authenticated renders per second at a p50
+of 216 ms, with 8 concurrent clients and every response reporting `x-cfw-cache: RENDER`. The same
+object answered 268 cached pages per second at a p50 near 20 ms, reporting `x-cfw-cache: HIT`. A
+render is roughly ten times the work of a cached hit, which is the ratio the architecture is built
+around.
+
+**Across a pool, by topology.** Addressing each object directly and summing, a pool reaches
+**1.00 / 1.72 / 3.64 / 7.10 / 15.19x at 1 / 2 / 4 / 8 / 16 lanes**, which is 95% of perfect at
+sixteen. That is a statement about how many objects a site has and what each one serves, not about
+what a visitor gets; the routed figure below is the smaller one and is the one to quote.
+
+**Across a pool, as routed.** Real traffic does not address a lane; it is hashed to one, and the
+primary serves bucket 0 as well as feeding replication. Driven that way against deployed sites with
+authenticated admin pages and a fixed 20 second window per cell:
+
+| lanes | served, 16 clients | p50     | served, 64 clients | p50      |
+| ----- | ------------------ | ------- | ------------------ | -------- |
+| 0     | 62                 | 5969 ms | 98                 | 16048 ms |
+| 1     | 54                 | 7712 ms | 78                 | 33741 ms |
+| 2     | 79                 | 3172 ms | 154                | 10431 ms |
+| 4     | 81                 | 2867 ms | 147                | 6506 ms  |
+| 8     | 128                | 1715 ms | 220                | 6125 ms  |
+| 16    | **294**            | 364 ms  | **445**            | 647 ms   |
+
+The table counts served requests and not a rate, because every cell drives the same window and a
+rate computed over elapsed time charges an arm twice for its own tail. Sixteen lanes serve 4.74x and
+4.54x what one object serves, and the latency effect is larger than the throughput one: p50 falls
+16.4x at 16 clients and 24.8x at 64.
+
+**Under saturation the baseline is zero.** The table above drives 16 and 64 clients against admin
+pages. Driven instead at 512 concurrent clients over 200 distinct authenticated node pages, same 20
+second window:
+
+| lanes | served, 512 clients | vs one lane |
+| ----- | ------------------- | ----------- |
+| 0     | **0**               | --          |
+| 1     | 426                 | 1.00x       |
+| 2     | 814                 | 1.91x       |
+| 8     | **1,889**           | 4.43x       |
+
+A single object serves nothing at this load; it sheds every request. The 4-lane cell is withheld
+because its site returned a 500 rate the other arms did not reproduce, and the rig was torn down
+before it could be re-driven. The two workloads are not comparable and their numbers must not be
+divided into each other.
+
+**A lane is paid for in rows written.** Every row written on the primary is written again on each
+lane, so a pool of N costs N+1 rows for the same change. Rows written is the meter that bounds
+regeneration, so a pool buys read throughput at a write-amplification cost: an 8-lane pool reaches
+the daily row ceiling nine times sooner than one object. Size a pool against the write rate as well
+as the read rate; it is a lever for read-heavy sites and a penalty on write-heavy ones.
+
+What one lane is worth depends on whether the single object was already saturated. Below saturation
+it loses, 0.87x at 32 clients and 0.98x at 64: routing hashes over two buckets, so the lane takes
+about 60% of the traffic onto an object whose Drupal caches are colder than the primary's while
+adding no parallelism. Above saturation it is the difference between answering and not. At 128
+clients one lane serves 2.06x what no pool serves, and at 512 a single object sheds every request
+while one lane still serves 426. The load for this comes from a Worker and not a laptop, driven
+through a service binding and fanned out across sub-invocations. A probe that holds service time
+fixed and sweeps only the fan-out puts that generator's own ceiling above 512 concurrent
+subrequests, so the pool is the thing being measured and the rig is not.
+
+The rig confirms the pool is addressed correctly: at 32 lanes all 33 objects answer, the
+distribution across buckets is even, and content writes forward from a lane to the primary without
+collision.
+
+### What a Lane Buys Against a VPS
+
+A VPS has no lane axis. Its ceiling is the cores it was bought with, and raising it means resizing
+the box or putting a load balancer in front of several, with shared session and cache state behind
+them. That is an architecture change, done by hand.
+
+A lane is a Durable Object the primary copies itself into, addressed by a hash of the visitor's
+affinity key. Adding one changes no configuration a site owner writes. The comparison therefore
+splits by traffic shape and not by hardware:
+
+- **Anonymous cached traffic**, which is most of it, never reaches an object on either side.
+  Drupflare answers from the colo nearest the visitor and a VPS answers from its one region, so the
+  difference is the network term in [Geography](#geography).
+- **Authenticated traffic** is where lanes decide it. A converged session is answered from the
+  compiled plan in the front worker's isolate, and the lanes exist for the requests that miss it.
+
+Economically the two bill on different axes. A VPS bills for its box whether or not anyone visits;
+Hetzner's CX22 is 2 vCPU and 4 GB for EUR 3.79 a month, and DigitalOcean's equivalent is $24.
+Drupflare bills per request and per row written on a $5 Workers Paid plan. For one busy site the
+monthly figures are close enough that the choice is not about price. For a fleet, or for a site
+whose traffic is bursty, they are not comparable: the VPS is paying for its peak all month.
+
+Drupflare does not need to win a raw uncached render, and it does not; it needs to be the better
+answer for the traffic a real site receives. Where it is slower is listed under
+[Limitations](#limitations).
+
+### Autoscaling
+
+The primary counts, per alarm window, how many requests waited for its gate. Three consecutive
+windows must all show waiting before a lane is provisioned, and the target is the smallest queue
+depth across those three, one lane per sustained waiter. A burst that clears inside one window
+provisions nothing.
+
+Autoscaling stops at 32 lanes by default. That bound is per-lane idle cost, which is storage plus
+replication catch-up, and is not a throughput limit. `REPLICA_MAX_LANES` moves it and
+`REPLICA_AUTOSCALE=0` turns autoscaling off.
+
+`REPLICA_COUNT` pins a size by hand, up to a hard ceiling of 256 lanes. That ceiling is arithmetic:
+a lane mints forwarded row ids from its own residue class modulo the pool's partition, and the
+primary takes class 0, so 256 is the largest pool whose writers all hold a class of their own. Past
+it two writers would mint the same id. Set `REPLICA_COUNT` above the lanes a site has provisioned and
+the router hashes over buckets whose objects do not exist, which costs a wasted hop and a retry on
+the primary for each one. All three settings are KV-overridable, so a pool can be turned on, resized
+or turned off without a redeploy.
+
+### How a Lane Is Built
+
+| piece            | what it does                                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **Provisioning** | `?action=provision&lane=<n>` on the primary copies itself into a lane, bounded per invocation and resumable by a cursor it hands back |
+| **Restore**      | each chunk carries the table's DDL, so a lane needs no Drupal install of its own                                                      |
+| **Catch-up**     | the lane pulls the primary's replication log on its own alarm and promotes itself through `admissionVerdict()`                        |
+| **Routing**      | a lane is chosen by hashing a stable per-visitor key                                                                                  |
+| **Failover**     | a lane refuses work it may not do with 421 and a retry-safety flag it computes                                                        |
+| **Staleness**    | `REPLICA_LAG_MS` bounds how far behind a serving lane may fall, at 30 s                                                               |
+
+Three refusals hold it up. A torn copy, where table A is at generation 12 and table B at 13, is
+refused and the position stays in flight until a whole consistent copy lands. A lane that has not
+finished cannot pass for one that has, because the first chunk declares which tables the copy will
+deliver and the lane holds the driver to that. And no lane is admitted until `system.private_key`
+arrives from the primary, since two objects each minting their own would issue CSRF tokens the other
+rejects.
+
+---
+
+## Free vs Paid
+
+The product goal is that free and paid are the same host. Paid buys performance and headroom. It
+does not buy features, and free is not a demo: both are viable Drupal hosts, or the project has
+failed.
+
+Free's limits are aggregate daily budgets, not the 10 ms per-invocation CPU cap. The cap constrains
+one execution unit, and the architecture chooses what an execution unit is. The model is
+`scripts/measure/free-envelope.ts`; score any change with it and not against a millisecond figure.
+
+### Free-Plan Meters
+
+Measured on deployed infrastructure, per-invocation `cpuTime` read through the Workers Observability
+API.
+
+| meter                        | free-plan ceiling | binds at                                     |
+| ---------------------------- | ----------------- | -------------------------------------------- |
+| **Worker requests**          | 100,000/day       | **~100,000 page views/day** ← the real limit |
+| Durable Object requests      | 100,000/day       | ~588,000 PV/day                              |
+| Rows written                 | 100,000/day       | ~555,000 PV/day                              |
+| Duration, rows read, storage | n/m               | not close                                    |
+
+A free site serves about 100,000 page views a day (about 3M a month) for a well-cached site,
+saturated at 1.00x, and every meter except Worker requests has roughly 5x headroom.
+
+| artifact             | what it is                                                     | from                              |
+| -------------------- | -------------------------------------------------------------- | --------------------------------- |
+| Worker bundle        | fits the 64 MiB Worker size limit                              | `bun run release:check`           |
+| PHP 8.5, nothing cut | a raw wasm module the platform compiles ahead of time          | `interp.lock.json`                |
+| First-run migration  | chunked and resumable, each batch sized to complete on its own | `assets/drupal-sql/manifest.json` |
+| Static asset tree    | served by Workers Assets, never reaching the Worker            | `assets/core/`                    |
+| Cold boot            | amortised off the request path                                 | deployed `cpuTime`                |
+
+### What One Site Gets
+
+Both performance levers are on by default on paid, managed or self-managed, where a warm object
+costs $0 marginal. On free, shell assembly is on and warming follows the thermal policy: a site
+rendering more than about 505 pages a day warms itself and a quieter one does not, because a warm
+object spends 10.8% of free's two daily meters. `SITE_WARM=1` on `/settings` forces it, and
+`WARM_INTERVAL_MS=30000` is a cheaper middle point at 2.9%. The numbers below are what a paid site
+gets, and what a free site gets once it is busy or has opted in.
+
+| authenticated page      |     boot |   render |       total | vs neither |
+| ----------------------- | -------: | -------: | ----------: | ---------: |
+| neither lever           | 1,264 ms | 2,127 ms |    3,391 ms |          - |
+| warm only               |        0 | 2,127 ms |    2,127 ms |       -37% |
+| shell assembly only     | 1,264 ms |  ~467 ms |   ~1,731 ms |       -49% |
+| **both, on by default** |        0 |  ~467 ms | **~467 ms** |   **-86%** |
+
+Every number in that table is derived, and the shipping configuration has since been measured
+directly at 208 ms p50 from a client. The boot saving is a measured subtraction; the render saving
+comes from a measured 4-5 ms against 20-21 ms ratio for a fragment render against the render it
+replaces, and applying that ratio to an edge `cpuTime` figure is an assumption. The table stays
+because it separates the two levers, which the measured figure does not.
+
+A cached page is 0 ms in every row: it answers off the object's own SQL without booting PHP, so
+neither lever can make one faster. What they speed up is the tier that always renders, which is the
+logged-in one.
+
+A fill is one page being rendered and stored so the next visitor gets it instantly, and a save is
+what causes most of them: a content change empties the whole site's page cache, not just the page
+edited, so every page has to be earned back. `PREFILL_ON_SAVE` re-queues the 25 busiest paths
+automatically; the rest fill when somebody asks. For one site, fills/day is roughly
+`saves/day x 25` plus whatever else gets visited.
+
+| your site                    | saves/day | fills/day | share of free |
+| ---------------------------- | --------: | --------: | ------------: |
+| personal blog, 80 pages      |         1 |       ~55 |            2% |
+| small business, 200 pages    |         2 |      ~150 |            5% |
+| club or nonprofit, 500 pages |         5 |      ~375 |           14% |
+| local news, 1,500 pages      |        20 |    ~1,300 |           47% |
+| busy news, 3,000 pages       |        50 |    ~2,750 |           99% |
+
+On free you can publish about 50 times a day on a 3,000-page site before regeneration binds, and
+serve about 3M pageviews a month while doing it. Free's quotas are account-wide, so several warm
+sites on one free account share them; a site that spends its daily meter drops back to the slow
+re-arm on its own and recovers at midnight UTC.
+
+### The Two Ceilings
+
+| ceiling          | what it limits                     | bound by                  | free today                         |
+| ---------------- | ---------------------------------- | ------------------------- | ---------------------------------- |
+| **Serving**      | visits/month that can be answered  | Worker requests, 100k/day | **3.0M/month**, saturated at 1.00x |
+| **Regeneration** | distinct pages re-rendered per day | rows written              | **50,916/day**                     |
+
+The regeneration figure is the shipping default, with `dynamic_page_cache` and `menu` held in
+memory. With `MEMORY_CACHE_BINS=none` it is 10,866 a day. Regeneration decides whether free is a
+Drupal host and not a cache.
+
+No page is served off the Worker. Both page tiers, the edge cache and the optional KV tier, cost one
+Worker request each because the Worker has to run to consult them. The alarm drains the file and
+page mirrors to an R2 bucket when one is bound, with pages ordered by view count so a limited budget
+publishes what moves traffic; the canonical `wrangler.jsonc` binds no bucket. Workers Static Assets
+are uploaded at deploy time, so they cannot hold a page rendered at runtime.
+
+There is no single rows-per-fill figure. A fill costs 2 to 94 rows depending on what is already
+warm, so the model names five measured warmth classes. `ROWS_PER_FILL` in
+`scripts/measure/free-envelope.ts` carries all five, and `warmthMix` prices a realistic spread.
+Every figure is counted at the storage handle, so it includes the host's own writes, notably the
+`cfw_page` insert that stores the whole rendered page.
+
+### Where the Work Pays
+
+| lever                                                  |      worth | note                                                                                                                                                                                         |
+| ------------------------------------------------------ | ---------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Null the `page` bin** (8 -> 3 rows, warm fill)       |  **2.67x** | done. It duplicated bytes the host already stores in `cfw_page`                                                                                                                              |
+| **Anything boot-directed** (JSPI, heap restore, `-O3`) | **~1.01x** | saturated for this ceiling: a 20x cut in boot cost per fill buys 1.1% of the regeneration budget. It says nothing about latency, where holding the object resident removes the boot outright |
+| More slicing / decomposition                           |   negative | alarms are counted DO requests; a 6-way split measured 5,555 -> 4,166 fills/day                                                                                                              |
+
+Two levers that look plausible are not levers. Uninstalling `dblog` does not reduce rows per fill:
+measured, zero rows of a fill go to `watchdog`. And past about 85% off-Worker serving the binding
+meter becomes DO requests and not rows, so trimming rows per fill beyond that point moves the rows
+meter and does not move the ceiling at all.
+
+### The Image Transform Cap
+
+This applies to `IMAGE_ENGINE=images` only. The default engine encodes in the Worker and has no
+transform allowance; it spends CPU, which is not a meter this project is bound by.
+
+Cloudflare Images allows 5,000 unique transformations per month on free, and it fails as a hard cap
+and not a bill. Every image style is a transformation, so ten styles over 2,000 images is 20,000, 4x
+over. It is the only quota here measured per month and not per day, so it does not clear at
+midnight.
+
+It is projected and not counted, because it is a function of the site's content and configuration
+and both are known in advance. The object multiplies its image styles by its managed images on every
+alarm and records `budget.image_transforms` in the health ledger at 80% of the allowance. It is a
+warning and never a repair: the remedies are dropping a style, cutting the image count, or switching
+to the default engine, and all three are decisions a human makes. `/health` shows it, and `/_cfw`
+shows the full projection with the largest style count that still fits.
+
+> [!CAUTION]
+> Do not enable the Workers Caching feature. Its cache key does not include the host, and this
+> product is multi-tenant by host; every site serves `/`, so one site's pages would be served to
+> another site's visitors. Cloudflare states it plainly: _"The cache key does not include the host,
+> so a request to `/api/users/42` hits the same cached entry whether it came in through
+> `api.example.com`, `api.example.net`, a service binding, or a `workers.dev` URL."_
+>
+> Zone settings cannot add the host back. _"No zone configuration for caching applies to Workers
+> Caching. Cache Rules, Cache Response Rules, Page Rules, cache level settings … have no effect on a
+> Worker's cache."_ The zone-level cache-key documentation does put the host in the key, and it
+> describes a different product, so it is not evidence about this one.
+>
+> It is also not a serving lever. A hit skips Worker execution but is still _"billed at the standard
+> Workers request rate"_, so the 100,000/day meter does not move, and it _"bills requests that are
+> normally free: static asset requests and worker-to-worker invocations"_, making it a net increase.
+> What it saves is CPU, which is not a meter this project is bound by.
+>
+> The `caches.default` tier this project does use is a different mechanism and is safe: its key
+> carries both the origin and the site id. `tests/node/cache-partition.spec.ts` holds both halves.
+
+---
+
+## Administration
+
+### The Admin Surfaces
+
+Seven pages under `/_cfw`, each one driving machinery that already exists. They take the owner
+token: sign in at `/_cfw/login`, and any page reached without a session redirects there and comes
+back afterwards.
+
+| page         | path             | what it does                                                                            |
+| ------------ | ---------------- | --------------------------------------------------------------------------------------- |
+| **Limits**   | `/_cfw`          | every metered resource, what spends it, and whether exceeding it bills or stops working |
+| **Extend**   | `/_cfw/extend`   | whether a contrib module installs here, answered against the shipped lock               |
+| **Commands** | `/_cfw/commands` | a Drush-shaped field over the site's operations                                         |
+| **Operate**  | `/_cfw/operate`  | the repair actions: purge, reconcile, sweep, database updates, restart the fill chain   |
+| **Deploy**   | `/_cfw/deploy`   | the provisioning steps, two of which cannot be automated                                |
+| **Git**      | `/_cfw/git`      | remotes, branches, pull requests and the working-tree diff                              |
+| **Access**   | `/_cfw/access`   | the OpenID Connect provider                                                             |
+
+The Commands field takes Drush spellings and resolves them to the operation the site registers, so
+`cache:rebuild`, `cache-rebuild`, `cc` and `cr` are the same command. `en <module>` routes to the
+module installer and not to the operations registry, and an operation given arguments it cannot
+take is refused by name instead of being truncated to its first word.
+
+```text
+cr                  rebuild the caches
+en webform          install a module
+en webform --dry    check whether it would install, without installing
+status              generation, migration state, queue depth
+```
+
+An operation with no driver is listed and disabled, not hidden, because a refusal with no named
+alternative is a refusal that gets retried.
+
+Extend checks a package against the shipped lock, installs it, and enables it. The page keeps those
+three steps separate: a check writes nothing, an install fetches the package and writes its files,
+and enabling turns the module on and reboots the interpreter. The same three are `/installable`,
+`/install` and `/enable` for a script.
+
+### Inside Drupal's Own Admin
+
+`/_cfw` is the host's surface and sits outside Drupal. The module adds a second one where a Drupal
+administrator looks first:
+
+| page               | path                              | what it shows                                                    |
+| ------------------ | --------------------------------- | ---------------------------------------------------------------- |
+| **Drupflare**      | `/admin/config/drupflare`         | the section, alongside Drupal's own configuration groups         |
+| **Runtime Status** | `/admin/config/drupflare/runtime` | the replica pool, page tiers, warming, edge plan and write lanes |
+| **Help**           | `/admin/help/topic/drupflare`     | what runs where, and which Drupal assumptions do not hold here   |
+
+Runtime Status reads the same payload `/serve-stats` returns, so the admin page and the host report
+cannot disagree.
+
+### Single Sign-On
+
+The Access page configures an OpenID Connect provider that the host serves at `/oidc`: it performs
+the token exchange and verifies the `id_token` signature before PHP is entered, so a site gets
+single sign-on without installing an OIDC module. An unverified `id_token` is an unauthenticated
+login, so the verification is mandatory. A site that prefers `drupal/openid_connect` can use it
+instead; its own client completes the login, with the token request parked and the signature
+checked over the host's crypto.
+
+Single sign-on needs `drupal/externalauth`, which maps the verified identity onto an account. No
+contrib module ships in the packed tree, so install it from the Extend page before the first login.
+
+Set the issuer and client id on the page, and the client secret as the `OIDC_CLIENT_SECRET` binding.
+The redirect URI to register with the provider is shown on the page. Saving verifies the issuer's
+discovery document immediately, so a typo surfaces there and not at someone's first login.
+
+Writing the provider takes the owner token, not the page's own gate. Whoever sets the issuer decides
+which provider every login on the site authenticates against.
+
+A login is refused when the signature comes from a key outside the provider's JWKS, when the issuer
+does not match, when the audience belongs to another client of the same provider, when the token has
+expired, or when the nonce belongs to a different login. The signing algorithm is taken from the key
+and not from the token header, and an account is keyed by issuer and subject together.
+
+### URL Routing
+
+Drupal owns the URL space. Any path the Worker does not claim is served as a page, so `/`,
+`/user/login`, `/admin` and `/node/1` all work. The Worker's own surfaces live under `/_cfw`, which
+Drupal does not generate; its diagnostic and owner routes are single-segment names like `/health`
+and `/export`.
+
+Which site a request resolves to is decided in [`src/ops/site-id.ts`](src/ops/site-id.ts): a KV
+mapping for the host, then the `SITE_ID` var, then the deployment's primary site, then the hostname
+itself, then `site`. One deployment is one site, so a second domain pointed at the worker reaches
+the site already claimed and does not open a new one. A host mapped in KV is an alias: its pages,
+redirects and login cookie carry that host, and `drangler domain add <host>` writes the mapping and
+the Custom Domain route. On `localhost` the hostname names no site, so it lands on `site`. `?site=`
+is refused on the public routes, so a link cannot choose which site answers; an owner route accepts
+it because the object checks the token itself, and `PW_DIAGNOSTICS=1` accepts it everywhere, which
+is what `/serve?site=X&path=Y` uses.
+
+### Scripts
+
+| command                      | what it does                                                |
+| ---------------------------- | ----------------------------------------------------------- |
+| `bun run dev`                | local worker with a real Durable Object                     |
+| `bun run deploy`             | deploy to Cloudflare                                        |
+| `bun run test`               | vitest: both projects, **workers inside workerd**           |
+| `bun run test:coverage`      | the same, with merged coverage                              |
+| `bun run test:node`          | only the node project (needs `node:sqlite`, a real PHP)     |
+| `bun run test:php`           | the Drupal database driver suite, under real PHP            |
+| `bun run typecheck`          | all three tsconfig projects; bare `tsc` covers only one     |
+| `bun run check:reachability` | which modules the edge actually imports, and which are dead |
+| `bun run assets:driver`      | repacks `assets/driver.json` from the sibling module repos  |
+| `bun run build`              | hydrate the release payload: what a deploy runs             |
+| `bun run build:local`        | build every generated artifact from source                  |
+| `bun run build:plan`         | what a source build would do, and what tools are missing    |
+| `bun run assets:sql`         | rebuild only the migration chunks                           |
+| `bun run build:site-db`      | build the packed Drupal database from nothing               |
+
+---
+
+## Configuration
+
+Every knob is a `vars` entry in `wrangler.jsonc`, and every one has a working default. The levers on
+`KV_OVERRIDABLE` in `src/ops/plan.ts` can also be overridden at runtime through the `CONFIG_KV`
+namespace without a redeploy: `GET /settings` lists them with the value in force and its source, and
+`PUT /settings` merges a patch. [`docs/configuration.md`](docs/configuration.md) is the full
+reference: every variable, its default, what reads it, and what breaks when it is wrong. Three vars
+are covered below, plus the two setup flows a new site runs once.
 
 ### `SITE_ORIGIN`
 
 The `scheme://host[:port]` Drupal builds absolute URLs against: the canonical tag, a form action, a
-`Location:`, the link in a password-reset mail. Unset, the object **pins the first non-local origin
-it serves** into `cfw_meta` and measures every later request against that rather than believing the
-inbound `Host`; `/firstrun` re-pins, so claiming a site also fixes its origin. Set it when a site is
-reached through a host it cannot observe, such as behind a proxy that rewrites `Host`, or on a deploy
-whose first request is a health check.
+`Location:`, the link in a password-reset mail. Unset, the object pins the first non-local origin it
+serves into `cfw_meta` and measures every later request against that and not the inbound `Host`;
+`/firstrun` re-pins, so claiming a site also fixes its origin. Set it when a site is reached through
+a host it cannot observe, such as behind a proxy that rewrites `Host`, or on a deploy whose first
+request is a health check.
 
 A local origin is never pinned, so running the suite or a `wrangler dev` against a persisted object
 cannot fix a real site's canonical URL to a developer's laptop. Cron boots against the same origin,
@@ -1112,15 +1169,15 @@ which is what stops a mailed reset link pointing the recipient at their own mach
 The highest RFC 5424 severity that PHP's log mirrors to `console.log`, and therefore to
 `wrangler tail`. `off | error | warn | log | info | debug`, defaulting to `info`. `debug` is off
 because a single render on 8.5 emits several severity-7 deprecation notices with full stack traces.
-An unrecognised value is the default rather than an error.
+An unrecognised value is the default and not an error.
 
 ### `MAX_BODY_BYTES`
 
 The largest non-file request body the edge forwards, defaulting to 2 MiB. Over it, the request is
-refused with 413 before any Durable Object hop. It is a heap guard rather than a bandwidth one:
-`parse_str()` on a form body allocates inside a 128 MB isolate, and `foo[][][][][]=bar` repeated
-turns a few hundred kilobytes of wire into far more of it. `multipart/form-data` is exempt, so file
-uploads are unaffected. `0` disables the guard.
+refused with 413 before any Durable Object hop. It guards the heap and not bandwidth: `parse_str()`
+on a form body allocates inside a 128 MB isolate, and `foo[][][][][]=bar` repeated turns a few
+hundred kilobytes of wire into far more of it. `multipart/form-data` is exempt, so file uploads are
+unaffected. `0` disables the guard.
 
 ### Connecting a Cloudflare Account
 
@@ -1131,13 +1188,13 @@ actions; the callback at `/setup/cf/callback` is the one public part of it.
 
 [`docs/configuration.md`](docs/configuration.md#connecting-a-cloudflare-account) has the whole
 contract: the client an operator registers once, the scopes requested, and why the client ID lives in
-the site's database rather than in KV.
+the site's database and not in KV.
 
 ### Onboarding a Sending Domain
 
 `GET /setup/mail?zone=<zone-id>` reports which step the domain is waiting on, and `?action=apply`
-creates the sending subdomain and writes the DNS. Safe to re-run: a settled zone costs zero API
-calls, and an existing DMARC record is reported rather than overwritten.
+creates the sending subdomain and writes the DNS. It is safe to re-run: a settled zone costs zero
+API calls, and an existing DMARC record is reported and not overwritten.
 
 [`docs/configuration.md`](docs/configuration.md#onboarding-a-sending-domain) has the five stages, the
 six records written, and what `settled` does and does not mean.
@@ -1146,7 +1203,7 @@ Both routes take the owner token; see [Log In](#log-in).
 
 ---
 
-## 🌿 Git Remotes
+## Git Remotes
 
 A site follows as many repositories as you connect to it. A push installs the module; the result is
 written back to the provider as a commit status. The page is `/_cfw/git`.
@@ -1168,7 +1225,7 @@ A public repository needs no credential at all.
 
 ### What Gets Installed
 
-Module names come from `*.info.yml` rather than from the directory, so a repository checked out under
+Module names come from `*.info.yml` and not from the directory, so a repository checked out under
 one name that provides another installs correctly, and a repository holding several extensions
 installs all of them at their own paths. Modules land in `modules/custom/`, themes in
 `themes/custom/`, profiles in `profiles/custom/`.
@@ -1177,8 +1234,8 @@ Only mountable files are kept (PHP, YAML, Twig, JavaScript, CSS), with `tests/`,
 `node_modules/` and dotfiles dropped. Every file is stored as its own row, and the pull reports what
 it skipped and why.
 
-**PHP costs no bundle bytes.** Module source is fetched over the assets binding rather than compiled
-into the Worker, so the size ceiling that governs the rest of the runtime does not apply to a custom
+PHP costs no bundle bytes. Module source is fetched over the assets binding and not compiled into
+the Worker, so the size ceiling that governs the rest of the runtime does not apply to a custom
 module written in PHP.
 
 ### Branches, Requests and Diffs
@@ -1198,13 +1255,13 @@ branch.
 
 ### Triggers
 
-**Polling** works against any remote and needs no cooperation from it. The interval is per repository
+Polling works against any remote and needs no cooperation from it. The interval is per repository
 and defaults to an hour; a poll costs one ref advertisement.
 
-**Webhooks** make a push arrive immediately. GitHub, GitLab, Bitbucket, Gitea and Forgejo can
-register one from the page; for anything else the page mints a secret and shows the delivery URL to
-register by hand. Every delivery is verified before it is acted on: HMAC-SHA256 where the provider
-signs, and a shared secret on GitLab installs older than 19.0. An unverifiable delivery is refused.
+Webhooks make a push arrive immediately. GitHub, GitLab, Bitbucket, Gitea and Forgejo can register
+one from the page; for anything else the page mints a secret and shows the delivery URL to register
+by hand. Every delivery is verified before it is acted on: HMAC-SHA256 where the provider signs, and
+a shared secret on GitLab installs older than 19.0. An unverifiable delivery is refused.
 
 ### Provider Coverage
 
@@ -1212,8 +1269,8 @@ signs, and a shared secret on GitLab installs older than 19.0. An unverifiable d
 | ---------------- | --------- | -------------------------- |
 | GitHub           | verified  | github.com                 |
 | GitLab           | verified  | GitLab CE                  |
-| Gitea            | verified  | Gitea 1.24.6               |
-| Forgejo          | verified  | Forgejo 13                 |
+| Gitea            | verified  | Gitea 28.0.0               |
+| Forgejo          | verified  | Forgejo 16                 |
 | Any HTTPS remote | verified  | `git upload-pack` directly |
 | Bitbucket        | supported | n/m                        |
 
@@ -1225,7 +1282,7 @@ the page.
 
 A pull is applied in one transaction and then verified by booting the Drupal kernel against the new
 tree. If the boot fails, the previous files are restored and the site keeps serving. A path already
-owned by another repository or by a `composer require` is reported as a conflict rather than taken.
+owned by another repository or by a `composer require` is reported as a conflict and not taken.
 
 Access tokens live in the site's own database, never in the KV namespace that carries runtime
 overrides. [`docs/configuration.md`](docs/configuration.md#git-remotes) has the scopes each provider
@@ -1233,10 +1290,10 @@ needs and the storage contract.
 
 ---
 
-## 📦 Module Revisions
+## Module Revisions
 
-A module that lives on your machine rather than on a git host is uploaded through `/modify`, and
-every upload is a revision the site keeps.
+A module that lives on your machine and not on a git host is uploaded through `/modify`, and every
+upload is a revision the site keeps.
 
 A revision is a manifest of files addressed by the hash of their contents. A second upload sends only
 the files that changed, and a file the site already holds costs nothing to keep. Five revisions per
@@ -1256,14 +1313,221 @@ names.
 An upload lands the same way a git pull does: one transaction, then a Drupal kernel boot with every
 enabled module's PHP loaded, and a restore of the previous file set if that boot fails. A module
 whose PHP no longer parses is rolled back and the reply names the parse error. A path another package
-already owns is reported as a conflict rather than taken.
+already owns is reported as a conflict and not taken.
 
 File contents are verified against the hash they were sent under before they are stored, so a
 manifest cannot come to name content the site never received.
 
 ---
 
-## 📁 Project Structure
+## Contrib Modules
+
+Installing a module works on a deployed site, with the module present in `core.extension` afterwards
+on 6 of 6 attempts. The cache is cold for one visit while the pages the install invalidated are
+re-rendered.
+
+A module is **verified** only when the gate enabled it against a real site and asserted an
+observable the module owns. Nothing reaches that state by inspection. The other two states are
+**untested** and **blocked**, and a blocked row says which capability is missing. `moduleTable()` in
+`src/ops/module-table.ts` is the census the lists below are rendered from.
+
+Contrib is a development dependency. The shipped pack carries four modules (`admin_toolbar`,
+`ctools`, `pathauto`, `token`); the rest are verified against a test build and installed by a site
+that asks for them, so a new site stays small.
+
+### Installing One
+
+Three owner-token routes, in the order a site uses them. Each takes `Authorization: Bearer <owner
+token>`, the token `/firstrun` mints when the site is claimed.
+
+| route                   | what it does                                                           |
+| ----------------------- | ---------------------------------------------------------------------- |
+| `/installable?module=X` | resolves the package and names any conflict with the shipped lock      |
+| `/install?module=X`     | fetches it and writes its files; runs the check first unless `force=1` |
+| `/enable?module=X`      | installs it through Drupal's own module installer                      |
+
+`drupal/*` resolves against `packages.drupal.org/8`; everything else against `repo.packagist.org`.
+Resolution is registry first and covers a composer graph's `replace`, stability flags, branch
+aliases, branch archives, metapackages and virtual packages; composer plugins are skipped. Installing
+does not enable: they are separate steps because a package that lands is not yet a module Drupal
+knows about.
+
+A module you wrote yourself arrives through a git remote instead, which pulls one commit at depth
+one and boots the kernel against the new tree, rolling back if it fatals. See
+[Git Remotes](#git-remotes). The same `/enable` step applies afterwards.
+
+### Verified
+
+`address`, `admin_toolbar`, `backup_migrate`, `better_exposed_filters`, `captcha`, `coffee`,
+`colorbox`, `config_ignore`, `crop`, `csv_serialization`, `ctools`, `devel`, `easy_breadcrumb`,
+`editor_advanced_link`, `entity`, `entity_browser`, `entity_reference_revisions`, `externalauth`,
+`facets`, `field_group`, `filefield_sources`, `focal_point`, `google_analytics`, `google_tag`,
+`honeypot`, `imageapi_optimize`, `imageapi_optimize_binaries`, `imce`, `jquery_ui`, `jquery_ui_autocomplete`,
+`jquery_ui_datepicker`, `jquery_ui_menu`, `json_field`, `key`, `libraries`, `linkit`, `mailsystem`,
+`memcache`, `menu_block`, `metatag`, `metatag_search_gov`, `migrate_plus`, `module_filter`, `openid_connect`,
+`paragraphs`, `pathauto`, `purge`, `queue_ui`, `recaptcha`, `redirect`, `redis`, `scheduler`,
+`search_api`, `search_api_solr`, `simple_sitemap`, `smtp`, `stage_file_proxy`, `svg_image`, `token`,
+`twig_tweak`, `usfedgov_google_analytics`, `uswds_base`, `video_embed_field`,
+`views_bulk_operations`, `views_data_export`, `webform`, `xmlsitemap`.
+
+`uswds_base` is a theme and installs through `theme_installer` and not the module installer.
+
+### Blocked
+
+Nothing. `openid_connect`, `redis` and `smtp` were here.
+
+`smtp` sends over the host transport from its own `smtp.settings`, and nothing in a render waits for
+delivery. `redis` and `openid_connect` both need an answer inside the request that asked: the PHP
+call is suspended, the Worker performs the socket read or the HTTP exchange, and the same call
+resumes with the answer. For `openid_connect` that is the authorization-code POST and the userinfo
+GET, so a login completes through the module's own client. For `redis` the Durable Object's own
+SQLite is still the faster cache backend and the recommended one.
+
+### Untested
+
+`search_gov_results_api` renders results from an API call made while its form is building. That call
+completes inside the render that makes it, so a search answers on the first request. No run has
+exercised it against a live Search.gov key.
+
+---
+
+## Production Codebases
+
+27 real Drupal codebases, each pinned to a commit in `config/corpus.yml`, are delivered the way a
+migration would deliver them and scored on 13 capabilities: install, container build, anonymous and
+authenticated render, entity CRUD, form submit, file read and write, queue and cron, outbound HTTP,
+update, cache rebuild, config import and module workflow.
+
+15 pass all 13 on a local runtime, among them GovCMS, Thunder, farmOS, Droopler, DrupalX, Open
+Intranet and YMCA Open Y. farmOS, GovCMS and Thunder also pass all 13 on a Worker deployed to a
+Cloudflare account, migrated and claimed the way a customer site would be. Thunder's heaviest admin
+pages can still exhaust a fresh isolate's memory, so its deployed result varies by deploy (11 of 13
+on one); a GET that meets the reset is retried once. Three more are partial, each with a recorded cause
+(varbase, openculturas and atelier), two stop on an upstream defect, six need an upgrade from Drupal
+10 or older, and one is a composer plugin and not a site.
+
+[`docs/compatibility.md`](docs/compatibility.md) is the per-codebase table, rendered from
+`docs/compatibility.json`, which the lane writes. `bun scripts/e2e/corpus-lane.ts --repo=<id>`
+drives one codebase.
+
+---
+
+## Limitations
+
+Measured properties of the runtime, listed so they are known before they are hit.
+
+- **Case-insensitive matching is ASCII-only.** Durable Object SQLite has no user-defined
+  collations, so Drupal's `NOCASE_UTF8` becomes builtin `NOCASE`. `Ünicode` does not match
+  `ünicode`. This affects username and email uniqueness and taxonomy matching.
+- **`LIKE`/`GLOB` patterns cap at 50 bytes.** A Views "contains" filter on a longer search string
+  fails in the engine.
+- **A statement caps at 100 bound parameters.**
+- **`REGEXP` is evaluated in PHP by the driver**, as are `MD5()` and `SUBSTRING_INDEX()` in a select
+  list. The engine has none of them, so the driver widens the statement and filters the rows
+  itself: Views regex filters work, and on a large table they cost a scan.
+- **Integers above 2^53** are read back through a second, casting query. The cursor returns doubles,
+  so the driver detects a value a double cannot hold and re-reads that statement with the affected
+  columns cast to text.
+- **A 64-bit integer does not survive a JSON round trip.** `PHP_INT_SIZE` is 8 and `PHP_INT_MAX` is
+  9,223,372,036,854,775,807, but a JSON number is a double, so a value above 2^53 handed across the
+  host boundary comes back rounded. Cast it to a string first. The database path already does this.
+- **The interpreter loads 27 extensions**: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache,
+  cfwpark, ctype, date, dom, filter, hash, json, lexbor, libxml, mbstring, pcre, pib, random,
+  session, standard, tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by
+  default; see `OPCACHE_MODE` in the configuration reference. `mbstring` is the native extension;
+  `iconv` is a PHP polyfill. There is no `gd` and no `pdo_sqlite`. `/php` reports the live list.
+- **Six more extensions are stand-ins the driver installs at boot**: curl, openssl, zip (including
+  `ZipArchive`), exif, fileinfo (including `finfo`) and xmlwriter. Each is parity-tested against the
+  real extension, and what a stand-in does not implement is refused at the call and recorded as a
+  degradation, never answered wrongly. The openssl stand-in covers AES and x509.
+- **`curl_*` works without `ext-curl`.** The functions are supplied over the same transport as the
+  rest of outbound traffic, so an SDK that bundles its own curl transport runs unmodified.
+  `curl_version()` reports `0.0.0-drupflare-shim`, and an option the shim does not understand is
+  refused and not ignored. The options Stripe and elastica set are understood.
+- **Passwords hash with bcrypt by default, and argon2id is available.** `ARGON2=1` switches the
+  password service to argon2id at m=19456 KiB, t=2, p=1, computed on the host and not in PHP.
+  Existing bcrypt hashes keep working and are upgraded at each account's next login. Hashes are
+  written in PHP's own encoded form, so they verify on any PHP with `ext-argon2`.
+- **Image derivatives are produced in the Worker and not by `gd`.** The toolkit hands the work to
+  `@gmitch215/tinyimg`, a wasm encoder that runs in the front worker and needs no zone, no binding
+  and no monthly transform allowance. It covers scale, crop, rotate, desaturate and format
+  conversion, and encodes JPEG, PNG and WebP. It does not encode AVIF: core asks the toolkit before
+  applying an AVIF effect and falls through to the style's `webp` fallback. Cloudflare Images is
+  reachable with `IMAGE_ENGINE=images` on a zone that wants AVIF. Styles at or below 480 px on the
+  long edge are produced during the request; larger ones are produced on the alarm chain. A public
+  image style URL is rewritten to the `/cfw-img/` delivery path.
+- **Outbound HTTP completes inside the request that asks.** `Drupal::httpClient()` and a Symfony HTTP
+  client park the PHP call while the Worker performs the fetch, and the same call resumes with the
+  answer. Where a park is refused (a call made from inside an internal function such as
+  `array_map`), the request falls back to the deferred transport: a previous fetch's response is
+  returned and no connection is opened. A URL the site can predict from its own installed projects
+  is warmed on the alarm before Drupal asks for it. A URL it cannot predict is queued, and an
+  idempotent request that deferred is drained and rendered once more inside the same visit, so the
+  answer usually arrives on the first request. Request headers are carried across the queue and are
+  part of the cache key, except `User-Agent`, which is sent but not keyed. A non-idempotent request
+  is never re-driven: a replayed POST is a different outcome.
+- **A page that has been rendered before never waits for a re-render, on a paid plan.** After a
+  content change, a request for a path with history is answered from the previous generation with
+  `x-cfw-edge: STALE` while the current one regenerates on the alarm chain. It is bounded two
+  generations and 24 hours deep, never applies to a session-carrying response, and refuses a
+  deny-list that `NEVER_STALE` extends. The tier is stored in KV and follows the KV page tier's own
+  plan gate, so a free site does not store a previous generation to fall back to;
+  `PAGE_KV_ENABLED=1` turns it on regardless of plan.
+- **Outbound TCP is either parked or declared, depending on which the module needs.**
+  `Drupal\drupflare\Network\CfwTcp` describes a whole exchange and reads the answer on a later
+  request over a queue, which suits syslog. A module that needs the answer inside the request that
+  asked, which is what a cache read is, gets it from the park: the PHP call is suspended mid-frame,
+  the Worker performs the socket read, and the same call resumes with the result. `drupal/redis` is
+  verified on that path. The endpoint and its credentials come from `REDIS_URL` and `SYSLOG_URL` and
+  not from the calling code, and administrative Redis commands are refused. The Durable Object's own
+  SQLite is still the recommended cache backend, because a parked get is a network round trip where
+  SQLite is a local read.
+- **Shell commands run only through a router.** `exec()`, `shell_exec()`, `proc_open()` and the rest
+  serve a fixed set of programs with platform equivalents (`echo`, `date`, `file`, `zip`, `unzip`,
+  `gzip`, `wget`, `curl`, checksums and a few more). Pipes, redirection and any other program fail
+  with a recorded degradation and not a fatal. `sleep()` parks the call and is capped per request by
+  `SLEEP_BUDGET_MS`.
+- **Config import and queue drains run in steps.** `POST /ops?op=cim&drive=1` and
+  `op=queue-drain&drive=1` run the first step in the request and leave the rest to the alarm, one
+  step per firing. [`docs/configuration.md`](docs/configuration.md#extensibility-routes) has the
+  parameters.
+- **Fibers are not available.** `new Fiber()` aborts the interpreter, because emscripten implements
+  none of the context-switching calls it needs. The build rewrites core's five uses to a
+  synchronous stand-in with the same surface.
+- **Greek word-final sigma lowercases differently** from native PHP, and `mb_strwidth` under-counts
+  emoji. Neither affects Drupal core.
+- **Writes do not scale, and a replica pool does not change that.** A lane refuses an authoritative
+  write and hands it back, so every write is still one object and one thread. What a pool scales is
+  authenticated reads; see [Replica Lanes](#replica-lanes).
+- **A module install leaves the object with little room to do anything else.** It is the most
+  expensive thing a site can do, and a booted interpreter already holds most of the object's
+  ~195 MiB memory budget. `memory.grow` has no inverse, so the heap never shrinks; a further growth
+  is served at a smaller step and not refused. The install queues the pages it invalidated instead
+  of re-rendering them, and the cache is cold for one visit.
+- **An object reset for memory costs a form submission a retry by hand.** A GET or HEAD that meets a
+  reset is sent once more to the fresh instance and answers normally with `x-cfw-retried: reset`. A
+  POST is repeated only when the object never started it: it records an attempt id before the page
+  runs, so a missing record means nothing was saved. A POST it had started gets a short "Try Again
+  in a Moment" page with `Retry-After: 2` instead of Cloudflare's 1101, because it may already have
+  saved.
+- **A cold object rebuilds Drupal, and the heap image does not help.** An evicted Durable Object has
+  no interpreter, so the next request that needs one pays a boot. `HEAP_IMAGE` stores a heap so that
+  boot can be replaced by a restore, and it is off by default: measured on two deployed workers, the
+  restore costs more than the boot it replaces, and it consumes storage on every site as well. `1`
+  opts in. What keeps a cold boot off the visitor's path is the page cache, the compiled plan, the
+  stale-generation serve, and a resident object while a session is active.
+- **A freshly deployed site is claimable until it is provisioned.** `/firstrun` answers without a
+  credential while the site has never been configured, because the owner token that `/export` takes
+  is minted by that route and nowhere else; gating it would mean the only way to get your data out
+  was to expose `/sql`, `/restore` and `/php` first. The window is the unprovisioned state only:
+  once configured the route answers 409, and reconfiguring needs the token. It is the same model as
+  Drupal's own `install.php`, and the window is signposted: an unclaimed site answers a browser
+  navigation with the claim page instead of its front page. Claim the site as the first thing you do
+  after deploying.
+
+---
+
+## Project Structure
 
 ```txt
 src/
@@ -1279,28 +1543,64 @@ src/
     html|css|js/     the setup, warming and guard pages
   ops/               cron/GC, sliced database updates, site identity, origin, setup page
   util/              shared helpers and the null/undefined contract types
-  ui/admin/          the /__ops admin surface
+  ui/admin/          the /_cfw admin surface
   probes/            measurement workers, kept so a report figure can be reproduced
 assets/
   core/              the browser-fetchable Drupal tree, served by Workers Assets
   driver.json        the two Drupal modules and the stream-http library, packed; this executes
   drupal-pf/         the per-file pack PHP materialises from
   drupal-sql/        the migration chunks, counted by their own manifest
-  drupal/site.sqlite the installed database the chunks are cut from; the one tracked asset
+  drupal/site.sqlite the installed database the chunks are cut from; the one tracked database
+config/              the contrib census, the corpus, the traffic mix and the quotas
+docker/              the integration rig and the VPS comparison arm
 tests/               unit (in workerd), integration (live Durable Object), e2e
 scripts/             packers, benches, and the measurement instruments
-experiments/         49 wrangler probe configs, kept for reproduction
+experiments/         61 wrangler probe configs, kept for reproduction
 docs/                the pages published at docs.drupflare.com, and the site's template
 ```
 
 The PHP lives in the sibling repositories, not here: `cfw_do_sqlite` in
 [`rom`](https://github.com/drupflare/rom), the capability module in
 [`drupflare`](https://github.com/drupflare/drupflare), and the wasm build toolchain in
-[`phasm`](https://github.com/drupflare/phasm). See [Repositories](#-repositories).
+[`phasm`](https://github.com/drupflare/phasm). See [Repositories](#repositories).
 
 ---
 
-## 🧪 Testing
+## Repositories
+
+This started as one repository and is split, so each piece is usable on its own.
+
+| repo                    | what it is                                                                    | install                                |
+| ----------------------- | ----------------------------------------------------------------------------- | -------------------------------------- |
+| **`worker`** (this one) | the Worker: cache tiers, the Durable Object, the packers                      | clone                                  |
+| **`drangler`**          | the CLI: stand a site up, check it, migrate one on or off                     | `bun add -g @drupflare/drangler`       |
+| **`drupflare`**         | the capability module: mail, fetch, images and KV bridged to Workers bindings | `composer require drupflare/drupflare` |
+| **`rom`**               | `cfw_do_sqlite`, the Drupal database driver for Durable Object SQLite         | `composer require drupflare/rom`       |
+| **`stream-http`**       | the `https://` stream wrapper `drupflare` extends                             | pulled in by `drupflare/drupflare`     |
+| **`phasm`**             | the PHP-to-WebAssembly build toolchain                                        | GitHub Releases                        |
+| **`cartridge`**         | the pack format and the lazy filesystem                                       | `@drupflare/cartridge`                 |
+| **`durabledb`**         | the `ctx.storage.sql` bridge and its codec                                    | `@drupflare/durabledb`                 |
+
+### How the PHP Reaches the Edge
+
+A `composer require` ships nothing. Composer does not run on the edge, so the packed tree is the
+vendor directory. `bun run assets:driver` reads the sibling checkouts directly and writes
+`assets/driver.json`, which the Durable Object mounts into its in-memory filesystem; that packed copy
+is what executes. `composer.json` records provenance and lets a developer resolve the packages
+normally, and both are on Packagist as `drupflare/rom` and `drupflare/drupflare`.
+
+The packer resolves each sibling as `DRUPFLARE_SRC` / `ROM_SRC` / `STREAM_HTTP_SRC`, then
+`../<name>`, then `.siblings/<name>`, and takes an allow-list of module-shaped paths (`src`,
+`.info.yml`, `.install`, `.module`, `.services.yml`). A module repository is not a module, and
+walking a checkout wholesale would pull `node_modules/` and `vendor/` into the bundle.
+
+Run `bun run assets:driver` after any change in a sibling. `tests/node/driver-pack.spec.ts` rebuilds
+the pack from the modules on disk and compares it to `assets/driver.json` byte for byte, so a stale
+pack fails the gate.
+
+---
+
+## Testing
 
 Three vitest projects, plus PHP suites in the sibling repositories and an end-to-end lane that needs
 a running server.
@@ -1313,9 +1613,10 @@ a running server.
 | PHP suites            | see below              | real PHP, in the sibling repos                 |
 | e2e                   | `bun run test:e2e`     | needs a running server                         |
 
-The e2e lane talks to real servers rather than mocks: Keycloak for single sign-on, Gitea and Forgejo
-for git, GreenMail for SMTP, Redis and a syslog collector for the TCP tier. `docker/compose.yml`
-carries all of them pinned by digest, and `tests/e2e/README.md` has the commands.
+The e2e lane talks to real servers and not mocks: Keycloak for single sign-on, Gitea, Forgejo and
+GitLab for git, GreenMail for SMTP, Redis and a syslog collector for the TCP tier, and Postgres and
+MySQL as external databases. `docker/compose.yml` carries all of them pinned by digest, with GitLab
+behind `--profile heavy`, and `tests/e2e/README.md` has the commands.
 
 The PHP suites live in the sibling repositories, which are the authority on their own module. Two
 have a script here; all take this repository's `drupal-src/` as `DRUPAL_ROOT`:
@@ -1339,28 +1640,28 @@ child-process control. It needs a real filesystem, so it has no counterpart here
 
 ### Three Vitest Projects
 
-`workers` is the default lane and where most of the subject lives. `node` exists because
-workerd cannot host two things the suite needs, both verified rather than assumed:
+`workers` is the default lane and where most of the subject lives. `node` exists because workerd
+cannot host two things the suite needs:
 
-- **`node:child_process` is not implemented.** A probe calling `execFileSync('php', ...)` fails
-  with "The child_process.execFileSync method is not implemented", so any suite whose oracle is
-  a real PHP process cannot run in the workers project at all.
-- **`node:sqlite` does not exist**, which `test-migrate-sql.mjs` needs to diff a replayed
-  database against its source.
+- `node:child_process` is not implemented. A probe calling `execFileSync('php', ...)` fails with
+  "The child_process.execFileSync method is not implemented", so any suite whose oracle is a real
+  PHP process cannot run in the workers project at all.
+- `node:sqlite` does not exist, which `test-migrate-sql.mjs` needs to diff a replayed database
+  against its source.
 
 Without that second project a PHP-oracle suite has to either transliterate the PHP and test the
-copy, or stay outside vitest forever. `tests/node/mb-fix-iconv.spec.ts` is the first occupant:
-it recovers two platform controls that had to be dropped when `mb-fix` moved into workerd, and
-it skips rather than fails when no `php` is on PATH.
+copy, or stay outside vitest. `tests/node/mb-fix-iconv.spec.ts` is the first occupant: it recovers
+two platform controls that had to be dropped when `mb-fix` moved into workerd, and it skips when no
+`php` is on PATH.
 
-`e2e` is the third and is excluded from `bun run test`: it needs a running worker and, for
-most of its specs, a running server to talk to. A commit gate that can be unavailable is not a gate.
-It skips when nothing is reachable and fails when `CI` is set, so a lane that quietly stopped running
+`e2e` is the third and is excluded from `bun run test`: it needs a running worker and, for most of
+its specs, a running server to talk to. A commit gate that can be unavailable is not a gate. It
+skips when nothing is reachable and fails when `CI` is set, so a lane that quietly stopped running
 is distinguishable from one that passed.
 
 Coverage from the two gate projects is merged into one lcov by `bun run test:coverage`; Codecov gets
-a `coverage` flag for the merged report and `workers` / `node` flags for per-lane test results,
-all with `carryforward: true`.
+a `coverage` flag for the merged report and `workers` / `node` flags for per-lane test results, all
+with `carryforward: true`.
 
 ### The Integration Lane
 
@@ -1374,269 +1675,59 @@ Every one of these has already produced a defect that a Node-hosted mock passed:
 
 - `ctx.storage.sql` is synchronous only from inside a Durable Object.
 - `transactionSync()` has no Node equivalent; `BEGIN` as SQL is refused outright.
-- The host caps a statement at **100 bound parameters**; local PDO allows 32,766. That gap
-  hid a live cache-write defect behind a green suite.
+- The host caps a statement at 100 bound parameters; local PDO allows 32,766. That gap hid a live
+  cache-write defect behind a green suite.
 - Neither clock advances across a synchronous `php._run()`, so a duration taken by subtracting two
-  readings either side of one is 0. A `Date.now()` delta that spans I/O is usable, because the clock
-  updates on I/O completion.
+  readings either side of one is 0. A `Date.now()` delta that spans I/O is usable, because the
+  clock updates on I/O completion.
 
 ### Coverage
 
 Coverage uses `provider: 'istanbul'`, not `v8`. The v8 provider reads coverage off the Node
 inspector and these tests run inside workerd's isolate, so it instruments every statement and
-attributes none of them while the suite passes. istanbul instruments at transform time, so it travels
-into the isolate with the code.
+attributes none of them while the suite passes. istanbul instruments at transform time, so it
+travels into the isolate with the code.
 
 The sibling repos split on the same axis: `earth-app/cloud` and `js/edgeport` are workerd and use
 istanbul; `earth-app/crust` and `earth-app/sky` are happy-dom and use v8.
 
 Thresholds sit just under the current measured figure and are ratcheted upward as coverage lands.
-An aspirational number here would be a failing check everyone learns to ignore.
 
 ### Rules for a New Test
 
-Assert on behaviour or a counter, never on timing, except where timing _is_ the claim. Name which
-cache bins were emptied for every render figure. **An absolute CPU number comes only from a deployed
-worker**; nothing in `tests/` can produce one. `docs/measurement-classes.md` is the full rule: which
+Assert on behaviour or a counter, never on timing, except where timing is the claim. Name which
+cache bins were emptied for every render figure. An absolute CPU number comes only from a deployed
+worker; nothing in `tests/` can produce one. `docs/measurement-classes.md` is the full rule: which
 instrument may produce which class of number, and which class is banned outright.
 
 ---
 
-## 📦 Repositories
+## Documentation
 
-This started as one repository and is split, so each piece is usable on its own.
+| page                                                           | what it covers                                                                     |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [`docs/configuration.md`](docs/configuration.md)               | every variable and binding, its default, and what breaks when it is wrong          |
+| [`docs/building-from-source.md`](docs/building-from-source.md) | the payload and source routes, each build step, and upgrading Drupal core          |
+| [`docs/repository-layout.md`](docs/repository-layout.md)       | every path outside `src/` and how it arrives on a clean clone                      |
+| [`docs/database.md`](docs/database.md)                         | how `assets/drupal/site.sqlite` is built                                           |
+| [`docs/compatibility.md`](docs/compatibility.md)               | the per-codebase results for the 27 production codebases                           |
+| [`docs/recovery.md`](docs/recovery.md)                         | point-in-time recovery, export, restore, and which primitive answers which failure |
+| [`docs/external-database.md`](docs/external-database.md)       | external databases, Hyperdrive, and why the site database lives in the object      |
+| [`docs/impact.md`](docs/impact.md)                             | energy, carbon, water and cost, with the label on every figure                     |
+| [`docs/government.md`](docs/government.md)                     | what a US federal site owner owns and what the host owns                           |
+| [`docs/measurement-classes.md`](docs/measurement-classes.md)   | which instrument may produce which class of number                                 |
+| [`docs/php-update-delivery.md`](docs/php-update-delivery.md)   | how a new PHP interpreter reaches this repository                                  |
 
-| repo                    | what it is                                                                      | install                                |
-| ----------------------- | ------------------------------------------------------------------------------- | -------------------------------------- |
-| **`worker`** (this one) | the Worker: cache tiers, the Durable Object, the packers                        | clone                                  |
-| **`drangler`**          | the CLI: stand a site up, check it, migrate one on or off                       | `bun add -g @drupflare/drangler`       |
-| **`drupflare`**         | the capability module -- mail, fetch, images and KV bridged to Workers bindings | `composer require drupflare/drupflare` |
-| **`rom`**               | `cfw_do_sqlite`, the Drupal database driver for Durable Object SQLite           | `composer require drupflare/rom`       |
-| **`stream-http`**       | the `https://` stream wrapper `drupflare` extends                               | pulled in by `drupflare/drupflare`     |
-| **`phasm`**             | the PHP-to-WebAssembly build toolchain                                          | GitHub Releases                        |
-| **`cartridge`**         | the pack format and the lazy filesystem                                         | `@drupflare/cartridge`                 |
-| **`durabledb`**         | the `ctx.storage.sql` bridge and its codec                                      | `@drupflare/durabledb`                 |
-
-### How the PHP Reaches the Edge
-
-**A `composer require` ships nothing.** Composer does not run on the edge, so the packed tree is the
-vendor directory. `bun run assets:driver` reads the sibling checkouts directly and writes
-`assets/driver.json`, which the Durable Object mounts into its in-memory filesystem; that packed copy
-is what executes. `composer.json` records provenance and lets a developer resolve the packages
-normally, and both are on Packagist as `drupflare/rom` and `drupflare/drupflare`.
-
-The packer resolves each sibling as `DRUPFLARE_SRC` / `ROM_SRC` / `STREAM_HTTP_SRC`, then
-`../<name>`, then `.siblings/<name>`, and takes an allow-list of module-shaped paths (`src`,
-`.info.yml`, `.install`, `.module`, `.services.yml`). A module repository is not a module, and
-walking a checkout wholesale would pull `node_modules/` and `vendor/` into the bundle.
-
-**Run `bun run assets:driver` after any change in a sibling.** `tests/node/driver-pack.spec.ts`
-rebuilds the pack from the modules on disk and compares it to `assets/driver.json` byte for byte, so
-a stale pack fails the gate.
-
-## 🧩 Contrib Modules
-
-Installing a module works on a deployed site, with the module present in `core.extension` afterwards
-on 6 of 6 attempts. The cache is cold for one visit while the pages the install invalidated are
-re-rendered.
-
-A module is **verified** only when the gate enabled it against a real site and asserted an observable
-the module owns. Nothing reaches that state by inspection. The other two states are **untested** and
-**blocked**, and a blocked row says which capability is missing. `moduleTable()` in
-`src/ops/module-table.ts` is the census the lists below are rendered from.
-
-Contrib is a development dependency. The shipped pack carries four modules (`admin_toolbar`,
-`ctools`, `pathauto`, `token`); the rest are verified against a test build and installed by a site
-that asks for them, so a new site stays small.
-
-### Installing One
-
-Three owner-token routes, in the order a site uses them. Each takes `Authorization: Bearer <owner
-token>`, the token `/firstrun` mints when the site is claimed.
-
-| route                   | what it does                                                           |
-| ----------------------- | ---------------------------------------------------------------------- |
-| `/installable?module=X` | resolves the package and names any conflict with the shipped lock      |
-| `/install?module=X`     | fetches it and writes its files; runs the check first unless `force=1` |
-| `/enable?module=X`      | installs it through Drupal's own module installer                      |
-
-`drupal/*` resolves against `packages.drupal.org/8`; everything else against `repo.packagist.org`.
-Installing does not enable: they are separate steps because a package that lands is not yet a module
-Drupal knows about.
-
-A module you wrote yourself arrives through a **git remote** instead, which pulls one commit at depth
-one and boots the kernel against the new tree, rolling back if it fatals. See
-[Git Remotes](#-git-remotes). The same `/enable` step applies afterwards.
-
-### Verified
-
-`address`, `admin_toolbar`, `backup_migrate`, `better_exposed_filters`, `captcha`, `coffee`,
-`colorbox`, `config_ignore`, `crop`, `csv_serialization`, `ctools`, `devel`, `easy_breadcrumb`,
-`editor_advanced_link`, `entity`, `entity_browser`, `entity_reference_revisions`, `externalauth`,
-`facets`, `field_group`, `filefield_sources`, `focal_point`, `google_analytics`, `google_tag`,
-`honeypot`, `imageapi_optimize`, `imageapi_optimize_binaries`, `imce`, `jquery_ui`, `jquery_ui_autocomplete`,
-`jquery_ui_datepicker`, `jquery_ui_menu`, `json_field`, `key`, `libraries`, `linkit`, `mailsystem`,
-`memcache`, `menu_block`, `metatag`, `metatag_search_gov`, `migrate_plus`, `module_filter`, `openid_connect`,
-`paragraphs`, `pathauto`, `purge`, `queue_ui`, `recaptcha`, `redirect`, `redis`, `scheduler`,
-`search_api`, `search_api_solr`, `simple_sitemap`, `smtp`, `stage_file_proxy`, `svg_image`, `token`,
-`twig_tweak`, `usfedgov_google_analytics`, `uswds_base`, `video_embed_field`,
-`views_bulk_operations`, `views_data_export`, `webform`, `xmlsitemap`.
-
-`uswds_base` is a theme and installs through `theme_installer` rather than the module installer.
-
-### Blocked
-
-Nothing. `openid_connect`, `redis` and `smtp` were here.
-
-`smtp` sends over the host transport from its own `smtp.settings`, and nothing in a render waits for
-delivery. `redis` and `openid_connect` both need an answer inside the request that asked: the PHP
-call is suspended, the Worker performs the socket read or the HTTP exchange, and the same call
-resumes with the answer. For `openid_connect` that is the authorization-code POST and the userinfo
-GET, so a login completes through the module's own client. For `redis` the Durable Object's own
-SQLite is still the faster cache backend and the recommended one.
-
-### Untested
-
-`search_gov_results_api` renders results from an API call made while its form is building. That call
-now completes inside the render that makes it, so a search answers on the first request. No run has
-exercised it against a live Search.gov key.
-
-## 🏛️ Production Codebases
-
-27 real Drupal codebases, each pinned to a commit in `config/corpus.yml`, are delivered the way a
-migration would deliver them and scored on 13 capabilities: install, container build, anonymous and
-authenticated render, entity CRUD, form submit, file read and write, queue and cron, outbound HTTP,
-update, cache rebuild, config import and module workflow. 15 pass all 13, among them GovCMS, Thunder,
-farmOS, Droopler, DrupalX, Open Intranet and YMCA Open Y, on a local runtime. farmOS, GovCMS and Thunder
-also pass all 13 on a Worker deployed to a Cloudflare account, migrated and claimed the way a customer
-site would be. Thunder's heaviest admin pages can still exhaust a fresh isolate's memory, so its deployed
-result varies by deploy (11 of 13 on one); a GET that meets the reset is retried once. The rest are listed with the capability each misses and why, or as needing an upgrade from
-Drupal 10 or older.
-
-[`docs/compatibility.md`](docs/compatibility.md) is the per-codebase table, rendered from
-`docs/compatibility.json`, which the lane writes. `bun scripts/e2e/corpus-lane.ts --repo=<id>`
-drives one codebase.
-
-## 🧱 Limitations
-
-Measured properties of the runtime, listed so they are known before they are hit.
-
-- **Case-insensitive matching is ASCII-only.** Durable Object SQLite has no user-defined
-  collations, so Drupal's `NOCASE_UTF8` becomes builtin `NOCASE`. `Ünicode` does not match
-  `ünicode`. This affects username and email uniqueness and taxonomy matching.
-- **`LIKE`/`GLOB` patterns cap at 50 bytes.** A Views "contains" filter on a longer search
-  string fails in the engine.
-- **A statement caps at 100 bound parameters.**
-- **`REGEXP` is evaluated in PHP by the driver**, as are `MD5()` and `SUBSTRING_INDEX()` in a select
-  list. The engine has none of them, so the driver widens the statement and filters the rows itself:
-  Views regex filters work, and on a large table they cost a scan.
-- **Integers above 2^53** are read back through a second, casting query. The cursor returns doubles, so the driver detects a value a double cannot hold and re-reads that statement with the affected columns cast to text.
-- **A 64-bit integer does not survive a JSON round trip.** `PHP_INT_SIZE` is 8 and `PHP_INT_MAX` is
-  9,223,372,036,854,775,807, but a JSON number is a double, so a value above 2^53 handed across the
-  host boundary comes back rounded. Cast it to a string first. The database path already does this.
-- **The interpreter loads 27 extensions**: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache,
-  cfwpark, ctype, date, dom, filter, hash, json, lexbor, libxml, mbstring, pcre, pib, random,
-  session, standard, tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by
-  default; see `OPCACHE_MODE` in the configuration reference. `mbstring` is the native extension;
-  `iconv` is a stand-in. There is no `gd` and no `pdo_sqlite`. `/php` reports the live list.
-- **`curl_*` works without `ext-curl`.** The functions are supplied over the same transport as the
-  rest of outbound traffic, so an SDK that bundles its own curl transport runs
-  unmodified. `curl_version()` reports `0.0.0-drupflare-shim`, and an option the shim does not
-  understand is refused rather than ignored.
-- **Passwords hash with bcrypt by default, and argon2id is available.** `ARGON2=1` switches the
-  password service to argon2id at m=19456 KiB, t=2, p=1, computed on the host rather than in PHP.
-  Existing bcrypt hashes keep working and are upgraded at each account's next login. Hashes are
-  written in PHP's own encoded form, so they verify on any PHP with `ext-argon2`.
-- **Image derivatives are produced in the Worker rather than by `gd`.** The toolkit hands the work to
-  `@gmitch215/tinyimg`, a wasm encoder that runs in the front worker and needs no zone, no binding and
-  no monthly transform allowance. It covers scale, crop, rotate, desaturate and format conversion, and
-  encodes JPEG, PNG and WebP. It does not encode AVIF: core asks the toolkit before applying an AVIF
-  effect and falls through to the style's `webp` fallback. Cloudflare Images is reachable with
-  `IMAGE_ENGINE=images` on a zone that wants AVIF. Styles at or below 480 px on the long edge are
-  produced during the request; larger ones are produced on the alarm chain.
-- **Outbound HTTP completes inside the request that asks.** `Drupal::httpClient()` and a Symfony
-  HTTP client park the PHP call while the Worker performs the fetch, and the same call resumes with
-  the answer. Where a park is refused (a call made from inside an internal function such as
-  `array_map`), the request falls back to the deferred transport: a previous fetch's response is
-  returned rather than a connection opened. A URL the site can predict from its own
-  installed projects is warmed on the alarm before Drupal asks for it. A URL it cannot predict is
-  queued, and an idempotent request that deferred is drained and rendered once more inside the same
-  visit, so the answer usually arrives on the first request rather than the second. Request headers
-  are carried across the queue and are part of the cache key, except `User-Agent`, which is sent but
-  not keyed. A non-idempotent request is never re-driven: a replayed POST is a different outcome.
-- **A page that has been rendered before never waits for a re-render, on a paid plan.** After a
-  content change, a request for a path with history is answered from the previous generation with
-  `x-cfw-edge: STALE` while the current one regenerates on the alarm chain. It is bounded two
-  generations and 24 hours deep, never applies to a session-carrying response, and refuses a
-  deny-list that `NEVER_STALE` extends. The tier is stored in KV and follows the KV page tier's own
-  plan gate, so a free site does not store a previous generation to fall back to; `PAGE_KV_ENABLED=1`
-  turns it on regardless of plan.
-- **Outbound TCP is either parked or declared, depending on which the module needs.**
-  `Drupal\drupflare\Network\CfwTcp` describes a whole exchange and reads the answer on a later
-  request over a queue, which suits syslog. A module that needs the answer inside the request that
-  asked, which is what a cache read is, gets it instead from the park: the PHP call is suspended
-  mid-frame, the Worker performs the socket read, and the same call resumes with the result.
-  `drupal/redis` is verified on that path. The endpoint and its credentials come from `REDIS_URL`
-  and `SYSLOG_URL` rather than from the calling code, and administrative Redis commands are refused.
-  **The Durable Object's own SQLite is still the recommended cache backend**, because a parked get is
-  a network round trip where SQLite is a local read.
-- **Shell commands run only through a router.** `exec()`, `shell_exec()`, `proc_open()` and the rest
-  serve a fixed set of programs with platform equivalents (`echo`, `date`, `file`, `zip`, `unzip`,
-  `gzip`, `wget`, `curl`, checksums and a few more). Pipes, redirection and any other program fail
-  with a recorded degradation rather than a fatal. `sleep()` parks the call and is capped per request
-  by `SLEEP_BUDGET_MS`.
-- **Greek word-final sigma lowercases differently** from native PHP, and `mb_strwidth`
-  under-counts emoji. Neither affects Drupal core.
-- **Writes do not scale, and a replica pool does not change that.** A lane refuses an authoritative
-  write and hands it back, so every write is still one object and one thread. What a pool scales is
-  authenticated reads; see [Replica Lanes](#-replica-lanes).
-- **A module install leaves the object with little room to do anything else.** It is the most
-  expensive thing a site can do, and a booted interpreter already holds most of the object's
-  ~195 MiB memory budget. `memory.grow`
-  has no inverse, so the heap never shrinks; a further growth is served at a smaller step rather than
-  refused. The install queues the pages it invalidated instead of re-rendering them, and the cache is
-  cold for one visit.
-- **An object reset for memory costs a form submission a retry by hand.** A GET or HEAD that meets a
-  reset is sent once more to the fresh instance and answers normally with `x-cfw-retried: reset`. A
-  POST is repeated only when the object never started it: it records an attempt id before the page
-  runs, so a missing record means nothing was saved. A POST it had started gets a short "Try Again in a
-  Moment" page with `Retry-After: 2` instead of Cloudflare's 1101, because it may already have saved.
-- **A cold object rebuilds Drupal, and the heap image does not help.** An evicted Durable Object has
-  no interpreter, so the next request that needs one pays a boot. `HEAP_IMAGE` stores a heap so that
-  boot can be replaced by a restore, and it is off by default: measured on two deployed workers, the
-  restore costs more than the boot it replaces, and it consumes storage on every site as well. `1`
-  opts in. What keeps a cold boot off the visitor's path instead is the page cache, the compiled plan,
-  the stale-generation serve, and a resident object while a session is active.
-- **A freshly deployed site is claimable until it is provisioned.** `/firstrun` answers without a
-  credential while the site has never been configured, because the owner token that `/export` takes
-  is minted by that route and nowhere else; gating it would mean the only way to get your data out
-  was to expose `/sql`, `/restore` and `/php` first. The window is the unprovisioned state only:
-  once configured the route answers 409, and reconfiguring needs the token. Same model as Drupal's
-  own `install.php`. The window is signposted rather than silent: an unclaimed site answers a
-  browser navigation with the claim page instead of its front page, so the owner is told to close it
-  on the first visit. Claim the site as the first thing you do after deploying.
+[`TECHNICAL_REPORT.md`](TECHNICAL_REPORT.md) is the engineering record: every measurement, the
+instrument behind it, and why each conclusion changed. It states the rule the project runs on: an
+absolute CPU figure comes only from `cpuTime` on a deployed worker, because in-PHP `microtime()` is
+frozen between I/O on the edge, so a duration taken by subtracting two of its readings is 0. The
+report was written by Claude (Anthropic) while doing the work. Where a number is a local ratio and
+not an edge absolute, it says so.
 
 ---
 
-## 📊 Technical Report
-
-[**`TECHNICAL_REPORT.md`**](TECHNICAL_REPORT.md) is the full engineering record: every
-measurement, every wrong turn, and why each conclusion changed. It is long, and the
-sequence of wrong turns is the most reusable part of it.
-
-It documents the rule the whole project runs on, **an absolute CPU figure comes only from
-`cpuTime` on a deployed worker**, because in-PHP `microtime()` is frozen between I/O on the
-edge, so a duration taken by subtracting two of its readings is 0. It also documents the six
-occasions a free-tier verdict moved, four of which were the instrument and not the system.
-
-> The report was written by Claude (Anthropic) while doing the work, and is a
-> record of measurements taken on real hardware and real Cloudflare
-> infrastructure rather than a summary of intent. Where a number is a local
-> ratio rather than an edge absolute, it says so.
-
----
-
-## 🤝 Contributing
+## Contributing
 
 ```sh
 bun install
@@ -1652,6 +1743,6 @@ Composer never runs on the edge, so `assets/driver.json` is the copy that actual
 `tests/node/driver-pack.spec.ts` is what catches it going stale. The PHP suites live in those repos
 and are the authority on their own module.
 
-## 📄 License
+## License
 
 See [LICENSE](LICENSE).

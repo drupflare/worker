@@ -161,15 +161,52 @@ shipped nginx and PHP-FPM stack at 3 CPUs.
 
 ### What The Idle Floor Costs
 
-| arm        | package | core   |
-| ---------- | ------- | ------ |
-| idle floor | 18.17 W | 0.15 W |
+`measured`, RAPL, idle windows interleaved with the load windows of each run:
 
-**RAPL covers the processor package only.** PSU loss, fans, drives and DRAM sit outside its domains,
-so these are a floor on machine energy rather than a total. Bounding the wall draw from a measured
-29.3 W DC floor and an 80 Plus Bronze supply gives 35 to 42 W, depending where a 750 W unit running
-at a few percent load sits on its efficiency curve. A wall meter needs physical access to the host
-and has not been run.
+| run                      | package                     | core   |
+| ------------------------ | --------------------------- | ------ |
+| per-request run          | 18.17 W                     | 0.15 W |
+| per-view run, 2026-10-01 | 20.65 W (19.65-21.85, n=15) | 0.23 W |
+
+**RAPL covers the processor package only.** PSU loss, the VRM, the GPU, drives, DRAM, the chipset and
+fans sit outside its domains, so these are a floor on machine energy. The whole machine is modelled
+component by component below; a wall meter needs physical access to the host and has not been run.
+
+| component                       | watts                  | label                                             |
+| ------------------------------- | ---------------------- | ------------------------------------------------- |
+| CPU package at idle             | 20.65                  | `measured`, RAPL                                  |
+| CPU at idle, published          | about 40               | `published`, PC Gamer 9900X review, another board |
+| CPU VRM loss                    | 12% of package         | `derived (modelled)`                              |
+| RTX 4070 at idle                | 11                     | `measured`, `nvidia-smi`                          |
+| WD2003FZEX hard drive           | 8.1 idle, 1.3 standby  | datasheet figure, fetch failed, `unverified`      |
+| NVMe SSD                        | 0.05 in its idle state | `measured`, NVMe Identify power states            |
+| DDR5, chipset, board, fans      | modelled per part      | `derived (modelled)`                              |
+| PSU efficiency, 20 W to 80 W DC | 62.9% rising to 81.3%  | `published`, Tom's Hardware, a sibling 750 W unit |
+
+`derived (modelled)` from those parts, idle at the wall:
+
+| case                                    | DC   | AC (wall) |
+| --------------------------------------- | ---- | --------- |
+| floor from measured RAPL, disks parked  | 46 W | 62 W      |
+| floor from measured RAPL, one disk spun | 53 W | 69 W      |
+| floor at the published 40 W CPU         | 69 W | 87 W      |
+| reasonable, disks parked                | 75 W | 94 W      |
+| reasonable, every disk spinning         | 87 W | 107 W     |
+
+Spin state during the runs is unknown, so both cases are carried. An earlier bound of 35 to 42 W at
+the wall counted only a measured 29.3 W DC floor and assumed a better PSU efficiency than the measured
+curve gives at this load. Under load, marginal wall energy is about 1.22 times the RAPL figure (PSU
+1.09 between 60 and 80 W DC, VRM 1.12).
+
+**The idle figure does not transfer to a production server, and in this direction that favours the
+conventional host.** This is a desktop: 62 to 107 W at the wall for 24 threads, or 2.6 to 4.5 W per
+thread, with a discrete GPU, two hard drives and a desktop chipset. A production server idles at
+135 W for 256 threads, 0.53 W per thread for the whole machine (SPECpower). So the idle-charged
+figures on this host overstate a production host's idle per view, and the energy model above uses
+the server figure, not this one. Ratios between arms do transfer, because both stacks run on the same
+processor; the same wasm render takes 1.85 times longer on a deployed EPYC core than on this
+machine's cores, which is why every Cloudflare figure is priced from `cpuTime` rather than from these
+joules.
 
 On Cloudflare the equivalent readings are CPU time rather than joules, taken from `cpuTime` on a
 deployed worker: 60.2 ms for a re-render on a page a content change invalidated, and 0.42 ms

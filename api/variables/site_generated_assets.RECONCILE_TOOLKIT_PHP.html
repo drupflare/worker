@@ -13,7 +13,7 @@
 <h1>Variable RECONCILE_TOOLKIT_PHP<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">RECONCILE_TOOLKIT_PHP</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;// __CFW_FIBER_SHIM__\nchdir(&#39;/drupal&#39;);\n\n$out = [&#39;ok&#39; =&gt; false];\ntry {\n\t// __CFW_KERNEL_BOOT__\n\t$editable = Drupal::configFactory()-&gt;getEditable(&#39;system.image&#39;);\n\t$out[&#39;before&#39;] = (string) $editable-&gt;get(&#39;toolkit&#39;);\n\t$editable-&gt;set(&#39;toolkit&#39;, &#39;cfw_images&#39;);\n\t$editable-&gt;save();\n\t$out[&#39;after&#39;] = (string) Drupal::config(&#39;system.image&#39;)-&gt;get(&#39;toolkit&#39;);\n\t$out[&#39;ok&#39;] = $out[&#39;after&#39;] === &#39;cfw_images&#39;;\n} catch (Throwable $e) {\n\t$out[&#39;error&#39;] = get_class($e) . &#39;: &#39; . $e-&gt;getMessage();\n\t$out[&#39;at&#39;] = $e-&gt;getFile() . &#39;:&#39; . $e-&gt;getLine();\n}\necho json_encode($out);\n&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/site/generated/assets.ts#L205">src/site/generated/assets.ts:205</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/site/generated/assets.ts#L205">src/site/generated/assets.ts:205</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

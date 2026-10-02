@@ -19,7 +19,7 @@ invocation retries from a consistent point (a <code>ctx.storage.put()</code> cur
 commit). <code>loadManifest</code>, <code>loadChunk</code> and <code>now</code> are injected so gate tests replay off disk.</p>
 </div></section><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L243">src/db/migrate-sql.ts:243</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L243">src/db/migrate-sql.ts:243</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -61,7 +61,7 @@ commit). <code>loadManifest</code>, <code>loadChunk</code> and <code>now</code> 
 <li><span><span class="tsd-kind-parameter">__namedParameters</span>: <a href="../interfaces/db_migrate-sql.SqlMigratorOptions.html" class="tsd-signature-type tsd-kind-interface">SqlMigratorOptions</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="" class="tsd-signature-type tsd-kind-class">SqlMigrator</a></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L257">src/db/migrate-sql.ts:257</a></li></ul></aside></div></li></ul></section></section></details>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L257">src/db/migrate-sql.ts:257</a></li></ul></aside></div></li></ul></section></section></details>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Properties"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="properties-1">Properties<a href="#properties-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
@@ -71,42 +71,42 @@ commit). <code>loadManifest</code>, <code>loadChunk</code> and <code>now</code> 
 <div class="tsd-comment tsd-typography"><p>fetches one chunk by file name and index</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L251">src/db/migrate-sql.ts:251</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L251">src/db/migrate-sql.ts:251</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="loadmanifest"><span>load<wbr/>Manifest</span><a href="#loadmanifest" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">loadManifest</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">()</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/db_migrate-sql.MigrationManifest.html" class="tsd-signature-type tsd-kind-interface">MigrationManifest</a><span class="tsd-signature-symbol">&gt;</span></div>
 <div class="tsd-comment tsd-typography"><p>fetches the manifest (memoised by <code>getManifest()</code>)</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L249">src/db/migrate-sql.ts:249</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L249">src/db/migrate-sql.ts:249</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="manifest"><code class="tsd-tag">Optional</code><span>manifest</span><a href="#manifest" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">manifest</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/db_migrate-sql.MigrationManifest.html" class="tsd-signature-type tsd-kind-interface">MigrationManifest</a></div>
 <div class="tsd-comment tsd-typography"><p>the manifest once loaded</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L255">src/db/migrate-sql.ts:255</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L255">src/db/migrate-sql.ts:255</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="now"><span>now</span><a href="#now" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">now</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">()</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>the clock, injectable for tests</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L253">src/db/migrate-sql.ts:253</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L253">src/db/migrate-sql.ts:253</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="sql"><span>sql</span><a href="#sql" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">sql</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/db_migrate-sql.SqlLike.html" class="tsd-signature-type tsd-kind-interface">SqlLike</a></div>
 <div class="tsd-comment tsd-typography"><p>the tenant database the chunks replay into</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L245">src/db/migrate-sql.ts:245</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L245">src/db/migrate-sql.ts:245</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="storage"><span>storage</span><a href="#storage" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">storage</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/db_migrate-sql.StorageLike.html" class="tsd-signature-type tsd-kind-interface">StorageLike</a></div>
 <div class="tsd-comment tsd-typography"><p>the storage handle whose <code>transactionSync()</code> makes a chunk atomic with its cursor</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L247">src/db/migrate-sql.ts:247</a></li></ul></aside></section></section></details>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L247">src/db/migrate-sql.ts:247</a></li></ul></aside></section></section></details>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Methods"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="methods-1">Methods<a href="#methods-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
@@ -120,7 +120,7 @@ commit). <code>loadManifest</code>, <code>loadChunk</code> and <code>now</code> 
 </div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/db_migrate-sql.MigrationManifest.html" class="tsd-signature-type tsd-kind-interface">MigrationManifest</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L272">src/db/migrate-sql.ts:272</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L272">src/db/migrate-sql.ts:272</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="reset"><span>reset</span><a href="#reset" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -132,7 +132,7 @@ Destructive; the route gates it behind an explicit flag.</p>
 </div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/db_migrate-sql.MigrateResetResult.html" class="tsd-signature-type tsd-kind-interface">MigrateResetResult</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L453">src/db/migrate-sql.ts:453</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L453">src/db/migrate-sql.ts:453</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="runall"><span>run<wbr/>All</span><a href="#runall" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -147,7 +147,7 @@ Destructive; the route gates it behind an explicit flag.</p>
 <li><span><span class="tsd-kind-parameter">__namedParameters</span>: <a href="../interfaces/db_migrate-sql.MigrateRunAllOptions.html" class="tsd-signature-type tsd-kind-interface">MigrateRunAllOptions</a><span class="tsd-signature-symbol"> = {}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/db_migrate-sql.MigrateStepResult.html" class="tsd-signature-type tsd-kind-interface">MigrateStepResult</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L445">src/db/migrate-sql.ts:445</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L445">src/db/migrate-sql.ts:445</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="status"><span>status</span><a href="#status" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -158,7 +158,7 @@ Destructive; the route gates it behind an explicit flag.</p>
 </div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/db_migrate-sql.MigrateStatus.html" class="tsd-signature-type tsd-kind-interface">MigrateStatus</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L278">src/db/migrate-sql.ts:278</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L278">src/db/migrate-sql.ts:278</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="step"><span>step</span><a href="#step" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -176,7 +176,7 @@ missing rows.</p>
 <li><span><span class="tsd-kind-parameter">__namedParameters</span>: <a href="../interfaces/db_migrate-sql.MigrateStepOptions.html" class="tsd-signature-type tsd-kind-interface">MigrateStepOptions</a><span class="tsd-signature-symbol"> = {}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/db_migrate-sql.MigrateStepResult.html" class="tsd-signature-type tsd-kind-interface">MigrateStepResult</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/db/migrate-sql.ts#L299">src/db/migrate-sql.ts:299</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/db/migrate-sql.ts#L299">src/db/migrate-sql.ts:299</a></li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

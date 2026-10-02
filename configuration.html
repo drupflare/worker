@@ -1152,6 +1152,108 @@ is the one owner set it does not reach, because the pages install code and run p
 <code>SameSite=Strict</code> is what stands in for a CSRF token: several owner routes act on a GET, so a
 cross-site request carrying the cookie would be enough to install a module. Strict means no
 cross-site request carries it, including a top-level link.</p>
+<h2 id="owner-token-recovery">Owner Token Recovery</h2>
+<p>The owner token is shown once, at the claim. <code>POST /recover-token</code> gives it back to anyone who can
+write the deployment&#39;s <code>CONFIG_KV</code> namespace, which means anyone who can already redeploy the worker
+with <code>PW_DIAGNOSTICS=1</code> and read it through <code>/sql</code>. The proof is no weaker than the token.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> recover-token</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://mysite.example</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --store</span></span></code></pre><p>The client mints a nonce (32 random bytes, base64url, 43 characters) and writes
+<code>recover:&lt;host&gt;:&lt;sha256 hex of the nonce&gt;</code> to <code>CONFIG_KV</code> with a 60-second TTL, KV&#39;s minimum. The
+value is <code>{&quot;host&quot;: &quot;&lt;host&gt;&quot;, &quot;exp&quot;: &lt;epoch ms&gt;}</code>. It then posts <code>{&quot;nonce&quot;: &quot;&lt;nonce&gt;&quot;}</code> to the site. The
+nonce appears only in that body; KV, wrangler&#39;s argv and the logs see its hash.</p>
+<p>The route is public, since the caller has no token, and it is answered in the front worker like
+<code>/settings</code>. The front worker reads the failure budget before it touches the object, then hops to
+<code>/__recover-token</code>, which does the rest:</p>
+<ol>
+<li>read <code>recover:&lt;request host&gt;:&lt;sha256(nonce)&gt;</code> from <code>CONFIG_KV</code>; missing is a 404;</li>
+<li>refuse a record whose <code>host</code> is not the request host (403), whose <code>exp</code> has passed (410), or whose
+<code>exp</code> is more than two minutes ahead (400), since KV&#39;s TTL, not the writer&#39;s clock, is the limit;</li>
+<li>add the record to the spent table in <code>cfw_meta</code> (<code>recover_spent</code>) with no <code>await</code> between the check
+and the write, so two racing requests spend it once; a spent record is a 410;</li>
+<li>delete the KV record, best effort;</li>
+<li>answer <code>{ &quot;ok&quot;: true, &quot;ownerToken&quot;: &quot;...&quot; }</code> with <code>cache-control: no-store</code>, or 409 if the site has
+no token yet.</li>
+</ol>
+<div class="table"><table>
+<thead>
+<tr>
+<th>status</th>
+<th><code>reason</code></th>
+<th>counts as a failure</th>
+<th>the client</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>200</td>
+<td></td>
+<td>clears the budget</td>
+<td>prints the token</td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>malformed</code></td>
+<td>yes</td>
+<td>stops</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>wrong-host</code></td>
+<td>yes</td>
+<td>stops</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>unknown</code></td>
+<td>yes</td>
+<td>retries; KV may not have it yet</td>
+</tr>
+<tr>
+<td>409</td>
+<td><code>unclaimed</code></td>
+<td>no</td>
+<td>stops; run <code>site claim</code></td>
+</tr>
+<tr>
+<td>410</td>
+<td><code>spent</code></td>
+<td>yes</td>
+<td>stops; run the command again</td>
+</tr>
+<tr>
+<td>429</td>
+<td><code>rate</code></td>
+<td>n/a</td>
+<td>stops; <code>retry-after</code> says how long</td>
+</tr>
+<tr>
+<td>501</td>
+<td><code>no-kv</code></td>
+<td>no</td>
+<td>stops; the deployment has no KV</td>
+</tr>
+</tbody></table></div>
+<p><strong>Why the spent table is in the object and not in KV.</strong> A deleted KV key can be served for another
+minute at a different colo, so a replay inside that window would find the record. The object is
+strongly consistent, which makes it the only place single use can be enforced. The KV delete is
+tidiness.</p>
+<p><strong>Why a recovery never mints.</strong> The route reads <code>owner_token</code> and never calls <code>ensureOwnerToken()</code>,
+which mints on a miss. A recovery on an unclaimed site would otherwise claim it for whoever holds KV
+access. The proof is spent in that case, and the client names <code>drangler site claim</code>.</p>
+<p><strong>The failure budget is the owner check&#39;s.</strong> <code>OWNER_FAIL_LIMIT</code> in <code>src/ops/admin-session.ts</code>: 12
+failures per 60 seconds, per isolate, keyed on <code>cf-connecting-ip</code>, checked before the hop and shared
+with the owner check and the sign-in form. A 404 counts because KV is eventually consistent and a
+fresh record can miss, so the client paces its retries (growing pauses, at most eight attempts) to
+stay under it. The budget removes the object-request cost of guessing. Guessing a 256-bit nonce was
+never the threat.</p>
+<p>Limits worth knowing:</p>
+<ul>
+<li>Edit rights on the <code>CONFIG_KV</code> namespace are owner-equivalent. A token scoped to &quot;Workers KV
+Storage: Edit&quot; is enough. In a managed deployment the operator owns the namespace and can already
+read every object, so tenants must never hold KV API access.</li>
+<li>A client clock more than about a minute behind the worker&#39;s makes <code>exp</code> already past (410).</li>
+<li>The token is not rotated. Whatever else holds it keeps working.</li>
+<li>A local <code>wrangler dev</code> site has local KV, which the Cloudflare API cannot write; the route is
+meant for a deployed site.</li>
+</ul>
 <h2 id="cron">Cron</h2>
 <div class="table"><table>
 <thead>

@@ -13,7 +13,7 @@
 <h1>Variable ADMIN_DEPLOY_CONNECT_JS<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">ADMIN_DEPLOY_CONNECT_JS</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;document.getElementById(&#39;cfoauth&#39;).addEventListener(&#39;submit&#39;, async (e) =&gt; {\n\te.preventDefault();\n\tconst out = document.getElementById(&#39;cfoauth-out&#39;);\n\tconst id = new FormData(e.target).get(&#39;client_id&#39;);\n\tif (!id) {\n\t\tout.textContent = &#39;Enter the client ID from your OAuth client.&#39;;\n\t\treturn;\n\t}\n\tout.textContent = &#39;Starting...&#39;;\n\ttry {\n\t\tconst res = await fetch(&#39;/setup/cf?action=connect&amp;client_id=&#39; + encodeURIComponent(id), {\n\t\t\tcredentials: &#39;same-origin&#39;\n\t\t});\n\t\tconst data = await res.json();\n\t\tif (!data.ok) throw new Error(data.error || &#39;refused&#39;);\n\t\twindow.location.href = data.authorizeUrl;\n\t} catch (err) {\n\t\tout.textContent = &#39;Could not start: &#39; + err.message;\n\t}\n});\n&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cb0dbf396e66d474556288a201904c29463a6d31/src/site/generated/assets.ts#L23">src/site/generated/assets.ts:23</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d51e10602b9e59bc0e033b39bdbf4f1c7a7c6dbe/src/site/generated/assets.ts#L23">src/site/generated/assets.ts:23</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

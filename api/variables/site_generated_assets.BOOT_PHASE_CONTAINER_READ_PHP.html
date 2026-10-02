@@ -13,7 +13,7 @@
 <h1>Variable BOOT_PHASE_CONTAINER_READ_PHP<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">BOOT_PHASE_CONTAINER_READ_PHP</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;\n// 3.1&#39;s suspect, isolated. This is the row $kernel-&gt;boot() reads, fetched the same way -- across\n// the host bridge, which encodes every value through json_encode(pw_encode()). Selecting data\n// rather than LENGTH(data): the question is what carrying half a megabyte through that\n// bridge costs, and LENGTH() would answer it with an integer.\n$rows = cfw_sql(&#39;SELECT cid, data FROM cache_container LIMIT 1&#39;);\n$row = is_array($rows) &amp;&amp; isset($rows[&#39;rows&#39;][0]) ? $rows[&#39;rows&#39;][0] : null;\n$blob = is_array($row) ? (string) ($row[&#39;data&#39;] ?? &#39;&#39;) : &#39;&#39;;\n$mark[&#39;containerRowFound&#39;] = $row !== null;\n$mark[&#39;containerCid&#39;] = is_array($row) ? substr((string) ($row[&#39;cid&#39;] ?? &#39;&#39;), 0, 80) : null;\n$mark[&#39;containerBytes&#39;] = strlen($blob);\n&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/site/generated/assets.ts#L87">src/site/generated/assets.ts:87</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/site/generated/assets.ts#L87">src/site/generated/assets.ts:87</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

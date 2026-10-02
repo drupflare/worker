@@ -17,10 +17,12 @@
 message varies and is not a slot), so a single refusal must not latch for the generation:
 <code>/admin/content</code> on <code>wrangler dev</code> is 12.6-17.9 req/s unserved against 221-400 req/s served.</p>
 <p>It stays bounded, since a page that varies every render would otherwise spend a diff every third
-render forever.</p>
+render forever. A spent key tries again after <a href="ops_edge-plan.PLAN_TTL_MS.html" class="tsd-kind-variable">PLAN_TTL_MS</a>: a re-proof drops a plan whose
+page ticks (a &quot;Member for&quot; line) and each recompile can refuse, so a permanent latch would
+eventually stop a page that holds a plan most of the time.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/edge-plan.ts#L88">src/ops/edge-plan.ts:88</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/edge-plan.ts#L90">src/ops/edge-plan.ts:90</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

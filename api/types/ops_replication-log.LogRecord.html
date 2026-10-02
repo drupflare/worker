@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">LogRecord</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#fingerprint">fingerprint</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#generation">generation</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#overflowed">overflowed</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#parent">parent</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#schemaversion">schemaVersion</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#statements">statements</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">params</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">sql</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/replication-log.ts#L13">src/ops/replication-log.ts:13</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/replication-log.ts#L13">src/ops/replication-log.ts:13</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -40,14 +40,14 @@
 <div class="tsd-comment tsd-typography"><p>the primary's authoritative-state fingerprint at <a href="#generation" class="tsd-kind-property">generation</a></p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/replication-log.ts#L21">src/ops/replication-log.ts:21</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/replication-log.ts#L21">src/ops/replication-log.ts:21</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="generation"><span>generation</span><a href="#generation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">generation</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>the generation this record produces</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/replication-log.ts#L15">src/ops/replication-log.ts:15</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/replication-log.ts#L15">src/ops/replication-log.ts:15</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="overflowed"><code class="tsd-tag">Optional</code><span>overflowed</span><a href="#overflowed" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">overflowed</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
@@ -55,28 +55,28 @@
 meeting it must restore (a truncated list would apply cleanly and be wrong).</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/replication-log.ts#L26">src/ops/replication-log.ts:26</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/replication-log.ts#L26">src/ops/replication-log.ts:26</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="parent"><span>parent</span><a href="#parent" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">parent</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>the generation it must be applied on top of</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/replication-log.ts#L17">src/ops/replication-log.ts:17</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/replication-log.ts#L17">src/ops/replication-log.ts:17</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="schemaversion"><span>schema<wbr/>Version</span><a href="#schemaversion" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">schemaVersion</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the pack generation both sides must agree on</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/replication-log.ts#L19">src/ops/replication-log.ts:19</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/replication-log.ts#L19">src/ops/replication-log.ts:19</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="statements"><span>statements</span><a href="#statements" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">statements</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">params</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">sql</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">[]</span></div>
 <div class="tsd-comment tsd-typography"><p>the primary's writes, in order</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/11efa3a69cc147a583a3e0fb2ee72928f4b64191/src/ops/replication-log.ts#L28">src/ops/replication-log.ts:28</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d633a47479dc7c2b18b8915aa1ad8b717667e67b/src/ops/replication-log.ts#L28">src/ops/replication-log.ts:28</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

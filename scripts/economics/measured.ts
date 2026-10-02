@@ -93,6 +93,33 @@ export const DRUPFLARE_ENERGY_PARITY = 1.06;
 
 export const IDLE_W_VPS_ARM = 18.17;
 
+// --- the J/view run ---------------------------------------------------------------------------
+
+/**
+ * CPU milliseconds per view, from each arm's cgroup, median of the valid class windows.
+ *
+ * `measured` on `paisley-park`, 2026-10-01, `scripts/measure/jview-energy.ts`, n=6-7 rounds per cell.
+ * `vps` is nginx with its cache plus php-fpm, `vpsFpm` is php-fpm with Drupal's page cache alone,
+ * and `bastion` is drupflare on a self-hosted node. The 3 CPUs are the cgroup cap of each arm.
+ */
+export const JVIEW_CPU_MS = {
+	vps: {
+		anonCached: 0.391,
+		anonMiss: 19.644,
+		authFront: 10.245,
+		authAdmin: 20.636,
+		authAccount: 12.885
+	},
+	vpsFpm: { anonCached: 2.265 },
+	bastion: {
+		anonCached: 1.105,
+		anonMiss: 32.51,
+		authFront: 2.867,
+		authAdmin: 2.92,
+		authAccount: 30.325
+	}
+};
+
 // --- the constraint -------------------------------------------------------------------------
 
 /** above this share of views a cold-path measurement is the wrong input */

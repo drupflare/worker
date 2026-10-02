@@ -21,11 +21,14 @@ import {
 const IDLE_W = 135.0; // SPECpower, Dell PowerEdge R6725 (EPYC 9845), active idle, 2025-10
 const PEAK_W = 460.0; // same class under full load; generous, keeps VPS busy-share cheap
 const PUE_COLO = 1.54; // Uptime Institute 2025 weighted average (colo/enterprise is 1.58-1.80)
-const PUE_HYPER = 1.15; // Uptime 2025 hyperscale band 1.10-1.15; take the WORSE end for us
+export const PUE_HYPER = 1.15; // Uptime 2025 hyperscale band 1.10-1.15; take the WORSE end for us
 const G_PER_KWH_US = num('grid-us', 384.0); // Ember Global Electricity Review 2025, US
 const G_PER_KWH_EU = num('grid-eu', 140.0); // IEA/EEA 2026 forecast, EU
 const HOURS_YEAR = 8766.0;
 const CORES = 128.0; // physical cores on the 2-socket host both sides are modelled on
+
+/** marginal power of one busy core, plus that core's share of idle while it is busy */
+export const W_PER_CORE = (PEAK_W - IDLE_W) / CORES + IDLE_W / CORES;
 
 /** Linear interpolation between idle and peak; standard first-order server power model. */
 export function wattsAt(util: number): number {
@@ -98,9 +101,7 @@ export function savingPct(incumbentKwh: number, viewsMonth: number): number {
 export function drupflareKwhYear(viewsMonth: number, renderFrac: number, renderMs: number): number {
 	const viewsYear = viewsMonth * 12.0;
 	const cpuS = (viewsYear * ((1 - renderFrac) * CPU_MS_CACHED + renderFrac * renderMs)) / 1000.0;
-	// marginal power of one busy core, plus that core's share of idle while it is busy
-	const wPerCore = (PEAK_W - IDLE_W) / CORES + IDLE_W / CORES;
-	return (cpuS * wPerCore * PUE_HYPER) / 3600.0 / 1000.0;
+	return (cpuS * W_PER_CORE * PUE_HYPER) / 3600.0 / 1000.0;
 }
 
 function row(

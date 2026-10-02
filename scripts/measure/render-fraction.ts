@@ -75,6 +75,8 @@ type Inputs = {
 	pagesPerSave: number;
 	/** Zipf exponent over the path set; 0 is the uniform strawman, ~1 is what web traffic reports near */
 	zipf: number;
+	/** edge cache lifetime in seconds; defaults to the front worker's own */
+	ttlS?: number;
 };
 
 type Result = {
@@ -116,7 +118,7 @@ export function model(inp: Inputs): Result {
 	const weightSum = DIURNAL.reduce((a, b) => a + b, 0);
 	const requestsPerDay = (inp.viewsPerMonth * 12) / 365;
 	const share = zipf(inp.paths, inp.zipf);
-	const rendersPerColoPerHour = 3600 / TTL_S;
+	const rendersPerColoPerHour = 3600 / (inp.ttlS ?? TTL_S);
 	const invalidationPerDay = inp.savesPerDay * inp.pagesPerSave * inp.colos;
 
 	let renders = 0;

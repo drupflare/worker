@@ -40,6 +40,39 @@ export function wattsAt(util: number): number {
 	return IDLE_W + (PEAK_W - IDLE_W) * util;
 }
 
+/** installed memory of the same SPECpower result: 24 x 16 GB DDR5, in GiB */
+export const HOST_MEMORY_GIB = 384;
+
+/** the result's measured points, as target load against watts; the model above interpolates between idle and peak only */
+export const SPEC_LOAD_POINTS: readonly (readonly [number, number])[] = [
+	[0, 135],
+	[0.1, 256],
+	[0.5, 466],
+	[1, 711]
+];
+
+/** the host's draw at a target load, interpolated between the measured points */
+export function specWattsAt(load: number): number {
+	for (let i = 1; i < SPEC_LOAD_POINTS.length; i += 1) {
+		const [u1, w1] = SPEC_LOAD_POINTS[i]!;
+		if (load <= u1) {
+			const [u0, w0] = SPEC_LOAD_POINTS[i - 1]!;
+			return w0 + ((load - u0) / (u1 - u0)) * (w1 - w0);
+		}
+	}
+	return PEAK_W;
+}
+
+/** watts charged to one busy core-second when the host runs at a load, so 100% is the floor {@link W_PER_CORE} uses */
+export function wattsPerBusyCore(load: number): number {
+	return specWattsAt(load) / (load * CORES);
+}
+
+/** how far the linear model sits below the measured curve at a load; above 1 means it understates the draw */
+export function linearUnderstatement(load: number): number {
+	return specWattsAt(load) / wattsAt(load);
+}
+
 /** One VPS's share of its host, running 24/7 whether or not anyone visits. */
 export function vpsKwhYear(density: number, util: number): number {
 	return ((wattsAt(util) / density) * PUE_COLO * HOURS_YEAR) / 1000.0;

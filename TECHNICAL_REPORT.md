@@ -1742,6 +1742,13 @@ them to record, so the counter sustained itself and was most of what it counted.
 the `setAlarm` alone and the two meter rows are amortised across 7.5 firings: 10,800 + 1,440 x 2 =
 13,680 a day. `tests/integration/warm-alarm-cost.spec.ts` pins the per-tick count at exactly 1.
 
+**CORRECTED 2026-10-02: the meter flush is 96 rows a day now, so a warmed object spends 10,896 rows a
+day, not 13,680.** `meterFlushBudget()` scales the flush interval with the remaining row budget, and an
+idle chain sits at its loosest, 900 s, one row a flush. The firings and object requests are unchanged
+at 10,800 a day. The cost model reads the interval from that function (`METER_FLUSH_SECONDS` in
+`scripts/measure/free-envelope.ts`), so the rows column above is the figure at the 60 s interval it was
+measured at and 10.9% of free's daily rows is the figure that ships.
+
 The model had to grow a second term for this. Folding the flush into a per-arm constant is wrong at
 every interval except the one it was derived at, and the flush is additionally capped by the FIRINGS
 -- an object waking every 240 s cannot flush every 60 s, and without the cap the model charged a

@@ -205,6 +205,24 @@ export function headline(viewsMonth: number) {
 	};
 }
 
+/** one row of the headline in whole-year energy: each deployment's kWh a year, idle included, and the saving */
+export function headlineYear(viewsMonth: number) {
+	const [matched, peak] = PRODUCTION_SHAPES as [ProductionShape, ProductionShape];
+	const drupflareKwh = drupflareKwhYearOnMix(viewsMonth);
+	const productionKwh = productionKwhYear(matched);
+	const peakKwh = productionKwhYear(peak);
+	return {
+		drupflareKwh,
+		productionKwh,
+		peakKwh,
+		savedKwh: productionKwh - drupflareKwh,
+		productionMultiple: productionKwh / drupflareKwh,
+		peakMultiple: peakKwh / drupflareKwh,
+		productionSaving: (1 - drupflareKwh / productionKwh) * 100,
+		peakSaving: (1 - drupflareKwh / peakKwh) * 100
+	};
+}
+
 /**
  * The render rate above which an nginx-hit opponent costs more per anonymous view than drupflare
  * would if it never rendered: where the hit gap (7.4 against 3.0 mJ) is paid back by renders.
@@ -215,16 +233,19 @@ export const BREAK_EVEN_RENDER_RATE =
 if (import.meta.main) {
 	const head = `${l('', 42)} ${VIEWS.map((v) => r(sfx(v, 0), 9)).join(' ')}`;
 
-	console.log('headline: energy per view, all-in, idle included (derived (modelled))\n');
+	console.log('headline: total energy a year, idle included (derived (modelled))\n');
 	console.log(
-		`${r('views/mo', 11)} ${r('drupflare', 13)} ${r('production', 13)} ${r('peak-sized', 13)} ${r('prod x', 10)} ${r('prod %', 9)} ${r('peak x', 10)} ${r('peak %', 9)}`
+		`${r('views/mo', 11)} ${r('drupflare', 11)} ${r('production', 11)} ${r('saved', 11)} ${r('prod x', 10)} ${r('prod %', 9)} ${r('peak x', 10)} ${r('peak %', 9)}`
 	);
 	for (const v of VIEWS) {
-		const h = headline(v);
+		const h = headlineYear(v);
 		console.log(
-			`${nr(v, 11)} ${r(energyJ(h.drupflare), 13)} ${r(energyJ(h.production), 13)} ${r(energyJ(h.peakSized), 13)} ${r(n(h.productionMultiple, 0), 10)} ${fr(h.productionSaving, 9, 4)} ${r(n(h.peakMultiple, 0), 10)} ${fr(h.peakSaving, 9, 4)}`
+			`${nr(v, 11)} ${r(energyKwh(h.drupflareKwh), 11)} ${r(energyKwh(h.productionKwh), 11)} ${r(energyKwh(h.savedKwh), 11)} ${r(n(h.productionMultiple, 0), 10)} ${fr(h.productionSaving, 9, 4)} ${r(n(h.peakMultiple, 0), 10)} ${fr(h.peakSaving, 9, 4)}`
 		);
 	}
+	console.log(
+		`\npeak-sized deployment: ${energyKwh(productionKwhYear(PRODUCTION_SHAPES[1] as ProductionShape))} a year`
+	);
 
 	console.log('\nproduction deployments, idle energy a year at colo PUE (derived (modelled))\n');
 	console.log(

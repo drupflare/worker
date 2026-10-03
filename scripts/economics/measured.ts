@@ -46,6 +46,23 @@ export const STALE_SERVE_MS = 12.0;
 /** a freshly provisioned site's database, 4,726,784 bytes, in the GB the storage meters bill */
 export const SITE_GB = 4.726784 / 1000.0;
 
+// --- what a site that stays resident, or wakes cold, costs --------------------------------------
+
+/** cpuTime of a cold interpreter boot, median of four fresh objects on a deployed paid worker, 2026-09-09 */
+export const COLD_BOOT_MS = 1264.0;
+
+/** billed wall time of one warming firing, n=116 across two deployed objects; CPU time was not read */
+export const WARM_FIRING_WALL_MS = 23.3;
+
+/** what one object may hold before the platform resets it, ramped on a paid object 2026-09-25 */
+export const OBJECT_MEMORY_MIB = 195;
+
+/**
+ * what the platform meters for an object holding a booted interpreter, the midpoint of 165-175 MiB
+ * from the same ramp, taken against the 80 MiB-start binary; the 64 MiB start since 2026-09-30 is lower
+ */
+export const BOOTED_FOOTPRINT_MIB = 170;
+
 // --- paths that are not a plain serve ----------------------------------------------------------
 
 /**

@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest';
+import { account } from '../../scripts/economics/bill';
 import {
 	CORES,
 	FLOOR_KWH_YEAR,
+	HOST_MEMORY_GIB,
 	IDLE_W,
 	PEAK_W,
 	PRODUCTION_SHAPES,
 	THREADS_PER_HOST,
 	W_PER_CORE,
+	linearUnderstatement,
 	productionKwhYear,
+	specWattsAt,
+	wattsPerBusyCore,
 	type ProductionShape
 } from '../../scripts/economics/energy';
 import {
@@ -30,6 +35,7 @@ import {
 	inUnit,
 	sig3
 } from '../../scripts/economics/fmt';
+import { BOOTED_FOOTPRINT_MIB, WARM_FIRING_WALL_MS } from '../../scripts/economics/measured';
 import {
 	COST,
 	HOST_SHAPES,
@@ -39,11 +45,29 @@ import {
 	drupflareMjPerView,
 	drupflareRenderRate,
 	headline,
+	headlineYear,
 	joulesPerView,
 	opponentMjPerView,
 	renderRate,
 	savingPct
 } from '../../scripts/economics/perview';
+import { DURABLE_OBJECTS } from '../../scripts/economics/rates';
+import {
+	COLD_ENCOUNTER_MS,
+	COMPOUND_EXTRA_WH_YEAR,
+	MODEL_AUTH_SHARE,
+	NGINX_HIT,
+	WARM_FIRINGS_PER_DAY,
+	breakEvenAuthShare,
+	breakEvenHold,
+	coldEncounterWhYear,
+	drupflareMj,
+	fleetSaving,
+	residencyWhYear,
+	shieldRatio,
+	states,
+	warmAlarmWhYear
+} from '../../scripts/economics/states';
 
 describe('energy units', () => {
 	it('picks the SI prefix that makes the number read naturally', () => {
@@ -259,5 +283,203 @@ describe('fleet energy, carbon and water', () => {
 		const s = FLEET_TABLE_VIEWS.map((v) => saving(v));
 		for (let i = 1; i < s.length; i++) expect(s[i]).toBeLessThan(s[i - 1]!);
 		expect(saving(10_000)).toBeGreaterThan(99.9);
+	});
+});
+
+describe('the whole-year headline', () => {
+	it('states each deployment in kWh a year and agrees with the per-view reading', () => {
+		const h = headlineYear(1_000_000);
+		expect(h.productionKwh).toBeCloseTo(224.2, 1);
+		expect(h.peakKwh).toBeCloseTo(390.0, 1);
+		expect(h.savedKwh).toBeCloseTo(h.productionKwh - h.drupflareKwh, 9);
+		expect(h.productionMultiple).toBeCloseTo(headline(1_000_000).productionMultiple, 3);
+		expect(h.peakSaving).toBeGreaterThan(h.productionSaving);
+	});
+});
+
+describe('the paid plan keeps every site warm', () => {
+	const D = 30.44;
+	const sites = 1_000;
+	const views = 10_000;
+	// the rate card, the measured firing and the object's own flush policy, with none of the model
+	const firings = WARM_FIRINGS_PER_DAY * D * sites;
+	const rows = 10_896 * D * sites;
+	const gbS = firings * (WARM_FIRING_WALL_MS / 1000) * 0.128;
+	const card = DURABLE_OBJECTS;
+	const warmOnly =
+		Math.max(0, rows - card.rowsWrittenIncluded) * (card.usdPerMillionRowsWritten / 1e6) +
+		Math.ceil((firings - card.requestsIncluded) / 1e6) * card.usdPerMillionRequests +
+		Math.ceil((gbS - card.gbSIncluded) / 1e6) * card.usdPerMillionGbS;
+
+	it('costs about $350 for a thousand sites, and the chain is most of it', () => {
+		const warm = account(sites, views, 'always').total;
+		// what the first-principles bill leaves out is the visitors' own rows and object requests
+		expect(warm - warmOnly - 5).toBeLessThan(3);
+		expect(warm).toBeGreaterThan(warmOnly + 5);
+		expect(warm / sites).toBeCloseTo(0.35, 2);
+	});
+
+	it('charges the chain its duration, which is what pushes a fleet past the included GB-seconds', () => {
+		expect(gbS).toBeGreaterThan(card.gbSIncluded);
+		const withoutDuration = warmOnly - card.usdPerMillionGbS;
+		expect(account(sites, views, 'always').total - 5 - withoutDuration).toBeGreaterThan(
+			card.usdPerMillionGbS - 1
+		);
+	});
+
+	it('leaves a sleeping fleet as it was', () => {
+		expect(account(sites, views).total).toBeCloseTo(5.8, 1);
+		expect(account(100, views).free).toBe(true);
+		expect(account(sites, views, 'always').total).toBeGreaterThan(
+			account(sites, views).total * 50
+		);
+	});
+
+	it('is free for one site either way', () => {
+		expect(account(1, views, 'always').free).toBe(true);
+	});
+});
+
+describe('the states a site can be in', () => {
+	it('prices cold encounters and the warming chain from measured firings and boots', () => {
+		expect(WARM_FIRINGS_PER_DAY).toBe(10_800);
+		expect(COLD_ENCOUNTER_MS).toBeCloseTo(3_391, 0);
+		expect(warmAlarmWhYear()).toBeCloseTo(65.2, 0);
+		expect(warmAlarmWhYear(0.1)).toBeCloseTo(warmAlarmWhYear() / 10, 9);
+		expect(coldEncounterWhYear(5)).toBeCloseTo(5 * coldEncounterWhYear(1), 9);
+	});
+
+	it('charges a resident object its share of the host idle draw', () => {
+		expect(HOST_MEMORY_GIB).toBe(384);
+		expect(residencyWhYear()).toBeCloseTo((195 / (384 * 1024)) * 135 * 8766 * 1.15, 6);
+		expect(residencyWhYear()).toBeCloseTo(675, 0);
+	});
+
+	it('scales the memory charge with what is held and for how much of the year', () => {
+		expect(residencyWhYear(BOOTED_FOOTPRINT_MIB)).toBeCloseTo(
+			(residencyWhYear() * BOOTED_FOOTPRINT_MIB) / 195,
+			9
+		);
+		expect(residencyWhYear(195, 0.25)).toBeCloseTo(residencyWhYear() / 4, 9);
+		expect(residencyWhYear(195, 0)).toBe(0);
+		for (const v of [10_000, 1_000_000]) {
+			let last = Infinity;
+			for (const share of [0.01, 0.1, 0.25, 0.5, 1]) {
+				const s = fleetSaving(v, residencyWhYear(BOOTED_FOOTPRINT_MIB, share));
+				expect(s).toBeLessThan(last === Infinity ? 100 : last);
+				last = s;
+			}
+			expect(fleetSaving(v, residencyWhYear(BOOTED_FOOTPRINT_MIB))).toBeGreaterThan(
+				fleetSaving(v, residencyWhYear())
+			);
+			expect(fleetSaving(v, residencyWhYear(195, 0.01))).toBeGreaterThan(98);
+		}
+	});
+
+	it('keeps the saving falling as a site holds more, and above the stated floors', () => {
+		for (const v of [10_000, 1_000_000, 10_000_000]) {
+			const rows = states(v);
+			expect(rows[0]!.name).toContain('headline');
+			expect(rows[0]!.whYear).toBeCloseTo(drupflareKwhYearOnMix(v) * 1000, 9);
+			const last = rows[rows.length - 1]!;
+			for (const r of rows) {
+				expect(r.vsProduction).toBeLessThanOrEqual(rows[0]!.vsProduction);
+				expect(r.vsProduction).toBeGreaterThan(99.5);
+				expect(r.vsVps).toBeGreaterThan(90);
+			}
+			expect(last.vsProduction).toBeLessThan(rows[1]!.vsProduction);
+		}
+	});
+
+	it('labels the last row as a bound and not as a state a site sits in', () => {
+		const rows = states(1_000_000);
+		expect(rows[rows.length - 1]!.name).toBe('compound adversarial bound');
+		expect(rows[rows.length - 1]!.whYear).toBeCloseTo(
+			rows[0]!.whYear + COMPOUND_EXTRA_WH_YEAR,
+			9
+		);
+	});
+
+	it('carries the warm bounds into the fleet, where memory is nearly all of the difference', () => {
+		for (const v of [10_000, 1_000_000, 20_000_000]) {
+			expect(fleetSaving(v)).toBeCloseTo(saving(v), 9);
+			const cpu = fleetSaving(v, warmAlarmWhYear());
+			const memory = fleetSaving(v, residencyWhYear());
+			const compound = fleetSaving(v, COMPOUND_EXTRA_WH_YEAR);
+			expect(cpu).toBeLessThan(fleetSaving(v));
+			expect(memory).toBeLessThan(cpu);
+			expect(compound).toBeLessThan(memory);
+			expect(fleetSaving(v) - cpu).toBeLessThan(fleetSaving(v) - memory);
+			expect(compound).toBeGreaterThan(55);
+		}
+	});
+
+	it('moves the 10,000-view multiplier by cold encounters and the 1M one barely at all', () => {
+		const low = states(10_000);
+		const mid = states(1_000_000);
+		expect(low[1]!.whYear / low[0]!.whYear).toBeGreaterThan(2);
+		expect(mid[1]!.whYear / mid[0]!.whYear).toBeLessThan(1.06);
+	});
+});
+
+describe('the per-view comparison against a shielded 24 h cache', () => {
+	const shield = OPPONENTS[3]!;
+	const free = OPPONENTS[4]!;
+
+	it('reproduces the published cells at the model logged-in share with the plan holding', () => {
+		for (const v of [1_000_000, 10_000_000]) {
+			expect(drupflareMj(v, MODEL_AUTH_SHARE, 1)).toBeCloseTo(drupflareMjPerView(v), 6);
+			expect(shieldRatio(v, MODEL_AUTH_SHARE, 1, NGINX_HIT)).toBeCloseTo(
+				opponentMjPerView(shield, v) / drupflareMjPerView(v),
+				6
+			);
+			expect(shieldRatio(v, MODEL_AUTH_SHARE, 1, 0)).toBeCloseTo(
+				opponentMjPerView(free, v) / drupflareMjPerView(v),
+				6
+			);
+		}
+	});
+
+	it('leaves the shield ahead on a mostly anonymous mix and drupflare ahead as logged-in views grow', () => {
+		for (const v of [1_000_000, 10_000_000]) {
+			expect(shieldRatio(v, 0, 1, NGINX_HIT)).toBeLessThan(1);
+			expect(shieldRatio(v, 0.2, 1, NGINX_HIT)).toBeGreaterThan(2);
+			expect(breakEvenAuthShare(v, NGINX_HIT)).toBeGreaterThan(0.04);
+			expect(breakEvenAuthShare(v, NGINX_HIT)).toBeLessThan(0.05);
+		}
+	});
+
+	it('needs the plan to hold on most logged-in views, and on more of them against a free hit', () => {
+		for (const v of [1_000_000, 10_000_000]) {
+			expect(breakEvenHold(v, NGINX_HIT)).toBeGreaterThan(0.7);
+			expect(breakEvenHold(v, NGINX_HIT)).toBeLessThan(0.76);
+			expect(breakEvenHold(v, 0)).toBeGreaterThan(0.9);
+			expect(breakEvenHold(v, 0)).toBeLessThan(0.95);
+		}
+	});
+
+	it('still renders less often than every shape modelled, the shield included', () => {
+		for (const shape of HOST_SHAPES) {
+			for (const v of [10_000, 1_000_000, 10_000_000]) {
+				expect(renderRate(shape, v)).toBeGreaterThan(drupflareRenderRate(v) * 4);
+			}
+		}
+	});
+});
+
+describe('watts for a busy core', () => {
+	it('puts the model figure at the full-load end of the measured curve and raises it as the host idles', () => {
+		expect(wattsPerBusyCore(1)).toBeCloseTo(W_PER_CORE, 9);
+		expect(wattsPerBusyCore(0.5)).toBeCloseTo(466 / 160, 9);
+		expect(wattsPerBusyCore(0.1)).toBeCloseTo(256 / 32, 9);
+		expect(wattsPerBusyCore(0.1)).toBeGreaterThan(wattsPerBusyCore(0.5));
+		expect(specWattsAt(0)).toBe(IDLE_W);
+		expect(specWattsAt(1)).toBe(PEAK_W);
+	});
+
+	it('shows the linear model understating the draw below full load', () => {
+		expect(linearUnderstatement(1)).toBeCloseTo(1, 9);
+		expect(linearUnderstatement(0.15)).toBeGreaterThan(1.2);
+		expect(linearUnderstatement(0.15)).toBeLessThan(1.3);
 	});
 });

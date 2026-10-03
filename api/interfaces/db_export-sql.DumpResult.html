@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">DumpResult</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#chars">chars</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#maxstatementchars">maxStatementChars</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#offsetpaged">offsetPaged</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#redacted">redacted</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#replayable">replayable</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#splitvalues">splitValues</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#sql">sql</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#statements">statements</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#structureonly">structureOnly</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#tables">tables</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/db/export-sql.ts#L194">src/db/export-sql.ts:194</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/db/export-sql.ts#L194">src/db/export-sql.ts:194</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -44,7 +44,7 @@
 <div class="tsd-comment tsd-typography"><p>characters, not bytes (a UTF-8 literal is wider on the wire)</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/db/export-sql.ts#L198">src/db/export-sql.ts:198</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/db/export-sql.ts#L198">src/db/export-sql.ts:198</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="maxstatementchars"><span>max<wbr/>Statement<wbr/>Chars</span><a href="#maxstatementchars" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">maxStatementChars</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
@@ -53,7 +53,7 @@
 960,544-character <code>cache_container</code> row that stores fine and fails mid-restore.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/db/export-sql.ts#L207">src/db/export-sql.ts:207</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/db/export-sql.ts#L207">src/db/export-sql.ts:207</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="offsetpaged"><span>offset<wbr/>Paged</span><a href="#offsetpaged" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">offsetPaged</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div>
@@ -62,38 +62,38 @@
 every schema this ships with.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/db/export-sql.ts#L225">src/db/export-sql.ts:225</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/db/export-sql.ts#L225">src/db/export-sql.ts:225</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="redacted"><span>redacted</span><a href="#redacted" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">redacted</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>rows withheld by <a href="../variables/db_export-sql.SECRET_META_KEYS.html" class="tsd-kind-variable">SECRET_META_KEYS</a>; a dump must say what it is not carrying</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/db/export-sql.ts#L213">src/db/export-sql.ts:213</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/db/export-sql.ts#L213">src/db/export-sql.ts:213</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="replayable"><span>replayable</span><a href="#replayable" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">replayable</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>false when any statement exceeds the ceiling, so a caller can refuse before storing it</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/db/export-sql.ts#L209">src/db/export-sql.ts:209</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/db/export-sql.ts#L209">src/db/export-sql.ts:209</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="splitvalues"><span>split<wbr/>Values</span><a href="#splitvalues" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">splitValues</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>values too wide for one statement, rebuilt with <code>col = col || ...</code> appends</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/db/export-sql.ts#L211">src/db/export-sql.ts:211</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/db/export-sql.ts#L211">src/db/export-sql.ts:211</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="sql"><span>sql</span><a href="#sql" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">sql</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/db/export-sql.ts#L195">src/db/export-sql.ts:195</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/db/export-sql.ts#L195">src/db/export-sql.ts:195</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="statements"><span>statements</span><a href="#statements" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">statements</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/db/export-sql.ts#L196">src/db/export-sql.ts:196</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/db/export-sql.ts#L196">src/db/export-sql.ts:196</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="structureonly"><span>structure<wbr/>Only</span><a href="#structureonly" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">structureOnly</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div>
@@ -101,14 +101,14 @@ every schema this ships with.</p>
 stale when the list changes.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/db/export-sql.ts#L218">src/db/export-sql.ts:218</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/db/export-sql.ts#L218">src/db/export-sql.ts:218</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="tables"><span>tables</span><a href="#tables" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">tables</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span></div>
 <div class="tsd-comment tsd-typography"><p>rows emitted per table, including the tables that emitted none</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/db/export-sql.ts#L200">src/db/export-sql.ts:200</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/db/export-sql.ts#L200">src/db/export-sql.ts:200</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

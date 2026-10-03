@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">SweepCursor</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#day">day</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#done">done</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#dospent">doSpent</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#generation">generation</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#lastrunms">lastRunMs</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#pages">pages</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowsspent">rowsSpent</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/sweep.ts#L325">src/ops/sweep.ts:325</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/ops/sweep.ts#L325">src/ops/sweep.ts:325</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -41,41 +41,41 @@
 <div class="tsd-comment tsd-typography"><p>the UTC day the spend belongs to; a different one is a fresh budget</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/sweep.ts#L327">src/ops/sweep.ts:327</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/ops/sweep.ts#L327">src/ops/sweep.ts:327</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="done"><span>done</span><a href="#done" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">done</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>true once nothing addressable is left uncovered at this generation</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/sweep.ts#L335">src/ops/sweep.ts:335</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/ops/sweep.ts#L335">src/ops/sweep.ts:335</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="dospent"><span>do<wbr/>Spent</span><a href="#dospent" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">doSpent</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/sweep.ts#L329">src/ops/sweep.ts:329</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/ops/sweep.ts#L329">src/ops/sweep.ts:329</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="generation"><span>generation</span><a href="#generation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">generation</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>the content generation the walk was planned against; a bump means the tail moved</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/sweep.ts#L332">src/ops/sweep.ts:332</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/ops/sweep.ts#L332">src/ops/sweep.ts:332</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="lastrunms"><span>last<wbr/>Run<wbr/>Ms</span><a href="#lastrunms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">lastRunMs</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/sweep.ts#L333">src/ops/sweep.ts:333</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/ops/sweep.ts#L333">src/ops/sweep.ts:333</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="pages"><span>pages</span><a href="#pages" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">pages</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/sweep.ts#L330">src/ops/sweep.ts:330</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/ops/sweep.ts#L330">src/ops/sweep.ts:330</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowsspent"><span>rows<wbr/>Spent</span><a href="#rowsspent" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsSpent</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/ops/sweep.ts#L328">src/ops/sweep.ts:328</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/ops/sweep.ts#L328">src/ops/sweep.ts:328</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

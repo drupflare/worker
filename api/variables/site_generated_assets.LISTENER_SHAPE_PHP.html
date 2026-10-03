@@ -13,7 +13,7 @@
 <h1>Variable LISTENER_SHAPE_PHP<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">LISTENER_SHAPE_PHP</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;\n/**\n * Describes a collected listener without calling it.\n *\n * @param callable|array|object|string $c\n *   A collected listener.\n */\nfunction cfw_listener_shape($c): string\n{\n\tif (is_array($c)) {\n\t\treturn (is_object($c[0]) ? get_class($c[0]) : (string) $c[0]) . &#39;::&#39; . $c[1];\n\t}\n\tif ($c instanceof Closure) {\n\t\treturn &#39;Closure&#39;;\n\t}\n\tif (is_object($c)) {\n\t\treturn get_class($c) . &#39;::__invoke&#39;;\n\t}\n\treturn gettype($c);\n}\n&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d63a3dbfb368174451c1d2f76fd1e97f90ae2d03/src/site/generated/assets.ts#L167">src/site/generated/assets.ts:167</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/site/generated/assets.ts#L167">src/site/generated/assets.ts:167</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

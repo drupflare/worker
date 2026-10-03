@@ -18,7 +18,7 @@
         "fzstd": "^0.1.1",
         "mysql2": "^3.24.4",
         "pg": "^8.23.0",
-        "php-wasm": "0.1.0",
+        "php-wasm": "0.2.0",
       },
       "devDependencies": {
         "@cloudflare/containers": "^0.3.7",
@@ -566,7 +566,7 @@
 
     "php-parser": ["php-parser@3.7.0", "", {}, "sha512-JRc1t78GZAEa+MuzVC5A5RJS1NDFTS4UnprUEu/NnsN9cyHbGZLUqghO9IQZUSCay62HYQiWd3PxyWAEF45zmA=="],
 
-    "php-wasm": ["php-wasm@0.1.0", "", {}, "sha512-8mqAUqYugBMT6YR8RC/5K2juvm31zO+KPdWI1Aij6KqFroCoDYSq2tLWTuIpJKx6Nq8o6gnI2jq5yjo3tK62hw=="],
+    "php-wasm": ["php-wasm@0.2.0", "", {}, "sha512-wID1a+RuyIlgk414FoBKM5z9UZ0sD4gl8Lu4fqy3K7d6kdZhfiC9u1/s3xJo5Is8ebj3VLiCVyp9INyZcgLuoA=="],
 
     "picocolors": ["picocolors@1.1.1", "", {}, "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="],
 

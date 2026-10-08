@@ -81,6 +81,17 @@ export async function readKvTier(f: FrontContext, edge: EdgeRead): Promise<Respo
 	if (edgeWanted && generation !== undefined) {
 		const stored = await readPage(env, site, generation, path);
 		if (stored) {
+			// a colo with no `caches.default` copy would otherwise pay this read on every view
+			storePageMemo(
+				pageKeyUrl(f.origin, site, generation, path),
+				{
+					body: new TextEncoder().encode(stored.html),
+					status: stored.status,
+					contentType: stored.contentType,
+					headers: [['x-cfw-generation', String(generation)]]
+				},
+				t0
+			);
 			return new Response(stored.html, {
 				status: stored.status,
 				headers: {

@@ -141,6 +141,103 @@ export function beatsByTwentyPercent(
 	return { beats: ratios.length > 0 && ratios.every((r) => r <= threshold), ratios };
 }
 
+/** A deterministic uniform generator in [0,1) (mulberry32), so a bootstrap repeats for one seed. */
+export function seededRandom(seed: number): () => number {
+	let a = seed >>> 0;
+	return () => {
+		a = (a + 0x6d2b79f5) >>> 0;
+		let t = a;
+		t = Math.imul(t ^ (t >>> 15), t | 1);
+		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+}
+
+/**
+ * Treatment over control for each paired block.
+ *
+ * Refuses a control at or below zero: an idle-subtracted reading can go negative, and a ratio
+ * against it is not a ratio, so clamping would invent a number.
+ */
+export function pairedRatios(control: number[], treatment: number[]): number[] {
+	if (control.length !== treatment.length) {
+		throw new Error(
+			`paired blocks differ in length: ${control.length} control, ${treatment.length} treatment`
+		);
+	}
+	if (control.length === 0) throw new Error('no paired blocks');
+	return control.map((c, i) => {
+		if (!(c > 0))
+			throw new Error(`control block ${i} is ${c}; a ratio needs a positive control`);
+		return (treatment[i] as number) / c;
+	});
+}
+
+/** Median of the ratios with a percentile bootstrap interval on it. */
+export function bootstrapMedianRatio(
+	ratios: number[],
+	opts: { iterations?: number; seed?: number; level?: number } = {}
+): { median: number; lo: number; hi: number; n: number } {
+	const iterations = opts.iterations ?? 10000;
+	const level = opts.level ?? 0.95;
+	const rand = seededRandom(opts.seed ?? 1);
+	const n = ratios.length;
+	const medians: number[] = [];
+	for (let i = 0; i < iterations; i += 1) {
+		const sample: number[] = [];
+		for (let j = 0; j < n; j += 1) sample.push(ratios[Math.floor(rand() * n)] as number);
+		medians.push(median(sample));
+	}
+	medians.sort((a, b) => a - b);
+	const tail = (1 - level) / 2;
+	const lo = medians[Math.floor(tail * iterations)] as number;
+	const hi = medians[Math.min(iterations - 1, Math.ceil((1 - tail) * iterations) - 1)] as number;
+	return { median: median(ratios), lo, hi, n };
+}
+
+/**
+ * Pass only when the upper bound of the interval is at or under the threshold.
+ *
+ * The median alone never passes: a median under the line with an upper bound over it is noise.
+ * The threshold is a product decision and the caller supplies it.
+ */
+export function ratioGate(
+	ratios: number[],
+	threshold: number,
+	opts: { minBlocks?: number; seed?: number } = {}
+): {
+	verdict: 'pass' | 'fail' | 'insufficient';
+	median: number;
+	lo: number;
+	hi: number;
+	n: number;
+	threshold: number;
+} {
+	const ci = bootstrapMedianRatio(ratios, { seed: opts.seed });
+	const verdict =
+		ci.n < (opts.minBlocks ?? 10) ? 'insufficient' : ci.hi <= threshold ? 'pass' : 'fail';
+	return { verdict, ...ci, threshold };
+}
+
+/** the verdict of {@link ratioGate} */
+export type GateVerdict = ReturnType<typeof ratioGate>['verdict'];
+
+/**
+ * The lowest ratio any treatment can reach, given the cost a null responder already pays.
+ *
+ * A floor result is a finding, not a failure to measure: it says the control is mostly wake and
+ * network cost that no treatment can remove, so the threshold is out of reach by construction.
+ */
+export function floorBound(
+	controlMj: number,
+	nullResponderMj: number
+): { share: number; minRatio: number; canShow(threshold: number): boolean } {
+	if (!(controlMj > 0)) throw new Error(`control energy is ${controlMj}; it must be positive`);
+	if (!(nullResponderMj >= 0)) throw new Error(`null responder energy is ${nullResponderMj}`);
+	const minRatio = nullResponderMj / controlMj;
+	return { share: minRatio, minRatio, canShow: (threshold) => minRatio < threshold };
+}
+
 /** the inputs of the derived arm, each one named so the output can print them beside the result */
 export type DerivedInputs = {
 	/** Cloudflare's published annual energy or the emissions it was converted from, in joules */

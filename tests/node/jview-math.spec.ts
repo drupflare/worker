@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
 	beatsByTwentyPercent,
+	bootstrapMedianRatio,
 	counterDelta,
 	derivedJoulesPerView,
+	floorBound,
 	jPerView,
 	median,
 	normalizeBody,
+	pairedRatios,
 	publishedHostJoulesPerView,
+	ratioGate,
 	scaleRates,
+	seededRandom,
 	smoothPicker,
 	spread,
 	weightedMean
@@ -85,6 +90,60 @@ describe('jview-math', () => {
 		expect(beatsByTwentyPercent([0.7, 0.75, 0.81], [1, 1, 1]).beats).toBe(false);
 		expect(beatsByTwentyPercent([], []).beats).toBe(false);
 		expect(beatsByTwentyPercent([0.8], [1]).beats).toBe(true);
+	});
+
+	it('pairs treatment over control and refuses what is not a ratio', () => {
+		expect(pairedRatios([2, 4], [1, 1])).toEqual([0.5, 0.25]);
+		expect(() => pairedRatios([1, 2], [1])).toThrow(/differ in length/);
+		expect(() => pairedRatios([], [])).toThrow(/no paired blocks/);
+		expect(() => pairedRatios([1, 0], [1, 1])).toThrow(/positive control/);
+		expect(() => pairedRatios([1, -3], [1, 1])).toThrow(/positive control/);
+	});
+
+	it('bootstraps the same interval for one seed and another for a second', () => {
+		const noisy = [0.5, 0.9, 0.6, 1.1, 0.7, 0.8, 1.3, 0.4, 0.95, 0.65];
+		const o = { iterations: 40, level: 0.5 };
+		const a = bootstrapMedianRatio(noisy, { ...o, seed: 7 });
+		expect(bootstrapMedianRatio(noisy, { ...o, seed: 7 })).toEqual(a);
+		const b = bootstrapMedianRatio(noisy, { ...o, seed: 8 });
+		expect([b.lo, b.hi]).not.toEqual([a.lo, a.hi]);
+		expect(a.lo).toBeLessThanOrEqual(a.median);
+		expect(a.hi).toBeGreaterThanOrEqual(a.median);
+		expect(a.n).toBe(10);
+		const flat = bootstrapMedianRatio([0.6, 0.6, 0.6, 0.6]);
+		expect([flat.lo, flat.hi, flat.median]).toEqual([0.6, 0.6, 0.6]);
+		const r = seededRandom(3);
+		const xs = Array.from({ length: 100 }, r);
+		expect(xs.every((x) => x >= 0 && x < 1)).toBe(true);
+		expect(Array.from({ length: 100 }, seededRandom(3))).toEqual(xs);
+	});
+
+	it('passes a ratio gate only on the upper bound, and never on a short sample', () => {
+		const near = [0.55, 0.6, 0.62, 0.58, 0.6, 0.63, 0.57, 0.61, 0.59, 0.6];
+		expect(ratioGate(near, 0.75).verdict).toBe('pass');
+		const wide = [0.5, 0.6, 0.7, 0.8, 0.9, 0.55, 0.65, 0.74, 0.85, 0.95];
+		const g = ratioGate(wide, 0.75);
+		expect(g.median).toBeLessThanOrEqual(0.75);
+		expect(g.hi).toBeGreaterThan(0.75);
+		expect(g.verdict).toBe('fail');
+		const nine = ratioGate(Array(9).fill(0.1), 0.75);
+		expect(nine.verdict).toBe('insufficient');
+		expect(ratioGate(Array(9).fill(0.1), 0.75, { minBlocks: 9 }).verdict).toBe('pass');
+		const aa = pairedRatios(Array(10).fill(5), Array(10).fill(5));
+		expect(ratioGate(aa, 0.75).verdict).toBe('fail');
+		expect(ratioGate(aa, 0.75).threshold).toBe(0.75);
+	});
+
+	it('bounds the best ratio by what a null responder already costs', () => {
+		const f = floorBound(176, 120);
+		expect(f.minRatio).toBeCloseTo(0.682, 3);
+		expect(f.share).toBe(f.minRatio);
+		expect(f.canShow(0.75)).toBe(true);
+		expect(floorBound(176, 150).canShow(0.75)).toBe(false);
+		expect(floorBound(100, 120).minRatio).toBeGreaterThan(1);
+		expect(() => floorBound(0, 1)).toThrow(/positive/);
+		expect(() => floorBound(-1, 1)).toThrow(/positive/);
+		expect(() => floorBound(10, -1)).toThrow(/null responder/);
 	});
 
 	it('attributes a network total over its requests and then over a view', () => {

@@ -18,11 +18,11 @@
         "fzstd": "^0.1.1",
         "mysql2": "^3.24.4",
         "pg": "^8.23.0",
-        "php-wasm": "0.1.0",
+        "php-wasm": "0.2.0",
       },
       "devDependencies": {
         "@cloudflare/containers": "^0.3.7",
-        "@cloudflare/vitest-pool-workers": "^0.22.0",
+        "@cloudflare/vitest-pool-workers": "^0.23.0",
         "@cloudflare/workers-types": "^5.20260829.1",
         "@playwright/test": "^1.62.1",
         "@prettier/plugin-php": "^0.25.0",
@@ -84,7 +84,7 @@
 
     "@cloudflare/unenv-preset": ["@cloudflare/unenv-preset@2.16.1", "", { "peerDependencies": { "unenv": "2.0.0-rc.24", "workerd": ">1.20260305.0 <2.0.0-0" } }, "sha512-ECxObrMfyTl5bhQf/lZCXwo5G6xX9IAUo+nDMKK4SZ8m4Jvvxp52vilxyySSWh2YTZz8+HQ07qGH/2rEom1vDw=="],
 
-    "@cloudflare/vitest-pool-workers": ["@cloudflare/vitest-pool-workers@0.22.0", "", { "dependencies": { "cjs-module-lexer": "1.2.3", "esbuild": "0.28.1", "miniflare": "5.20260815.0-alpha", "wrangler": "4.124.0", "zod": "4.4.3" }, "peerDependencies": { "@vitest/runner": "^4.1.0", "@vitest/snapshot": "^4.1.0", "vitest": "^4.1.0" } }, "sha512-OJv/qikkOgxnKxJ5xrLS7zuOLZhc/6iziU+llqZm4tiQf2CJUYwlMuXN68VaWIQebORd1AUx4w6A0oy8XRbuaQ=="],
+    "@cloudflare/vitest-pool-workers": ["@cloudflare/vitest-pool-workers@0.23.0", "", { "dependencies": { "cjs-module-lexer": "1.2.3", "esbuild": "0.28.1", "miniflare": "5.20260815.0-alpha", "wrangler": "4.124.0", "zod": "4.4.3" }, "peerDependencies": { "@vitest/runner": "^4.1.0", "@vitest/snapshot": "^4.1.0", "vitest": "^4.1.0" } }, "sha512-4giZR3fuY9GcTx6Jb7gZX33SUOgeY7rQSm9qSdf9TPfI8i3fP+P1ZA8BM9rMOSoMtLpwo+Zw5zy3v2Ux7iAvNA=="],
 
     "@cloudflare/workerd-darwin-64": ["@cloudflare/workerd-darwin-64@1.20260828.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-CVd+xPhqUESg8Xhq09TZx0wl4FSirfJGOzvbPz2yHhBIvmNHFFQkSN3rkd7wEwnhQQk37Xi0/aD6ykPLJbmGiQ=="],
 
@@ -566,7 +566,7 @@
 
     "php-parser": ["php-parser@3.7.0", "", {}, "sha512-JRc1t78GZAEa+MuzVC5A5RJS1NDFTS4UnprUEu/NnsN9cyHbGZLUqghO9IQZUSCay62HYQiWd3PxyWAEF45zmA=="],
 
-    "php-wasm": ["php-wasm@0.1.0", "", {}, "sha512-8mqAUqYugBMT6YR8RC/5K2juvm31zO+KPdWI1Aij6KqFroCoDYSq2tLWTuIpJKx6Nq8o6gnI2jq5yjo3tK62hw=="],
+    "php-wasm": ["php-wasm@0.2.0", "", {}, "sha512-wID1a+RuyIlgk414FoBKM5z9UZ0sD4gl8Lu4fqy3K7d6kdZhfiC9u1/s3xJo5Is8ebj3VLiCVyp9INyZcgLuoA=="],
 
     "picocolors": ["picocolors@1.1.1", "", {}, "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="],
 

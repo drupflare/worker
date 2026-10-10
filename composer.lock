@@ -454,16 +454,16 @@
         },
         {
             "name": "drupal/core",
-            "version": "11.4.7",
+            "version": "11.4.9",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupal/core.git",
-                "reference": "093cabca228b49f5df2283fc02d7e212ce31b6e3"
+                "reference": "cb07269d7829379f0960d469d7a0e6c045facd22"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/drupal/core/zipball/093cabca228b49f5df2283fc02d7e212ce31b6e3",
-                "reference": "093cabca228b49f5df2283fc02d7e212ce31b6e3",
+                "url": "https://api.github.com/repos/drupal/core/zipball/cb07269d7829379f0960d469d7a0e6c045facd22",
+                "reference": "cb07269d7829379f0960d469d7a0e6c045facd22",
                 "shasum": ""
             },
             "require": {
@@ -598,7 +598,8 @@
             },
             "autoload": {
                 "files": [
-                    "includes/bootstrap.inc"
+                    "includes/bootstrap.inc",
+                    "includes/guzzle_file_cookie_jar_shim.php"
                 ],
                 "psr-4": {
                     "Drupal\\Core\\": "lib/Drupal/Core",
@@ -635,7 +636,7 @@
             ],
             "description": "Drupal is an open source content management platform powering millions of websites and applications.",
             "support": {
-                "source": "https://github.com/drupal/core/tree/11.4.7"
+                "source": "https://github.com/drupal/core/tree/11.4.9"
             },
             "funding": [
                 {
@@ -643,11 +644,11 @@
                     "type": "other"
                 }
             ],
-            "time": "2026-09-16T14:39:21+00:00"
+            "time": "2026-10-09T17:44:27+00:00"
         },
         {
             "name": "drupal/core-composer-scaffold",
-            "version": "11.4.7",
+            "version": "11.4.9",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupal/core-composer-scaffold.git",
@@ -691,13 +692,13 @@
                 "drupal"
             ],
             "support": {
-                "source": "https://github.com/drupal/core-composer-scaffold/tree/11.4.7"
+                "source": "https://github.com/drupal/core-composer-scaffold/tree/11.4.9"
             },
             "time": "2026-07-09T23:23:24+00:00"
         },
         {
             "name": "drupal/core-project-message",
-            "version": "11.4.7",
+            "version": "11.4.9",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupal/core-project-message.git",
@@ -735,13 +736,13 @@
                 "drupal"
             ],
             "support": {
-                "source": "https://github.com/drupal/core-project-message/tree/11.4.7"
+                "source": "https://github.com/drupal/core-project-message/tree/11.4.9"
             },
             "time": "2026-01-07T19:00:53+00:00"
         },
         {
             "name": "drupal/core-recipe-unpack",
-            "version": "11.4.7",
+            "version": "11.4.9",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupal/core-recipe-unpack.git",
@@ -782,29 +783,29 @@
                 "drupal"
             ],
             "support": {
-                "source": "https://github.com/drupal/core-recipe-unpack/tree/11.4.7"
+                "source": "https://github.com/drupal/core-recipe-unpack/tree/11.4.9"
             },
             "time": "2026-01-07T19:00:53+00:00"
         },
         {
             "name": "drupal/core-recommended",
-            "version": "11.4.7",
+            "version": "11.4.9",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupal/core-recommended.git",
-                "reference": "c033d0c3f0a12627e5a6c879b8a869ff268e3efe"
+                "reference": "d9a6466e0ed74b87b58761493bf31da75b1bc0f0"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/drupal/core-recommended/zipball/c033d0c3f0a12627e5a6c879b8a869ff268e3efe",
-                "reference": "c033d0c3f0a12627e5a6c879b8a869ff268e3efe",
+                "url": "https://api.github.com/repos/drupal/core-recommended/zipball/d9a6466e0ed74b87b58761493bf31da75b1bc0f0",
+                "reference": "d9a6466e0ed74b87b58761493bf31da75b1bc0f0",
                 "shasum": ""
             },
             "require": {
                 "asm89/stack-cors": "~v2.4.0",
                 "composer/semver": "~3.4.4",
                 "doctrine/lexer": "~3.0.1",
-                "drupal/core": "11.4.7",
+                "drupal/core": "11.4.9",
                 "egulias/email-validator": "~4.0.4",
                 "justinrainbow/json-schema": "~6.8.2",
                 "marc-mabe/php-enum": "~v4.7.2",
@@ -852,7 +853,9 @@
             },
             "type": "metapackage",
             "extra": {
-                "branch-alias": []
+                "branch-alias": {
+                    "dev-main": "11.x-dev"
+                }
             },
             "notification-url": "https://packagist.org/downloads/",
             "license": [
@@ -860,13 +863,13 @@
             ],
             "description": "Core and its dependencies with known-compatible minor versions. Require this project INSTEAD OF drupal/core.",
             "support": {
-                "source": "https://github.com/drupal/core-recommended/tree/11.4.7"
+                "source": "https://github.com/drupal/core-recommended/tree/11.4.9"
             },
-            "time": "2026-09-16T14:39:21+00:00"
+            "time": "2026-10-09T17:44:27+00:00"
         },
         {
             "name": "drupal/core-vendor-hardening",
-            "version": "11.4.7",
+            "version": "11.4.9",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupal/core-vendor-hardening.git",
@@ -904,7 +907,7 @@
                 "drupal"
             ],
             "support": {
-                "source": "https://github.com/drupal/core-vendor-hardening/tree/11.4.7"
+                "source": "https://github.com/drupal/core-vendor-hardening/tree/11.4.9"
             },
             "time": "2026-01-07T19:00:53+00:00"
         },
@@ -6409,11 +6412,11 @@
         },
         {
             "name": "phpstan/phpstan",
-            "version": "2.2.16",
+            "version": "2.3.1",
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phpstan/phpstan/zipball/46a6d9060e5a7763adfcc21ebcb8b504ebdbcb92",
-                "reference": "46a6d9060e5a7763adfcc21ebcb8b504ebdbcb92",
+                "url": "https://api.github.com/repos/phpstan/phpstan/zipball/6155239b488e95d26d1ebd95c6b4bb294d7f09db",
+                "reference": "6155239b488e95d26d1ebd95c6b4bb294d7f09db",
                 "shasum": ""
             },
             "require": {
@@ -6469,7 +6472,7 @@
                     "type": "github"
                 }
             ],
-            "time": "2026-09-25T09:31:51+00:00"
+            "time": "2026-10-08T21:09:11+00:00"
         },
         {
             "name": "sirbrillig/phpcs-variable-analysis",

@@ -103,7 +103,7 @@
 	},
 	"devDependencies": {
 		"@cloudflare/containers": "^0.3.7",
-		"@cloudflare/vitest-pool-workers": "^0.22.0",
+		"@cloudflare/vitest-pool-workers": "^0.23.0",
 		"@cloudflare/workers-types": "^5.20260829.1",
 		"@playwright/test": "^1.62.1",
 		"@prettier/plugin-php": "^0.25.0",
@@ -138,7 +138,7 @@
 		"fzstd": "^0.1.1",
 		"mysql2": "^3.24.4",
 		"pg": "^8.23.0",
-		"php-wasm": "0.1.0"
+		"php-wasm": "0.2.0"
 	},
 	"lint-staged": {
 		"*.{php,module,ts,js,mjs,html,css,md,json,jsonc}": "prettier --write"

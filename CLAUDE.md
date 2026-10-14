@@ -487,8 +487,8 @@ equally true of a background agent running one.
 
 ## The rig is `docker/compose.yml`, and a rig finds what a green suite cannot
 
-Seven services, every one pinned by digest: GreenMail, Redis, syslog, Gitea, **Forgejo**, **Keycloak**,
-and **GitLab CE** behind `--profile heavy` because it wants ~4 GB and several minutes. `tests/e2e/README.md`
+Nine services, every one pinned by digest: GreenMail, PostgreSQL, MySQL, Redis, Gitea, **Forgejo**,
+**Keycloak**, syslog, and **GitLab CE** behind `--profile heavy` because it wants ~4 GB and several minutes. `tests/e2e/README.md`
 has the commands.
 
 **Building these found three defects in one pass, and no lane could have seen any of them:**

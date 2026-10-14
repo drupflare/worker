@@ -6,12 +6,9 @@
  *   php -d opcache.enable_cli=0 -d xdebug.mode=off scripts/drupal/install-site-db.php \
  *       drupal-src /tmp/built-site.sqlite [--site-name="CFW Bench"] [--allow-shipping-pack]
  *
- * `assets/drupal/site.sqlite` is the database the edge executes, it is the only
- * TRACKED artifact under `assets/` because nothing regenerates it, and its recipe lived in a chat
- * log. Every fix that touched it -- the collector entries, the container definition -- therefore
- * went in as a surgical insert against a file no one could rebuild. That gates one-click deploy: a
- * clean checkout can fetch Drupal (`scripts/vendor.ts`) and pack every other asset, and then has no
- * way to produce the database those assets are indexed against.
+ * `assets/drupal/site.sqlite` is the database the edge executes, and this script is its producer.
+ * Changes to it are made by rebuilding, not by editing the tracked file, so a clean checkout can
+ * reproduce it from `scripts/vendor.ts` and the pack inputs.
  *
  * It installs into `sites/build` rather than `sites/default`. Core's own `dr install` takes no
  * `--site-path` and refuses outright when a site is already installed, and `drupal-src/sites/default`
@@ -251,12 +248,7 @@ foreach ($configEdits as $name => $values) {
 	$editable->save();
 }
 
-// `system.advisories` IS LEFT ON, reversing what this script used to do. It forced `enabled` false
-// on the reasoning that SystemHooks::cron() GETs updates.drupal.org and this runtime has no outbound
-// socket. Both halves of that expired: the stream wrapper and the park landed, `CRON_HOOKS` runs
-// `system` and `update`, and advisory detection is the host's `cron:advisories`. The shipped pack has
-// carried `enabled: true` in all six of its committed versions, so the trim was also already wrong
-// about what it was reproducing.
+// system.advisories stays enabled; its cron fetch goes through the host's stream wrapper.
 // #endregion
 
 // #region the twig cache prefix, which the pack cannot be baked without

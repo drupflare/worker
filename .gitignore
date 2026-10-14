@@ -8,7 +8,7 @@ vendor/
 node_modules/
 package-lock.json
 
-# the Drupal tree the packers, the PHP suites and phpstan all read: the 11.4.5 tarball from
+# the Drupal tree the packers, the PHP suites and phpstan all read: the Drupal tarball from
 # ftp.drupal.org plus the four pinned contrib modules. One command rebuilds it:
 # bun run fetch:drupal (the same script .github/workflows/build.yml calls)
 drupal-src

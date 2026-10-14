@@ -458,6 +458,15 @@ bypassed for a session; drupflare answers them from the compiled plan. Both side
 time at the same watts per core and PUE, with the opponent's CPU scaled to the deployed render, so one
 instrument charges both. The drupflare row is the figure the headline and the production table use.
 
+The 9.5% uncached share sets the mix and is not a render count. A render is priced from the page-store
+model for drupflare, saves times the pages a save invalidates, and from each opponent's lifetime model
+for the others; a view that a store or a cache already holds costs a hit. The weight would matter if
+every such view were a PHP render on drupflare. That adds 0.095 of the 149.2 mJ gap between a render
+(153.8 mJ) and a hit (4.6 mJ), 14.2 mJ a view, and a native opponent that rendered them all adds 8.7
+mJ. At a million views that is 19.7 mJ for drupflare against 16.6 mJ for the 24-hour shield, so the
+lead depends on those views not rendering. `config/traffic.yml` calls them the uncached tail, a first
+visit or a purged path, and no deployed site has reported what share of them reaches PHP.
+
 Energy per view on the mix, in millijoules, `derived (modelled)`, with the opponent's figure over
 drupflare's in brackets:
 
@@ -602,6 +611,29 @@ model assumes, 1.15 PUE for a hyperscale operator against 1.54 for colocation. T
 near 1 - 1.15 / 1.54, or 25.3%, and the model reaches 25.34% at a trillion views. An opponent hosted
 at hyperscale PUE would lose that floor, leaving only the render-fraction difference.
 
+### Fleet Sensitivities
+
+Three assumptions of the fleet model move without a new measurement. `derived (modelled)`, from
+`bun scripts/economics/fleet.ts`:
+
+| Cloudflare PUE                | saving at 1,000,000 views | saving at 20,000,000 views |
+| ----------------------------- | ------------------------: | -------------------------: |
+| 1.15, the modelled hyperscale |                    99.13% |                     91.21% |
+| 1.30                          |                    99.02% |                     90.06% |
+| 1.54, the colocation figure   |                    98.84% |                     88.23% |
+
+- **PUE:** charging Cloudflare the colocation PUE the opponent carries takes the 20 million row from
+  91.21% to 88.23%, so a saving above 90% at that traffic holds only at the modelled PUE. The 1.54
+  is an industry average [6] and says nothing about Cloudflare's facilities.
+- **Omitted energy:** Cloudflare's networking, storage and idle hardware are not attributed to a
+  site. Spread over the fleet's views, the 20 million row falls to 90% if that energy is 0.74 mJ a
+  view and to no saving at 55.8 mJ a view. At a million views the same two thresholds are 57.6 and
+  624.9 mJ.
+- **Host memory:** the shared host is packed at 1 GB a site onto 1,536 GB while its power comes from
+  the SPECpower result, a 384 GiB host. On 384 GiB, 1,000 sites need 2.6 hosts and not one, and the
+  saving is 99.64% at a million views and 94.88% at 20 million. The tables keep the 1,536 GB host
+  because it is the arm less favourable to drupflare; `--ram-gb-host=384` runs the other.
+
 ### The Fleet At Different Residency
 
 The table above is the sleeping arm: every drupflare site holds nothing between requests, which is
@@ -675,12 +707,10 @@ per-site traffic:
 | ----------------------------- | -------------------: | -----------------------: | -----------------------------: | ----------------------------: |
 | Arizona State University      |               $14.44 |           309.8x cheaper |                 368.8x cheaper |               1717.2x cheaper |
 | Mass.gov                      |                $6.80 |             1.8x cheaper |                   1.8x cheaper |                  8.6x cheaper |
-| NASA (nasa.gov)               |               $12.38 |             2.5x cheaper |                   6.8x cheaper |                  4.7x cheaper |
-| a U.S. government news agency |   $364.81 to $728.18 |     2.7x to 2.9x cheaper |          3.2x to 24.8x cheaper |          7.5x to 4.4x cheaper |
+| NASA (nasa.gov)               |               $12.38 |             2.0x cheaper |                   2.0x cheaper |                  6.4x cheaper |
+| a U.S. government news agency |   $364.81 to $728.18 |     3.2x to 2.4x cheaper |           3.2x to 2.4x cheaper |          7.5x to 5.2x cheaper |
 
-Every estate costs less on drupflare than on every conventional host priced. The most popular cloud's
-high multiples at NASA and the news agency's high estimate come from transfer: Lightsail publishes no
-overage price for instances, so the model buys the larger bundle that includes it. [Where The Curves
+Every estate costs less on drupflare than on every conventional host priced. [Where The Curves
 Meet](#where-the-curves-meet) gives the general crossing. Kept warm, as a paid plan does by default,
 Arizona State's 426 sites cost $139.80 a month, 32.0 times under the cheapest VPS and 127 times under
 the managed floor. The other three estates have few sites, so the warming chain adds under $3 a month
@@ -866,8 +896,8 @@ cheapest plan as unavailable. Linode's per-plan backup price comes from its API 
 
 A conventional price here is the bill for the hardware the traffic needs, and it moves with traffic.
 Peak load is five times the average, and every view is charged to the origin as a render. A render
-costs 17.9 ms of CPU, from the shipped nginx and PHP-FPM stack's measured 67 renders a second on 1.2
-cores. The cores a box needs are the fewest whole cores that keep the p95 response inside a bound in
+costs 44.7 ms of CPU, the capacity of one core of a Ryzen 9 9900X running the shipped nginx and
+PHP-FPM stack (What Running It Showed). The cores a box needs are the fewest whole cores that keep the p95 response inside a bound in
 an M/M/c queue, and never above a utilisation cap, at that peak rate.
 
 Two bounds give two sizings. A viable box keeps the p95 under 60 seconds, the default read timeout
@@ -879,9 +909,9 @@ shared plan [31]. A burstable plan has a lower baseline, such as the 10% of a vC
 [32], but the average load here is a few percent of one core.
 
 Memory sets the floor and does not grow with traffic. The Ubuntu 24.04 cloud image needs 1 GB of RAM
-for the operating system alone [33]. The shipped stack's nginx and 32 PHP-FPM children held 172 MB
+for the operating system alone [33]. The shipped stack's nginx and 8 PHP-FPM children held 169 MB
 under the render load, and MariaDB's default InnoDB buffer pool is 128 MiB [34]. Together that is
-1.3 GiB a box, so a 1 GiB plan is below the floor and 2 GiB is the smallest size that meets it.
+1.29 GiB a box, so a 1 GiB plan is below the floor and 2 GiB is the smallest size that meets it.
 Drupal's own documentation gives 1 GB as the minimum for Composer [35], which is a build requirement
 and not a serving one. Disk is about 10 GB in use (the operating system, the 167 MB Drupal tree and
 the 5.8 MB database, modelled) against 25 GB on the smallest 2 GiB plans. Transfer is 166 KB a view,
@@ -889,21 +919,22 @@ the first load of the demo site (66 requests, 17.2 KB of HTML, n=1), so 3 millio
 498 GB. Every view is charged as a first load, and no CDN is assumed. What a conventional host needs at each
 traffic level, with the cheapest priced provider for each sizing:
 
-| views/site/mo | peak req/s | viable vCPU | matched vCPU | GiB a box | transfer GB | cheapest viable         | cheapest matched        |
-| ------------- | ---------- | ----------- | ------------ | --------- | ----------- | ----------------------- | ----------------------- |
-| 10,000        | 0.0        | 1           | 1            | 1.30      | 2           | Vultr vc2-1c-2gb x1     | Vultr vc2-1c-2gb x1     |
-| 100,000       | 0.2        | 1           | 1            | 1.30      | 17          | Vultr vc2-1c-2gb x1     | Vultr vc2-1c-2gb x1     |
-| 1,000,000     | 1.9        | 1           | 1            | 1.30      | 166         | Vultr vc2-1c-2gb x1     | Vultr vc2-1c-2gb x1     |
-| 3,000,000     | 5.7        | 1           | 1            | 1.30      | 498         | Vultr vc2-1c-2gb x1     | Vultr vc2-1c-2gb x1     |
-| 10,000,000    | 19.0       | 1           | 1            | 1.30      | 1,660       | Vultr vc2-1c-2gb x1     | Vultr vc2-1c-2gb x1     |
-| 30,000,000    | 57.0       | 2           | 2            | 1.30      | 4,980       | Vultr vc2-1c-2gb x2     | Vultr vc2-1c-2gb x2     |
-| 100,000,000   | 190.1      | 4           | 5            | 1.30      | 16,600      | Akamai g6-standard-1 x4 | Akamai g6-standard-1 x5 |
+| views/site/mo | peak req/s | viable vCPU | matched vCPU | GiB a box | transfer GB | cheapest viable      | cheapest matched     |
+| ------------- | ---------- | ----------- | ------------ | --------- | ----------- | -------------------- | -------------------- |
+| 10,000        | 0.0        | 1           | 1            | 1.29      | 2           | Vultr vc2-1c-2gb x1  | Vultr vc2-1c-2gb x1  |
+| 100,000       | 0.2        | 1           | 1            | 1.29      | 17          | Vultr vc2-1c-2gb x1  | Vultr vc2-1c-2gb x1  |
+| 1,000,000     | 1.9        | 1           | 1            | 1.29      | 166         | Vultr vc2-1c-2gb x1  | Vultr vc2-1c-2gb x1  |
+| 3,000,000     | 5.7        | 1           | 1            | 1.29      | 498         | Vultr vc2-1c-2gb x1  | Vultr vc2-1c-2gb x1  |
+| 10,000,000    | 19.0       | 1           | 2            | 1.29      | 1,660       | Vultr vc2-1c-2gb x1  | Amazon $12 bundle x1 |
+| 30,000,000    | 57.0       | 3           | 4            | 1.29      | 4,980       | Amazon $12 bundle x2 | Amazon $12 bundle x2 |
+| 100,000,000   | 190.1      | 9           | 11           | 1.29      | 16,600      | Vultr vc2-2c-2gb x5  | Amazon $12 bundle x6 |
 
-Three million views a month is 5.7 requests a second at peak and a tenth of a core, so a single
-vCPU serves it with room to spare, and one vCPU carries a matched box up to about 23.6 million views
-a month. The two sizings differ only past 30 million views, because a render is cheap. The floor is
-the memory a box needs, and the traffic that follows moves the bill through the vCPU count above
-23 million views and through transfer above a plan's included allowance.
+Three million views a month is 5.7 requests a second at peak and a quarter of a core, so a single
+vCPU serves it with room to spare, and one vCPU carries a matched box up to about 9.4 million views
+a month and a viable one to 11.2 million. The two sizings differ from there, and the gap widens with
+traffic: 9 vCPU against 11 at 100 million. The floor is the memory a box needs, and the traffic that
+follows moves the bill through the vCPU count above 9 million views and through transfer above a
+plan's included allowance.
 
 The providers priced, at the smallest box that meets the floor at 100,000 views a month:
 
@@ -915,6 +946,44 @@ The providers priced, at the smallest box that meets the floor at 100,000 views 
 | Akamai Cloud (Linode) [26]     | g6-standard-1     | 1    | 2   | 2           | $12.00 | $2.50   | $0.00 | $14.50 |
 | Microsoft Azure (East US) [39] | Standard_B2pls_v2 | 2    | 4   | none        | $24.53 | $10.22  | $4.40 | $39.15 |
 
+### What Running It Showed
+
+The shipped nginx and PHP-FPM 8.5 stack, with opcache and the tracing JIT, on the same Drupal tree and
+SQLite database that drupflare serves, was run in one container image on two hosts and driven by the
+same generator from one machine, `measured`, by `scripts/measure/floor-rig.ts`. Every request is a
+render: a unique query string that misses nginx, the page cache and the dynamic page cache, checked on
+each response. Server time is nginx's own `$request_time`, so it carries no network.
+
+| host                            | CPU a render | renders a second at one core | server time, one client |
+| ------------------------------- | -----------: | ---------------------------: | ----------------------: |
+| Ryzen 9 9900X, database on disk | 44.1-46.4 ms |                  6.2 to 10.5 |           113 to 116 ms |
+| same, database on tmpfs         |      44.8 ms |                         22.4 |                   41 ms |
+| Cloudflare Container, 1 vCPU    |     144.9 ms |                          6.6 |                  144 ms |
+
+- **CPU:** a render costs 44.1 to 46.4 ms of a Zen 5 core in all eight disk and tmpfs runs, across 1
+  and 2 CPUs, 8 to 32 children and 1 to 4 GiB limits, and the full-core capacity of 22.4 a second is
+  44.7 ms. The model used 17.9 ms from an earlier rig, and that figure did not reproduce here. The gap
+  is unexplained. Cloudflare's container vCPU took 145 ms, so a slower core needs proportionally more
+  of them.
+- **Disk:** with the database on disk a render also waits about 70 ms, and throughput stops near 10 a
+  second however many cores it has: the 2-CPU run read 8.5. The container used about 0.45 of its core
+  at that ceiling. Moving the database to tmpfs took one client from 113 ms to 41 ms and capacity to
+  22.4 a second, a full core. SQLite commits synchronously by default and every unique render writes
+  cache rows, so this is that rig's commit latency, and MariaDB on a production disk was not
+  measured. The cost model uses the CPU figure and no disk wait.
+- **Queueing:** on the tmpfs run the p95 was 190 ms at half of capacity and 272 ms at 80%, against
+  268 and 671 ms from an M/M/1 queue with that service time. The model's bound held with room, since
+  render times vary less than an exponential. Errors appeared at 16 clients and in the 80% cell; the
+  cause was not examined.
+- **Memory:** nginx plus PHP-FPM held 169 MB with 8 children, 227 MB with 16 and 342 MB with 32 under
+  load, anonymous and shared memory from the container's cgroup, about 7.2 MB a child. A 1 GiB limit
+  was reached 1,743 and 2,386 times, with 8 and 32 children, and killed nothing: anonymous memory
+  stayed under 300 MB and the pressure was page cache. Per-child proportional memory could not be
+  read, because the probe ran unprivileged.
+
+The model now charges 44.7 ms a render. That moves nothing at or below 3 million views, where a box
+is one vCPU, and above 9 million views it roughly doubles the vCPUs a load needs.
+
 ### Prices At Each Traffic Level
 
 What hosting the same site costs conventionally, per site:
@@ -925,19 +994,20 @@ What hosting the same site costs conventionally, per site:
 | 10,000        | $10.50       | $14.40       | $12.50             | $58.20              | $41.67        |
 | 100,000       | $10.50       | $14.40       | $12.50             | $58.20              | $41.67        |
 | 1,000,000     | $10.50       | $14.40       | $12.50             | $58.20              | $41.67        |
-| 10,000,000    | $10.50       | $14.40       | $12.50             | $58.20              | $41.67        |
+| 10,000,000    | $12.50       | $21.60       | $12.50             | $58.20              | $41.67        |
 
-Amazon Lightsail publishes no transfer overage price for instances, so its column reads the larger
-bundle that includes the transfer, which overstates it above about 18 million views.
+Amazon Lightsail publishes no transfer overage price for instances, so a plan whose transfer is
+exceeded is not priced. At the CPU cost measured here the vCPUs a load needs bring enough included
+transfer in every row, so none is dropped.
 
-Above 23 million views the hardware grows with the traffic, and so does the bill. The same prices at
+Above 9 million views the hardware grows with the traffic, and so does the bill. The same prices at
 higher traffic, with drupflare's per-site bill at 1,000 sites:
 
 | views/site/mo | cheapest VPS | DigitalOcean | latency-matched VPS | managed floor | drupflare |
 | ------------- | ------------ | ------------ | ------------------- | ------------- | --------- |
-| 30,000,000    | $30.80       | $38.60       | $58.20              | $41.67        | $10.92    |
-| 100,000,000   | $105.50      | $132.40      | $147.40             | $41.67        | $36.39    |
-| 1,000,000,000 | $1,023.50    | $1,413.60    | $1,406.20           | $41.67        | $363.86   |
+| 30,000,000    | $25.00       | $43.20       | $79.80              | $41.67        | $10.92    |
+| 100,000,000   | $75.00       | $129.60      | $144.60             | $41.67        | $36.39    |
+| 1,000,000,000 | $877.00      | $1,206.40    | $1,221.40           | $41.67        | $363.86   |
 
 ### The Free Plan
 
@@ -982,7 +1052,7 @@ Against each host, one site, as the ratio of the host's bill to drupflare's:
 | 10,000        | free         | free               | free                | free          |
 | 100,000       | free         | free               | free                | free          |
 | 1,000,000     | free         | free               | free                | free          |
-| 10,000,000    | 2.0x cheaper | 2.4x cheaper       | 11.3x cheaper       | 8.1x cheaper  |
+| 10,000,000    | 2.4x cheaper | 2.4x cheaper       | 11.3x cheaper       | 8.1x cheaper  |
 
 Against each host, a thousand sites:
 
@@ -992,7 +1062,7 @@ Against each host, a thousand sites:
 | 10,000        | 1810.9x cheaper | 2155.9x cheaper    | 10037.7x cheaper    | 7186.2x cheaper |
 | 100,000       | 273.2x cheaper  | 325.2x cheaper     | 1514.1x cheaper     | 1084.0x cheaper |
 | 1,000,000     | 28.8x cheaper   | 34.2x cheaper      | 159.4x cheaper      | 114.1x cheaper  |
-| 10,000,000    | 2.9x cheaper    | 3.4x cheaper       | 16.0x cheaper       | 11.4x cheaper   |
+| 10,000,000    | 3.4x cheaper    | 3.4x cheaper       | 16.0x cheaper       | 11.4x cheaper   |
 
 ### Kept Warm
 
@@ -1024,7 +1094,7 @@ Kept warm, against each host, one site:
 | 10,000        | free         | free               | free                | free          |
 | 100,000       | free         | free               | free                | free          |
 | 1,000,000     | free         | free               | free                | free          |
-| 10,000,000    | 2.0x cheaper | 2.4x cheaper       | 11.0x cheaper       | 7.9x cheaper  |
+| 10,000,000    | 2.4x cheaper | 2.4x cheaper       | 11.0x cheaper       | 7.9x cheaper  |
 
 Kept warm, against each host, a thousand sites:
 
@@ -1034,7 +1104,7 @@ Kept warm, against each host, a thousand sites:
 | 10,000        | 29.9x cheaper | 35.6x cheaper      | 166.0x cheaper      | 118.8x cheaper |
 | 100,000       | 27.4x cheaper | 32.6x cheaper      | 151.8x cheaper      | 108.7x cheaper |
 | 1,000,000     | 14.8x cheaper | 17.6x cheaper      | 82.0x cheaper       | 58.7x cheaper  |
-| 10,000,000    | 2.6x cheaper  | 3.1x cheaper       | 14.6x cheaper       | 10.4x cheaper  |
+| 10,000,000    | 3.1x cheaper  | 3.1x cheaper       | 14.6x cheaper       | 10.4x cheaper  |
 
 A fleet pays for keeping its sites warm, about 35 cents a site a month at 1,000 sites. At 10,000 views
 a site that leaves a thousand sites 30 times cheaper than the cheapest VPS, 166 times cheaper than a
@@ -1072,8 +1142,8 @@ trillion views a site a month:
 | latency-matched VPS | never  | never       |
 
 drupflare is the cheaper bill at every traffic level against both. At 1,000 sites and 100 million
-views per site the cheapest VPS costs $105.50 a site against drupflare's $36.39, and at a billion
-views $1,023.50 against $363.86.
+views per site the cheapest VPS costs $75.00 a site against drupflare's $36.39, and at a billion
+views $877.00 against $363.86.
 
 The managed floor would cross near 112 million views for one site and 115 million for a thousand,
 but only because it is held flat at the entry plan's price. No managed plan serves that traffic at
@@ -1085,13 +1155,23 @@ $41.67, so the crossing comes from the flat price.
   found no energy counter by any of the six routes a Linux process has, and no energy field exists
   anywhere in the account's analytics schema. The Cloudflare side of every figure above is an
   allocation over measured workload and published hardware.
+- **No cost for custom domains.** The bills above are Workers account bills. A site on its own domain
+  through Cloudflare for SaaS adds $0.10 a hostname a month past the first 100 [40], so 1,000 of them
+  add $90 a month and take the asleep bill at 10,000 views from $5.80 to $95.80. How a fleet's domains
+  attach decides whether that applies, and `scripts/economics/pricing.ts` takes the count.
+- **No consolidated-host bill.** The conventional bills price one origin a site. A consolidated host
+  pays for memory alone at least $5.00 a GiB a month at the cheapest sourced plan: $5,000 for 1,000
+  sites at 1 GiB each, $1,250 at 0.25 GiB and $500 at 0.1 GiB, before CPU, disk, transfer and
+  backups. A bill of $350.65 buys 71.8 MiB of memory a site across 1,000 sites and $5.80 buys 1.2 MiB,
+  so a consolidated host undercuts the kept-warm bill only if a site fits in about 72 MiB. No source
+  gives a Drupal site's memory on a shared host.
 - **No claim that 1,000 sites replace 1,000 servers.** VPS providers and managed platforms already
   consolidate, so the comparison is against hosting that has captured most of the multi-tenancy
   saving.
 - **Conventional prices are sized list prices.** They exclude labour, a CDN, the database and file
   replication of a multi-region origin and cross-region transfer, and they price a box from documented
-  minimums and a measured stack. No 1 GiB or 2 GiB box was run under load for this page, and no
-  source gives PHP-FPM memory per child for Drupal.
+  minimums and a measured stack. The stack was measured with SQLite and not MariaDB, on one machine
+  and on a Cloudflare container, and no source gives PHP-FPM memory per child for Drupal.
 - **The energy worst case and the priced box differ in size.** The energy model charges a VPS a 320th
   of a host, two vCPUs. The cost model prices one vCPU and 2 GiB, which is a 192nd of a 384 GiB host by
   memory, so the energy charge is at most low for the box priced.
@@ -1257,3 +1337,5 @@ https://pantheon.io/plans/pricing
 [38] DigitalOcean, "Droplet Pricing," DigitalOcean. Accessed: Oct. 14, 2026. [Online]. Available: https://www.digitalocean.com/pricing/droplets
 
 [39] Microsoft, "Azure Retail Prices API" and "Bandwidth pricing," Microsoft Azure. Accessed: Oct. 14, 2026. [Online]. Available: https://prices.azure.com/api/retail/prices and https://azure.microsoft.com/en-us/pricing/details/bandwidth/
+
+[40] Cloudflare, "Plans," Cloudflare for SaaS documentation. Accessed: Oct. 14, 2026. [Online]. Available: https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/plans/

@@ -50,6 +50,7 @@ COPY drupal-src /var/www/html
 COPY site.sqlite /seed/site.sqlite
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY start.sh /usr/local/bin/vps-start
+COPY probe.php /usr/local/etc/php/probe.php
 RUN chmod +x /usr/local/bin/vps-start
 
 ARG VPS_ADMIN_PASS=cfw-Bench-9143-pass

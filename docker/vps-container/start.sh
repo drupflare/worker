@@ -7,6 +7,11 @@
 
 echo "vps-start: booting" >&2
 
+# lets a rig size the pool at run time; unset keeps the value baked into the image
+if [ -n "$VPS_FPM_MAX_CHILDREN" ]; then
+	sed -i "s/^pm.max_children.*/pm.max_children = $VPS_FPM_MAX_CHILDREN/" /usr/local/etc/php-fpm.d/zz-bench.conf
+fi
+
 # FOREGROUND, backgrounded by the shell. `--daemonize` forks and detaches, which the local Docker
 # daemon allows and the container sandbox does not: nginx then came up and every request answered
 # 502 because php-fpm was never listening.

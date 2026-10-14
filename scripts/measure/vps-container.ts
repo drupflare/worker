@@ -71,7 +71,8 @@ function stage() {
 		['assets/drupal/site.sqlite', 'site.sqlite'],
 		['docker/vps-container/nginx.conf', 'nginx.conf'],
 		['docker/vps-container/start.sh', 'start.sh'],
-		['docker/vps/prepend.php', 'prepend.php']
+		['docker/vps/prepend.php', 'prepend.php'],
+		['docker/vps-container/probe.php', 'probe.php']
 	];
 	for (const [from] of inputs) {
 		if (!existsSync(resolve(ROOT, from))) {

@@ -16,8 +16,8 @@ Three layers decide what a value is, most specific first:
 
 ## Bindings
 
-`wrangler.jsonc` is the canonical config and declares seven of the eight. `SEND_EMAIL` is read where
-it is bound and absent otherwise.
+`wrangler.jsonc` is the canonical config and declares seven of the nine. `FILES` and `SEND_EMAIL` are
+the two it leaves out.
 
 | binding               | kind             | canonical config | what breaks without it                                                               |
 | --------------------- | ---------------- | ---------------- | ------------------------------------------------------------------------------------ |
@@ -31,8 +31,7 @@ it is bound and absent otherwise.
 | `RENDER_LANES`        | Durable Object   | declared         | image styles render on first view instead of on upload                               |
 | `SEND_EMAIL`          | `send_email`     | not declared     | the credential-free mail transport is absent; `api` or `smtp` still work             |
 
-**`FILES` is the one binding the shipping config leaves out, because naming it breaks the deploy
-button.** R2 has to be enabled from the Cloudflare dashboard before any bucket can exist, so a
+**`FILES` is left out of the shipping config because naming it breaks the deploy button.** R2 has to be enabled from the Cloudflare dashboard before any bucket can exist, so a
 config that names one is refused with _"Please enable R2 through the Cloudflare Dashboard.
 [code: 10042]"_ on every account that has not done that. Enabling R2 requires a payment card on
 either Workers plan, even when usage stays inside the monthly allocation. KV and D1 have no such
@@ -67,11 +66,11 @@ Drupal under another name. At runtime it is only reported, as the fleet row's `c
 ### `SITE_ID`
 
 One object per site, and the object's **name** is the site identity, so a wrong answer here serves a
-request from a different site's database. Five layers, in `src/ops/site-id.ts`: a `site:host:<host>`
-KV mapping, then `SITE_ID`, then the deployment's primary site (`src/ops/deployment-site.ts`), then
-the hostname itself, then the literal `site`.
+request from a different site's database. The layers, in order, are implemented in `src/ops/site-id.ts`: `?site=` (only when the caller opts
+in), a `site:host:<host>` KV mapping, then `SITE_ID`, then the deployment's primary site
+(`src/ops/deployment-site.ts`), then the hostname itself, then the literal `site`.
 
-The two optional layers sit above the derived one because derivation answers for every real host, so
+The optional layers sit above the derived one because derivation answers for every real host, so
 anything below it would be unreachable on exactly the hosts it exists to configure. `localhost`,
 `127.0.0.1`, `0.0.0.0` and `::1` name no site and fall past derivation, which is what lets a local
 dev server and a deployed site run the same code path.
@@ -82,7 +81,7 @@ the old one still holds the data.
 
 ### `SITE_LOCATION_HINT`
 
-One of `wnam enam sam weur eeur apac oc afr me`, or unset.
+One of `wnam enam sam weur eeur apac apac-ne apac-se oc afr me`, or unset.
 
 Unset by default. Placement follows the first request a site answers, which for a deploy-button site
 is wherever the deployer was. Pinning a region on an owner's behalf trades latency for one audience
@@ -98,10 +97,8 @@ KV-overridable through the `settings` key, so a region can be chosen without a r
 
 ### `SITE_ORIGIN`
 
-Every absolute URL Drupal emits is built from the request's scheme and host: the canonical tag, a
-form action, a `Location:`, the link in a password-reset mail. The render fragments hardcoded
-`localhost`, so a deployed site told every visitor and every crawler that it lived on
-`http://localhost`, and a reset link mailed to a user pointed at their own machine.
+Every absolute URL Drupal emits is built from the origin: the canonical tag, a form action, a
+`Location:`, the link in a password-reset mail.
 
 The inbound `Host` carries no guarantee: an attacker who can set it can move a password-reset link
 onto a host they control. So the origin is a property of the **site**, resolved in
@@ -109,8 +106,8 @@ onto a host they control. So the origin is a property of the **site**, resolved 
 
 1. `SITE_ORIGIN`, which wins outright.
 2. **The pin**, held in `cfw_meta` under `site_origin`. Trust on first use: the first non-local
-   origin a site serves is stored, and every later request is measured against it. A forged `Host`
-   after the pin changes nothing.
+   origin a site serves is stored, and later requests do not overwrite it. A forged `Host` after the
+   pin changes nothing.
 3. The observed origin, when there is no pin; that request is the one that sets the pin.
 4. `http://localhost`, only when nothing above produced a usable value.
 
@@ -123,8 +120,9 @@ the suite or a `wrangler dev` against a persisted object cannot fix a real site'
 developer's laptop.
 
 Set it when the site is reached through a host it cannot observe: behind a proxy that rewrites
-`Host`, or on a deploy whose first request is a health check. `/firstrun` re-pins, so claiming a site
-also fixes its origin, and cron boots against the same value.
+`Host`, or on a deploy whose first request is a health check. `SITE_ORIGIN` takes precedence over the
+pin on every request, so it can change the origin of a site that has already pinned one; the stored
+value is left in place.
 
 Getting it wrong points canonical tags, redirects and mailed links at the wrong host. What a request
 resolves to is a separate question, answered by `SITE_ID`.
@@ -161,47 +159,46 @@ Specs: `tests/unit/ops/site-origin.spec.ts`, `tests/integration/deployment-site.
 in this project is a free-plan limit, and a typo must not silently grant a 30 s CPU budget to
 something that has 10 ms.
 
-The plan selects six numbers at once, from `src/ops/plan-profile.ts`. Each is individually
-overridable by its own var, so a paid profile can be run on free or the reverse.
+The plan sets five defaults in `src/ops/plan-profile.ts`. Four are numbers, and each has its own var,
+so a paid profile can run on free or the reverse. The fifth, `bootInline`, is not configurable.
 
-| profile field    | var                | free  | paid   |
-| ---------------- | ------------------ | ----- | ------ |
-| `fillBatchSize`  | `FILL_BATCH_SIZE`  | 5     | 8      |
-| `httpDrainLimit` | `HTTP_DRAIN_LIMIT` | 3     | 15     |
-| `mirrorLimit`    | `MIRROR_LIMIT`     | 2     | 10     |
-| `inlineBudgetMs` | `RENDER_BUDGET_MS` | 2,000 | 10,000 |
-| `bootInline`     | none               | off   | on     |
+| profile field    | var                | free   | paid   |
+| ---------------- | ------------------ | ------ | ------ |
+| `fillBatchSize`  | `FILL_BATCH_SIZE`  | 5      | 8      |
+| `httpDrainLimit` | `HTTP_DRAIN_LIMIT` | 3      | 15     |
+| `mirrorLimit`    | `MIRROR_LIMIT`     | 2      | 10     |
+| `inlineBudgetMs` | `RENDER_BUDGET_MS` | 10,000 | 10,000 |
+| `bootInline`     | none               | on     | on     |
 
-`bootInline` is the one that changes an outcome rather than a rate: whether a MISS on a **cold**
-object may boot the interpreter and render, or answer 503 and hand the path to the alarm chain. That
-boot is ~1.4 s, which is why it stays off on free. Raising `RENDER_BUDGET_MS` does not move it; the
-estimate is only consulted once an interpreter exists.
+`bootInline` decides whether a MISS on a cold object may boot the interpreter and render inline, or
+answer 503 and hand the path to the alarm chain. It is on for both plans.
 
-`CONFIG_KV` under the key `plan` overrides the var and is read once per isolate per minute, so an
+The plan override lives in `CONFIG_KV`. The deployment-wide key `plan` applies to every site, and
+`plan:<site>` overlays it for one site. Both are read at most once per isolate per minute, so an
 account upgrade takes effect without a redeploy. A missing binding, a KV error and an unrecognised
 value all fall through to the var.
 
 ## Serving and Caching
 
-| var                      | default  | what it does                                                                    |
-| ------------------------ | -------- | ------------------------------------------------------------------------------- |
-| `GEN_BUCKET_MS`          | 5,000    | how long the edge reuses a resolved site generation before re-reading it        |
-| `MAX_BODY_BYTES`         | 2 MiB    | largest non-file request body the edge forwards                                 |
-| `OUTBOUND_GUARD`         | on       | refuse an outbound fetch to a private, loopback or metadata address; `0` off    |
-| `PAGE_KV_ENABLED`        | on       | the cross-colo KV page tier; `0` off, `1` also lets free store compiled plans   |
-| `PAGE_KV_TTL`            | 86,400   | seconds a stored page lives; floored at KV's own 60 s minimum                   |
-| `KV_WRITES_PER_DAY`      | per plan | page writes to `PAGE_KV` one site may make a UTC day; 800 on free, paid unset   |
-| `EDGE_PLAN`              | on       | serve an authenticated page from a compiled plan in the front worker; `0` off   |
-| `NEVER_STALE`            | unset    | extra path prefixes that may never be served from a previous generation         |
-| `AGED_SERVE_MAX_MS`      | 60,000   | how long a page a save superseded may still be answered while it refills; 0 off |
-| `ASSET_AGGREGATES`       | off      | substitute the build's CSS and JS aggregates into a stored page; `1` on         |
-| `MEMORY_CACHE_BINS`      | unset    | cache bins the interpreter holds in memory instead of in SQL, comma-separated   |
-| `MEMORY_CACHE_MAX_ITEMS` | 64       | entries one in-memory bin may hold before it drops its oldest                   |
-| `RENDER_BUDGET_MS`       | per plan | wall-clock ms a MISS may spend rendering before handing off to the alarm        |
-| `FILL_BATCH_SIZE`        | per plan | pages one alarm firing may fill before re-arming; capped at 50                  |
-| `WINDOW_SITES`           | unset    | narrows the scheduled fill window to these sites; unset drives the whole fleet  |
-| `WINDOW_MAX_FILLS`       | 50       | fills one window may drive                                                      |
-| `WINDOW_WALL_MS`         | 60,000   | wall-clock ms one window may run                                                |
+| var                      | default  | what it does                                                                                              |
+| ------------------------ | -------- | --------------------------------------------------------------------------------------------------------- |
+| `GEN_BUCKET_MS`          | 5,000    | how long the edge reuses a resolved site generation before re-reading it                                  |
+| `MAX_BODY_BYTES`         | 2 MiB    | largest non-file request body the edge forwards                                                           |
+| `OUTBOUND_GUARD`         | on       | refuse an outbound fetch to a private, loopback or metadata address; `0` off                              |
+| `PAGE_KV_ENABLED`        | on       | the cross-colo KV page tier; `0` off, `1` also lets free store compiled plans                             |
+| `PAGE_KV_TTL`            | 86,400   | seconds a stored page lives; floored at KV's own 60 s minimum                                             |
+| `KV_WRITES_PER_DAY`      | per plan | page writes to `PAGE_KV` one site may make a UTC day; 800 on free, no limit on paid                       |
+| `EDGE_PLAN`              | on       | serve an authenticated page from a compiled plan in the front worker; `0` off                             |
+| `NEVER_STALE`            | unset    | extra path prefixes that may never be served from a previous generation                                   |
+| `AGED_SERVE_MAX_MS`      | 60,000   | how long a page a save superseded may still be answered while it refills; 0 off                           |
+| `ASSET_AGGREGATES`       | unset    | substitute the build's CSS and JS aggregates into a stored page; `1` on, and the canonical config sets it |
+| `MEMORY_CACHE_BINS`      | unset    | cache bins the interpreter holds in memory instead of in SQL; `none` turns all off                        |
+| `MEMORY_CACHE_MAX_ITEMS` | 64       | entries one in-memory bin may hold before it drops its oldest                                             |
+| `RENDER_BUDGET_MS`       | per plan | wall-clock ms a MISS may spend rendering before handing off to the alarm                                  |
+| `FILL_BATCH_SIZE`        | per plan | pages one alarm firing may fill before re-arming; capped at 50                                            |
+| `WINDOW_SITES`           | unset    | narrows the scheduled fill window to these sites; unset drives the whole fleet                            |
+| `WINDOW_MAX_FILLS`       | 50       | fills one window may drive                                                                                |
+| `WINDOW_WALL_MS`         | 60,000   | wall-clock ms one window may run                                                                          |
 
 ### `OUTBOUND_GUARD`
 
@@ -287,31 +284,16 @@ in the tenant's SQLite. `pib_run` performs no request shutdown, so a class stati
 Worker invocation to the next, which is what makes this a real tier here and a test double on an
 ordinary PHP host.
 
-What it buys, measured in workerd on the shipping pack with the two arms differing by this variable
-and nothing else: a real re-render after a tag invalidation charges **8 rows with the bin in SQL and
-4 with it in memory**, for a byte-identical page. Four of the eight are the `dynamic_page_cache` bin,
-and rows written is the meter that bounds regeneration.
+The default is `dynamic_page_cache` and `menu`. `MEMORY_CACHE_BINS=none` turns the tier off, and a
+variable set to an empty string takes the default, the same as an unset one.
 
-It is ON by default for `dynamic_page_cache`, and `MEMORY_CACHE_BINS=none` is the off switch -- an
-unset variable and an empty one are the same string in a Worker env, so turning a default off needs
-a word rather than an absence.
+In a measured re-render after a tag invalidation, the bin in memory charged 4 rows where the bin in
+SQL charged 8, for a byte-identical page (workerd, shipping pack, the two arms differing by this
+variable only). Rows written is the meter that bounds regeneration.
 
-**The default shipped off until the cost was measured rather than reasoned about.** The argument for
-leaving it off was that the bin dies with the interpreter, so a render after an eviction could no
-longer reassemble and would pay more. Measured with both arms dropping the interpreter between two
-fills: **6 charged rows with the bin in SQL against 2 in memory**. A cold render REWRITES the SQL bin
-rather than reading it, so surviving the drop buys that render nothing. The lever is cheaper in both
-states.
-
-What it still costs is CPU on that render and isolate memory for what it holds, and neither is the
-binding constraint; the CPU is spent on a request already paying a 1,398 ms boot.
-
-**The published ceiling has NOT been re-derived against this default yet, deliberately.**
-`ROWS_PER_FILL.realRender` is 9, which describes `MEMORY_CACHE_BINS=none`; at the default a real
-re-render measures 3 to 4. Quoting the lower figure would take the ceiling 9,685 -> 27,845/day and
-invert the safety property it rests on -- a realistic warmth mix prices 3.20 against that class's
-3.00, where it used to sit below, so the headline would become optimistic rather than a floor.
-`tests/integration/rows-per-fill-audit.spec.ts` measures both configurations and prints the gap.
+After an interpreter drop the in-memory bin is empty, and the next render rebuilds it. Across a drop,
+the in-memory setting charged 2 rows against 6 for the SQL bin. The cost is isolate memory for the
+entries held and CPU on the rebuilding render.
 
 Bin names are bare, without the `cache_` prefix: `MEMORY_CACHE_BINS=dynamic_page_cache,render`.
 
@@ -326,8 +308,8 @@ own 112 MiB recycle is the backstop underneath it.
 
 Both are on `KV_OVERRIDABLE`. The value is read when `settings.php` is composed, which happens on
 every boot because the pack's filesystem is remounted each time, so a change takes effect on the
-next interpreter boot rather than needing a redeploy. Consumers: `memoryCacheBins()` in
-`src/site-do.ts` and `CfwCacheBackendFactory` in the `drupflare` module.
+next interpreter boot rather than needing a redeploy. Source: `memoryCacheBins()` in
+`src/do/levers.ts`, and `CfwCacheBackendFactory` in the `drupflare` module.
 
 ### `ASSET_AGGREGATES`
 
@@ -338,8 +320,8 @@ per-library aggregates plus a file-to-library index. With `ASSET_AGGREGATES=1`, 
 of tags for a library is replaced by that library's single aggregate tag as the page is stored.
 
 The substitution is **all or nothing per library**: either every tag in the run is replaced or none is.
-The previous attempt at this shipped a page that loaded faster and had no CSS, and a partial
-replacement is how that happens.
+A partial replacement would store a page that references an aggregate for some of its CSS and not
+the rest.
 
 It is on `KV_OVERRIDABLE`, so turning it on needs no redeploy.
 
@@ -348,16 +330,15 @@ It is on `KV_OVERRIDABLE`, so turning it on needs no redeploy.
 rewrites every asset tag to a URL the asset layer does not publish, the Worker answers it as a Drupal
 path, and the page renders with no CSS. That is the same failure the all-or-nothing rule above exists
 to prevent, arriving from the other side.
-`tests/unit/runtime/assets-ignore.spec.ts` now resolves every URL the substitution emits, so a page
-whose stylesheets 404 fails the gate rather than shipping.
+`tests/unit/runtime/assets-ignore.spec.ts` resolves every URL the substitution emits, so a page whose
+stylesheets 404 fails the test suite.
 
 Turning it on without running `assets:agg` changes nothing rather than breaking a page: an absent
 manifest means no library matches.
 
-**What it buys is render time and stored bytes, not Worker requests.** Measured against
-`bun run dev`: an unaggregated core stylesheet at `/core/themes/olivero/css/base/base.css` answers
-200 with no `x-cfw-*` header at all, so the Worker never runs and the file already costs nothing. The
-individual files were on the free path the whole time.
+**What it buys is render time and stored bytes, not Worker requests.** An individual core stylesheet,
+such as `/core/themes/olivero/css/base/base.css`, is answered by the asset layer without running the
+Worker, so the individual files already cost no Worker request.
 
 ### `EDGE_PLAN`
 
@@ -386,18 +367,16 @@ the session CSRF token in the logout link. The first two are generated fresh; th
 substituted from what the visitor's own last render carried, so a plan holding one refuses to run for
 a visitor whose token this isolate has not seen.
 
-A response that ROTATES the session is never compiled. That means a `Set-Cookie` setting a value the
-request did not already hold; PHP re-sends the session cookie unchanged on every `session_start()`
-when `session.cookie_lifetime` is non-zero, and Drupal ships 2000000, so the header's presence alone
-says nothing.
+A response that rotates the session is never compiled: a `Set-Cookie` that sets a value the request
+did not already hold. Drupal re-sends the session cookie unchanged on every request when
+`session.cookie_lifetime` is non-zero (its default is 2000000), so a `Set-Cookie` header alone does
+not mean rotation.
 
 Served responses carry `x-cfw-cache: PLAN` and `x-cfw-plan: mem`, `private` or `kv`; everything else
 reports on `x-cfw-plan` why it did not.
 
-`x-cfw-plan` is the edge plan and nothing else. The Cloudflare account plan is `x-cfw-account-plan`,
-which is where it moved at header version 2 -- both were `x-cfw-plan` before, written by three places
-with two meanings, so which one a reader got depended on which of them answered. `x-cfw-v` carries
-the contract version and is what a client checks before reading either.
+`x-cfw-plan` is the edge plan and nothing else. The Cloudflare account plan is `x-cfw-account-plan`.
+`x-cfw-v` carries the header contract version, and a client checks it before reading either.
 
 An isolate serves against the last generation it learned from the object, and stops after 10 seconds
 without re-learning one. That is the staleness bound, and it is the same two-window lag the shared
@@ -492,7 +471,8 @@ third delivery path beside `/git` and `/install`, and the only one that keeps hi
 | `?action=drop&package=X&rev=Y`     | POST   | deletes a revision and the blobs nothing else names       |
 
 A revision is a manifest of content-addressed blobs, so a second upload sends only the files that
-changed and a blob already present costs no rows. Five revisions per package are kept.
+changed and a blob already present costs no rows. Five revisions per package are kept
+(`REVISION_RETENTION` in `src/ops/module-rev.ts`).
 
 `plan` answers the have/want split and the change it would make: `counts` over every declared file,
 the `removed` paths by name, and the rows an apply would charge. A file whose new bytes have not been
@@ -571,7 +551,7 @@ entry that recorded it; clearing without reading that first is how the same faul
 
 ### Reading the Degradation Band Off a Response
 
-Once a site leaves `normal`, every response it serves carries three headers:
+Once a site leaves `normal`, every response it serves carries these headers:
 
 | header                 | value                                                   |
 | ---------------------- | ------------------------------------------------------- |
@@ -582,25 +562,17 @@ Once a site leaves `normal`, every response it serves carries three headers:
 A `normal` site carries none of them, so their presence is the signal and no parsing is needed to
 tell the two states apart.
 
-`readOnlyResponse()` had always named the band on a REFUSAL, so `read-only` was observable and
-`reduced` was not: a site spends the whole way from 80% of a daily quota to 95% while every response
-looks identical, and the first thing an operator saw was the 503 at the end of it. `degradeHeaders()`
-was written for exactly that and called by nothing.
+The band is reported on every response from `reduced` onward, not only on a refusal. The level is
+not persisted: the counter is keyed per UTC day, so midnight clears it.
 
-The band recovers on its own. Nothing persists the level, and the counter is keyed per UTC day, so
-midnight clears it with no flag to reset.
+`/serve-stats` reports `lastGitPoll`, `lastMirrorDrain` and `lastPageMirrorDrain`, each with its
+`*At`. Every alarm unit catches its own error so one failure cannot stop the chain, so these
+timestamps are the way to see a unit that has been failing.
 
-Three timestamps that also had no reader are on `/serve-stats` now: `lastGitPoll`, `lastMirrorDrain`
-and `lastPageMirrorDrain`, each with its `*At`. Every one of those alarm units catches its own error
-so a failure cannot stop the chain, which is right and means a git poll that has been failing for a
-week otherwise looks identical to one that has never run.
-
-**A withdrawn replica lane is not on this list, and does not need to be.** A lane that withdrew asks
-the primary for a fresh copy itself, and the primary queues the copy and arms an alarm to perform it,
-so there is nothing for an operator to drive. `/replica` stays diagnostic-only for a second reason:
-it also carries the path a lane uses to commit a batch it executed speculatively, which belongs to
-the pool rather than to whoever holds the owner token. Read the state through `/health` and
-`/serve-stats`.
+A withdrawn replica lane is not a repair target. It asks the primary for a fresh copy itself, and the
+primary queues that copy and arms an alarm to perform it. `/replica` is diagnostic only: it also
+carries the path a lane uses to commit a batch it executed speculatively, which belongs to the pool
+rather than to the owner token. Read the state through `/health` and `/serve-stats`.
 
 ## The Admin Surface
 
@@ -609,8 +581,8 @@ so `/_cfw/login` exchanges the token for a cookie: `HttpOnly`, `SameSite=Strict`
 cleared by `/_cfw/logout`. A page reached without it redirects to the sign-in form and returns
 afterwards. A bearer header reaches the same pages, so a script needs no browser.
 
-**`PW_DIAGNOSTICS` does not open these pages.** It opens everything else it always opened; the surface
-is the one owner set it does not reach, because the pages install code and run privileged operations.
+**`PW_DIAGNOSTICS` does not open these pages.** It opens the other owner routes. These pages install
+code and run privileged operations, so they take the owner token only.
 `SameSite=Strict` is what stands in for a CSRF token: several owner routes act on a GET, so a
 cross-site request carrying the cookie would be enough to install a module. Strict means no
 cross-site request carries it, including a top-level link.
@@ -697,9 +669,9 @@ Limits worth knowing:
 | `GC_INTERVAL_MS`        | 3,600,000 | gap between garbage-collection passes                                                           |
 | `CACHE_DATA_MAX_ROWS`   | 5,000     | row cap on `cache_data`                                                                         |
 | `WATCHDOG_ROW_LIMIT`    | unset     | row cap on `watchdog`; unset reads `dblog.settings` from the site                               |
-| `KEEP_WARM_MS`          | 240,000   | idle alarm re-arm; NOT a keep-warm, see below                                                   |
+| `KEEP_WARM_MS`          | 240,000   | idle alarm re-arm; does not keep the object warm                                                |
 | `SITE_WARM`             | by plan   | `1` warms, `0` never warms; unset warms a paid site and leaves a free one to the thermal policy |
-| `WARM_INTERVAL_MS`      | 8,000     | the warm re-arm, KV-overridable; clamped under 10,000 only when `RETAIN_INTERPRETER=0`          |
+| `WARM_INTERVAL_MS`      | 8,000     | the warm re-arm, KV-overridable; clamped to 600,000, or to 8,000 when `RETAIN_INTERPRETER=0`    |
 | `RECYCLE_ABOVE_BYTES`   | 117440512 | drop the interpreter at the end of an invocation above this linear-memory reading; floor 32 MiB |
 | `ISOLATE_ABOVE_BYTES`   | 130023424 | the same drop against the whole-isolate estimate (linear memory plus the JS side); floor 64 MiB |
 | `FILL_SETTLE_MS`        | 60,000    | ms after a boot before the alarm runs PHP (fills, cron, reconcile); `0` is off                  |
@@ -724,14 +696,15 @@ added together. Two interpreters do not fit 128 MiB, so `interpreters` above 1 i
 for on a replica pool.
 
 `RETAIN_INTERPRETER` keeps the interpreter in the isolate when the instance is evicted, so the next
-request skips the boot while the isolate survives: 61-169 ms against about 1-2.5 s measured, after gaps
-up to 150 s in most rounds. When the isolate is gone the next request boots as it would have anyway.
+request skips the boot while the isolate survives. In measurement, adopting a kept interpreter took
+61-169 ms against 1-2.5 s for a boot. When the isolate is gone the next request boots as it would have
+anyway.
 An adopted interpreter is refused when the site committed a write since it was kept. `/serve-stats`
 reports `retention`.
 
-**`REPLICA_READ_ONLY` is a SAFETY interlock.** Setting it wraps every installed `cfw*` capability so
-the object physically cannot commit an authoritative write, and refuses anything unrecognised. That
-half works and is reported at `/serve-stats` under `replica`.
+**`REPLICA_READ_ONLY` is a safety interlock.** Setting it wraps every installed `cfw*` capability so
+the object cannot commit an authoritative write, and refuses anything unrecognised. The mode is
+reported under `replica` in `/serve-stats`.
 
 A replica is started by a bulk copy and kept current by a log, both over `/__replica`:
 
@@ -753,12 +726,12 @@ How many lanes a site has beyond the primary. **0 is the default and means one o
 which case every routing decision resolves to the primary and nothing changes.
 
 **One lane helps only once the single object is saturated.** Measured through the front worker on
-authenticated pages: one lane serves 0.87x what no pool serves at 32 clients and 0.98x at 64, because
-affinity hashes over two buckets and the lane takes about 60% of the traffic onto an object whose
-Drupal caches are colder than the primary's while adding no parallelism. At 128 clients the same lane
-serves 2.06x, and at 512 a single object sheds every request as 503 while one lane still serves 426.
-Set this above 1 for a site that is not yet contended; autoscaling only provisions on sustained
-queueing, which is the regime where even one lane pays.
+authenticated pages, one lane served 0.87x the throughput of no pool at 32 clients and 0.98x at 64,
+because the lane takes about 60% of the traffic onto an object whose Drupal caches are colder than
+the primary's. At 128 clients the same lane served 2.06x, and at 512 a single object answered every
+request with 503 while one lane still served 426. A fixed `REPLICA_COUNT` suits a site that is already
+contended. Autoscaling provisions lanes only under sustained queueing, the regime where even one lane
+pays.
 
 Lane 0 is the primary; lanes 1..n are objects named `<site>#r<lane>`. `#` is outside the set
 `encodeSiteId()` keeps and outside its `_<hex>` escape, so a replica name cannot collide with a site
@@ -769,18 +742,14 @@ primary read-only too, so raising `REPLICA_COUNT` cannot put an existing object 
 accident. It tells the router how many lanes to spread across, and nothing else.
 
 A lane is chosen by hashing a stable key: the path for a request carrying a session, else the client
-address, else the path (`affinityKey()` in `src/ops/replica-routing.ts`). A shared-counter round robin
-produced a completely flat scaling curve on the rig while per-client affinity produced 1.00 / 1.80 /
-2.14; an authenticated session keys on the path so one editor's pages spread. A write spreads only
-where the lane can forward it; with `WRITE_FORWARD=0` it goes to the primary without asking a replica
-first.
+address, else the path (`affinityKey()` in `src/ops/replica-routing.ts`). An authenticated session keys
+on the path, so one editor's pages spread across lanes. A write spreads only where the lane can
+forward it; with `WRITE_FORWARD=0` it goes to the primary without asking a replica first.
 
-**Only the serving path spreads.** `/serve` is an allow-list of one and every other route pins to the
-primary, because the two mistakes do not cost the same: a route wrongly pinned loses capacity nobody
-sees, and a route wrongly spread answers from a replica's copy. The routing rule read the method and
-never the path, so `/export` handed back one lane's database and `GET /migrate` re-ran migration on
-an object that is not the site. Every visitor path is rewritten to `/serve` before the router is
-asked, so the list needs no other entry.
+**Only the serving path spreads.** `/serve` is the one route on the allow-list, and every other route
+pins to the primary. A route wrongly pinned loses capacity; a route wrongly spread answers from a
+replica's copy. Visitor paths are rewritten to `/serve` before routing, so the list needs no other
+entry.
 
 The router does not track which lanes are ready. A lane that is not `SERVING` answers 421 with
 `x-cfw-retry-safe: 1` and the front worker retries on the primary, so readiness needs no cache and no
@@ -788,7 +757,7 @@ invalidation. It costs one extra hop, and only while a lane is not ready.
 
 ### `REPLICA_AUTOSCALE`
 
-Raising `REPLICA_COUNT` by hand tells the ROUTER that lanes exist. It does not create them, so the
+Raising `REPLICA_COUNT` by hand tells the router that lanes exist. It does not create them, so the
 lanes it routes to hold no data and answer 421 until somebody drives the provisioning loop.
 Autoscaling is the half that creates one.
 
@@ -804,37 +773,31 @@ least 2 and may still grow. `REPLICA_AUTOSCALE=0` is how an operator pins the nu
 
 ### `REPLICA_MAX_LANES`
 
-The ceiling autoscaling will not grow past, defaulting to 32.
+The ceiling autoscaling will not grow past. The default is 32, and larger values are capped at 32.
 
-**Throughput gives no reason to cap.** Addressing objects directly and summing, efficiency against
-perfect scaling reads 100 / 95 / 90 / 85% at 8 / 16 / 32 / 48 replicas -- a flat ~5 points per
-doubling with no knee. That is a topology figure, and routed throughput is measured separately with
-a Worker-hosted generator whose own ceiling is established first.
+**Throughput does not set the cap.** Addressing objects directly and summing, efficiency against
+perfect scaling is 100 / 95 / 90 / 85% at 8 / 16 / 32 / 48 replicas, a loss of about 5 points per
+doubling. This figure describes the topology; routed throughput is a separate measurement.
 
-**Pin `REPLICA_AUTOSCALE=0` before measuring anything against lane count.** Autoscaling builds lanes
-under exactly the load a rig offers, so a control arm provisioned with zero lanes answered from `r1`
-and `r2` on its first run. Read `x-cfw-lanes` back at drive time rather than trusting the number the
-rig set.
+**Set `REPLICA_AUTOSCALE=0` when measuring against a fixed lane count.** Autoscaling builds lanes
+under the load a benchmark offers, so a control arm provisioned with zero lanes can answer from `r1`
+and `r2` on its first run. Read `x-cfw-lanes` back at drive time rather than trusting the configured
+number.
 
 **A pool is reached only by isolates that have already seen it.** `believedLanes()` is per isolate
 and is set from the `x-cfw-lanes` the primary reports on a response, so the first request a cold
 isolate makes goes to the primary whatever the pool size, and the belief expires after
-`LANES_TRUST_MS`. Measured on a 4-lane site: five consecutive requests all answered `primary`, and
-twenty answered `primary 13 / r2 1 / r3 1 / r4 5`. Sustained traffic keeps every isolate warm and
-this is invisible; a low-rate or bursty client sees a larger share answered by the primary. Count
-distinct `x-cfw-replica` values across a burst to read a pool -- a single response cannot.
+`LANES_TRUST_MS`. Sustained traffic keeps every isolate warm; a low-rate or bursty client sees a
+larger share answered by the primary. Count distinct `x-cfw-replica` values across a burst to read a
+pool, since a single response cannot show it.
 
 **The hard ceiling is 256 and it is arithmetic.** `replicaCount()` clamps to `ID_PARTITION_LANES`,
 which it imports rather than restates: a lane mints forwarded row ids from its residue class modulo
 the partition, the primary takes class 0, and past 256 two writers would share a class and mint the
 same id. The default of 32 is a cost bound below that, not a correctness one.
 
-An earlier default of 3 existed for a different reason and is worth recording, because it read as a
-performance limit and was not one. Warming is per OBJECT, so a warmed pool multiplied it: 32 idle
-lanes re-arming every 8 s is 345,600 rows a day to serve nothing, 3.5x free's entire daily budget. A
-lane the router is not choosing now falls back to the slow re-arm and hibernates, so an unused lane
-costs storage and replication catch-up rather than a warming chain. That per-lane idle cost is the
-bound that actually matters and it is not yet measured.
+A lane the router is not choosing falls back to the slow re-arm and hibernates, so an unused lane
+costs storage and replication catch-up rather than a warming chain.
 
 ### `WRITE_FORWARD`
 
@@ -844,14 +807,14 @@ a non-zero `REPLICA_COUNT`, both off by default. A site with no pool is unaffect
 
 The lane runs the whole write locally, discards its own effect through the driver's `commit: false`
 path, and hands the statement list to the primary, which stays the sequencer. Ids are partitioned so
-that every writer holds a residue class no other writer mints -- lanes from their lane number, the
-primary from slice 0 -- and a lane records the ids it forwarded so it cannot repeat one before
-replication catches up.
+that every writer holds a residue class no other writer mints: lanes from their lane number, the
+primary from slice 0. A lane records the ids it forwarded so it cannot repeat one before replication
+catches up.
 
 Two things are worth knowing before turning it off. A write reaches a lane at all only because this
 is on: with it off the router pins every POST to the primary, so the one object the pool exists to
-relieve keeps every form submission. And an unbuffered write -- one Drupal issues outside a
-transaction -- takes the transaction bridge on a lane rather than the exec bridge, because
+relieve keeps every form submission. An unbuffered write, one Drupal issues outside a transaction,
+takes the transaction bridge on a lane rather than the exec bridge, because
 `cfwSqlExec` has no rollback and a write on it can be neither forwarded nor discarded. That routing
 lives in the driver; the host's guard refuses an exec write and fails over, which is what happens if
 the two ever disagree about whether a connection holds a residue class.
@@ -866,11 +829,10 @@ re-arms and repeats the ask until the copy lands; the primary queues the lane in
 a repair before growing the pool, on a quiet site as well as a busy one.
 
 Once a lane is `SERVING` it falls through to the ordinary alarm body, and this var is the bound on
-how far behind it may fall. Measured: without the tightening a serving lane re-arms at
-`KEEP_WARM_MS`, so it pulls the log every 240,000 ms and can serve a copy four minutes behind the
-primary while looking healthy; the fence refuses only a caller that states a freshness requirement,
-and a visitor states none. With it, 30,000. Clamped to 1,000..300,000; below a second a lane spends
-more on asking than on serving.
+how far behind it may fall. Without it, a serving lane re-arms at `KEEP_WARM_MS` and can serve a copy
+four minutes behind the primary; the staleness fence refuses only a caller that states a freshness
+requirement, and a visitor states none. The default is 30,000. KV overrides are limited to
+1,000..300,000; below a second a lane spends more on asking than on serving.
 
 Each round costs two Durable Object requests against the primary, so this is a cost knob as much as a
 freshness one.
@@ -886,7 +848,7 @@ curl "$SITE/replica?action=provision&lane=1&cursor=<the cursor from the last ans
 ```
 
 It runs on the primary because that is the object a caller can reach; a lane has no route into it
-from outside. The lane needs no Drupal install of its own -- each chunk carries the table's DDL --
+from outside. The lane needs no Drupal install of its own, since each chunk carries the table's DDL,
 and it reaches `VERIFIED` on the final chunk, which arms its alarm. From there it is self-driving.
 
 `budget` sets rows per invocation and defaults to 4,000. The cursor carries the generation the copy
@@ -909,7 +871,7 @@ id minted in its constructor kept ONE incarnation across 71 consecutive 8 s alar
 and 45 s the constructor ran again on every probe.
 
 `KEEP_WARM_MS` ships at 240,000, which is 24x the threshold, so it re-arms an idle alarm and keeps
-nothing warm. The name is older than the measurement; it is an idle re-arm.
+nothing warm.
 
 `SITE_WARM` re-arms at `WARM_INTERVAL_MS` instead. At 8,000 the object never hibernates, so every
 request finds the interpreter it left. A longer interval lets it hibernate, and the next instance then
@@ -924,8 +886,8 @@ tick charges one row, the `setAlarm` itself. What warming buys is the 1,398 ms
 cold boot on every page that renders, which is the authenticated tier; a cached page answers off SQL
 without booting PHP at all, so warming cannot make one faster by any amount.
 
-**Past hibernation the curve has one knee, at 30 s.** Measured 2026-09-25 on paid throwaways: a page
-that needs PHP, requested after 150-300 s of idle. The 30-120 s rows come from 12 workers over four
+**Past hibernation the curve has one knee, at 30 s.** Measured on paid deployments with a page that
+needs PHP, requested after 150-300 s of idle. The 30-120 s rows come from 12 workers over four
 phases, rotated so every worker ran every interval (288 visits).
 
 | re-arm            | firings a day | share of free's budgets | paid, per site-month | adopted | the request                    |
@@ -937,8 +899,7 @@ phases, rotated so every worker ran every interval (288 visits).
 
 Past 10 s, adoption depends first on where the platform places the object. Four of the twelve
 workers never adopted at any interval; on the other eight, 30 s adopted 54% and 60-120 s 21-23%. Every
-visit that did not adopt found no retained interpreter in its isolate, so the code refused none. The
-same account also swings by the hour: 27 of 28 at 16:00 UTC, 0 of 60 at 19:00.
+visit that did not adopt found no retained interpreter in its isolate.
 
 A site that is not warming re-arms at 240 s, whether the thermal policy declined it or an operator
 set `SITE_WARM=0`, because that is the cheapest point and the thermal policy declines exactly the
@@ -958,8 +919,7 @@ never idles 10 s and is already resident, so the warming would be redundant rath
 `renderRate()` is a property of anonymous traffic: it decides how likely a visitor is to arrive. What
 decides whether an expensive render is imminent is whether somebody is signed in and working, and an
 editor on a quiet site sits far below the 505 renders/day crossing while producing exactly the requests
-a cold boot hurts most. Measured on the VPS comparison rig, an authenticated render is 31 ms on a warm
-object and 513 ms on a cold one. A compiled plan removes the render, not the boot: the first three
+a cold boot hurts most. In measurement, an authenticated render took 31 ms on a warm object and 513 ms on a cold one. A compiled plan removes the render, not the boot: the first three
 requests of a session still render, and any request that falls through the plan tier pays whatever the
 object costs at that moment.
 
@@ -1012,12 +972,10 @@ Cron renders against the site's origin, so links in mail it sends point at the s
 | `shm`  | opcache on with shared memory as its backing store       |
 | `pack` | reads a file cache baked into the pack, read-only        |
 
-The default is `off`, and the arms are measured. `file` writes 2,346 `.bin` files and 32,141,312
-bytes into the in-memory filesystem for a cache nothing ever reads, and `opcache_get_status()`
-reports opcache DISABLED on that arm because `file_cache_only=1` turns the shared-memory backend
-off. `shm` does accelerate (2,346 cached scripts, no filesystem writes) and puts its arena in PHP's
-linear memory, taking an object to 191.25 MiB against a 128 MiB isolate. `off` renders within 1 ms of
-`file` and leaves 37 MiB more room.
+`off` is the default. `file` writes its cache into the in-memory filesystem and never reads it back, so
+opcache reports itself disabled on that arm. `shm` accelerates scripts but places its arena in PHP's
+linear memory; in one measurement that took an object to 191.25 MiB, past the 128 MiB isolate limit.
+`off` renders no slower than `file` and leaves more memory free.
 
 `pack` needs `bun scripts/bake-opcache.ts` first and mounts nothing without it. It loads the baked
 cache as a second layer and cuts a cold render's object CPU by roughly 500-900 ms (deployed, n=8
@@ -1043,8 +1001,7 @@ login invocation has.
 
 Allows an authenticated GET to be answered from a stored shell with its personalised regions filled
 at the edge. On by default with no plan branch; `0` opts out, and an empty value is treated as
-unset. The row toll below is what a plan branch would have been about, and at one site it fits
-free's 100,000 rows/day. No visitor is served an assembly that has not been proven against their own
+unset. Assembly writes rows, described below. No visitor is served an assembly that has not been proven against their own
 render.
 
 A path with no stored shell is seeded from the next authenticated request, which is what lets
@@ -1082,16 +1039,13 @@ only in these two vars, `cpuTime` on the cold render, nothing asked of either ob
 | `HEAP_IMAGE=1` and `HEAP_SNAPSHOT=1` | 2020, 1908, 1937, 1561, 1912 |   5 |  1,912 |
 | both `0`                             | 1277, 1343, 1113, 1251       |   4 |  1,264 |
 
-The ranges do not overlap, so a restore costs about 648 ms more than booting from scratch, and it
-consumes storage against an account-wide 5 GB cap. The cause of the extra time is not known. Checking
-the restored bytes is not it: that costs 13-20 ms for a 37 MB image
-(`node scripts/measure/heap-digest-cost.ts`).
+The ranges do not overlap, so a restore cost about 648 ms more than booting from scratch, and it
+consumes storage against an account-wide 5 GB cap. The cause of the extra time is not known.
 
-**The size of the image depends on when it is taken, and the producer takes the expensive one.**
-`snapshotStep()` fires on an alarm arriving with no resident interpreter, so on a fresh site it
-captures the cold shape at 37,158,912 bytes. An image taken after a kernel boot and a serve is
-9,699,328. The measurement above is of the cold one, which is what ships, and a run against the
-post-serve image reads a 314.5 ms saving instead. `TECHNICAL_REPORT.md` carries both.
+**The image size depends on when it is taken.** `snapshotStep()` takes its image from an alarm that
+finds no resident interpreter, so on a fresh site it captures the cold shape at 37,158,912 bytes. An
+image taken after a kernel boot and a serve is 9,699,328 bytes, and a restore from that image was
+measured at 314.5 ms faster than booting.
 
 `snapshotStep()` still takes one image per pack generation from the alarm when opted in, and `/heap`
 reports `imagedGeneration`, `imageAttempts` and `lastHeapImage`. It never drops the interpreter: it
@@ -1099,9 +1053,8 @@ runs before the fill loop and only when `this.php === null`. It also refuses to 
 operator took, since the GC keeps exactly one. When an image IS stored its chunks are deflated, which
 bounds the storage at 3,134,727 bytes rather than 11,206,656.
 
-The post-render image is not shipped and its safety is not established: byte-identical anonymous
-output is a first-order check, and it falls short of proving that no session-bearing state survives,
-which is the reason the code images before the first render.
+The image is taken before the first render. Byte-identical anonymous output does not prove that no
+session state survives a render, so no post-render image is produced.
 
 **What replaces this as the number to watch is the cold-encounter share**, not the cold-boot duration.
 `src/ops/cold-encounter.ts` classifies every request the object handles and `/serve-stats` reports
@@ -1113,12 +1066,6 @@ a KV page read all return from the front worker, so the object's own denominator
 a share taken against it reads several times high. The front worker reports what it absorbed on the
 next request that hops anyway, under `x-cfw-absorbed`, and `coldOfTraffic` is null until it has --
 because a worker too old to report and a site with nothing absorbed are otherwise the same reading.
-
-**A pack-generic image cannot ship in the bundle, and it fails on size.** Two sites provisioned from
-one pack with the hash salt and pinned origin forced equal share 70.27% of pages once rendered, and
-the image is 2,588,005 bytes gzipped against roughly 355 KiB of headroom. Over by 7.3x even at
-perfect determinism. Delta encoding against a shared base, or shipping a base through the assets
-binding, are the surviving ideas and neither is priced.
 
 **Changing `LAZY_MOUNT`, `MIGRATE_ENGINE` or `SITE_DB_PREFIX` in a deploying config means changing
 `assets/.assetsignore` too.** The shipping asset set is derived from the canonical values of those
@@ -1138,9 +1085,8 @@ three; `tests/unit/runtime/assets-ignore.spec.ts` fails when the two disagree.
 
 **One boolean that exposes arbitrary SQL against the site database (`/sql`), a whole-database
 overwrite (`/restore`) and arbitrary PHP (`/php`).** Diagnostic routes fail closed without it.
-`bun run dev` sets it; a deployed configuration must not. It is absent from the KV override
-allow-list: KV is operator-writable, and every name on that list has a worst case of a slow site,
-with no change to what is reachable.
+`bun run dev` sets it; a deployed configuration must not. It is not KV-overridable: a KV write that set
+it would open `/sql` and `/restore` on a live site.
 
 ### `PHP_LOG_LEVEL`
 
@@ -1149,10 +1095,9 @@ same scale `CfwLogger` sends and Drupal's own `watchdog` uses. `warning` and `no
 aliases for `warn` and `log`, and `all` for `debug`.
 
 `CfwLogger` ships every Drupal log entry across the host bridge and the object mirrors it to
-`console.log` so it survives the isolate that produced it. Unfiltered, that is right for a ring
-buffer and wrong for a terminal: one page render on 8.5 emits several severity-7 deprecation notices
-with full stack traces, which is most of what a `wrangler dev` session prints. `info` is the default
-for that reason.
+`console.log`, so the output survives the isolate that produced it. Unfiltered, a single page render
+emits several debug-level deprecation notices with stack traces, which fills a terminal. `info` is the
+default for that reason.
 
 An unrecognised value falls back to the default and raises no error. A fatal carries `level: "error"`
 with no severity and is derived from the name, so a missing field never drops it.
@@ -1197,15 +1142,9 @@ bytes either way. `/serve-stats` reports the month's tally as `r2`. Set it to `0
 mirrors while leaving `FILES` bound. On an account running several sites, divide the allocation
 between them.
 
-**Mirror to the optimum.** Once R2's read meter binds, moving more traffic off-Worker spends a
-333,333/day meter to save a 100,000/day one. On the default traffic mix the peak is 0.769 off-Worker
-for 432,900 views/day, against 336,700 for mirroring everything, so maximising costs 96,200
-views/day.
-
-The optimum moves with the traffic mix and with CDN absorption, so compute it every time:
-`optimalOffWorker()` in `scripts/measure/free-envelope.ts` derives it from the same model every other
-caller uses. Raising absorption does not converge on "mirror everything"; at absorption 1, where R2
-reads cannot bind at all, the peak lands at 0.898 and is bound by rows.
+The share of traffic worth serving off the Worker depends on the traffic mix and on CDN absorption.
+`optimalOffWorker()` in `scripts/measure/free-envelope.ts` computes it from the same model the free-plan
+envelope uses.
 
 ## Files and Images
 
@@ -1221,19 +1160,16 @@ A public image style's URL points at the Worker's delivery path, `/cfw-img/<id>/
 where the front worker renders the derivative with tinyimg. The drupflare module rewrites the URL
 from the style's effect chain: scale, scale-and-crop, resize and convert each map to one transform.
 A chain that cannot be expressed as one transform, and any private file, keeps Drupal's stock URL.
-Before this, the toolkit copied the original to the derivative path and every style served the
-full-size source.
 
 With `RENDER_LANES` bound, an image written to `public://` is queued, and the next alarm renders
 every configured style at once on the rendering lanes, Durable Objects that hold no Drupal state.
 The results are stored under `public://cfw-derivatives/`, and the image route answers a stored copy
-in place of the source on the request it already makes, marked `x-cfw-image: STORED`. Measured on a
-deployed worker with the four shipped styles, n=5: the job took 984-1,718 ms on four lanes with five
-or six Durable Object requests, a stored first view answered in 41-91 ms, and the same style
+in place of the source on the request it already makes, marked `x-cfw-image: STORED`. In measurement on
+a deployed worker with the four shipped styles (n=5), the render job took 984-1,718 ms on four lanes
+with five or six Durable Object requests. A stored first view answered in 41-91 ms, and the same style
 rendered on first view took up to 1,647 ms. Stored and rendered bytes were identical in all 20
-comparisons. Driven through the media form on a deployed worker, n=5, an upload answered 303 in
-750-939 ms and all four styles were stored 3.9-4.4 s after the POST. `EAGER_DERIVATIVES=0` returns
-to rendering on first view.
+comparisons. Through the media form, an upload answered 303 in 750-939 ms and all four styles were
+stored 3.9-4.4 s after the POST. `EAGER_DERIVATIVES=0` returns to rendering on first view.
 
 ### `FILES_PUBLIC_URL`
 
@@ -1264,7 +1200,7 @@ AVIF, and it costs a zone with transformations enabled, does not exist on `*.wor
 5,000 transformations a month. Against the four shipped image styles that is 1,250 images before a
 site stops generating derivatives.
 
-**The toolkit reports the engine's real format list**, and that matters more than it sounds. All four
+**The toolkit reports the engine's real format list.** All four
 shipped styles are `image_scale` plus `image_convert_avif`, and core's `AvifImageEffect` asks the
 toolkit whether AVIF is supported before using it, falling through to the style's configured fallback
 of `webp` when the answer is no. So core degrades on its own with no config change, provided the
@@ -1275,9 +1211,8 @@ Measured on a deployed free worker, `cpuTime` amortised over 10 transforms per i
 12, against a source-only control at 0 ms: thumbnail 36.3 ms, medium 48.6, large 63.5, wide 188.2.
 Styles at or below 480 px on the long edge are produced inline; larger ones go to the fill queue.
 
-gd is not an engine and is not planned. Built to native wasm and deployed beside tinyimg on the same
-3000x1571 JPEG, it used ~294 ms of CPU against tinyimg's ~184 ms, and it cannot write WebP. Code
-that calls PHP's `imagecreate*` functions directly finds them absent on this runtime.
+gd is not an engine. Code that calls PHP's `imagecreate*` functions directly finds them absent on this
+runtime.
 
 ## Outbound Mail
 
@@ -1286,10 +1221,10 @@ of three transports and commits the message to `cfw_mail_queue`; the alarm sends
 is the implementation.
 
 **The plugin is claimed by a config override that the module registers, not by `settings.php`.**
-Assigning `system.mail:interface.default = cfw_mail` from `settings.php` names a plugin of a module a
-site may not have installed, and `MailManager` throws `PluginNotFoundException` on an unresolvable id,
-which answered 500 on `/user/password` for every site. `MailInterfaceOverride` can only run when
-`drupflare` is installed, and it yields to `smtp` on a site that has `smtp`.
+Assigning `system.mail:interface.default = cfw_mail` from `settings.php` would name a plugin of a
+module the site may not have installed, and `MailManager` throws `PluginNotFoundException` for an id it
+cannot resolve. `MailInterfaceOverride` runs only when `drupflare` is installed, and it yields to `smtp`
+on a site that has `smtp`.
 
 | var                   | default  | what it does                                               |
 | --------------------- | -------- | ---------------------------------------------------------- |
@@ -1342,15 +1277,11 @@ status code to read.
 
 ### SMTP
 
-**A `send_email` binding can be added later, and it is not in the canonical config for a different
-reason than you would guess.** Checked against Cloudflare's own configuration reference: `send_email`
-is an ordinary Wrangler array entry, so adding one is a redeploy rather than a recreate, and
-`allowed_destination_addresses` / `destination_address` narrow what it may reach. What stops it
-shipping by default is that its prerequisites are ACCOUNT state the control plane cannot provision
-on an operator's behalf -- Email Routing enabled, at least one verified destination address, and the
-sending domain onboarded -- which is the same shape that made `r2_buckets` refuse the one-click
-deploy. `api` needs none of that beyond the token `/setup/cf` already grants, so it is the transport
-the product provisions and the binding is an opt-in.
+**The canonical config does not declare `send_email`.** It is an ordinary Wrangler binding, so adding
+one is a redeploy, and `allowed_destination_addresses` / `destination_address` narrow what it may reach.
+Its prerequisites are account state the deploy button cannot provision: Email Routing enabled, at least
+one verified destination address, and an onboarded sending domain. `api` needs only the token that
+`/setup/cf` grants, so it is the transport the product provisions, and the binding is an opt-in.
 
 Port 25 is blocked on Workers; `MAIL_TRANSPORT=smtp` with `SMTP_PORT=25` is refused by name, before
 any attempt. `smtp.mx.cloudflare.net` is refused too: it resolves inside `162.158.0.0/15`, a
@@ -1373,7 +1304,7 @@ characters, headers over 16 KB, or a payload over 1,000,000 bytes. That last one
 Durable Object record ceiling of 2,199,995 bytes; Cloudflare's own 5 MiB is the looser of the two and
 never fires first.
 
-A failure after commit is only visible on `/__serve-stats`, under `mailQueue`, `lastMailDrain` and
+A failure after commit is only visible on `/serve-stats`, under `mailQueue`, `lastMailDrain` and
 `lastMailDrainAt`. A failed send is not retried: a send is not idempotent, and a password reset
 delivered twice with two different one-time links is worse than one that did not arrive.
 
@@ -1486,7 +1417,7 @@ PHP reaches HTTPS through a stream wrapper the runtime invokes from inside a C f
 one cannot resume, so Guzzle and Symfony's HTTP client are given a handler that yields from userland
 instead. `drupal/openid_connect` completes a login through its own client that way. A call made from
 inside an internal function such as `array_map` cannot park; it falls back to the deferred transport
-rather than failing. `TECHNICAL_REPORT.md` has the mechanism and the measured trip counts.
+rather than failing.
 
 | var               | default | what it does                                                               |
 | ----------------- | ------- | -------------------------------------------------------------------------- |
@@ -1673,8 +1604,8 @@ providers support it and an access token can write it.
 
 GitHub's Checks API carries annotations and per-line output, and only a GitHub App can write one. A
 repository-scoped fine-grained token is refused with `Resource not accessible by personal access
-token` on both check-run endpoints and accepted on the status endpoint, so the product offers commit
-statuses and avoids the word "checks".
+token` on both check-run endpoints and accepted on the status endpoint, so the product writes commit
+statuses.
 
 | provider       | read the tree          | write a status           | create a webhook           |
 | -------------- | ---------------------- | ------------------------ | -------------------------- |
@@ -1804,8 +1735,7 @@ override in force.
 { "RENDER_BUDGET_MS": 4000, "FILL_BATCH_SIZE": 8, "PREFILL": "0" }
 ```
 
-`GET /settings` prints the current list with the value in force and where it came from, which is the
-answer to keep rather than a count here. This page said eleven while the list held eighteen.
+`GET /settings` lists every lever with the value in force and where it came from.
 
 ### Writing Them
 
@@ -1818,14 +1748,9 @@ curl -X PUT -H "authorization: Bearer $OWNER_TOKEN" -H 'content-type: applicatio
   -d '{"RENDER_BUDGET_MS": 4000, "PREFILL": "0"}' https://your-site/settings
 ```
 
-`resolvePlan()` and `resolveSettings()` had read these keys since they shipped and nothing in `src/`
-ever called `CONFIG_KV.put()`, so every name below was a knob that could only be turned by editing
-`wrangler.jsonc` and redeploying: a deploy to change a value the deploy exists to avoid.
-
 An unlisted name is refused and named in the reply rather than dropped in silence. The allow-list is
-enforced at the writer as well as the reader, because a reader-side filter makes an unlisted name
-inert while a writer-side one makes it unstorable, and a document written before another reader
-exists is a document that reader will trust.
+enforced at the writer as well as the reader: a reader-side filter makes an unlisted name inert, and a
+writer-side filter makes it unstorable.
 
 The route is answered by the front Worker with no object hop: `CONFIG_KV` is a front-Worker binding,
 so reaching it through the Durable Object would spend a request to get at a namespace the isolate
@@ -1843,8 +1768,7 @@ Every lever has a domain, `LEVER_DOMAINS` in `src/ops/plan.ts`: a flag is `0` or
 the range its reader clamps to, and a fixed choice (`OPCACHE_MODE`, `MAIL_TRANSPORT`,
 `SITE_LOCATION_HINT`) is one of its listed values. The form offers a select or a bounded number
 field from it, and `writeSettings()` refuses a value outside it and names the reason, so a mistyped
-value cannot reach a reader. `LAZY_FS_BUDGET_BYTES` stops at 8 MiB, half of the 16 MiB a module
-install was measured to fail at.
+value cannot reach a reader. `LAZY_FS_BUDGET_BYTES` accepts values up to 8 MiB.
 
 ### The Three Permissions
 
@@ -1874,19 +1798,14 @@ on `/_cfw/git`, for the same tenancy reason. Within the operations terminal, `en
 line additionally require `administer drupflare owner`, so a site can grant the terminal without
 granting the ability to add code to the runtime.
 
-**Every one of them reaches a reader inside the Durable Object, and for a while only two did.**
-`withSettings()` is applied in `src/site.ts`, to the front Worker's env, and the object receives its
-own copy of the bindings, so most of them were knobs nothing read: `RENDER_BUDGET_MS`,
-`FILL_BATCH_SIZE`, `HTTP_DRAIN_LIMIT`, `MIRROR_LIMIT`, `LAZY_FS_BUDGET_BYTES`
-and `PREFILL` are read in the object (`src/site-do.ts` and `src/do/levers.ts`) and only there. `adoptSettings()` now overlays every name
-on the allow-list, and is called from `alarm()` as well as `handle()`, because several of them are
-read on the fill chain and an alarm never passes through `handle()`. The fast storage lane adopts
-nothing and must not: it is await-free by construction and reads no lever.
+The front Worker and the Durable Object each hold their own copy of the bindings, so the overrides are
+applied inside the object too. `adoptSettings()` overlays every name on the allow-list in the object,
+and it runs from `alarm()` as well as `handle()`, because several levers are read on the fill chain and
+an alarm never passes through `handle()`. The fast storage lane adopts nothing: it is await-free by
+construction and reads no lever.
 
-A lever is offered here first, then as a var. KV comes before `vars` so an operator can change a
-setting without a redeploy; the var is the fallback. That ordering applies to anything new, including
-values that look like deploy-time properties. `SITE_LOCATION_HINT` reads like one and behaves
-otherwise, since `DurableObjectNamespace.get()` takes the hint per call.
+A lever is consulted from KV before its var. An operator can change a setting without a redeploy, and
+the var is the fallback.
 
 **The list is an allow-list and it is a privilege boundary.** KV is operator-writable, so merging an
 arbitrary object into the environment would let anyone with KV write set `PW_DIAGNOSTICS=1`. Every
@@ -1920,14 +1839,13 @@ A second object under the same rule read 1 MISS, 7 HIT and 2 DYNAMIC across 10 r
 same picture with two requests landing at a PoP that had not filled yet.
 
 **Measure with GET, never `curl -I`.** HEAD is what `curl -I` sends, Cloudflare does not populate its
-cache from a HEAD, and every reading comes back `DYNAMIC`. That method produced the conclusion "R2
-custom domains do not cache", which was an artifact of the instrument.
+cache from a HEAD, and every reading comes back `DYNAMIC`.
 
 ### The Cache Rule
 
 One rule, scoped to the CDN hostname and nothing else:
 
-```
+```text
 expression:        (http.host eq "drupflare-cdn.example.com")
 action:            set_cache_settings
 action_parameters: { "cache": true, "edge_ttl": { "mode": "override_origin", "default": 3600 } }
@@ -1942,9 +1860,8 @@ that has never had a cache-phase ruleset the entrypoint does not exist yet and c
 nothing.
 
 **One zone-scoped permission creates it: `Zone > Cache Rules > Edit`.** Cloudflare's documentation
-also lists the account-scoped `Account Rulesets: Edit` and `Account Filter Lists: Edit`; measured,
-this rule shape needs neither. That correction matters, because the account-scoped reading is what
-had rejected this lever as an account-wide write bought for one site.
+also lists the account-scoped `Account Rulesets: Edit` and `Account Filter Lists: Edit`. This rule
+shape needs neither.
 
 ### Smart Tiered Cache
 
@@ -1965,31 +1882,25 @@ The token needs `Zone Settings Write` or `Zone Write`. Tiered Cache and Smart To
 available on the Free plan; Generic Global, Regional and Custom topologies are Enterprise only.
 Cloudflare selects the upper tier automatically for a zone using R2 as an origin.
 
-### Why the Model Still Defaults to Zero
+### Absorption in the Model
 
-`cdnAbsorption` in `scripts/measure/free-envelope.ts` defaults to **0** and should stay there.
+`cdnAbsorption` in `scripts/measure/free-envelope.ts` defaults to **0**.
 
-Absorption follows the traffic, not the configuration. It is a function of reads per colo per TTL
-window, so a site at 10 views/day spread over 40 PoPs absorbs almost nothing and the same site at
-10,000 views/day absorbs nearly everything. Zero is the correct floor for a low-traffic site and for
-any site with no rule, and it is the only value that holds at every traffic level.
+Absorption follows the traffic. It depends on reads per colo per TTL window, so a site with few views
+spread over many PoPs absorbs almost nothing, and the same site at high traffic absorbs nearly
+everything. Zero is the floor for a low-traffic site and for any site with no rule.
 
-So the 4.33x peak is reachable, at traffic high enough to keep PoPs warm, with one operator-applied
-rule. Report anything derived from a non-zero absorption as a range.
+`cdnAbsorption` is a code-level option. The command line takes `--visits`, `--dynamic` and `--warmth`
+only; absorption is passed to `envelope()`, `optimalOffWorker()` and `scoreWorkload()` in
+`scripts/measure/free-envelope.ts`.
 
-**`cdnAbsorption` is a code-level option.** The command line takes `--visits`, `--dynamic` and
-`--warmth` only; absorption is passed to `envelope()`, `optimalOffWorker()` and `scoreWorkload()` in
-`scripts/measure/free-envelope.ts`, so a claim that depends on it comes from a caller that names the
-value, and never from the default run.
-
-**Drupflare does not create the rule.** It is a change to a zone the operator owns, its value depends
-on traffic the product cannot see, and the model's default does not move until an operator says they
-applied it.
+Drupflare does not create the Cache Rule. It changes a zone the operator owns, and the model's default
+stays at 0 until an operator applies the rule.
 
 ## Related
 
-- `docs/repository-layout.md` -- every path outside `src/` and how it arrives
-- `docs/building-from-source.md` -- the seventeen steps a source build runs
-- `docs/measurement-classes.md` -- which instrument may produce which class of number
-- `docs/recovery.md` -- which primitive answers which failure
-- `docs/external-database.md` -- why the site database lives in the Durable Object
+- [Repository layout](repository-layout.md): every path outside `src/` and how it arrives
+- [Building from source](building-from-source.md): how a source build runs
+- [Measurement classes](measurement-classes.md): which instrument may produce which class of number
+- [Recovery](recovery.md): which primitive answers which failure
+- [External database](external-database.md): why the site database lives in the Durable Object

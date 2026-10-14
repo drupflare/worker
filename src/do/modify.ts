@@ -27,7 +27,7 @@ import { firstRow } from '../util/sql';
 import { gitApply, gitRestore, gitVerifyBoot } from './git-delivery';
 
 /**
- * Seven actions over uploaded module revisions, mirroring `/git`'s single-route shape. Only
+ * Eight actions over uploaded module revisions, mirroring `/git`'s single-route shape. Only
  * `commit` and `activate` change what runs, through the same apply-verify-restore path as git.
  */
 export async function handleModify(

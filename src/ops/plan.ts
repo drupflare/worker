@@ -1,3 +1,4 @@
+import { OPCACHE_MODES } from '../runtime/opcache';
 import { ruleDocumentRefusal } from './edge-rules';
 
 /** the subset of the environment a plan decision reads */
@@ -220,7 +221,7 @@ export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
 	MAIL_TRANSPORT: { kind: 'enum', values: ['auto', 'binding', 'api', 'smtp', 'off'] },
 	MAIL_DRAIN_LIMIT: { kind: 'int', min: 1, max: 25 },
 	SHELL_ASSEMBLY: { kind: 'flag' },
-	OPCACHE_MODE: { kind: 'enum', values: ['file', 'shm', 'off'] },
+	OPCACHE_MODE: { kind: 'enum', values: OPCACHE_MODES },
 	ARGON2: { kind: 'flag' },
 	SITE_LOCATION_HINT: {
 		kind: 'enum',

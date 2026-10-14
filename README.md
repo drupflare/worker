@@ -594,15 +594,16 @@ Infrastructure, for one small content site. Vendor figures are list prices and a
 
 | line item         | Drupflare free                  | Drupflare paid                 | small VPS                                  | prov. |
 | ----------------- | ------------------------------- | ------------------------------ | ------------------------------------------ | ----- |
-| Compute           | $0.00                           | $5.00 Workers Paid             | $5-12                                      | L     |
+| Compute           | $0.00                           | $5.00 Workers Paid             | $10-12 for 1-2 vCPU and 2 GiB              | L     |
 | Database          | $0.00 (the object's own SQLite) | included                       | on the box, or $15+ managed                | L     |
-| Backups           | $0.00                           | included in the plan's storage | ~20% surcharge on the majors               | L     |
+| Backups           | $0.00                           | included in the plan's storage | $0.50-2.50, snapshots or a plan surcharge  | L     |
 | CDN               | included                        | included                       | $0 with Cloudflare in front, which most do | L     |
 | TLS               | included                        | included                       | $0 via Let's Encrypt, yours to renew       | L     |
-| **Monthly total** | **$0.00**                       | **~$5.00**                     | **~$6-14**                                 |       |
-| **Annual**        | **$0**                          | **~$60**                       | **~$72-168**                               |       |
+| **Monthly total** | **$0.00**                       | **~$5.00**                     | **~$10.50-14.50**                          |       |
+| **Annual**        | **$0**                          | **~$60**                       | **~$126-174**                              |       |
 
-Paid against a VPS is roughly $12-108 a year, and at the bottom of the market it is close to a wash.
+Paid against a VPS is roughly $66-114 a year. The VPS is the smallest box that meets Drupal's
+documented memory minimum, priced from provider list prices in [the impact report](docs/impact.md).
 The row with no VPS equivalent is the first one: there is no $0 VPS, and free carries about 3.0M
 visits a month with the same feature set as paid, including both performance levers, which default
 on regardless of plan. At fleet scale the infrastructure works out near $0.028 per site per month.

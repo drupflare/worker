@@ -51,15 +51,15 @@ The restore applies on the object's next start. The undo bookmark is obtainable 
 that schedules the restore, so it is returned rather than logged.
 
 **It is unsupported in local development, and the local runtime signals that badly.** Cloudflare's
-wording is that "a durable log of data changes is not stored locally". Measured: all three
-methods EXIST in the local runtime. `getBookmarkForTime()` throws "This Durable Object's storage
-back-end does not implement point-in-time recovery", while `getCurrentBookmark()` answers
+wording is that "a durable log of data changes is not stored locally". All three
+methods exist in the local runtime. `getBookmarkForTime()` throws "This Durable Object's storage
+back-end does not implement point-in-time recovery", while `getCurrentBookmark()` returns
 `00000000-00000000-00000000-00000000000000000000000000000000` and throws nothing.
 
-So a feature-detect on the method passes and hands back a bookmark that would schedule a restore to
-the beginning of time. `/pitr` refuses an all-zero bookmark by VALUE for that reason, and reports
-`supported: false` with the platform's own sentence when the API throws. Any claim about what a
-restore does on the edge still needs a deployed test.
+A feature-detect on the method therefore passes and hands back a bookmark that would schedule a
+restore to the beginning of time. `/pitr` refuses an all-zero bookmark by value, and reports
+`supported: false` with the platform's own sentence when the API throws. Restore behaviour is
+verified on a deployed object only.
 
 ## The Export Dump
 
@@ -75,17 +75,18 @@ REAL is the one class read directly.
 What a dump contains:
 
 - **Structure only** for tables whose rows regenerate: every `cache_*` bin, `cachetags`, `sessions`,
-  `semaphore`, `flood`, `queue`, `watchdog`, `history`, the `search_*` tables and `cfw_page`. Size is
-  the smaller half of the reason. A restored `cache_container` would boot the site on the previous
+  `semaphore`, `flood`, `queue`, `watchdog`, `history`, `search_dataset`, `search_index`,
+  `search_total` and `cfw_page`. A restored `cache_container` would boot the site on the previous
   site's service container, and `cachetags` checksums that disagree with the bins they describe leave
   rows that are present and permanently rejected.
 - **Nothing at all** from `cfw_migrate`, `cfw_import` and `cfw_import_chunk`. A dump carrying
   `cfw_import_chunk` would contain itself, and one carrying `cfw_migrate` would have a replay
   overwrite the cursor that makes the replay resumable.
-- **No secrets by default.** The owner token, the Cloudflare OAuth access and refresh tokens and
-  `hash_salt` are withheld and the count of withheld rows is reported. `?secrets=1` carries them. A
-  faithful restore needs `hash_salt`, since it signs one-time login links and form tokens; a backup
-  stored anywhere else should not have it.
+- **No secrets by default.** The owner token, the Cloudflare OAuth token and client id, the SMTP
+  settings, `hash_salt`, and the git provider tokens and webhook secrets (`git_token_*`,
+  `git_hooksecret_*`) are withheld. `?secrets=1` carries them. A faithful restore needs `hash_salt`,
+  since it signs one-time login links and form tokens; a backup stored anywhere else should not have
+  it.
 
 Options:
 
@@ -94,15 +95,15 @@ Options:
 | `?cursor=start` | chunked and resumable; each response carries `nextCursor`         |
 | `?body=1`       | include the SQL text in a chunked response rather than its length |
 | `?all=1`        | carry rows for the regenerable tables too                         |
-| `?secrets=1`    | carry the four withheld `cfw_meta` keys                           |
+| `?secrets=1`    | carry the withheld `cfw_meta` secrets                             |
 | `?limit=N`      | cap rows per table                                                |
 | `?chunkChars=N` | override the 1,000,000-character chunk size                       |
 
-**A dump that cannot be replayed answers 409 rather than 200.** A restore point nobody can replay is
-worse than none, because it reads as a backup. `?all=1` is the usual way to produce one: the whole
-`cache_container` row measures 960,544 characters against the 100,000-character Durable Object
-statement ceiling. A chunked export answers 409 on a shape mismatch as well, which is how splicing
-two different dumps into one file is caught.
+**A dump that cannot be replayed answers 409 rather than 200.** A restore point nobody can replay
+reads as a backup while being useless. `?all=1` includes the `cache_container` row, which measures
+960,544 characters against the 100,000-character Durable Object statement ceiling, so a dump carrying
+it is not replayable. A chunked export also answers 409 on a shape mismatch, so two dumps cannot be
+spliced into one file unnoticed.
 
 ## Restore
 
@@ -126,7 +127,7 @@ complete stored import exists.
 | Bad module update           | PITR, then `wrangler rollback` if code moved | files already mirrored to R2; a config change an editor made after the update                                                                      | as above, plus `wrangler rollback [VERSION_ID]`                              |
 | Corrupted config            | `/restore` of the last good dump             | content created since that dump; needs `PW_DIAGNOSTICS=1`                                                                                          | `POST /restore?label=pre-fix` with the dump as the body                      |
 | Failed migration            | re-run the migration                         | nothing, if the cursor survived; `cfw_migrate` is resumable and a dump excludes it                                                                 | `drangler migrate ...`; `GET /migrate` reports `chunk`, `chunks` and `done`  |
-| Whole-object loss           | `/restore` into a new object                 | PITR entirely -- the log died with the object; `hash_salt` unless the dump used `?secrets=1`                                                       | `POST /restore` against the new site name                                    |
+| Whole-object loss           | `/restore` into a new object                 | PITR entirely; the log died with the object; `hash_salt` unless the dump used `?secrets=1`                                                         | `POST /restore` against the new site name                                    |
 | Worker version rollback     | `wrangler rollback`                          | **the database.** Code moves, data does not. Refused if a Durable Object class lifecycle change or a deleted binding sits between the two versions | `wrangler rollback [VERSION_ID] --name <worker>`                             |
 | R2 asset loss               | the mirror refills from the object           | nothing; the object is the durable copy and R2 is a cache in front of it                                                                           | no operator route; `/__mirror` is DO-internal and the alarm drains the queue |
 
@@ -139,8 +140,8 @@ rollback and a PITR restore, in that order. Cloudflare refuses the rollback outr
 Object class lifecycle change happened between the two versions, or if the target version binds an R2
 bucket, KV namespace or queue that no longer exists.
 
-**R2 is a mirror, not a backup.** With no `FILES` bucket bound -- the free-tier default -- the object
-is the durable copy and there is nothing to lose. With one bound, the bucket holds rendered pages and
+**R2 is a mirror, not a backup.** With no `FILES` bucket bound, which is the shipped configuration, the
+object is the durable copy and there is nothing to lose. With one bound, the bucket holds rendered pages and
 uploaded files that the object still has, and the mirror queue refills it on the alarm.
 
 ## Keeping a Dump
@@ -156,7 +157,7 @@ like a backup.
 
 ## Related
 
-- `docs/configuration.md` -- `PW_DIAGNOSTICS`, the `FILES` binding and the runtime overrides
-- `docs/external-database.md` -- why the data lives in the object
-- `TECHNICAL_REPORT.md`, Platform Constraints -- the 100,000-character statement ceiling and the other
+- `docs/configuration.md`: `PW_DIAGNOSTICS`, the `FILES` binding and the runtime overrides
+- `docs/external-database.md`: why the data lives in the object
+- `TECHNICAL_REPORT.md`, Platform Constraints: the 100,000-character statement ceiling and the other
   measured Durable Object SQLite limits

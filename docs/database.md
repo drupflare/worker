@@ -2,7 +2,7 @@
 
 `assets/drupal/site.sqlite` is the Drupal database every new site is created from. It is the only
 tracked artifact under `assets/`, and this page is how it is built. Read its current size and shape
-off the file rather than from here; `bun run check:site-db` diffs a fresh build against it.
+off the file rather than from here. `node scripts/diff-site-db.ts` compares a fresh build against it.
 
 One command produces it:
 
@@ -11,7 +11,7 @@ php -d opcache.enable_cli=0 -d xdebug.mode=off \
   scripts/drupal/install-site-db.php drupal-src /tmp/site.sqlite
 ```
 
-`bun run build:site-db` is the same thing with the flags already set. The script refuses to write
+`bun run build:site-db <output>` runs the same command with the flags already set. The script refuses to write
 `assets/drupal/site.sqlite` unless given `--allow-shipping-pack`, so the normal loop is build
 elsewhere and compare:
 
@@ -44,19 +44,18 @@ and the index count.
 | `system.performance:js.preprocess`      | `false` | the same                                                              |
 | `automated_cron.settings:interval`      | `0`     | the host owns the schedule; Drupal must not run cron inside a serve   |
 
-`max_age` is the one to understand. Drupal's installer default of `0` is right for a host that
-configures a reverse proxy separately. Here the reverse proxy is the product: at `0` the fill chain
-declines to store every response it renders, and the page table stays empty on every site.
+`max_age` is the one to understand. Drupal's installer default of `0` suits a host that configures a
+reverse proxy separately. This runtime serves its own cached pages, so at `0` the fill chain declines
+to store every response it renders and the page table stays empty.
 
 **Write these through Drupal, never with SQL.** `ConfigFactory::save()` writes the `config` row and
 clears the `cache_config` copy. Drupal reads the bin first, so an `UPDATE` against `config` alone
-leaves the old value in force. That happened: the `max_age` fix was committed correctly and had no
-effect on any site until a later commit moved the cached row as well.
+leaves the old value in force.
 
 ## The Cache Indexes
 
-Every cache bin ships `<bin>_created` and `<bin>_expire`. Sixteen of them are dropped, leaving the
-pair on `cache_data` only.
+Every cache bin ships `<bin>_created` and `<bin>_expire`. The pair is dropped on every bin except
+`cache_data`, which keeps it.
 
 Nothing on this runtime reads them. `DatabaseBackend::getMultiple()` selects by `cid`, and
 `garbageCollection()` never runs because the host sweeps expiry itself. Each surviving index costs a
@@ -74,33 +73,28 @@ object, a password hash and per-row timestamps, so two correct runs differ in th
 while describing the same site. `scripts/diff-site-db.ts` compares the table set, the module set,
 the config names and five row counts.
 
-Measured on 2026-09-09 against the shipped file of that date, a fresh build gave: **41 modules
-against 41, 175 config rows against 175, and every table present.** The differences that remained
-were these, and each was accounted for:
+A fresh build agrees with the shipped file on the module set, the config rows and the table set: 41
+modules, 175 config rows and every table. The remaining differences are these:
 
 | Difference                           | Direction    | Cause                                                    |
 | ------------------------------------ | ------------ | -------------------------------------------------------- |
-| 4 `drupflare.*` routes, 3 menu links | build only   | that file predated those routes; see below               |
 | `state:drupflare.router_fingerprint` | build only   | written when the module is enabled                       |
 | `state:twig_extension_hash_prefix`   | shipped only | written by `bun run assets:twig`, a later build step     |
 | `state:system.theme.files`           | shipped only | written on the first request                             |
 | six `cache_*` bins                   | shipped only | Drupal creates them on the first request, not at install |
-| 739 free pages                       | shipped only | the shipped file has never been vacuumed after an edit   |
 
 The six lazy bins and the two first-request state rows are named in `diff-site-db.ts` rather than
 tolerated by a wildcard, so a seventh missing table is a failure instead of a rounding error.
 
 ## The Router Follows the Driver
 
-The 2026-09-09 comparison found that `core.extension` in the shipped database listed `drupflare`
-while the `router` table carried none of its four routes and none of its three menu links, because
-the module was enabled into the database before those routes existed. `router` is a table that
-`RouteBuilder` writes, not a cache Drupal rebuilds on demand, so the Drupflare admin section,
-Runtime Status and the Operations Terminal answered 404 on every site created from it.
+`router` is a table that `RouteBuilder` writes, not a cache Drupal rebuilds on demand. A database
+built before a module's routes existed lacks them, and the Drupflare admin section, Runtime Status
+and the Operations Terminal answer 404 on every site created from it.
 
-The database was rebuilt against the current driver on 2026-09-30, which fixed it for new sites.
-`tests/node/driver-pack.spec.ts` now fails when the packed router lacks a route the driver declares
-or carries a permission the driver no longer declares. Existing sites are reached by the
+The packed database carries the current driver's routes. `tests/node/driver-pack.spec.ts` fails when
+the packed router lacks a route the driver declares or carries a permission the driver no longer
+declares. Existing sites are reached by the
 `router-driver-routes` step in `src/ops/reconcile.ts`, which compares a site's `router` rows against
 `DRIVER_ROUTES` and rebuilds when any are absent. After a rebuild, run `assets:twig`, `assets:core`,
 `assets:pack` and `assets:scrub`, then `assets:container`: a fresh install mints a new
@@ -118,7 +112,8 @@ identical `cachetags`.** A checksum that disagrees with the destination's tags m
 present and rejected, so the cost it was meant to remove is still paid and nothing looks wrong.
 
 After any change, run `bun run assets:sql` to rewrite the migration chunks the Durable Object
-replays, then `node scripts/diff-site-db.ts` to see what moved.
+replays, then `node scripts/diff-site-db.ts <previous file> assets/drupal/site.sqlite` to see what
+moved.
 
 ## Reading It With Other Tools
 

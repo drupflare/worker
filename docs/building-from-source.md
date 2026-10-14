@@ -17,12 +17,12 @@ checkout has neither and `wrangler deploy` has nothing to upload.
 
 The payload route downloads them as one verified tarball. It is a plain HTTPS GET: no Docker, no
 `gh` auth, no PHP, no Cloudflare credential. That is what makes the Deploy to Cloudflare button
-work, since its build command is `bun install && bun run hydrate` and Workers Builds has no Docker
-to build with.
+work. Its build command is `bun run hydrate` (`build.command` in `wrangler.jsonc`), and Workers
+Builds has no Docker to build with.
 
-The source route regenerates the same bytes locally. It exists for the case the payload cannot
-cover: a checkout of a commit no release was cut from, and the window before the first release
-exists at all. It produces every artifact the payload carries, `assets/prefill.json` included.
+The source route regenerates the same bytes locally. It covers what the payload cannot: a checkout of
+a commit no release was cut from, and a repository with no release yet. It produces every artifact
+the payload carries, `assets/prefill.json` included.
 
 ## Where a Payload Comes From
 
@@ -36,15 +36,15 @@ against the `SHA256SUMS` published beside it.
 | 3     | the GitHub Release             | the same bytes, canonical                     |
 | 4     | `payloads/dev-<branch>/` on R2 | that branch's tip, replaced on every push     |
 
-**The CDN copy is tried before the GitHub Release, and that order is measured rather than
-preferred.** A Cloudflare Workers Builds job hung for its whole timeout pulling a release asset body
-in a container that had restored 13.4 MB from this CDN 0.6 s earlier. The Release stays canonical
-and stays the fallback, so a CDN that is down costs a retry rather than a deploy.
+**The CDN copy is tried before the GitHub Release.** A Workers Builds job stalled for its whole
+timeout on a release asset download, in a container that had restored the same 13.4 MB from the CDN
+seconds earlier. The Release stays canonical and stays the fallback, so a CDN outage costs a retry
+rather than a deploy.
 
-**The dev line never displaces a release.** It is last, it announces itself, and it exists so a
-checkout on a commit no release was cut from downloads a tree in seconds instead of building one in
-minutes with a toolchain the deploy container does not have. `bun run build:local` is still there
-when you want the bytes regenerated rather than fetched.
+**The dev line is tried last and never displaces a release.** It is keyed by branch: the checkout's
+own branch first, then `master`. It lets a checkout on a commit no release was cut from download a
+tree in seconds instead of building one with a toolchain the deploy container does not have.
+`bun run build:local` is still there when you want the bytes regenerated rather than fetched.
 
 Both lines are published by CI from the tarball the release job already built, so nothing is
 rebuilt to publish it. The keys come from `scripts/payload-cdn.ts`, which the resolver and the
@@ -127,19 +127,16 @@ workflow artifacts over `gh`: a different host on a different domain, so it is a
 never a retry.
 
 `frame` compresses the binary to `.interp/php8.5.wasm.br`, and **the shipping bundle does not need
-it.** The Worker size limit is 64 MiB uncompressed with no compressed limit beside it, the tree
-measures a fifth of that (`bun run release:check`), and the interpreter travels as a raw
-`CompiledWasm` import. Dropping the inflate took startup from 106 ms to 5 ms, measured on a deployed
-free worker.
+it.** The Worker size limit is 64 MiB uncompressed, with no compressed limit. `bun run release:check`
+prints the current uncompressed figure. The interpreter travels as a raw `CompiledWasm` import, which
+took startup from 106 ms to 5 ms on a deployed free worker.
 
 The step stays because three configs under `experiments/wrangler/` still name the brotli seam, and it
-is the rollback path if the raw import ever has to be reverted. It is brotli at quality 11 and window
-22, packed by `node:zlib` and inflated by `node:zlib`, so producer and consumer are the same
-implementation. The frame is cached on mtime; pass `--force` to repack.
+is the rollback path if the raw import has to be reverted. It is brotli at quality 11 and window 22,
+packed and inflated by `node:zlib`, so producer and consumer are the same implementation. The frame
+is cached on mtime; pass `--force` to repack.
 
-There is no decoder step and no Docker requirement. A wasm zstd decoder used to ship in the bundle
-because the pure-JS alternative was slow, and it was the build's only Docker dependency; `node:zlib`
-runs at module scope in workerd and does the same work for nothing.
+The build has no decoder step and needs no Docker.
 
 ### 3-4, The Driver Pack
 
@@ -150,8 +147,8 @@ The two Drupal modules and the stream wrapper live in sibling repositories, whic
 truth. `siblings` resolves each one in this order and clones only what is missing:
 
 1. `DRUPFLARE_SRC` / `ROM_SRC` / `STREAM_HTTP_SRC`, when set
-2. `../drupflare`, `../rom`, `../stream-http` -- the developer layout
-3. `.siblings/<name>` -- this build's own clone
+2. `../drupflare`, `../rom`, `../stream-http` (the developer layout)
+3. `.siblings/<name>` (this build's own clone)
 
 An explicit environment setting outranks an inference from the layout, and the developer layout
 outranks a private clone, so a checkout you are editing is never shadowed by a clone of master.
@@ -190,10 +187,12 @@ set. The bootstrap breaks that cycle by globbing the tree under `FULL=1` instead
 entirely on a hydrated tree, which already has a `core.json`.
 
 This is the one place where a source-built tree and a shipped one differ in content. The shipping
-pack's file list came from a traced run -- a recorded measurement a checkout does not have -- so the
-bootstrap globs every non-test file instead, and the bake derives its list from that. The difference
-is small, because the profiled set is completed by rules that already reach most of the tree.
-Measured on Drupal 11.4.5, a clean clone against the shipping artifacts:
+pack's file list came from a traced run that a checkout cannot repeat, so the bootstrap globs every
+non-test file instead, and the bake derives its list from that. The difference is small, because the
+profiled set is completed by rules that already reach most of the tree.
+
+Measured on Drupal 11.4.5, a clean clone against the shipping artifacts. The shipped core version is
+`SHIPPED_CORE_VERSION` in `src/ops/shipped-lock.ts`:
 
 | artifact      | shipped    | source-built | delta            |
 | ------------- | ---------- | ------------ | ---------------- |
@@ -201,8 +200,7 @@ Measured on Drupal 11.4.5, a clean clone against the shipping artifacts:
 | `core.pf.bin` | 11,992,672 | 12,457,108   | +464,436 (+3.9%) |
 | `core.bin.gz` | 8,126,017  | 8,588,601    | +462,584 (+5.7%) |
 
-The Worker bundle is unaffected; the packs are Workers assets and carry no bundle bytes. A
-source-built tree dry-runs at **2,830.85 KiB gzipped**, taken while the compressed ceiling still existed; the limit is 64 MiB uncompressed now.
+The Worker bundle is unaffected; the packs are Workers assets and carry no bundle bytes.
 
 `twig` bakes the precompiled Twig cache and writes two records: `twig-bake.json`, which the gate
 reads, and `core.list.json`, **the file list both packers then read**.
@@ -217,40 +215,35 @@ materialised when PHP opens it instead of inflating 11,447 files at boot. It the
 `core.pf.bin` carries `settings.php` with a real `hash_salt`, Workers assets are served publicly, and
 a packed-but-unscrubbed pack is the state `release-payload.ts` refuses to publish.
 
-`static` copies the browser-fetchable half of the tree -- `css`, `js`, fonts and images under
-`core/` -- into `assets/core/`, where the Workers Assets layer serves it at the `/core/**` URLs
+`static` copies the browser-fetchable half of the tree (`css`, `js`, fonts and images under
+`core/`) into `assets/core/`, where the Workers Assets layer serves it at the `/core/**` URLs
 Drupal already emits. Every pack skips those extensions because PHP never opens them, and nothing
 serves a file out of the PHP MEMFS over HTTP, so this is the only thing that answers them. It copies
 where the other steps pack: Workers Assets content-hashes and compresses what it serves, and a hit
-never reaches the Worker. 4,028 files, 11,910,687 bytes on Drupal 11.4.5, with
+never reaches the Worker. 4,030 files on the current tree, with
 `core/profiles/demo_umami`, `tests/`, `node_modules/` and `.pcss.css` sources left out.
 
 `sql` chunks the committed `site.sqlite` into the JSON the Durable Object replays in JavaScript. It
 reads a tracked file, so it is the one step that works on a clone with nothing else built.
 
-It also drops the BAKE's own history on the way through: `dropBakeHistory()` empties `watchdog` and
-removes `state:install_time`, both of which a site otherwise inherits. The bake's log dated a fresh
-site's first page weeks in the past, and `SystemRequirementsHooks` falls back to `install_time` when
-`system.cron_last` is absent, so a site provisioned today opened with a red Cron row reading the bake
-date. This is a build step rather than a hand edit because a hand edit to a tracked artifact is
-reverted by the next `bun install` restore.
+It also drops the bake's own history on the way through: `dropBakeHistory()` empties `watchdog` and
+removes `state:install_time`. Without that, a new site inherits the bake's log dates and an install
+time that makes the Cron requirement read as overdue. This is a build step rather than a hand edit,
+because `bun install` restores the tracked database from the CDN and would revert a hand edit.
 
 ### 14, The Aggregates
 
 `agg` reads the `*.libraries.yml` definitions out of `drupal-src` and emits immutable per-library CSS
-and JS aggregates into `assets/agg/`, plus a file-to-library index. Its output is not committed: 808
-aggregates over 6.57 MB for 725 libraries, where a given site uses a few dozen. The serving side is
-off unless `ASSET_AGGREGATES=1`, and with no manifest present it changes nothing rather than breaking
-a page.
+and JS aggregates into `assets/agg/`, plus a file-to-library index. The output is not committed. The
+serving side is off unless `ASSET_AGGREGATES=1`, and with no manifest present it changes nothing.
 
-**It belongs in the numbered sequence, because `wrangler.jsonc` ships `ASSET_AGGREGATES: "1"`.** A
+**It belongs in the numbered sequence, because `wrangler.jsonc` sets `ASSET_AGGREGATES: "1"`.** A
 tree that builds the pack without it runs the lever with nothing to substitute, and the lever
 degrades quietly by design, so nothing reports it. The symptom is `/agg/manifest.json` answering 404.
 
 The output has to be published as well as built. `assets/.assetsignore` denies by default, so it
 needs `!/agg/`; without that line the aggregates upload nowhere and a page with the lever on has no
-CSS. The 6.57 MB is charged to the Workers Assets store rather than to the 64 MiB bundle: a dry run
-of the canonical config reads 5,788 asset files and reports a 14,476.94 KiB upload.
+CSS. The aggregates count against the Workers Assets store, not the 64 MiB bundle.
 
 ## Why The Order Is The Order
 
@@ -282,11 +275,10 @@ These orderings fail silently when reversed, which is why
 that hash covers every installed composer package. Any change in `drupal-src` moves it, including
 `composer require --dev drupal/<module>`, which is how the contrib lane gets its fixture. When the
 packed row and the pack disagree, the first `$kernel->boot()` on every site misses and rebuilds a
-482 KB container: `kernelBootMs` 1,024 against 86, and roughly 3.7x the heap image.
+482 KB container, which took 1,024 ms against 86 ms for a boot that hits.
 
 The row cannot be retargeted by editing its key. A compiled container embeds the absolute root it was
-built against, 27 occurrences of it in a row baked natively, so it has to come from a boot where the
-root is `/drupal`. The step runs `wrangler dev --local`, migrates a throwaway site, renders one page
+built against, so it has to come from a boot where the root is `/drupal`. The step runs `wrangler dev --local`, migrates a throwaway site, renders one page
 and reads back the row that boot rebuilt.
 
 `tests/node/container-cid.spec.ts` compares the pack against the database and fails when they
@@ -298,23 +290,20 @@ disagree. Run the step on its own with `bun run assets:container`, which re-chun
 prefilled path is a **hit on its first ever request**, so whatever is in that file is the page a
 visitor sees.
 
-That is why it cannot be baked on native PHP, which was tried: the bytes came back with suffixed
-block ids, because `Html::$seenIds` is a static `drupal_static_reset()` does not clear, and with a
-different favicon path, because the packer drops `.ico` so wasm's `file_exists()` correctly disagrees
-with native PHP's. Both render fine and neither matches what the site produces, so the page would
-change the first time something re-rendered it.
+The bytes depend on the runtime, so native PHP cannot produce them. Native PHP returns suffixed block
+ids, because `Html::$seenIds` is a static that `drupal_static_reset()` does not clear. It also
+returns a different favicon path, because the packer drops `.ico` and wasm's `file_exists()` answers
+differently. Both renders are valid pages that do not match what the site serves.
 
 The step needs the runtime, and it does not need a deploy. `scripts/bake-prefill.ts` boots
-`wrangler dev` locally -- workerd, with its own Durable Object, no Cloudflare login -- drives
+`wrangler dev` locally (workerd, with its own Durable Object, no Cloudflare login), drives
 `/migrate` to completion, renders the five paths through `/serve`, and tears the worker down. The
 state directory is a fresh `--persist-to` under the system temp directory each time, so a run cannot
-lift a page from a Durable Object left behind by a previous one.
+lift a page from a Durable Object left behind by an earlier run.
 
 The migration runs with `prefill=0`, which is what makes it a bake. `/migrate` seeds the serving
 table from the shipped `assets/prefill.json`, so with it on every `/serve` is a hit of the file being
-rebuilt. Measured: all five pages came back byte-identical to the previous artifact with `renderMs`
-carried across unchanged, and a config change made two steps earlier appeared nowhere in the output.
-`migrateSite()` now asks for an unseeded site and throws if the route prefills anyway.
+rebuilt. `migrateSite()` asks for an unseeded site and throws if the route prefills anyway.
 
 It is the **only optional step**. It binds a port and boots an interpreter, and a busy port must not
 discard sixteen finished steps: a failure here is reported, the build continues, and the run ends
@@ -330,29 +319,27 @@ bun scripts/bake-prefill.ts --port=8802 --keep # or drive it directly
 
 ## Caching
 
-Every step's cache key is the artifact it produces, with no stamp file anywhere, so a
-`fetch:drupal --force` that replaced a patched tree cannot leave a stamp behind claiming the patch is
-still applied.
+Every step's cache key is the artifact it produces. There are no stamp files, so a rebuilt tree cannot
+keep a stale record of a patch that is gone.
 
 The three expensive steps cache individually as well, and each takes `--force`:
 
-| artifact                 | cached on                                          | rebuild with                                     |
-| ------------------------ | -------------------------------------------------- | ------------------------------------------------ |
-| `.interp/php8.5.wasm`    | sha256 in `cdn-manifest.json`                      | `bun run restore:artifacts -- --force`           |
-| `.interp/php8.5.wasm.br` | mtime against the binary it was packed from        | `bun scripts/pack-wasm-brotli.ts <wasm> --force` |
-| `drupal-src/`            | presence of `core/lib/Drupal.php`, not its version | `bun run fetch:drupal -- --force`                |
+| artifact                 | cached on                                        | rebuild with                                     |
+| ------------------------ | ------------------------------------------------ | ------------------------------------------------ |
+| `.interp/php8.5.wasm`    | sha256 in `cdn-manifest.json`                    | `bun run restore:artifacts -- --force`           |
+| `.interp/php8.5.wasm.br` | mtime against the binary it was packed from      | `bun scripts/pack-wasm-brotli.ts <wasm> --force` |
+| `drupal-src/`            | installed core version matches the requested one | `bun run fetch:drupal -- --force`                |
 
-**The tree row is presence, and `fetch-drupal-tree.ts` applies a different rule.** The script
-compares the version and refuses a mismatch; the `tree` step is skipped before the script runs, so on
-an already-built tree the comparison never happens. See [Upgrading Drupal Core](#upgrading-drupal-core).
+The `tree` step is satisfied only when the installed core version matches `DRUPAL_VERSION`, or
+`SHIPPED_CORE_VERSION` when it is unset. A different version runs `fetch:drupal`, which refuses to
+replace the tree without `--force`. See [Upgrading Drupal Core](#upgrading-drupal-core).
 
 ## A Step Is Judged By Its Artifact
 
-`runLocalBuild()` checks what a step produced, and ignores what it returned. `restore-artifacts.ts`
-exits 0 when a fetch fails -- it is a postinstall and must never break `bun install` -- so a step
-that trusted the exit code reported success, produced nothing, and surfaced two steps later as
-`frame needs .interp/php8.5.wasm`. Checking the artifact is also what lets the interpreter's fallback
-know it is still needed.
+`runLocalBuild()` decides success from the files a step produces, not from its exit code.
+`restore-artifacts.ts` exits 0 when a fetch fails, because it runs as a postinstall. A step that
+trusted the exit code would report success with no output, and the failure would surface later as
+`frame needs .interp/php8.5.wasm`.
 
 ## Rebuilding Only Part Of It
 
@@ -368,48 +355,17 @@ not on disk fails by name before it runs.
 
 ## Upgrading Drupal Core
 
-Rehearsed against the real thing: the shipped tree was downgraded to 11.4.4 and
-upgraded back to 11.4.5 six times, in a throwaway copy of the repository. **Every figure below is
-wall clock** on one machine; none of them is a CPU number and none is comparable to a deployed one.
+Changing the core version means replacing the Drupal tree, then rebuilding every artifact made from
+it. A plain `DRUPAL_VERSION=<version> bun run build:local` re-runs the `tree` step, which refuses to
+replace a tree at another version without `--force`. The steps after `tree` are keyed on their own
+outputs, so they keep what is on disk unless `--force` or `--only` says otherwise.
 
-### `DRUPAL_VERSION` Alone Rebuilds Nothing
+### The Sequence
 
-`DRUPAL_VERSION=<version> bun run build:local` **rebuilds nothing on a tree that is already built,
-and reports success.** Measured on a tree built at 11.4.4:
-
-```txt
-$ DRUPAL_VERSION=11.4.5 bun run build:local -- --skip=prefill
-  skip  tree  already built: drupal-src/core/lib/Drupal.php
-  ... all fifteen steps skipped ...
-nothing rebuilt: this tree is deployable
-real 0.08
-```
-
-The tree was still at 11.4.4 afterwards. `DRUPAL_VERSION` is read by `fetch-drupal-tree.ts` and by
-nothing else, and the `tree` step is keyed on the presence of `drupal-src/core/lib/Drupal.php`, so
-the step that would compare the two versions is skipped before it can. Every downstream step is then
-skipped for the same reason: its own output is still on disk from the previous version.
-
-### Two Failures On The Way To A Working Sequence
-
-Both were hit while rehearsing, and both stop an upgrade dead.
-
-**`bun run fetch:drupal -- --force` throws `ENOTEMPTY`, after deleting `core/`.** The `site` step
-runs Drupal's installer, which hardens `drupal-src/sites/build` to `0555`; `rmSync(recursive, force)`
-under Bun 1.4.0 cannot unlink through a read-only directory, so the recursive delete fails partway.
-The tree is left with no `core/` and 4,253 entries still in place, and re-running the same command
-fails identically. `chmod -R u+w drupal-src` first is the workaround. A `--force` rebuild of a tree
-that has never had a site installed into it does not hit this.
-
-**A forced build re-runs `tree`, which reads the version again.** `bun run build:local -- --force`
-executes `bun run fetch:drupal` with whatever `DRUPAL_VERSION` is in its own environment; unset, that
-is `SHIPPED_CORE_VERSION`, and the script then refuses a tree at any other version. The variable has
-to be set on both commands or neither.
-
-### The Sequence That Works
+`DRUPAL_VERSION` must be set on both commands, or on neither. A forced build runs `fetch:drupal`
+again, and that script reads the version from its own environment.
 
 ```sh
-chmod -R u+w drupal-src
 DRUPAL_VERSION=11.4.5 bun scripts/fetch-drupal-tree.ts --force
 DRUPAL_VERSION=11.4.5 bun run build:local -- --force \
   --skip=interpreter,frame,siblings,driver,prefill
@@ -417,8 +373,9 @@ DRUPAL_VERSION=11.4.5 bun run build:local -- --force \
 
 Four of the five skipped steps do not depend on the core version: two are the interpreter, one is
 the sibling checkouts and one is the driver pack. The fifth, `prefill`, does; drop it from that list
-on a real upgrade, since it re-renders the prefilled pages and a core patch can change them. It is
-excluded from the measurement below only because it binds a port.
+on a real upgrade, since it re-renders the prefilled pages and a core patch can change them.
+
+Wall clock on one development machine, six core-version swaps (median in the first row):
 
 | measure                                           |  n  | wall clock               |
 | ------------------------------------------------- | :-: | ------------------------ |
@@ -427,18 +384,17 @@ excluded from the measurement below only because it binds a port.
 | of which: reinstall, rebake, repack, recopy       |  6  | 15-16 s                  |
 | a from-scratch build, same steps plus `driver`    |  1  | 23 s                     |
 
-The six swaps alternated direction, because a downgrade and an upgrade are the same work: replace
-167 MB of tree, reinstall the build site, rebake 23 Twig templates, repack 11,457 files twice and
-recopy 4,060 static assets.
+A swap replaces about 167 MB of tree, reinstalls the build site, rebakes 23 Twig templates, repacks
+11,457 files and recopies 4,060 static assets.
 
-**Verified by artifact.** After the last swap the rebuilt `assets/core/misc/ajax.js` hashed
-identically to the 11.4.5 reference tree and differently from the 11.4.4 one, and
-`assets/drupal/core.bin.gz` carried `const VERSION = '11.4.5'` and no other.
+**Verified by artifact.** A rebuilt `assets/core/misc/ajax.js` hashed identically to the 11.4.5
+reference tree and differently from 11.4.4. `assets/drupal/core.bin.gz` carried `const VERSION =
+'11.4.5'` and no other version string.
 
-### What A Patch Release Actually Moves
+### What A Patch Release Moves
 
-`scripts/tree-diff.mjs` hashes a tree and plans the objects a rollout has to move. For
-11.4.4 -> 11.4.5:
+`scripts/tree-diff.mjs` hashes a tree and plans the objects a rollout has to move. Example, 11.4.4
+to 11.4.5:
 
 | set                                  | count   |
 | ------------------------------------ | ------- |
@@ -460,30 +416,30 @@ pack half of a rollout, with the static half counted separately.
 
 ### The Two Rows Nothing Regenerates
 
-`sql` reads `assets/drupal/site.sqlite` verbatim, and two of its prefilled rows embed the core
-version, both at `expire = -1`:
+`sql` reads `assets/drupal/site.sqlite` verbatim. Two of its prefilled rows embed the core version,
+both at `expire = -1`:
 
 | bin               | cid                    | bytes  |
 | ----------------- | ---------------------- | ------ |
 | `cache_discovery` | `library_info:olivero` | 89,184 |
 | `cache_data`      | `fonts:olivero:...`    | 630    |
 
-The version in them is the `?v=` cache-buster Drupal appends to every asset URL. Measured across all
-six swaps, `site.sqlite` came out byte-identical to the committed one, so **a core upgrade does not
-touch them**: after a patch that changes `core/misc/ajax.js`, the site serves new bytes at
-`/core/misc/ajax.js` while still advertising the old version in the query string.
+The version in them is the `?v=` cache-buster Drupal appends to every asset URL. Across repeated
+core swaps, `site.sqlite` came out byte-identical to the committed one. **A core upgrade does not
+change these rows**, so after a patch that changes `core/misc/ajax.js`, the site serves new bytes at
+`/core/misc/ajax.js` while the query string still carries the old version.
 
 The correction is a cache invalidation: delete both rows and Drupal rebuilds them, at the cost of one
-discovery pass on the first render. `scripts/bake-collectors.php` is what originally produced them,
-and it is not wired into `build:local`: it reads `<root>/sites/default/files/.sqlite`, which the
-`site` step does not create (that step writes `sites/build/files/build-site.sqlite`), and it writes
-into the build database, from which the rows were then copied by hand into `site.sqlite`.
+discovery pass on the first render. `scripts/bake-collectors.php` produced them, and it is not
+wired into `build:local`. It reads `<root>/sites/default/files/.sqlite`, which the `site` step does
+not create (that step writes `sites/build/files/build-site.sqlite`), and it writes into the build
+database, from which the rows were copied by hand into `site.sqlite`.
 
 ## Related
 
-- `docs/configuration.md` -- every variable and binding, and what breaks when one is wrong
-- `docs/repository-layout.md` -- every path outside `src/` and how it arrives
-- `scripts/README.md` -- why each script is in the language it is in
+- `docs/configuration.md`: every variable and binding, and what breaks when one is wrong
+- `docs/repository-layout.md`: every path outside `src/` and how it arrives
+- `scripts/README.md`: why each script is in the language it is in
 
 `bun run release:payload` builds the payload the fast route downloads and `bun run release:check`
 prices the canonical config against the 64 MiB ceiling.

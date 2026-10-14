@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
 	CATALOG,
-	MATCHED_REGIONS,
-	MEMORY_PER_BOX_GIB,
 	cheapestUsdMonth,
+	cheapestUsdPerGiBMonth,
+	consolidatedMemoryFloorUsdMonth,
+	MATCHED_REGIONS,
 	matchedUsdMonth,
+	MEMORY_PER_BOX_GIB,
 	needFor,
 	quote,
 	ranked
@@ -38,10 +40,10 @@ describe('the hosting catalog', () => {
 });
 
 describe('the load a conventional origin carries', () => {
-	it('is a tenth of a core at 3 million views a month, so one vCPU', () => {
+	it('is a quarter of a core at 3 million views a month, so one vCPU', () => {
 		const need = needFor(3_000_000);
 		expect(need.lambdaS).toBeCloseTo(5.7, 1);
-		expect(need.cores).toBeCloseTo(0.1, 1);
+		expect(need.cores).toBeCloseTo(0.25, 2);
 		expect(need.vcpu).toBe(1);
 	});
 
@@ -50,15 +52,16 @@ describe('the load a conventional origin carries', () => {
 	});
 
 	it('grows to whole vCPUs once a core is not enough, and a matched box needs more than a viable one', () => {
-		expect(needFor(30_000_000).vcpu).toBe(2);
-		expect(needFor(100_000_000, 'viable').vcpu).toBe(4);
-		expect(needFor(100_000_000, 'matched').vcpu).toBe(5);
+		expect(needFor(30_000_000, 'viable').vcpu).toBe(3);
+		expect(needFor(30_000_000).vcpu).toBe(4);
+		expect(needFor(100_000_000, 'viable').vcpu).toBe(9);
+		expect(needFor(100_000_000, 'matched').vcpu).toBe(11);
 	});
 });
 
 describe('pricing a host', () => {
 	it('excludes plans below the per-box memory the operating system, stack and database need', () => {
-		expect(MEMORY_PER_BOX_GIB).toBeCloseTo(1.3, 2);
+		expect(MEMORY_PER_BOX_GIB).toBeCloseTo(1.285, 3);
 		const q = quote('vultr', needFor(10_000))!;
 		expect(q.plan).toBe('vc2-1c-2gb');
 	});
@@ -76,7 +79,7 @@ describe('pricing a host', () => {
 	it('does not price a plan whose transfer is exceeded and whose overage is unsourced', () => {
 		expect(CATALOG.providers.lightsail!.egressUSDPerGB).toBeUndefined();
 		expect(quote('lightsail', needFor(1_000_000))).toBeDefined();
-		expect(quote('lightsail', needFor(1_000_000_000))).toBeUndefined();
+		expect(quote('lightsail', { ...needFor(1_000_000), egressGB: 10_000 })).toBeUndefined();
 	});
 
 	it('ranks providers cheapest first', () => {
@@ -91,5 +94,16 @@ describe('pricing a host', () => {
 		const each = quote('digitalocean', needFor(30_000))!.usd;
 		const lb = CATALOG.providers.digitalocean!.loadBalancerUSDMonth!.global;
 		expect(matchedUsdMonth(30_000)).toBeCloseTo(MATCHED_REGIONS * each + lb, 5);
+	});
+});
+
+describe('a consolidated host priced on memory alone', () => {
+	it('is the cheapest plan price a GiB times the memory the sites hold', () => {
+		const rate = cheapestUsdPerGiBMonth();
+		expect(rate).toBeGreaterThan(0);
+		expect(consolidatedMemoryFloorUsdMonth(1000, 0.25)).toBeCloseTo(250 * rate, 6);
+		for (const p of Object.values(CATALOG.providers))
+			for (const plan of p.plans)
+				expect(plan.monthlyUSD / plan.memoryGiB).toBeGreaterThanOrEqual(rate);
 	});
 });

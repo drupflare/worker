@@ -36,7 +36,7 @@ export const G_US = num('grid-us', 384.0);
 // LBNL 2024 US data center energy report: 66 bn L direct over 176 TWh, ~800 bn L via generation
 export const WATER_DIRECT_L_PER_KWH = 0.375;
 export const WATER_INDIRECT_L_PER_KWH = 4.55;
-const RAM_GB_HOST = 1536.0; // a large modern 2-socket host
+const RAM_GB_HOST = num('ram-gb-host', 1536.0); // a large modern 2-socket host
 const RAM_GB_SITE = 1.0; // php-fpm pool + opcache + MySQL share for a small Drupal site; generous
 
 /** the opponent's edge misses reach an origin, so its fraction carries the TTL floor over 8 colos */
@@ -167,6 +167,20 @@ export function drupflare(
 	return (cpuS * wPerCore * PUE_HYPER) / 3600.0 / 1000.0;
 }
 
+/** the saving if Cloudflare's PUE were `pue`; the CPU energy scales with it and the opponent's does not */
+export function savingAtPue(viewsMonth: number, pue: number): number {
+	const d = (drupflareMix(1000, viewsMonth) * pue) / PUE_HYPER;
+	return (1 - d / sharedHostingPublished(1000, viewsMonth).kwh) * 100;
+}
+
+/** extra drupflare energy a view, in mJ, that takes the 1,000-site saving down to `pct`; 0 means no saving */
+export function omittedEnergyMj(viewsMonth: number, pct: number): number {
+	const extraKwh =
+		sharedHostingPublished(1000, viewsMonth).kwh * (1 - pct / 100) -
+		drupflareMix(1000, viewsMonth);
+	return (extraKwh * 3.6e9) / (1000 * viewsMonth * 12);
+}
+
 /** kWh the published arm of the fleet model avoids a year */
 export function fleetGapKwh(sites: number, viewsMonth: number): number {
 	return sharedHostingPublished(sites, viewsMonth).kwh - drupflareMix(sites, viewsMonth);
@@ -225,6 +239,22 @@ if (import.meta.main) {
 			`${nr(v, 15)} ${SHARED_ARMS.map((a) => fr((1 - d / sharedHostingArm(a, 1000, v).kwh) * 100, 14, 3)).join(' ')}`
 		);
 	}
+
+	console.log(
+		'\nsensitivity, 1,000 sites: the saving at other Cloudflare PUEs, and the energy it omits'
+	);
+	for (const v of [1_000_000, 20_000_000]) {
+		console.log(
+			`  ${nr(v, 12)} views/site/mo: ` +
+				[PUE_HYPER, 1.3, PUE_COLO]
+					.map((p) => `PUE ${p} ${fr(savingAtPue(v, p), 6, 2)}%`)
+					.join(', ') +
+				`; extra mJ a view to reach 90%: ${fr(omittedEnergyMj(v, 90), 5, 2)}, to reach 0%: ${fr(omittedEnergyMj(v, 0), 5, 1)}`
+		);
+	}
+	console.log(
+		"  host memory: rerun with --ram-gb-host=384 for the SPECpower result's own memory"
+	);
 
 	console.log('\nwhere the saving comes from, 1,000 sites at 10k views/mo:');
 	const { hosts, kwh } = sharedHostingPublished(1000, 10_000);

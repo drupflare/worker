@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { num } from './args';
 
 /** one sourced fact in the catalog */
@@ -39,14 +40,14 @@ interface Catalog {
 
 /** every provider the model prices, with the page each figure was read from */
 export const CATALOG: Catalog = JSON.parse(
-	readFileSync(new URL('./hosting-catalog.json', import.meta.url), 'utf8')
+	readFileSync(join(import.meta.dirname, 'hosting-catalog.json'), 'utf8')
 );
 
 /** seconds in an average month */
 export const SECONDS_MONTH = 2_629_800.0;
 
-/** measured on the shipped nginx and PHP-FPM stack: 67 renders a second on 1.2 cores */
-export const RENDER_S_PER_CPU = num('render-s-per-cpu', 56.0);
+/** measured: 44.7 ms of CPU a render on one Ryzen 9 9900X core, nginx and PHP-FPM, 8 runs of 44.1 to 46.4 ms */
+export const RENDER_S_PER_CPU = num('render-s-per-cpu', 22.4);
 /** every view is charged to the origin as a render; a cached hit would only lower it */
 export const ORIGIN_RENDER_FRAC = num('origin-render-frac', 1.0);
 /** the peak arrival rate over the monthly average */
@@ -68,8 +69,8 @@ const SIZING: Record<Sizing, { p95S: number; maxUtil: number }> = {
 const MIN_VCPU = 1;
 /** Canonical's minimum for an Ubuntu 24.04 cloud image */
 const OS_GIB = num('os-gib', 1);
-/** measured: nginx and PHP-FPM with 32 children held 172 MB under the render load */
-const STACK_GIB = num('stack-gib', 0.172);
+/** measured: nginx and 8 PHP-FPM children held 169 MB, anonymous plus shared, under the render load; 32 children held 342 MB */
+const STACK_GIB = num('stack-gib', 0.157);
 /** MariaDB's default innodb_buffer_pool_size */
 const DB_GIB = num('db-gib', 0.128);
 /** what every box needs before it serves a request; memory does not grow with traffic here */
@@ -91,7 +92,7 @@ export interface Need {
 }
 
 /** the share of arrivals that wait longer than `t` in an M/M/c queue with a = lambda / mu (Erlang C) */
-function waitTail(a: number, c: number, t: number, mu: number): number {
+export function waitTail(a: number, c: number, t: number, mu: number): number {
 	if (a >= c) return 1;
 	let b = 1;
 	for (let k = 1; k <= c; k += 1) b = (a * b) / (k + a * b);
@@ -195,6 +196,21 @@ const MATCHED_PROVIDER = 'digitalocean';
 /** the most-used specialist VPS provider and the most-used cloud, from the 2025 developer survey */
 export const POPULAR_VPS = 'digitalocean';
 export const POPULAR_CLOUD = 'lightsail';
+
+/** the lowest plan price per GiB of memory in the catalog, before backups, disk and transfer */
+export const cheapestUsdPerGiBMonth = (): number =>
+	Math.min(
+		...Object.values(CATALOG.providers).flatMap((p) =>
+			p.plans.map((plan) => plan.monthlyUSD / plan.memoryGiB)
+		)
+	);
+
+/**
+ * What memory alone costs a consolidated host that carries `sites` sites at `gibPerSite` each.
+ * A floor: CPU, disk, transfer and backups are not in it.
+ */
+export const consolidatedMemoryFloorUsdMonth = (sites: number, gibPerSite: number): number =>
+	sites * gibPerSite * cheapestUsdPerGiBMonth();
 
 /** the lowest bill that survives the traffic, at any provider priced */
 export const cheapestViableUsdMonth = (views: number) => ranked(needFor(views, 'viable'))[0]!.usd;

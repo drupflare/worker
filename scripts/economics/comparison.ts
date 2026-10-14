@@ -30,6 +30,8 @@ import {
 	MEMORY_PER_BOX_GIB,
 	ORIGIN_RENDER_FRAC,
 	cheapestUsdMonth,
+	cheapestUsdPerGiBMonth,
+	consolidatedMemoryFloorUsdMonth,
 	matchedUsdMonth,
 	needFor,
 	popularCloudUsdMonth,
@@ -365,6 +367,22 @@ for (const sites of SITES) {
 		`  ${nr(sites, 6)} site${sites === 1 ? ' ' : 's'}: free to ${nr(Math.floor(lo), 12)} views/site/month` +
 			`  (${sfx(Math.floor(lo) * sites)} across the account), then $${f(PAID_BASE, 2)}/mo`
 	);
+}
+
+console.log('\n--- a consolidated host, memory alone ---');
+{
+	const rate = cheapestUsdPerGiBMonth();
+	console.log(`cheapest sourced plan price a GiB of memory: $${f(rate, 2)} a month`);
+	for (const gib of [1, 0.25, 0.1]) {
+		console.log(
+			`  1,000 sites at ${gib} GiB each: $${nr(consolidatedMemoryFloorUsdMonth(1000, gib), 8)} a month`
+		);
+	}
+	for (const budget of [350.65, 5.8]) {
+		console.log(
+			`  a bill of $${f(budget, 2)} buys ${f((budget / 1000 / rate) * 1024, 1)} MiB of memory a site across 1,000 sites`
+		);
+	}
 }
 
 console.log('\n--- what each figure is ---');

@@ -14,21 +14,20 @@
 <section class="tsd-panel">
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="sitewarmenabled"><span class="tsd-kind-call-signature">siteWarmEnabled</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/ops_cron.CronEnv.html" class="tsd-signature-type tsd-kind-interface">CronEnv</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><a href="#sitewarmenabled" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="sitewarmenabled"><span class="tsd-kind-call-signature">siteWarmEnabled</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/ops_cron.CronEnv.html" class="tsd-signature-type tsd-kind-interface">CronEnv</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">paid</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><a href="#sitewarmenabled" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Whether this site re-arms fast enough to stay resident.</p>
-<p>On by default on both plans: for one site warming costs 10.8% of free's two daily meters and $0
-marginal on paid, and removes the 1,398 ms cold boot from every page that renders (the
-authenticated tier). Fleet arithmetic is the wrong lever for a default; <a href="ops_cron.idleRearmMs.html" class="tsd-kind-function">idleRearmMs</a>'s
-headroom check handles an account running out.</p>
+<div class="tsd-comment tsd-typography"><p>Whether this site is configured to re-arm fast enough to stay resident.</p>
+<p>True when <code>SITE_WARM=1</code>, or when it is unset on a paid plan. Unset on free is false here because
+the thermal policy decides there; see <a href="ops_cron.warmForced.html" class="tsd-kind-function">warmForced</a>.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
-<li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">env</span>: <a href="../interfaces/ops_cron.CronEnv.html" class="tsd-signature-type tsd-kind-interface">CronEnv</a></span></li></ul></div>
+<li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">env</span>: <a href="../interfaces/ops_cron.CronEnv.html" class="tsd-signature-type tsd-kind-interface">CronEnv</a></span></li>
+<li><span><span class="tsd-kind-parameter">paid</span>: <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol"> = false</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/ops/cron.ts#L409">src/ops/cron.ts:409</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/a5625c21a7dd8ac0f52ff923d37ca657b3be6826/src/ops/cron.ts#L407">src/ops/cron.ts:407</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

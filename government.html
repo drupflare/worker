@@ -198,6 +198,17 @@
 			.readme li::marker {
 				color: var(--accent-strong);
 			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
 			.readme code {
 				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 			}
@@ -292,6 +303,7 @@
 					Drupflare
 				</a>
 				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="configuration.html">Configuration</a>
 				<a href="compatibility.html">Compatibility</a>
 				<a href="building-from-source.html">Building From Source</a>
@@ -331,28 +343,24 @@ bot management or a Turnstile interstitial in front of a site built here puts th
 compliance, so those stay off.</p>
 <p>HTTP 301 for retired content, which <code>drupal/redirect</code> produces and the edge honours.</p>
 <h2 id="searchgov-splits-in-two">Search.gov Splits in Two</h2>
-<p>Search.gov offers two integrations and this architecture hosts one of them.</p>
-<p>The crawl route works. Search.gov indexes the public site from an XML sitemap and renders results on
-a Search.gov-hosted page. Nothing outbound happens in PHP: <code>simple_sitemap</code> and <code>xmlsitemap</code> produce
+<p>Search.gov offers two integrations. The crawl route is verified here and the Results API route is not.</p>
+<p>Search.gov indexes the public site from an XML sitemap and renders results on a Search.gov-hosted
+page. Nothing outbound happens in PHP: <code>simple_sitemap</code> and <code>xmlsitemap</code> produce
 the sitemap, <code>metatag_search_gov</code> produces the <code>searchgov_custom1-3</code> fields the index reads, and
 stored pages serve the crawler. All three are verified.</p>
-<p>The Results API route does not. <code>search_gov_results_api</code> renders results on the site&#39;s own page by
-calling <code>api.gsa.gov</code> while building the form, and the results are the page. This runtime performs an
-outbound call between invocations rather than inside one, so a deferred exchange returns nothing on
-the first request. The module is recorded untested with that mechanism: measured, the deferred tier
-does carry its GET across two renders, and what it lacks is a live Search.gov key.</p>
-<p><code>drupal/redis</code> was named here as refused for the same reason and no longer is. <strong>Nor is HTTP</strong>, which
-this page said could not take that route: PHP does reach HTTPS through a wrapper the runtime invokes
-from inside a C frame a suspended call cannot return through, and the answer was to stop going that
-way rather than to accept it. <code>ParkFetchHandler</code> replaces Guzzle&#39;s transport with plain userland
-code, which is a frame the park can suspend under, so an HTTP response arrives inside the render that
-asked for it. <code>config/modules.yml</code> records the park carrying <code>api.gsa.gov</code> that way.</p>
-<p>What keeps the module untested is now its own: a live Search.gov key, and its <code>#pre_render</code>
-behaviour. Neither is a runtime refusal.</p>
+<p>The Results API route is not verified. <code>search_gov_results_api</code> renders results on the site&#39;s own
+page by calling <code>api.gsa.gov</code> while building the form, and the results are the page. The call goes
+out through the park: <code>ParkFetchHandler</code> replaces Guzzle&#39;s transport with plain userland code, which
+is a frame the park can suspend under, so the response arrives inside the render that asked for it.
+<code>config/modules.yml</code> records the park carrying <code>api.gsa.gov</code> that way.</p>
+<p>The module is recorded <code>untested</code> for two reasons. Seeing a result needs a live Search.gov key. The
+module also does not render what it fetched: <code>processResults()</code> renders each result child on its own,
+and <code>buildMultiple</code> is a <code>#pre_render</code> on the parent, so a detached child renders as an empty shell.
+That is an upstream defect and not a property of this runtime.</p>
 <h2 id="the-uswds-theme">The USWDS Theme</h2>
 <p><code>uswds_base</code> is a theme, and a theme reaches this runtime through a different installer than a
 module. <code>composer/installers</code> places it under <code>themes/contrib</code>, <code>extension.list.module</code> does not list
-themes, and <code>module_installer</code> cannot install one. The pack now sweeps the theme tree, <code>/__enable</code>
+themes, and <code>module_installer</code> cannot install one. The pack sweeps the theme tree, <code>/__enable</code>
 routes a theme to <code>theme_installer</code>, and <code>assets:static</code> copies the theme subtree alongside <code>core</code>
 and <code>modules</code>.</p>
 <p>Its default library mode loads USWDS from a CDN. M-23-22 prohibits embedding static third-party

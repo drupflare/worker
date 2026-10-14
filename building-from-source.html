@@ -198,6 +198,17 @@
 			.readme li::marker {
 				color: var(--accent-strong);
 			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
 			.readme code {
 				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 			}
@@ -292,6 +303,7 @@
 					Drupflare
 				</a>
 				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="configuration.html">Configuration</a>
 				<a href="compatibility.html">Compatibility</a>
 				<a href="building-from-source.html" aria-current="page">Building From Source</a>
@@ -336,11 +348,11 @@ payload exists. <code>--payload-only</code> forbids the fallback; <code>--from-s
 checkout has neither and <code>wrangler deploy</code> has nothing to upload.</p>
 <p>The payload route downloads them as one verified tarball. It is a plain HTTPS GET: no Docker, no
 <code>gh</code> auth, no PHP, no Cloudflare credential. That is what makes the Deploy to Cloudflare button
-work, since its build command is <code>bun install &amp;&amp; bun run hydrate</code> and Workers Builds has no Docker
-to build with.</p>
-<p>The source route regenerates the same bytes locally. It exists for the case the payload cannot
-cover: a checkout of a commit no release was cut from, and the window before the first release
-exists at all. It produces every artifact the payload carries, <code>assets/prefill.json</code> included.</p>
+work. Its build command is <code>bun run hydrate</code> (<code>build.command</code> in <code>wrangler.jsonc</code>), and Workers
+Builds has no Docker to build with.</p>
+<p>The source route regenerates the same bytes locally. It covers what the payload cannot: a checkout of
+a commit no release was cut from, and a repository with no release yet. It produces every artifact
+the payload carries, <code>assets/prefill.json</code> included.</p>
 <h2 id="where-a-payload-comes-from">Where a Payload Comes From</h2>
 <p><code>hydrate</code> tries four places and takes the first that answers, and every one of them is verified
 against the <code>SHA256SUMS</code> published beside it.</p>
@@ -373,14 +385,14 @@ against the <code>SHA256SUMS</code> published beside it.</p>
 <td>that branch&#39;s tip, replaced on every push</td>
 </tr>
 </tbody></table></div>
-<p><strong>The CDN copy is tried before the GitHub Release, and that order is measured rather than
-preferred.</strong> A Cloudflare Workers Builds job hung for its whole timeout pulling a release asset body
-in a container that had restored 13.4 MB from this CDN 0.6 s earlier. The Release stays canonical
-and stays the fallback, so a CDN that is down costs a retry rather than a deploy.</p>
-<p><strong>The dev line never displaces a release.</strong> It is last, it announces itself, and it exists so a
-checkout on a commit no release was cut from downloads a tree in seconds instead of building one in
-minutes with a toolchain the deploy container does not have. <code>bun run build:local</code> is still there
-when you want the bytes regenerated rather than fetched.</p>
+<p><strong>The CDN copy is tried before the GitHub Release.</strong> A Workers Builds job stalled for its whole
+timeout on a release asset download, in a container that had restored the same 13.4 MB from the CDN
+seconds earlier. The Release stays canonical and stays the fallback, so a CDN outage costs a retry
+rather than a deploy.</p>
+<p><strong>The dev line is tried last and never displaces a release.</strong> It is keyed by branch: the checkout&#39;s
+own branch first, then <code>master</code>. It lets a checkout on a commit no release was cut from download a
+tree in seconds instead of building one with a toolchain the deploy container does not have.
+<code>bun run build:local</code> is still there when you want the bytes regenerated rather than fetched.</p>
 <p>Both lines are published by CI from the tarball the release job already built, so nothing is
 rebuilt to publish it. The keys come from <code>scripts/payload-cdn.ts</code>, which the resolver and the
 workflows both read; <code>tests/node/workflows.spec.ts</code> fails if a workflow starts spelling a key of its
@@ -571,17 +583,14 @@ normal clone the step is a no-op. When the CDN cannot be reached the step falls 
 workflow artifacts over <code>gh</code>: a different host on a different domain, so it is a second source and
 never a retry.</p>
 <p><code>frame</code> compresses the binary to <code>.interp/php8.5.wasm.br</code>, and <strong>the shipping bundle does not need
-it.</strong> The Worker size limit is 64 MiB uncompressed with no compressed limit beside it, the tree
-measures a fifth of that (<code>bun run release:check</code>), and the interpreter travels as a raw
-<code>CompiledWasm</code> import. Dropping the inflate took startup from 106 ms to 5 ms, measured on a deployed
-free worker.</p>
+it.</strong> The Worker size limit is 64 MiB uncompressed, with no compressed limit. <code>bun run release:check</code>
+prints the current uncompressed figure. The interpreter travels as a raw <code>CompiledWasm</code> import, which
+took startup from 106 ms to 5 ms on a deployed free worker.</p>
 <p>The step stays because three configs under <code>experiments/wrangler/</code> still name the brotli seam, and it
-is the rollback path if the raw import ever has to be reverted. It is brotli at quality 11 and window
-22, packed by <code>node:zlib</code> and inflated by <code>node:zlib</code>, so producer and consumer are the same
-implementation. The frame is cached on mtime; pass <code>--force</code> to repack.</p>
-<p>There is no decoder step and no Docker requirement. A wasm zstd decoder used to ship in the bundle
-because the pure-JS alternative was slow, and it was the build&#39;s only Docker dependency; <code>node:zlib</code>
-runs at module scope in workerd and does the same work for nothing.</p>
+is the rollback path if the raw import has to be reverted. It is brotli at quality 11 and window 22,
+packed and inflated by <code>node:zlib</code>, so producer and consumer are the same implementation. The frame
+is cached on mtime; pass <code>--force</code> to repack.</p>
+<p>The build has no decoder step and needs no Docker.</p>
 <h3 id="3-4-the-driver-pack">3-4, The Driver Pack</h3>
 <p>Composer never runs on the edge, so a <code>require</code> in a manifest ships nothing. The Durable Object
 mounts <code>assets/driver.json</code> into its in-memory filesystem, and that packed copy is what executes.</p>
@@ -589,8 +598,8 @@ mounts <code>assets/driver.json</code> into its in-memory filesystem, and that p
 truth. <code>siblings</code> resolves each one in this order and clones only what is missing:</p>
 <ol>
 <li><code>DRUPFLARE_SRC</code> / <code>ROM_SRC</code> / <code>STREAM_HTTP_SRC</code>, when set</li>
-<li><code>../drupflare</code>, <code>../rom</code>, <code>../stream-http</code> -- the developer layout</li>
-<li><code>.siblings/&lt;name&gt;</code> -- this build&#39;s own clone</li>
+<li><code>../drupflare</code>, <code>../rom</code>, <code>../stream-http</code> (the developer layout)</li>
+<li><code>.siblings/&lt;name&gt;</code> (this build&#39;s own clone)</li>
 </ol>
 <p>An explicit environment setting outranks an inference from the layout, and the developer layout
 outranks a private clone, so a checkout you are editing is never shadowed by a clone of master.</p>
@@ -621,10 +630,11 @@ compiled</em>, so on a checkout with no pack there is no list to build, and <cod
 set. The bootstrap breaks that cycle by globbing the tree under <code>FULL=1</code> instead. It is skipped
 entirely on a hydrated tree, which already has a <code>core.json</code>.</p>
 <p>This is the one place where a source-built tree and a shipped one differ in content. The shipping
-pack&#39;s file list came from a traced run -- a recorded measurement a checkout does not have -- so the
-bootstrap globs every non-test file instead, and the bake derives its list from that. The difference
-is small, because the profiled set is completed by rules that already reach most of the tree.
-Measured on Drupal 11.4.5, a clean clone against the shipping artifacts:</p>
+pack&#39;s file list came from a traced run that a checkout cannot repeat, so the bootstrap globs every
+non-test file instead, and the bake derives its list from that. The difference is small, because the
+profiled set is completed by rules that already reach most of the tree.</p>
+<p>Measured on Drupal 11.4.5, a clean clone against the shipping artifacts. The shipped core version is
+<code>SHIPPED_CORE_VERSION</code> in <code>src/ops/shipped-lock.ts</code>:</p>
 <div class="table"><table>
 <thead>
 <tr>
@@ -653,8 +663,7 @@ Measured on Drupal 11.4.5, a clean clone against the shipping artifacts:</p>
 <td>+462,584 (+5.7%)</td>
 </tr>
 </tbody></table></div>
-<p>The Worker bundle is unaffected; the packs are Workers assets and carry no bundle bytes. A
-source-built tree dry-runs at <strong>2,830.85 KiB gzipped</strong>, taken while the compressed ceiling still existed; the limit is 64 MiB uncompressed now.</p>
+<p>The Worker bundle is unaffected; the packs are Workers assets and carry no bundle bytes.</p>
 <p><code>twig</code> bakes the precompiled Twig cache and writes two records: <code>twig-bake.json</code>, which the gate
 reads, and <code>core.list.json</code>, <strong>the file list both packers then read</strong>.</p>
 <p><code>core</code> repacks the tree from that list. It runs under <code>PACK_INDEX=1</code>, which takes <code>core.list.json</code>
@@ -665,34 +674,29 @@ a presence check would skip the repack and ship a pack missing every template th
 materialised when PHP opens it instead of inflating 11,447 files at boot. It then scrubs the pack:
 <code>core.pf.bin</code> carries <code>settings.php</code> with a real <code>hash_salt</code>, Workers assets are served publicly, and
 a packed-but-unscrubbed pack is the state <code>release-payload.ts</code> refuses to publish.</p>
-<p><code>static</code> copies the browser-fetchable half of the tree -- <code>css</code>, <code>js</code>, fonts and images under
-<code>core/</code> -- into <code>assets/core/</code>, where the Workers Assets layer serves it at the <code>/core/**</code> URLs
+<p><code>static</code> copies the browser-fetchable half of the tree (<code>css</code>, <code>js</code>, fonts and images under
+<code>core/</code>) into <code>assets/core/</code>, where the Workers Assets layer serves it at the <code>/core/**</code> URLs
 Drupal already emits. Every pack skips those extensions because PHP never opens them, and nothing
 serves a file out of the PHP MEMFS over HTTP, so this is the only thing that answers them. It copies
 where the other steps pack: Workers Assets content-hashes and compresses what it serves, and a hit
-never reaches the Worker. 4,028 files, 11,910,687 bytes on Drupal 11.4.5, with
+never reaches the Worker. 4,030 files on the current tree, with
 <code>core/profiles/demo_umami</code>, <code>tests/</code>, <code>node_modules/</code> and <code>.pcss.css</code> sources left out.</p>
 <p><code>sql</code> chunks the committed <code>site.sqlite</code> into the JSON the Durable Object replays in JavaScript. It
 reads a tracked file, so it is the one step that works on a clone with nothing else built.</p>
-<p>It also drops the BAKE&#39;s own history on the way through: <code>dropBakeHistory()</code> empties <code>watchdog</code> and
-removes <code>state:install_time</code>, both of which a site otherwise inherits. The bake&#39;s log dated a fresh
-site&#39;s first page weeks in the past, and <code>SystemRequirementsHooks</code> falls back to <code>install_time</code> when
-<code>system.cron_last</code> is absent, so a site provisioned today opened with a red Cron row reading the bake
-date. This is a build step rather than a hand edit because a hand edit to a tracked artifact is
-reverted by the next <code>bun install</code> restore.</p>
+<p>It also drops the bake&#39;s own history on the way through: <code>dropBakeHistory()</code> empties <code>watchdog</code> and
+removes <code>state:install_time</code>. Without that, a new site inherits the bake&#39;s log dates and an install
+time that makes the Cron requirement read as overdue. This is a build step rather than a hand edit,
+because <code>bun install</code> restores the tracked database from the CDN and would revert a hand edit.</p>
 <h3 id="14-the-aggregates">14, The Aggregates</h3>
 <p><code>agg</code> reads the <code>*.libraries.yml</code> definitions out of <code>drupal-src</code> and emits immutable per-library CSS
-and JS aggregates into <code>assets/agg/</code>, plus a file-to-library index. Its output is not committed: 808
-aggregates over 6.57 MB for 725 libraries, where a given site uses a few dozen. The serving side is
-off unless <code>ASSET_AGGREGATES=1</code>, and with no manifest present it changes nothing rather than breaking
-a page.</p>
-<p><strong>It belongs in the numbered sequence, because <code>wrangler.jsonc</code> ships <code>ASSET_AGGREGATES: &quot;1&quot;</code>.</strong> A
+and JS aggregates into <code>assets/agg/</code>, plus a file-to-library index. The output is not committed. The
+serving side is off unless <code>ASSET_AGGREGATES=1</code>, and with no manifest present it changes nothing.</p>
+<p><strong>It belongs in the numbered sequence, because <code>wrangler.jsonc</code> sets <code>ASSET_AGGREGATES: &quot;1&quot;</code>.</strong> A
 tree that builds the pack without it runs the lever with nothing to substitute, and the lever
 degrades quietly by design, so nothing reports it. The symptom is <code>/agg/manifest.json</code> answering 404.</p>
 <p>The output has to be published as well as built. <code>assets/.assetsignore</code> denies by default, so it
 needs <code>!/agg/</code>; without that line the aggregates upload nowhere and a page with the lever on has no
-CSS. The 6.57 MB is charged to the Workers Assets store rather than to the 64 MiB bundle: a dry run
-of the canonical config reads 5,788 asset files and reports a 14,476.94 KiB upload.</p>
+CSS. The aggregates count against the Workers Assets store, not the 64 MiB bundle.</p>
 <h2 id="why-the-order-is-the-order">Why The Order Is The Order</h2>
 <p>These orderings fail silently when reversed, which is why
 <code>tests/node/build-from-source.spec.ts</code> asserts them. <code>agg</code> is absent from the list because it reads
@@ -720,10 +724,9 @@ replays, so a rekey after it would ship the old row.</li>
 that hash covers every installed composer package. Any change in <code>drupal-src</code> moves it, including
 <code>composer require --dev drupal/&lt;module&gt;</code>, which is how the contrib lane gets its fixture. When the
 packed row and the pack disagree, the first <code>$kernel-&gt;boot()</code> on every site misses and rebuilds a
-482 KB container: <code>kernelBootMs</code> 1,024 against 86, and roughly 3.7x the heap image.</p>
+482 KB container, which took 1,024 ms against 86 ms for a boot that hits.</p>
 <p>The row cannot be retargeted by editing its key. A compiled container embeds the absolute root it was
-built against, 27 occurrences of it in a row baked natively, so it has to come from a boot where the
-root is <code>/drupal</code>. The step runs <code>wrangler dev --local</code>, migrates a throwaway site, renders one page
+built against, so it has to come from a boot where the root is <code>/drupal</code>. The step runs <code>wrangler dev --local</code>, migrates a throwaway site, renders one page
 and reads back the row that boot rebuilt.</p>
 <p><code>tests/node/container-cid.spec.ts</code> compares the pack against the database and fails when they
 disagree. Run the step on its own with <code>bun run assets:container</code>, which re-chunks afterwards.</p>
@@ -731,21 +734,18 @@ disagree. Run the step on its own with <code>bun run assets:container</code>, wh
 <p><code>prefill</code> produces <code>assets/prefill.json</code>, which holds the bytes the site returns for five paths. A
 prefilled path is a <strong>hit on its first ever request</strong>, so whatever is in that file is the page a
 visitor sees.</p>
-<p>That is why it cannot be baked on native PHP, which was tried: the bytes came back with suffixed
-block ids, because <code>Html::$seenIds</code> is a static <code>drupal_static_reset()</code> does not clear, and with a
-different favicon path, because the packer drops <code>.ico</code> so wasm&#39;s <code>file_exists()</code> correctly disagrees
-with native PHP&#39;s. Both render fine and neither matches what the site produces, so the page would
-change the first time something re-rendered it.</p>
+<p>The bytes depend on the runtime, so native PHP cannot produce them. Native PHP returns suffixed block
+ids, because <code>Html::$seenIds</code> is a static that <code>drupal_static_reset()</code> does not clear. It also
+returns a different favicon path, because the packer drops <code>.ico</code> and wasm&#39;s <code>file_exists()</code> answers
+differently. Both renders are valid pages that do not match what the site serves.</p>
 <p>The step needs the runtime, and it does not need a deploy. <code>scripts/bake-prefill.ts</code> boots
-<code>wrangler dev</code> locally -- workerd, with its own Durable Object, no Cloudflare login -- drives
+<code>wrangler dev</code> locally (workerd, with its own Durable Object, no Cloudflare login), drives
 <code>/migrate</code> to completion, renders the five paths through <code>/serve</code>, and tears the worker down. The
 state directory is a fresh <code>--persist-to</code> under the system temp directory each time, so a run cannot
-lift a page from a Durable Object left behind by a previous one.</p>
+lift a page from a Durable Object left behind by an earlier run.</p>
 <p>The migration runs with <code>prefill=0</code>, which is what makes it a bake. <code>/migrate</code> seeds the serving
 table from the shipped <code>assets/prefill.json</code>, so with it on every <code>/serve</code> is a hit of the file being
-rebuilt. Measured: all five pages came back byte-identical to the previous artifact with <code>renderMs</code>
-carried across unchanged, and a config change made two steps earlier appeared nowhere in the output.
-<code>migrateSite()</code> now asks for an unseeded site and throws if the route prefills anyway.</p>
+rebuilt. <code>migrateSite()</code> asks for an unseeded site and throws if the route prefills anyway.</p>
 <p>It is the <strong>only optional step</strong>. It binds a port and boots an interpreter, and a busy port must not
 discard sixteen finished steps: a failure here is reported, the build continues, and the run ends
 naming the file and the command that retries it. An absent <code>prefill.json</code> is normal at runtime; the
@@ -753,9 +753,8 @@ first request to each path renders, and misses the prefill hit.</p>
 <p>To produce or refresh it on its own:</p>
 <pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:local</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --only=prefill</span></span>
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/bake-prefill.ts</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --port=8802</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --keep</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # or drive it directly</span></span></code></pre><h2 id="caching">Caching</h2>
-<p>Every step&#39;s cache key is the artifact it produces, with no stamp file anywhere, so a
-<code>fetch:drupal --force</code> that replaced a patched tree cannot leave a stamp behind claiming the patch is
-still applied.</p>
+<p>Every step&#39;s cache key is the artifact it produces. There are no stamp files, so a rebuilt tree cannot
+keep a stale record of a patch that is gone.</p>
 <p>The three expensive steps cache individually as well, and each takes <code>--force</code>:</p>
 <div class="table"><table>
 <thead>
@@ -777,19 +776,18 @@ still applied.</p>
 </tr>
 <tr>
 <td><code>drupal-src/</code></td>
-<td>presence of <code>core/lib/Drupal.php</code>, not its version</td>
+<td>installed core version matches the requested one</td>
 <td><code>bun run fetch:drupal -- --force</code></td>
 </tr>
 </tbody></table></div>
-<p><strong>The tree row is presence, and <code>fetch-drupal-tree.ts</code> applies a different rule.</strong> The script
-compares the version and refuses a mismatch; the <code>tree</code> step is skipped before the script runs, so on
-an already-built tree the comparison never happens. See <a href="#upgrading-drupal-core">Upgrading Drupal Core</a>.</p>
+<p>The <code>tree</code> step is satisfied only when the installed core version matches <code>DRUPAL_VERSION</code>, or
+<code>SHIPPED_CORE_VERSION</code> when it is unset. A different version runs <code>fetch:drupal</code>, which refuses to
+replace the tree without <code>--force</code>. See <a href="#upgrading-drupal-core">Upgrading Drupal Core</a>.</p>
 <h2 id="a-step-is-judged-by-its-artifact">A Step Is Judged By Its Artifact</h2>
-<p><code>runLocalBuild()</code> checks what a step produced, and ignores what it returned. <code>restore-artifacts.ts</code>
-exits 0 when a fetch fails -- it is a postinstall and must never break <code>bun install</code> -- so a step
-that trusted the exit code reported success, produced nothing, and surfaced two steps later as
-<code>frame needs .interp/php8.5.wasm</code>. Checking the artifact is also what lets the interpreter&#39;s fallback
-know it is still needed.</p>
+<p><code>runLocalBuild()</code> decides success from the files a step produces, not from its exit code.
+<code>restore-artifacts.ts</code> exits 0 when a fetch fails, because it runs as a postinstall. A step that
+trusted the exit code would report success with no output, and the failure would surface later as
+<code>frame needs .interp/php8.5.wasm</code>.</p>
 <h2 id="rebuilding-only-part-of-it">Rebuilding Only Part Of It</h2>
 <pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:local</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --only=twig,core,pack</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # after editing the Drupal tree</span></span>
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:local</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --skip=prefill</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">        # skip the step that needs a free port</span></span>
@@ -797,40 +795,19 @@ know it is still needed.</p>
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:local</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --json</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">                # the plan and the preflight, as one object</span></span></code></pre><p><code>--only</code> and <code>--skip</code> reject a name that is not a step, by name and out loud. A step whose inputs are
 not on disk fails by name before it runs.</p>
 <h2 id="upgrading-drupal-core">Upgrading Drupal Core</h2>
-<p>Rehearsed against the real thing: the shipped tree was downgraded to 11.4.4 and
-upgraded back to 11.4.5 six times, in a throwaway copy of the repository. <strong>Every figure below is
-wall clock</strong> on one machine; none of them is a CPU number and none is comparable to a deployed one.</p>
-<h3 id="drupal_version-alone-rebuilds-nothing"><code>DRUPAL_VERSION</code> Alone Rebuilds Nothing</h3>
-<p><code>DRUPAL_VERSION=&lt;version&gt; bun run build:local</code> <strong>rebuilds nothing on a tree that is already built,
-and reports success.</strong> Measured on a tree built at 11.4.4:</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span>$ DRUPAL_VERSION=11.4.5 bun run build:local -- --skip=prefill</span></span>
-<span class="line"><span>  skip  tree  already built: drupal-src/core/lib/Drupal.php</span></span>
-<span class="line"><span>  ... all fifteen steps skipped ...</span></span>
-<span class="line"><span>nothing rebuilt: this tree is deployable</span></span>
-<span class="line"><span>real 0.08</span></span></code></pre><p>The tree was still at 11.4.4 afterwards. <code>DRUPAL_VERSION</code> is read by <code>fetch-drupal-tree.ts</code> and by
-nothing else, and the <code>tree</code> step is keyed on the presence of <code>drupal-src/core/lib/Drupal.php</code>, so
-the step that would compare the two versions is skipped before it can. Every downstream step is then
-skipped for the same reason: its own output is still on disk from the previous version.</p>
-<h3 id="two-failures-on-the-way-to-a-working-sequence">Two Failures On The Way To A Working Sequence</h3>
-<p>Both were hit while rehearsing, and both stop an upgrade dead.</p>
-<p><strong><code>bun run fetch:drupal -- --force</code> throws <code>ENOTEMPTY</code>, after deleting <code>core/</code>.</strong> The <code>site</code> step
-runs Drupal&#39;s installer, which hardens <code>drupal-src/sites/build</code> to <code>0555</code>; <code>rmSync(recursive, force)</code>
-under Bun 1.4.0 cannot unlink through a read-only directory, so the recursive delete fails partway.
-The tree is left with no <code>core/</code> and 4,253 entries still in place, and re-running the same command
-fails identically. <code>chmod -R u+w drupal-src</code> first is the workaround. A <code>--force</code> rebuild of a tree
-that has never had a site installed into it does not hit this.</p>
-<p><strong>A forced build re-runs <code>tree</code>, which reads the version again.</strong> <code>bun run build:local -- --force</code>
-executes <code>bun run fetch:drupal</code> with whatever <code>DRUPAL_VERSION</code> is in its own environment; unset, that
-is <code>SHIPPED_CORE_VERSION</code>, and the script then refuses a tree at any other version. The variable has
-to be set on both commands or neither.</p>
-<h3 id="the-sequence-that-works">The Sequence That Works</h3>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">chmod</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -R</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> u+w</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> drupal-src</span></span>
-<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">DRUPAL_VERSION</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">=</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">11.4.5</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/fetch-drupal-tree.ts</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --force</span></span>
+<p>Changing the core version means replacing the Drupal tree, then rebuilding every artifact made from
+it. A plain <code>DRUPAL_VERSION=&lt;version&gt; bun run build:local</code> re-runs the <code>tree</code> step, which refuses to
+replace a tree at another version without <code>--force</code>. The steps after <code>tree</code> are keyed on their own
+outputs, so they keep what is on disk unless <code>--force</code> or <code>--only</code> says otherwise.</p>
+<h3 id="the-sequence">The Sequence</h3>
+<p><code>DRUPAL_VERSION</code> must be set on both commands, or on neither. A forced build runs <code>fetch:drupal</code>
+again, and that script reads the version from its own environment.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">DRUPAL_VERSION</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">=</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">11.4.5</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/fetch-drupal-tree.ts</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --force</span></span>
 <span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">DRUPAL_VERSION</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">=</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">11.4.5</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:local</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --force</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  --skip=interpreter,frame,siblings,driver,prefill</span></span></code></pre><p>Four of the five skipped steps do not depend on the core version: two are the interpreter, one is
 the sibling checkouts and one is the driver pack. The fifth, <code>prefill</code>, does; drop it from that list
-on a real upgrade, since it re-renders the prefilled pages and a core patch can change them. It is
-excluded from the measurement below only because it binds a port.</p>
+on a real upgrade, since it re-renders the prefilled pages and a core patch can change them.</p>
+<p>Wall clock on one development machine, six core-version swaps (median in the first row):</p>
 <div class="table"><table>
 <thead>
 <tr>
@@ -860,15 +837,13 @@ excluded from the measurement below only because it binds a port.</p>
 <td>23 s</td>
 </tr>
 </tbody></table></div>
-<p>The six swaps alternated direction, because a downgrade and an upgrade are the same work: replace
-167 MB of tree, reinstall the build site, rebake 23 Twig templates, repack 11,457 files twice and
-recopy 4,060 static assets.</p>
-<p><strong>Verified by artifact.</strong> After the last swap the rebuilt <code>assets/core/misc/ajax.js</code> hashed
-identically to the 11.4.5 reference tree and differently from the 11.4.4 one, and
-<code>assets/drupal/core.bin.gz</code> carried <code>const VERSION = &#39;11.4.5&#39;</code> and no other.</p>
-<h3 id="what-a-patch-release-actually-moves">What A Patch Release Actually Moves</h3>
-<p><code>scripts/tree-diff.mjs</code> hashes a tree and plans the objects a rollout has to move. For
-11.4.4 -&gt; 11.4.5:</p>
+<p>A swap replaces about 167 MB of tree, reinstalls the build site, rebakes 23 Twig templates, repacks
+11,457 files and recopies 4,060 static assets.</p>
+<p><strong>Verified by artifact.</strong> A rebuilt <code>assets/core/misc/ajax.js</code> hashed identically to the 11.4.5
+reference tree and differently from 11.4.4. <code>assets/drupal/core.bin.gz</code> carried <code>const VERSION = &#39;11.4.5&#39;</code> and no other version string.</p>
+<h3 id="what-a-patch-release-moves">What A Patch Release Moves</h3>
+<p><code>scripts/tree-diff.mjs</code> hashes a tree and plans the objects a rollout has to move. Example, 11.4.4
+to 11.4.5:</p>
 <div class="table"><table>
 <thead>
 <tr>
@@ -903,8 +878,8 @@ separately, 11 browser-fetchable files changed, of which two match <code>pack-st
 set and therefore ship: <code>core/misc/ajax.js</code> and <code>core/misc/details.js</code>. Read <code>objectsToUpload</code> as the
 pack half of a rollout, with the static half counted separately.</p>
 <h3 id="the-two-rows-nothing-regenerates">The Two Rows Nothing Regenerates</h3>
-<p><code>sql</code> reads <code>assets/drupal/site.sqlite</code> verbatim, and two of its prefilled rows embed the core
-version, both at <code>expire = -1</code>:</p>
+<p><code>sql</code> reads <code>assets/drupal/site.sqlite</code> verbatim. Two of its prefilled rows embed the core version,
+both at <code>expire = -1</code>:</p>
 <div class="table"><table>
 <thead>
 <tr>
@@ -924,20 +899,20 @@ version, both at <code>expire = -1</code>:</p>
 <td>630</td>
 </tr>
 </tbody></table></div>
-<p>The version in them is the <code>?v=</code> cache-buster Drupal appends to every asset URL. Measured across all
-six swaps, <code>site.sqlite</code> came out byte-identical to the committed one, so <strong>a core upgrade does not
-touch them</strong>: after a patch that changes <code>core/misc/ajax.js</code>, the site serves new bytes at
-<code>/core/misc/ajax.js</code> while still advertising the old version in the query string.</p>
+<p>The version in them is the <code>?v=</code> cache-buster Drupal appends to every asset URL. Across repeated
+core swaps, <code>site.sqlite</code> came out byte-identical to the committed one. <strong>A core upgrade does not
+change these rows</strong>, so after a patch that changes <code>core/misc/ajax.js</code>, the site serves new bytes at
+<code>/core/misc/ajax.js</code> while the query string still carries the old version.</p>
 <p>The correction is a cache invalidation: delete both rows and Drupal rebuilds them, at the cost of one
-discovery pass on the first render. <code>scripts/bake-collectors.php</code> is what originally produced them,
-and it is not wired into <code>build:local</code>: it reads <code>&lt;root&gt;/sites/default/files/.sqlite</code>, which the
-<code>site</code> step does not create (that step writes <code>sites/build/files/build-site.sqlite</code>), and it writes
-into the build database, from which the rows were then copied by hand into <code>site.sqlite</code>.</p>
+discovery pass on the first render. <code>scripts/bake-collectors.php</code> produced them, and it is not
+wired into <code>build:local</code>. It reads <code>&lt;root&gt;/sites/default/files/.sqlite</code>, which the <code>site</code> step does
+not create (that step writes <code>sites/build/files/build-site.sqlite</code>), and it writes into the build
+database, from which the rows were copied by hand into <code>site.sqlite</code>.</p>
 <h2 id="related">Related</h2>
 <ul>
-<li><code>docs/configuration.md</code> -- every variable and binding, and what breaks when one is wrong</li>
-<li><code>docs/repository-layout.md</code> -- every path outside <code>src/</code> and how it arrives</li>
-<li><code>scripts/README.md</code> -- why each script is in the language it is in</li>
+<li><code>docs/configuration.md</code>: every variable and binding, and what breaks when one is wrong</li>
+<li><code>docs/repository-layout.md</code>: every path outside <code>src/</code> and how it arrives</li>
+<li><code>scripts/README.md</code>: why each script is in the language it is in</li>
 </ul>
 <p><code>bun run release:payload</code> builds the payload the fast route downloads and <code>bun run release:check</code>
 prices the canonical config against the 64 MiB ceiling.</p>

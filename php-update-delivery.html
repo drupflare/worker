@@ -198,6 +198,17 @@
 			.readme li::marker {
 				color: var(--accent-strong);
 			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
 			.readme code {
 				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 			}
@@ -292,6 +303,7 @@
 					Drupflare
 				</a>
 				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="configuration.html">Configuration</a>
 				<a href="compatibility.html">Compatibility</a>
 				<a href="building-from-source.html">Building From Source</a>
@@ -315,7 +327,7 @@ stops.</p>
 <p>A running Worker cannot swap its PHP binary. The change unit is a redeploy.</p>
 <ul>
 <li><strong>The interpreter is a bundle-time module.</strong> <code>src/runtime/php-binary-raw.ts</code> reaches it with
-<code>import wasmModule from &#39;../../.interp/php8.5.wasm&#39;</code>, and <code>wrangler.jsonc</code> maps <code>**/*.wasm</code> to
+<code>import wasmModule from &#39;../../.interp/php8.5.tuned.wasm&#39;</code>, and <code>wrangler.jsonc</code> maps <code>**/*.wasm</code> to
 module type <code>CompiledWasm</code>. Wrangler resolves a module import when the bundle is built. No runtime
 API adds a module to a deployed bundle.</li>
 <li><strong>There is no compile step to pay.</strong> A <code>CompiledWasm</code> import arrives already compiled, so the seam
@@ -331,7 +343,7 @@ compile. Together they rule out R2, KV, the asset layer, a service binding and D
 storage as a source of interpreter bytes.</p>
 <p>Everything after the build is automatable. <code>wrangler versions upload</code> produces a version without
 deploying it, <code>wrangler versions deploy &lt;id&gt;@&lt;pct&gt;</code> splits traffic, and <code>wrangler rollback &lt;id&gt;</code>
-reverses it, all against wrangler 4.120.0.</p>
+reverses it, all against the wrangler version pinned in <code>package.json</code>.</p>
 <h2 id="the-pipeline">The Pipeline</h2>
 <p>Two workflows, one in each repository.</p>
 <div class="table"><table>
@@ -466,16 +478,17 @@ fixes with it.</p>
 <ul>
 <li>Only the 100 most recent versions are reachable.</li>
 <li>A rollback cannot cross a Durable Object class lifecycle change, and <code>wrangler versions upload</code>
-cannot carry one. <code>wrangler.jsonc</code> holds
-<code>migrations: [{ tag: &quot;v1&quot;, new_sqlite_classes: [&quot;SitePhpDurableObject&quot;] }]</code>, so an interpreter
-bump must never also add a migration tag. Lifecycle changes go out alone, through
+cannot carry one. <code>wrangler.jsonc</code> holds the
+migration tags <code>v1</code> (<code>SitePhpDurableObject</code>) and <code>v2</code> (<code>RenderLane</code>), so an interpreter bump must
+never also add a migration tag. Lifecycle changes go out alone, through
 <code>wrangler deploy</code>.</li>
 </ul>
 <p>A rollback restores code, but a heap image is data and it is binary-specific. opcache runs
 <code>file_cache_only=1</code> in MEMFS, which belongs to the interpreter instance and outlives nothing. <strong>The
-stored heap snapshot does outlive it.</strong> <code>HEAP_SNAPSHOT</code> is on by default and each site holds
-31,784,960 bytes across 159 rows, so restoring an image taken on one interpreter into another is
-corruption rather than a slow path.</p>
+stored heap snapshot does outlive it.</strong> <code>HEAP_SNAPSHOT</code> is on unless it is set to <code>0</code> or the
+deployment carries environment variables or config. One measured site held 31,784,960 bytes of
+snapshot across 159 rows. Restoring an image taken on one interpreter into another is corruption
+rather than a slow path.</p>
 <p><code>cfw_heap_snapshot</code> rows are keyed on the <strong>pack generation</strong> (<code>latestSnapshotMeta(sql, packGeneration())</code>), not on the interpreter. An interpreter bump that leaves the pack alone therefore
 selects a snapshot taken on the previous binary. Ship an interpreter bump with <code>HEAP_SNAPSHOT=0</code>, or
 move the pack generation with it, until the snapshot key carries the interpreter pin.</p>
@@ -485,8 +498,7 @@ Cloudflare guarantees that &quot;for a given deployment, requests to each Durabl
 the same Worker version&quot;. So <code>wrangler versions deploy &lt;new&gt;@10 &lt;current&gt;@90</code> puts roughly 10% of
 sites entirely on the new interpreter rather than scattering 10% of requests. An object reassigned a
 version is reset and drops its interpreter, so each rollout step costs one cold boot per object
-moved: 1,398 ms of edge cpuTime, n=3, on a platform whose 400-600 ms bimodality is unverified as a
-standing property.</p>
+moved: about 1,398 ms of edge cpuTime (n=3).</p>
 <p>Percentages are the only lever wrangler exposes, so the canary set cannot be chosen. Treat the
 presence of a quarantined row (<code>isQuarantined()</code> in <code>src/ops/repair.ts</code>) in the canary set as a
 reason to abort, and never as health data.</p>
@@ -523,9 +535,8 @@ reason to abort, and never as health data.</p>
 <td>a regression in the meter that binds regeneration</td>
 </tr>
 </tbody></table></div>
-<p>Do not gate on CPU. An absolute figure comes only from <code>cpuTime</code> on a deployed version, and the
-platform&#39;s reported 400-600 ms spread did not reproduce across 640 requests on a warm object, but
-a canary window of n=1 or n=3 still carries no spread, so it cannot support a boot-time verdict.</p>
+<p>Do not gate on CPU. An absolute figure comes only from <code>cpuTime</code> on a deployed version. A canary
+window of n=1 or n=3 cannot show a spread, so it cannot support a boot-time verdict.</p>
 <p>An available upgrade must not enter <code>recordOutcome()</code>. <code>src/ops/repair.ts</code> counts consecutive
 same-code failures toward quarantine and rollback, and an upgrade is not a fault.</p>
 <h2 id="trust">Trust</h2>
@@ -581,9 +592,9 @@ request; whether it merges is theirs.</p>
 <p>The only runtime cost is the cold boot each Durable Object pays when it is reassigned a version,
 twice per rollout. At a few interpreter releases per year that does not appear in either ceiling,
 and a version change introduces no new row class.</p>
-<p>Free and paid stay equivalent. Versions, gradual deployments and rollbacks are not plan-gated. The
-one plan-sensitive number is the 3 MiB bundle ceiling against 10 MiB on paid, which the gate reads
-from wrangler.</p>
+<p>Free and paid stay equivalent. Versions, gradual deployments and rollbacks are not plan-gated, and the
+bundle ceiling is 64 MiB uncompressed on both plans. The gate reads it from wrangler&#39;s <code>Total Upload</code>
+line.</p>
 <h2 id="rejected-alternatives">Rejected Alternatives</h2>
 <div class="table"><table>
 <thead>
@@ -598,7 +609,7 @@ from wrangler.</p>
 </tr>
 <tr>
 <td>Interpreter as a Workers Static Asset, fetched at boot</td>
-<td>Same wall. <code>CLAUDE.md</code> records this as why the binary cannot live on the asset layer.</td>
+<td>Same constraint as the runtime swap: the bytes must be present at bundle time.</td>
 </tr>
 <tr>
 <td>Dynamic Workers with <code>{data: ArrayBuffer}</code></td>
@@ -618,7 +629,7 @@ from wrangler.</p>
 </tr>
 <tr>
 <td>Fetching binaries into <code>vendor/</code></td>
-<td>14 unreproducible binaries. A pipeline that writes there is one bad path expansion from the only permanent loss in the project. <code>.interp/</code> is gitignored and disposable.</td>
+<td>15 hand-built binaries under <code>vendor/static*/</code> that this repository cannot reproduce. A pipeline that writes there is one bad path expansion from the only permanent loss in the project. <code>.interp/</code> is gitignored and disposable.</td>
 </tr>
 <tr>
 <td>Committing the binary to either repository</td>
@@ -634,29 +645,26 @@ from wrangler.</p>
 <li><strong>Deploying.</strong> The pipeline ends at a pull request and an artifact. Promotion, canary and rollback
 are <code>wrangler</code> commands a human runs.</li>
 <li><strong>Drupal.</strong> <code>SHIPPED_LOCK_VERSIONS</code>, <code>assets/drupal/site.sqlite</code> and <code>assets/driver.json</code> are a
-separate lane, and <code>site.sqlite</code> has no reproducible recipe. That lane reaches an existing site
+separate lane, and <code>site.sqlite</code> is built by <code>scripts/drupal/install-site-db.php</code> (see <a href="database.html">Site Database</a>). That lane reaches an existing site
 through <code>src/ops/reconcile.ts</code> rather than through a redeploy: a step observes the site&#39;s end state,
 and <code>container-driver-digest</code> compares <code>src/ops/driver-digest.ts</code> against what the site recorded, so
 a <code>#[Hook]</code> class added to a sibling after the bake is discovered on the next boot. A redeploy alone
 does not move it, because <code>DrupalKernel::getContainerCacheKey()</code> is composer&#39;s <code>VERSIONS_HASH</code> plus
 the PHP version and the OS.</li>
 <li><strong>Attestation.</strong> Covered in <a href="#trust">Trust</a>.</li>
-<li><strong>PHP 8.5 on the edge.</strong> The shipping seam is 8.5. A <code>cfw-*</code> deploy once returned 1101 with
-<code>ExitStatus: Program terminated with exit(-2)</code>; the cause was opcache, which reads
-<code>opcache.file_cache</code> during PHP&#39;s module startup, before the mount sequence creates
-<code>/tmp/opcache</code>. <code>src/runtime/opcache.ts</code> sets it to <code>/tmp</code>, which emscripten&#39;s MEMFS always creates.
-8.5 has rendered on a deployed worker since; the opcache file-cache counts in that comment were
-read off one. Each new build still needs its own deploy to prove it renders; the gate proves the
-bundle builds and fits.</li>
+<li><strong>PHP 8.5 on the edge.</strong> The shipping seam is 8.5. opcache reads <code>opcache.file_cache</code> during PHP&#39;s
+module startup, before the mount sequence creates <code>/tmp/opcache</code>, and the boot exits with status -2.
+<code>src/runtime/opcache.ts</code> sets it to <code>/tmp</code>, which emscripten&#39;s MEMFS always creates. Each new build
+still needs its own deploy to prove it renders; the gate proves the bundle builds and fits.</li>
 <li><strong>A minor-version bump.</strong> 8.3 to 8.5 moves the glue filename, needs a new seam plus one line in
 wrangler&#39;s <code>alias</code>, changes <code>DEFAULT_PLATFORM.php</code> in <code>src/ops/packagist.ts</code>, and re-runs
 <code>tests/node/php-fragments.spec.ts</code> and <code>bun run test:health</code> under the new interpreter. The
-version guard in step 2 of <a href="#verification">Verification</a> refuses the fetch until the seam moves
+version guard in step 1 of <a href="#verification">Verification</a> refuses the fetch until the seam moves
 first.</li>
 <li><strong>Multiple Worker scripts.</strong> Gradual deployments split versions of a single script. A fleet on N
 independently deployed scripts is N rollouts.</li>
-<li><strong>Toolchain pins are split.</strong> The frame needs no external tool -- <code>node:zlib</code> packs it and
-<code>node:zlib</code> inflates it on the edge -- and the interpreter is pinned to a builder image digest.</li>
+<li><strong>Toolchain pins are split.</strong> The frame needs no external tool: <code>node:zlib</code> packs it and
+<code>node:zlib</code> inflates it on the edge. The interpreter is pinned to a builder image digest.</li>
 </ul>
 			</div>
 		</main>

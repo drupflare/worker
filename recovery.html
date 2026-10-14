@@ -198,6 +198,17 @@
 			.readme li::marker {
 				color: var(--accent-strong);
 			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
 			.readme code {
 				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 			}
@@ -292,6 +303,7 @@
 					Drupflare
 				</a>
 				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="configuration.html">Configuration</a>
 				<a href="compatibility.html">Compatibility</a>
 				<a href="building-from-source.html">Building From Source</a>
@@ -403,14 +415,14 @@ one the platform holds.</p>
 <p>The restore applies on the object&#39;s next start. The undo bookmark is obtainable only from the call
 that schedules the restore, so it is returned rather than logged.</p>
 <p><strong>It is unsupported in local development, and the local runtime signals that badly.</strong> Cloudflare&#39;s
-wording is that &quot;a durable log of data changes is not stored locally&quot;. Measured: all three
-methods EXIST in the local runtime. <code>getBookmarkForTime()</code> throws &quot;This Durable Object&#39;s storage
-back-end does not implement point-in-time recovery&quot;, while <code>getCurrentBookmark()</code> answers
+wording is that &quot;a durable log of data changes is not stored locally&quot;. All three
+methods exist in the local runtime. <code>getBookmarkForTime()</code> throws &quot;This Durable Object&#39;s storage
+back-end does not implement point-in-time recovery&quot;, while <code>getCurrentBookmark()</code> returns
 <code>00000000-00000000-00000000-00000000000000000000000000000000</code> and throws nothing.</p>
-<p>So a feature-detect on the method passes and hands back a bookmark that would schedule a restore to
-the beginning of time. <code>/pitr</code> refuses an all-zero bookmark by VALUE for that reason, and reports
-<code>supported: false</code> with the platform&#39;s own sentence when the API throws. Any claim about what a
-restore does on the edge still needs a deployed test.</p>
+<p>A feature-detect on the method therefore passes and hands back a bookmark that would schedule a
+restore to the beginning of time. <code>/pitr</code> refuses an all-zero bookmark by value, and reports
+<code>supported: false</code> with the platform&#39;s own sentence when the API throws. Restore behaviour is
+verified on a deployed object only.</p>
 <h2 id="the-export-dump">The Export Dump</h2>
 <p><code>GET /export</code> with <code>Authorization: Bearer &lt;ownerToken&gt;</code> dumps the site database as replayable SQL.
 It is one of the owner routes, which the owner token reaches without <code>PW_DIAGNOSTICS=1</code>;
@@ -422,17 +434,18 @@ REAL is the one class read directly.</p>
 <p>What a dump contains:</p>
 <ul>
 <li><strong>Structure only</strong> for tables whose rows regenerate: every <code>cache_*</code> bin, <code>cachetags</code>, <code>sessions</code>,
-<code>semaphore</code>, <code>flood</code>, <code>queue</code>, <code>watchdog</code>, <code>history</code>, the <code>search_*</code> tables and <code>cfw_page</code>. Size is
-the smaller half of the reason. A restored <code>cache_container</code> would boot the site on the previous
+<code>semaphore</code>, <code>flood</code>, <code>queue</code>, <code>watchdog</code>, <code>history</code>, <code>search_dataset</code>, <code>search_index</code>,
+<code>search_total</code> and <code>cfw_page</code>. A restored <code>cache_container</code> would boot the site on the previous
 site&#39;s service container, and <code>cachetags</code> checksums that disagree with the bins they describe leave
 rows that are present and permanently rejected.</li>
 <li><strong>Nothing at all</strong> from <code>cfw_migrate</code>, <code>cfw_import</code> and <code>cfw_import_chunk</code>. A dump carrying
 <code>cfw_import_chunk</code> would contain itself, and one carrying <code>cfw_migrate</code> would have a replay
 overwrite the cursor that makes the replay resumable.</li>
-<li><strong>No secrets by default.</strong> The owner token, the Cloudflare OAuth access and refresh tokens and
-<code>hash_salt</code> are withheld and the count of withheld rows is reported. <code>?secrets=1</code> carries them. A
-faithful restore needs <code>hash_salt</code>, since it signs one-time login links and form tokens; a backup
-stored anywhere else should not have it.</li>
+<li><strong>No secrets by default.</strong> The owner token, the Cloudflare OAuth token and client id, the SMTP
+settings, <code>hash_salt</code>, and the git provider tokens and webhook secrets (<code>git_token_*</code>,
+<code>git_hooksecret_*</code>) are withheld. <code>?secrets=1</code> carries them. A faithful restore needs <code>hash_salt</code>,
+since it signs one-time login links and form tokens; a backup stored anywhere else should not have
+it.</li>
 </ul>
 <p>Options:</p>
 <div class="table"><table>
@@ -456,7 +469,7 @@ stored anywhere else should not have it.</li>
 </tr>
 <tr>
 <td><code>?secrets=1</code></td>
-<td>carry the four withheld <code>cfw_meta</code> keys</td>
+<td>carry the withheld <code>cfw_meta</code> secrets</td>
 </tr>
 <tr>
 <td><code>?limit=N</code></td>
@@ -467,11 +480,11 @@ stored anywhere else should not have it.</li>
 <td>override the 1,000,000-character chunk size</td>
 </tr>
 </tbody></table></div>
-<p><strong>A dump that cannot be replayed answers 409 rather than 200.</strong> A restore point nobody can replay is
-worse than none, because it reads as a backup. <code>?all=1</code> is the usual way to produce one: the whole
-<code>cache_container</code> row measures 960,544 characters against the 100,000-character Durable Object
-statement ceiling. A chunked export answers 409 on a shape mismatch as well, which is how splicing
-two different dumps into one file is caught.</p>
+<p><strong>A dump that cannot be replayed answers 409 rather than 200.</strong> A restore point nobody can replay
+reads as a backup while being useless. <code>?all=1</code> includes the <code>cache_container</code> row, which measures
+960,544 characters against the 100,000-character Durable Object statement ceiling, so a dump carrying
+it is not replayable. A chunked export also answers 409 on a shape mismatch, so two dumps cannot be
+spliced into one file unnoticed.</p>
 <h2 id="restore">Restore</h2>
 <p><code>POST /restore</code> with the dump as the request body. <strong>This route is diagnostic-gated, not
 owner-gated</strong>: it needs <code>PW_DIAGNOSTICS=1</code>, because it overwrites a whole database. Export is a
@@ -519,7 +532,7 @@ complete stored import exists.</p>
 <tr>
 <td>Whole-object loss</td>
 <td><code>/restore</code> into a new object</td>
-<td>PITR entirely -- the log died with the object; <code>hash_salt</code> unless the dump used <code>?secrets=1</code></td>
+<td>PITR entirely; the log died with the object; <code>hash_salt</code> unless the dump used <code>?secrets=1</code></td>
 <td><code>POST /restore</code> against the new site name</td>
 </tr>
 <tr>
@@ -542,8 +555,8 @@ versions. It does not touch <code>ctx.storage</code>, so a bad deploy that also 
 rollback and a PITR restore, in that order. Cloudflare refuses the rollback outright if a Durable
 Object class lifecycle change happened between the two versions, or if the target version binds an R2
 bucket, KV namespace or queue that no longer exists.</p>
-<p><strong>R2 is a mirror, not a backup.</strong> With no <code>FILES</code> bucket bound -- the free-tier default -- the object
-is the durable copy and there is nothing to lose. With one bound, the bucket holds rendered pages and
+<p><strong>R2 is a mirror, not a backup.</strong> With no <code>FILES</code> bucket bound, which is the shipped configuration, the
+object is the durable copy and there is nothing to lose. With one bound, the bucket holds rendered pages and
 uploaded files that the object still has, and the mirror queue refills it on the alarm.</p>
 <h2 id="keeping-a-dump">Keeping a Dump</h2>
 <p>Nothing schedules an export. A dump exists because someone asked for one, and it lives wherever they
@@ -555,9 +568,9 @@ built is not replayable, so a backup job can fail loudly instead of storing some
 like a backup.</p>
 <h2 id="related">Related</h2>
 <ul>
-<li><code>docs/configuration.md</code> -- <code>PW_DIAGNOSTICS</code>, the <code>FILES</code> binding and the runtime overrides</li>
-<li><code>docs/external-database.md</code> -- why the data lives in the object</li>
-<li><code>TECHNICAL_REPORT.md</code>, Platform Constraints -- the 100,000-character statement ceiling and the other
+<li><code>docs/configuration.md</code>: <code>PW_DIAGNOSTICS</code>, the <code>FILES</code> binding and the runtime overrides</li>
+<li><code>docs/external-database.md</code>: why the data lives in the object</li>
+<li><code>TECHNICAL_REPORT.md</code>, Platform Constraints: the 100,000-character statement ceiling and the other
 measured Durable Object SQLite limits</li>
 </ul>
 			</div>

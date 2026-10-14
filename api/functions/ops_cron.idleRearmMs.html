@@ -14,7 +14,7 @@
 <section class="tsd-panel">
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="idlerearmms"><span class="tsd-kind-call-signature">idleRearmMs</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/ops_cron.CronEnv.html" class="tsd-signature-type tsd-kind-interface">CronEnv</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">hasHeadroom</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><a href="#idlerearmms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="idlerearmms"><span class="tsd-kind-call-signature">idleRearmMs</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/ops_cron.CronEnv.html" class="tsd-signature-type tsd-kind-interface">CronEnv</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">hasHeadroom</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">paid</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><a href="#idlerearmms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>The idle re-arm a site should use.</p>
 </div>
@@ -26,10 +26,11 @@
 <div class="tsd-comment tsd-typography"><p>whether the quota ladder still permits background work. False drops to the
 slow re-arm, protecting account-wide meters (on free, ten warm sites would spend 108% of the
 daily rows staying warm). A degraded site un-warms itself and recovers at midnight UTC.</p>
-</div></li></ul></div>
+</div></li>
+<li><span><span class="tsd-kind-parameter">paid</span>: <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol"> = false</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">number</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/cda5cfb55d8cf17a38dd740b078968980861113e/src/ops/cron.ts#L422">src/ops/cron.ts:422</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/a5625c21a7dd8ac0f52ff923d37ca657b3be6826/src/ops/cron.ts#L418">src/ops/cron.ts:418</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

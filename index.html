@@ -198,6 +198,17 @@
 			.readme li::marker {
 				color: var(--accent-strong);
 			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
 			.readme code {
 				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 			}
@@ -292,6 +303,7 @@
 					Drupflare
 				</a>
 				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="configuration.html">Configuration</a>
 				<a href="compatibility.html">Compatibility</a>
 				<a href="building-from-source.html">Building From Source</a>
@@ -320,6 +332,7 @@
 <a class="card" href="php-update-delivery.html"><strong>PHP Interpreter Update Delivery</strong><span>How a new PHP interpreter build reaches a deployed site.</span></a>
 <a class="card" href="recovery.html"><strong>Recovery</strong><span>The four ways a site moves backwards and how to come back.</span></a>
 <a class="card" href="repository-layout.html"><strong>Repository Layout</strong><span>Every path outside src/ and how it arrives on a clean clone.</span></a>
+<a class="card" href="technical-report.html"><strong>Technical Report: Drupal on Cloudflare Workers</strong><span>The engineering record: architecture, platform limits, costs and measurements.</span></a>
 </div>
 			<div class="readme">
 				<p><a href="https://deploy.workers.cloudflare.com/?url=https://github.com/drupflare/worker"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a></p>
@@ -999,7 +1012,7 @@ against 96,177 on the front page) and the difference is unexplained.</p>
 <td>Compute</td>
 <td>$0.00</td>
 <td>$5.00 Workers Paid</td>
-<td>$5-12</td>
+<td>$10-12 for 1-2 vCPU and 2 GiB</td>
 <td>L</td>
 </tr>
 <tr>
@@ -1013,7 +1026,7 @@ against 96,177 on the front page) and the difference is unexplained.</p>
 <td>Backups</td>
 <td>$0.00</td>
 <td>included in the plan&#39;s storage</td>
-<td>~20% surcharge on the majors</td>
+<td>$0.50-2.50, snapshots or a plan surcharge</td>
 <td>L</td>
 </tr>
 <tr>
@@ -1034,18 +1047,19 @@ against 96,177 on the front page) and the difference is unexplained.</p>
 <td><strong>Monthly total</strong></td>
 <td><strong>$0.00</strong></td>
 <td><strong>~$5.00</strong></td>
-<td><strong>~$6-14</strong></td>
+<td><strong>~$10.50-14.50</strong></td>
 <td></td>
 </tr>
 <tr>
 <td><strong>Annual</strong></td>
 <td><strong>$0</strong></td>
 <td><strong>~$60</strong></td>
-<td><strong>~$72-168</strong></td>
+<td><strong>~$126-174</strong></td>
 <td></td>
 </tr>
 </tbody></table></div>
-<p>Paid against a VPS is roughly $12-108 a year, and at the bottom of the market it is close to a wash.
+<p>Paid against a VPS is roughly $66-114 a year. The VPS is the smallest box that meets Drupal&#39;s
+documented memory minimum, priced from provider list prices in <a href="impact.html">the impact report</a>.
 The row with no VPS equivalent is the first one: there is no $0 VPS, and free carries about 3.0M
 visits a month with the same feature set as paid, including both performance levers, which default
 on regardless of plan. At fleet scale the infrastructure works out near $0.028 per site per month.</p>
@@ -1096,7 +1110,7 @@ on regardless of plan. At fleet scale the infrastructure works out near $0.028 p
 </tbody></table></div>
 <p>Price those at your own rate; this project states no hourly figure.</p>
 <p>Performance, with the full provenance in
-<a href="https://github.com/drupflare/worker/blob/master/TECHNICAL_REPORT.md#-executive-summary">the report&#39;s executive summary</a>:</p>
+<a href="technical-report.html#-executive-summary">the report&#39;s executive summary</a>:</p>
 <div class="table"><table>
 <thead>
 <tr>
@@ -2659,7 +2673,7 @@ instrument may produce which class of number, and which class is banned outright
 <td>how a new PHP interpreter reaches this repository</td>
 </tr>
 </tbody></table></div>
-<p><a href="https://github.com/drupflare/worker/blob/master/TECHNICAL_REPORT.md"><code>TECHNICAL_REPORT.md</code></a> is the engineering record: every measurement, the
+<p><a href="technical-report.html"><code>TECHNICAL_REPORT.md</code></a> is the engineering record: every measurement, the
 instrument behind it, and why each conclusion changed. It states the rule the project runs on: an
 absolute CPU figure comes only from <code>cpuTime</code> on a deployed worker, because in-PHP <code>microtime()</code> is
 frozen between I/O on the edge, so a duration taken by subtracting two of its readings is 0. The

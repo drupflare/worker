@@ -198,6 +198,17 @@
 			.readme li::marker {
 				color: var(--accent-strong);
 			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
 			.readme code {
 				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 			}
@@ -292,6 +303,7 @@
 					Drupflare
 				</a>
 				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="configuration.html">Configuration</a>
 				<a href="compatibility.html">Compatibility</a>
 				<a href="building-from-source.html">Building From Source</a>
@@ -323,7 +335,7 @@ size and ETag.</p>
 <h2 id="pack-backup"><code>.pack-backup/</code></h2>
 <p>7.2 MB, one file, and it stays. It is the rollback point for an earlier lineage of the packed
 database (7,585,792 bytes, against 5,832,704 for the current one), and <code>bun run bake:pack</code>
-<strong>overwrites it on its next run</strong> (<code>scripts/bake-pack.ts:138</code>, the <code>snapshot</code> step). Its content is also in the
+<strong>overwrites it on its next run</strong> (the <code>snapshot</code> step of <code>scripts/bake-pack.ts</code>). Its content is also in the
 bucket at <code>snapshots/site.sqlite.064105ca7223</code>.</p>
 <h2 id="tracked-against-untracked">Tracked Against Untracked</h2>
 <p>A deploy reads <code>src/</code>, <code>assets/</code> and <code>.interp/</code>. The rest of the untracked bulk is build input,
@@ -350,20 +362,20 @@ instruments. The shape of the table is what is meant to last; the numbers in it 
 <tr>
 <td><code>tests/</code></td>
 <td>5.2M</td>
-<td>437 of 437</td>
+<td>438 of 438</td>
 <td>committed</td>
 <td>no</td>
 </tr>
 <tr>
 <td><code>scripts/</code></td>
-<td>2.1M</td>
-<td>196 of 196</td>
+<td>2.2M</td>
+<td>198 of 198</td>
 <td>committed</td>
 <td>no</td>
 </tr>
 <tr>
 <td><code>docs/</code></td>
-<td>640K</td>
+<td>656K</td>
 <td>yes</td>
 <td>committed</td>
 <td>no</td>
@@ -398,7 +410,7 @@ instruments. The shape of the table is what is meant to last; the numbers in it 
 </tr>
 <tr>
 <td><code>drupal-src/</code></td>
-<td>278M</td>
+<td>167M</td>
 <td>no</td>
 <td><code>bun run fetch:drupal</code>, which <code>build.yml</code> also calls</td>
 <td>yes, regenerable</td>
@@ -426,35 +438,35 @@ instruments. The shape of the table is what is meant to last; the numbers in it 
 </tr>
 <tr>
 <td><code>.trim-assets/</code></td>
-<td>37M</td>
+<td>7.6M</td>
 <td>no</td>
 <td><code>bash scripts/stage-edge-assets.sh</code></td>
 <td>yes, regenerable</td>
 </tr>
 <tr>
 <td><code>typedoc/</code></td>
-<td>7.9M</td>
+<td>36M</td>
 <td>no</td>
 <td><code>bun run docs:build</code></td>
 <td>yes, regenerable</td>
 </tr>
 <tr>
 <td><code>coverage/</code></td>
-<td>5.0M</td>
+<td>--</td>
 <td>no</td>
 <td><code>bun run test:coverage</code></td>
 <td>yes, regenerable</td>
 </tr>
 <tr>
 <td><code>dist/</code></td>
-<td>36M</td>
+<td>72M</td>
 <td>no</td>
 <td><code>bun run release:payload</code></td>
 <td>yes, regenerable</td>
 </tr>
 <tr>
 <td><code>.wrangler/</code></td>
-<td>15G</td>
+<td>209M</td>
 <td>no</td>
 <td>any <code>wrangler dev</code> or vitest run</td>
 <td>yes, regenerable</td>
@@ -467,47 +479,39 @@ instruments. The shape of the table is what is meant to last; the numbers in it 
 <td>yes, regenerable</td>
 </tr>
 </tbody></table></div>
-<p><code>.wrangler/</code> is almost the whole checkout. It grows with every dev session and vitest run and nothing
-prunes it, so a working tree measured after a long run is mostly cache. Delete it when disk matters.</p>
-<p><code>docker/</code> holds two rigs and they are unrelated. <code>compose.yml</code> is the nine-service integration rig
-(GreenMail, Postgres, MySQL, Redis, syslog, Gitea, Forgejo, Keycloak, GitLab). <code>vps.yml</code> plus <code>docker/vps/</code> is the
-comparison arm: nginx and PHP 8.5 FPM against the same <code>drupal-src</code> tree and the same
-<code>assets/drupal/site.sqlite</code> this project serves, so a measurement isolates the runtime. Both mount the
-tracked database read-only and copy it, because SQLite writes to the file it reads and a benchmark
-must not mutate what it measures.</p>
-<p>phasm should not become a submodule. The worker consumes its output rather than its source, and a
-submodule would put a Docker toolchain in a clean clone&#39;s dependency path.</p>
+<p><code>.wrangler/</code> grows with every <code>wrangler dev</code> session and vitest run, and nothing prunes it. Delete it
+when disk space matters.</p>
+<p><code>docker/</code> holds two rigs, which are unrelated. <code>compose.yml</code> is the nine-service integration rig
+(GreenMail, Postgres, MySQL, Redis, syslog, Gitea, Forgejo, Keycloak, GitLab). <code>vps.yml</code> with
+<code>docker/vps/</code> is the comparison arm: nginx and PHP 8.5 FPM running the same <code>drupal-src</code> tree and the
+same <code>assets/drupal/site.sqlite</code> this project serves, so a measurement isolates the runtime. The arm
+mounts the tracked database read-only and copies it, because SQLite writes to the file it reads.</p>
 <h2 id="experiments"><code>experiments/</code></h2>
-<p>71 files, 110,263 bytes, all committed, per <code>git ls-files experiments</code>: <strong>61 wrangler configs</strong> -- 59
-under <code>experiments/wrangler/</code> and one each in <code>arena/</code> and <code>duration/</code> -- plus the
+<p>71 files, 110,263 bytes, all committed, per <code>git ls-files experiments</code>: <strong>61 wrangler configs</strong> (59
+under <code>experiments/wrangler/</code>, and one each in <code>arena/</code> and <code>duration/</code>), plus the
 <code>experiments/wrangler/README.md</code>, the probe seams those directories pair with their configs, two
 binary seams under <code>binary/</code>, a loose <code>probe-o3mbsjlj.ts</code> at the top, and the data files from the
-boot-phase sweeps. <code>CLAUDE.md</code> keeps them prettier-ignored; they are kept for reproduction and left
-unmaintained.</p>
-<p>The 282 MB of <code>experiments/wrangler/.wrangler</code> miniflare state this section used to describe is gone;
-it regenerates on the next <code>wrangler dev</code> and is gitignored.</p>
+boot-phase sweeps. They are kept for reproduction and are not maintained. <code>.prettierignore</code> excludes
+the directory from formatting.</p>
 <h2 id="assetscore"><code>assets/core/</code></h2>
 <p>24 MB, 4,030 files, produced by <code>bun run assets:static</code> from step 13 of the source build. It is the
 browser-fetchable half of the Drupal tree (<code>css</code>, <code>js</code>, fonts and images under <code>core/</code>) copied to
 where Workers Assets serves it at the <code>/core/**</code> URLs Drupal already emits.</p>
-<p>All three PHP packers skip those extensions, correctly, because PHP never opens them. Nothing serves
-a file out of the PHP MEMFS over HTTP either, so before this every stylesheet, script and font 404&#39;d.
-It copies where the packers pack: Workers Assets content-hashes, caches and compresses what it
-serves, and a hit never reaches the Worker, so the tree costs nothing against either free-tier
-ceiling.</p>
-<p><code>assets/.assetsignore</code> denies by default and negates <code>/core/</code>; <code>tests/unit/runtime/assets-ignore.spec.ts</code>
-asserts both that the negation reaches into the directory and that every <code>/core/**</code> URL a prefilled
-page references answers 200.</p>
+<p>All three PHP packers skip those extensions, because PHP never opens them. Nothing serves a file out
+of the PHP MEMFS over HTTP, so these files reach the browser only through this directory. Workers
+Assets content-hashes, caches and compresses what it serves, and a cache hit never reaches the Worker.</p>
+<p><code>assets/.assetsignore</code> denies by default and negates <code>/core/</code>. <code>tests/unit/runtime/assets-ignore.spec.ts</code>
+asserts that the negation reaches into the directory and that every <code>/core/**</code> URL a prefilled page
+references answers 200.</p>
 <h2 id="vendor"><code>vendor/</code></h2>
 <p><code>wrangler deploy</code> does not read it. The canonical config aliases <code>./runtime/php-binary.js</code> to
 <code>src/runtime/php-binary-raw.ts</code>, which imports the interpreter from <code>.interp/</code>. <code>vendor/</code> reaches a
 bundle only through the unaliased default seam <code>src/runtime/php-binary.ts</code> and the <code>src/probes/**</code>
 configs, so it is a local store of hand-built binaries kept for reproducing past measurements.</p>
-<p>Never delete, move or overwrite anything under it. The rule stands and the recovery position has
-moved: <strong>all 34 vendor files are in <code>drupflare-cdn</code></strong>, and every one matches on size and on
-ETag-against-md5. They are 34 of the manifest&#39;s 35 <code>keys</code>, the 35th being
-<code>assets/drupal/site.sqlite</code>; two retired <code>vendor/static-long64/</code> keys sit in <code>archived</code> on top of
-that. <code>vendor/static-o3mbsjlj/php8.3-worker.mjs{,.wasm}</code> were the last two missing and were uploaded.</p>
+<p>Never delete, move or overwrite anything under it. A local deletion is recoverable, but the
+recovery is not free. <strong>All 34 vendor files are in <code>drupflare-cdn</code></strong>, each matching on size and on
+ETag-against-md5. They are 34 of the manifest&#39;s 35 <code>keys</code>; the 35th is <code>assets/drupal/site.sqlite</code>.
+Four retired <code>vendor/</code> keys sit in the manifest&#39;s <code>archived</code> list.</p>
 <p><code>vendor/php8.3.wasm</code>, <code>vendor/php8.4.wasm</code> and their <code>-web.mjs</code> glue are the only reproducible entries:
 <code>bun run vendor</code> copies them out of the <code>php-wasm</code> npm package. They cost 27 MB and are backed up, and
 no change is recommended.</p>
@@ -517,7 +521,7 @@ produces it: the release tarball for <code>SHIPPED_CORE_VERSION</code> from <cod
 <code>drupal-&lt;version&gt;/</code> wrapper stripped, then completed with the four contributed modules the tarball does
 not carry. <code>DRUPAL_VERSION</code> overrides the version; <code>--force</code> replaces a tree that is present at a
 different one. A second run on a satisfied tree downloads nothing.</p>
-<p><code>.github/workflows/build.yml</code> calls the same script and keys its cache on
+<p><code>.github/workflows/build.yml</code> calls the same script, resolving the version with
 <code>bun scripts/fetch-drupal-tree.ts --print-version</code>, so a developer and the gate lane hold the same tree.
 <code>tests/node/drupal-tree.spec.ts</code> fails if the workflow grows a second producer.</p>
 <p>The tarball is core only. <code>SHIPPED_LOCK_VERSIONS</code> names <code>admin_toolbar</code>, <code>ctools</code>, <code>pathauto</code> and
@@ -531,10 +535,8 @@ the same reason. Everything except the packers degrades to skipped or unresolved
 of them fails loudly, so the tree being absent is quiet.</p>
 <h2 id="siblings"><code>.siblings/</code></h2>
 <p><code>bun run assets:driver</code> reads the sibling checkouts of <code>drupflare/drupflare</code>, <code>drupflare/rom</code> and
-<code>drupflare/stream-http</code> directly and packs them into <code>assets/driver.json</code>. <strong>There is no in-repo copy
-of the modules.</strong> One existed, at <code>drupal/</code>, and it was what the packer read; it drifted from both
-siblings, with <code>CircuitBreaker.php</code> differing and the test copies sitting 8 assertions behind and
-nothing reporting it.</p>
+<code>drupflare/stream-http</code> directly and packs them into <code>assets/driver.json</code>. <strong>The repository keeps no
+copy of the modules.</strong></p>
 <p>Composer never runs on the edge, so the packed copy is what executes.
 <code>tests/node/driver-pack.spec.ts</code> rebuilds <code>assets/driver.json</code> from the modules on disk and compares byte
 for byte, so a stale pack fails the gate.</p>
@@ -546,9 +548,7 @@ mount rather than the directory: <code>../rom</code> provides <code>cfw_do_sqlit
 <code>.siblings/&lt;name&gt;</code>. CI sets the environment variables and checks the repositories out under <code>.siblings/</code>;
 <code>bun run build:local</code> clones into the same paths, and only the ones that are not already there.</p>
 <h2 id="unwired-scripts">Unwired Scripts</h2>
-<p>Reference counts across <code>package.json</code>, <code>scripts/</code>, <code>src/</code>, <code>tests/</code>, <code>docs/</code> and the READMEs.
-<code>scripts/build-oracle.ts</code> was deleted: no <code>wrangler.*.jsonc</code> declares <code>ORACLE_KV</code>, so
-<code>src/ops/oracle.ts</code> always fell through to the live check and the oracle it built had no consumer.</p>
+<p>Reference counts across <code>package.json</code>, <code>scripts/</code>, <code>src/</code>, <code>tests/</code>, <code>docs/</code> and the READMEs.</p>
 <div class="table"><table>
 <thead>
 <tr>
@@ -564,22 +564,21 @@ mount rather than the directory: <code>../rom</code> provides <code>cfw_do_sqlit
 </tr>
 <tr>
 <td><code>scripts/stage-edge-assets.sh</code></td>
-<td>3</td>
+<td>1</td>
 <td>superseded by <code>assets/.assetsignore</code> for the canonical config, still used by <code>experiments/wrangler/*</code>. Keep.</td>
 </tr>
 </tbody></table></div>
-<p><code>scripts/</code> needs no reorganisation. Its four groups map to the rule in <code>scripts/README.md</code>: live pipeline
-in TypeScript, <code>bench/</code> PHP for the native half of a ratio, <code>probe/</code> shell pairs, <code>measure/</code> frozen
-instruments. <code>CLAUDE.md</code> freezes <code>src/probes/**</code> on the same grounds. <code>release-payload.ts</code>,
-<code>hydrate.ts</code> and <code>backup-cdn.ts</code> sit flat alongside <code>pack-*.ts</code> and <code>gen-driver-assets.ts</code>.
-<code>experiments/</code> is the counterpart to <code>src/probes/**</code>: configs kept for reproduction, prettier-ignored.</p>
-<h2 id="qa-coverage-of-the-reports-claims">QA Coverage of the Report&#39;s Claims</h2>
-<p>Thirteen load-bearing claims from the report&#39;s executive summary, scored by what a test can catch.
-Three classes:</p>
+<p><code>scripts/</code> is grouped by role, as described in <code>scripts/README.md</code>: the live pipeline in TypeScript,
+<code>bench/</code> PHP for the native half of a ratio, <code>probe/</code> shell pairs, and <code>measure/</code> instruments.
+<code>src/probes/**</code> holds measurement instruments on the same terms. <code>release-payload.ts</code>, <code>hydrate.ts</code>
+and <code>backup-cdn.ts</code> sit flat alongside <code>pack-*.ts</code> and <code>gen-driver-assets.ts</code>. <code>experiments/</code> holds
+configs kept for reproduction and excluded from prettier.</p>
+<h2 id="test-coverage-of-headline-claims">Test Coverage of Headline Claims</h2>
+<p>Thirteen headline claims from the summary in <code>TECHNICAL_REPORT.md</code>, classed by what can check them:</p>
 <ul>
-<li><strong>(a) arithmetic or model</strong> -- hermetic, free, in the gate.</li>
-<li><strong>(b) artifact</strong> -- needs bytes on disk; runs in the release lane, which hydrates the payload.</li>
-<li><strong>(c) edge</strong> -- needs a deployed worker. An absolute CPU figure comes only from <code>cpuTime</code> on one.</li>
+<li><strong>(a) arithmetic or model</strong>: hermetic, free, in the gate.</li>
+<li><strong>(b) artifact</strong>: needs bytes on disk; runs in the release lane, which hydrates the payload.</li>
+<li><strong>(c) edge</strong>: needs a deployed worker. An absolute CPU figure comes only from <code>cpuTime</code> on one.</li>
 </ul>
 <div class="table"><table>
 <thead>
@@ -612,7 +611,7 @@ Three classes:</p>
 <td>4</td>
 <td>the per-class row cost of a fill</td>
 <td>a</td>
-<td><strong>yes.</strong> <code>tests/integration/rows-per-fill-audit.spec.ts</code> drives every class on one object and pins it; three consecutive runs read identical counts.</td>
+<td><strong>yes.</strong> <code>tests/integration/rows-per-fill-audit.spec.ts</code> drives every class on one object and pins it.</td>
 </tr>
 <tr>
 <td>5</td>
@@ -630,7 +629,7 @@ Three classes:</p>
 <td>7</td>
 <td>the canonical config reaches its own code</td>
 <td>a</td>
-<td><strong>yes.</strong> <code>tests/node/wrangler-reachability.spec.ts</code> covers five defects of that shape, including the binary alias.</td>
+<td><strong>yes.</strong> <code>tests/node/wrangler-reachability.spec.ts</code>, including the binary alias.</td>
 </tr>
 <tr>
 <td>8</td>
@@ -648,7 +647,7 @@ Three classes:</p>
 <td>10</td>
 <td>cold boot 1,398 ms, <code>page_cache</code> hit 1 ms, render 2,127 ms, startup 5 ms</td>
 <td>c</td>
-<td><strong>no.</strong> In-PHP <code>microtime()</code> and <code>Date.now()</code> do not ADVANCE on the edge, so a delta from either reads 0. The absolute is a real epoch; only the duration is unmeasurable there.</td>
+<td><strong>no.</strong> PHP clocks do not advance across a synchronous PHP run on the edge, so a duration read inside PHP is 0. The absolute time is a real epoch. Durations need a deployed worker&#39;s <code>cpuTime</code>.</td>
 </tr>
 <tr>
 <td>11</td>
@@ -689,27 +688,25 @@ Three classes:</p>
 <td>artifact figures: payload manifest, frame sizes, chunk count, Twig keys</td>
 <td>the (b) rows</td>
 <td>one payload download plus a dry-run, ~3 minutes</td>
-<td>built, in the release lane. Worth running nightly against the latest release to catch an asset that has been deleted or replaced</td>
+<td>built, in the release lane. Not scheduled; a nightly run against the latest release would catch a deleted or replaced asset</td>
 </tr>
 <tr>
 <td>CDN backup intact</td>
-<td>35 live + 6 archived keys</td>
-<td>41 HEADs, no credentials</td>
-<td>built. <code>.github/workflows/backup.yml</code>, nightly at 05:20</td>
+<td>35 live + 15 archived keys</td>
+<td>one HEAD per key, no credentials</td>
+<td>built. <code>.github/workflows/backup.yml</code>, daily at 05:20 UTC</td>
 </tr>
 <tr>
 <td>edge figures: <code>cpuTime</code>, cold boot, render cost</td>
 <td>the (c) rows</td>
 <td>a deploy, a tail and a teardown per run</td>
-<td>no. It needs a deploy into an account carrying production workers, and an n=1 nightly figure carries no spread, so it reads as a trend when it is one sample</td>
+<td>no. One nightly sample carries no spread</td>
 </tr>
 </tbody></table></div>
-<p>The recommendation is the split that exists: <strong>push proves the model, the release proves the artifact, and
-nothing automated proves the edge.</strong> The one addition worth making is a nightly re-run of the release
-lane&#39;s <code>payload</code> job against the latest published release, at ~3 minutes of runner time.</p>
-<p>Edge figures, if they are ever tracked, need a manual <code>workflow_dispatch</code> that deploys a <code>cfw-*</code>
-throwaway, reads <code>cpuTime</code> from the Observability API at n&gt;=5, tears it down and asserts a <strong>spread</strong>.
-That is separate work, it needs an account decision, and it is not a test.</p>
+<p>Push checks the model, and the release checks the artifact. Nothing scheduled checks the edge. The
+release workflow runs on <code>workflow_dispatch</code> only.</p>
+<p>Tracking edge figures needs a <code>workflow_dispatch</code> job that deploys a <code>cfw-*</code> worker, reads <code>cpuTime</code>
+from the Observability API at n &gt;= 5, tears the worker down, and reports the spread.</p>
 			</div>
 		</main>
 		<footer>

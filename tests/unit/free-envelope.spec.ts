@@ -933,8 +933,7 @@ describe('the keep-warm chain, priced across a FLEET rather than one site', () =
 	/**
 	 * The published ceiling was the ceiling of a site that does not keep itself resident.
 	 *
-	 * `siteWarmEnabled()` returns true when the var is unset, so warming is the shipping default and
-	 * spends 10,896 rows and 10,800 DO requests a day before a visitor arrives -- and `envelope()`
+	 * `warmForced()` warms an unset paid site, so warming is the paid default and spends 10,896 rows and 10,800 DO requests a day before a visitor arrives -- and `envelope()`
 	 * divided the whole 100,000 as though none of that had been spent. `thermal.ts` declines to warm
 	 * a site below ~505 renders/day, but a site AT the regeneration ceiling is far above that
 	 * crossing by construction, which is what makes the subtraction right here specifically.

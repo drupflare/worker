@@ -731,8 +731,9 @@ describe('SITE_WARM decides the idle re-arm', () => {
 	});
 
 	it('agrees with the interval the cron module resolves', () => {
-		expect(siteWarmEnabled({})).toBe(true);
-		expect(siteWarmEnabled({ SITE_WARM: '0' })).toBe(false);
+		expect(siteWarmEnabled({}, true)).toBe(true);
+		expect(siteWarmEnabled({})).toBe(false);
+		expect(siteWarmEnabled({ SITE_WARM: '0' }, true)).toBe(false);
 		expect(idleRearmMs({ SITE_WARM: '1' })).toBe(8_000);
 		expect(idleRearmMs({ SITE_WARM: '0' })).toBe(240_000);
 	});

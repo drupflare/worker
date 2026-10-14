@@ -882,9 +882,8 @@ export function envelope(
 		/**
 		 * Whether this site keeps itself resident, which SPENDS the budget being divided up.
 		 *
-		 * Defaults to true because `siteWarmEnabled()` returns true when the var is unset, so the
-		 * shipping default is a warmed site -- and the published ceiling was computed as though it
-		 * were not. At `WARM_INTERVAL_MS` that is 12,240 rows/day and 10,800 DO requests/day gone
+		 * Defaults to true because `warmForced()` warms an unset paid site, so the paid default is a
+		 * warmed site -- and the published ceiling was computed as though it were not. At `WARM_INTERVAL_MS` that is 12,240 rows/day and 10,800 DO requests/day gone
 		 * before a visitor arrives, which is 12.2% of the row budget the regeneration ceiling
 		 * divides.
 		 *

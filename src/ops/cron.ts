@@ -399,17 +399,13 @@ export function warmIntervalConfigured(env?: CronEnv): number | undefined {
 }
 
 /**
- * Whether this site re-arms fast enough to stay resident.
+ * Whether this site is configured to re-arm fast enough to stay resident.
  *
- * On by default on both plans: for one site warming costs 10.8% of free's two daily meters and $0
- * marginal on paid, and removes the 1,398 ms cold boot from every page that renders (the
- * authenticated tier). Fleet arithmetic is the wrong lever for a default; {@link idleRearmMs}'s
- * headroom check handles an account running out.
+ * True when `SITE_WARM=1`, or when it is unset on a paid plan. Unset on free is false here because
+ * the thermal policy decides there; see {@link warmForced}.
  */
-export function siteWarmEnabled(env?: CronEnv): boolean {
-	const set = env?.SITE_WARM;
-	if (set !== undefined && String(set) !== '') return String(set) === '1';
-	return true;
+export function siteWarmEnabled(env?: CronEnv, paid = false): boolean {
+	return warmForced(env, paid) === true;
 }
 
 /**
@@ -419,8 +415,8 @@ export function siteWarmEnabled(env?: CronEnv): boolean {
  *   slow re-arm, protecting account-wide meters (on free, ten warm sites would spend 108% of the
  *   daily rows staying warm). A degraded site un-warms itself and recovers at midnight UTC.
  */
-export function idleRearmMs(env?: CronEnv, hasHeadroom = true): number {
-	return hasHeadroom && siteWarmEnabled(env) ? warmIntervalMs(env) : keepWarmMs(env);
+export function idleRearmMs(env?: CronEnv, hasHeadroom = true, paid = false): number {
+	return hasHeadroom && siteWarmEnabled(env, paid) ? warmIntervalMs(env) : keepWarmMs(env);
 }
 
 /** a missing table is nothing to do; anything else is a failure */

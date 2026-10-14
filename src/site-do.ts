@@ -3411,7 +3411,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 */
 	thermalRearmMs(): number {
 		const headroom = this.degradation().cron;
-		const configured = idleRearmMs(this.env, headroom);
+		const configured = idleRearmMs(this.env, headroom, isPaid(this.env));
 		if (!headroom) return configured;
 		const forced = warmForced(this.env, isPaid(this.env));
 		const stored = this.storedRenderWindow();

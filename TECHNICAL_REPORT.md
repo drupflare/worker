@@ -61,8 +61,8 @@ concurrent waves of 20, at `cpuTime` p50 ~180 ms and max 493 ms, with every invo
 
 **The regeneration ceiling now subtracts warming, and it did not until 2026-09-22.** `envelope()`
 divided the whole 100,000 rows/day as though nothing had been spent before a visitor arrived.
-`siteWarmEnabled()` returns true when the var is unset, so a warmed object is the shipping default
-(since 2026-09-25 on paid; an unset value on free is the thermal policy's call), and at the 8 s
+`warmForced()` warms an unset paid site (since 2026-09-25; an unset value on free is the thermal
+policy's call), so a warmed object is the paid default, and at the 8 s
 interval it spends **10,896 rows/day and 10,800 DO requests/day** keeping itself
 resident. The published ceiling was therefore the ceiling of a configuration the product does not
 ship. Subtracting it took the windowed figure **10,869 -> 9,685/day**, which was **10.9% lower**,

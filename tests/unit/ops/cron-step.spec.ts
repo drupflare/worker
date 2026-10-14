@@ -267,10 +267,13 @@ describe('the warm re-arm has to beat the hibernation threshold', () => {
 		expect(HIBERNATION_IDLE_MS).toBe(10_000);
 	});
 
-	it('is on by default, because at one site it is 10.8% of free and $0 on paid', () => {
-		expect(siteWarmEnabled(undefined)).toBe(true);
+	it('is on by default on paid and left to the thermal policy on free', () => {
+		expect(siteWarmEnabled(undefined, true)).toBe(true);
+		expect(siteWarmEnabled(undefined)).toBe(false);
 		expect(siteWarmEnabled({ SITE_WARM: '1' })).toBe(true);
-		expect(siteWarmEnabled({ SITE_WARM: '0' })).toBe(false);
+		expect(siteWarmEnabled({ SITE_WARM: '0' }, true)).toBe(false);
+		expect(idleRearmMs({}, true, true)).toBe(8000);
+		expect(idleRearmMs({})).toBe(240000);
 	});
 
 	it('an explicitly unwarmed site keeps the slow idle re-arm', () => {

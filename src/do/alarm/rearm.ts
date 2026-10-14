@@ -1,5 +1,6 @@
 import { idleRearmMs } from '../../ops/cron';
 import { mailDrainEnabled } from '../../ops/mail';
+import { isPaid } from '../../ops/plan';
 import { isQuarantined, parseState } from '../../ops/repair';
 import { alarmRearmDelayMs, classifyAlarmOutcome } from '../alarm';
 import { noteResident } from '../isolate';
@@ -33,7 +34,10 @@ export async function rearmPhase({ site, outcomes, held, hold }: AlarmContext): 
 				// a lane nobody routes to must hibernate, since warming is per object and a pool
 				// multiplies it; otherwise the predictor decides, never overriding SITE_WARM
 				idleMs: site.laneIsIdle()
-					? Math.max(idleRearmMs(site.env, site.degradation().cron), 240_000)
+					? Math.max(
+							idleRearmMs(site.env, site.degradation().cron, isPaid(site.env)),
+							240_000
+						)
 					: site.thermalRearmMs()
 			});
 	const heldDelayMs = held && hold !== undefined ? Math.max(1, hold - site.nowMs()) : Infinity;

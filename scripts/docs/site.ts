@@ -17,6 +17,8 @@ const ALIASES: Record<string, BundledLanguage> = {
 
 /** one line per docs page; a page missing here fails the build, so the front page cannot omit it */
 const SUMMARY: Record<string, string> = {
+	'technical-report':
+		'The engineering record: architecture, platform limits, costs and measurements.',
 	'building-from-source': 'From a clean clone to a deployable tree, and the release payload.',
 	compatibility: 'Which Drupal codebases run, per codebase, from the corpus lane.',
 	configuration: 'Every variable and binding in wrangler.jsonc, and how each is changed.',
@@ -34,12 +36,20 @@ const SUMMARY: Record<string, string> = {
 /** the header nav: the pages a new reader reaches for first */
 const NAV = [
 	'impact',
+	'technical-report',
 	'configuration',
 	'compatibility',
 	'building-from-source',
 	'recovery',
 	'database'
 ];
+
+/** the report lives at the repository root and is published beside the docs pages */
+const REPORT = 'technical-report';
+const sourcePath = (name: string) => (name === REPORT ? 'TECHNICAL_REPORT.md' : `docs/${name}.md`);
+
+/** nav labels where the page's H1 is too long for the bar */
+const NAV_LABEL: Record<string, string> = { [REPORT]: 'Technical Report' };
 
 const PLACEHOLDER = '<!-- readme -->';
 
@@ -52,14 +62,16 @@ const language = (lang: string | undefined): BundledLanguage | 'text' => {
 const escapeHtml = (text: string) =>
 	text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
 
-const docs = readdirSync(join(root, 'docs'))
-	.filter((file) => file.endsWith('.md'))
-	.map((file) => basename(file, '.md'))
-	.sort();
+const docs = [
+	...readdirSync(join(root, 'docs'))
+		.filter((file) => file.endsWith('.md'))
+		.map((file) => basename(file, '.md')),
+	REPORT
+].sort();
 for (const name of docs)
-	if (!SUMMARY[name]) throw new Error(`docs/${name}.md has no entry in SUMMARY`);
+	if (!SUMMARY[name]) throw new Error(`${sourcePath(name)} has no entry in SUMMARY`);
 for (const name of [...Object.keys(SUMMARY), ...NAV])
-	if (!docs.includes(name)) throw new Error(`docs/${name}.md does not exist`);
+	if (!docs.includes(name)) throw new Error(`${sourcePath(name)} does not exist`);
 
 /** a link written in the source file `from`, as a site link or else a repository URL */
 function resolve(from: string, href: string): string {
@@ -68,6 +80,7 @@ function resolve(from: string, href: string): string {
 	const target = posix.normalize(posix.join(posix.dirname(from), path)).replace(/\/$/, '');
 	const suffix = hash ? `#${hash}` : '';
 	if (target === 'README.md') return `index.html${suffix}`;
+	if (target === 'TECHNICAL_REPORT.md') return `${REPORT}.html${suffix}`;
 	const page = target.match(/^docs\/([^/]+)\.md$/)?.[1];
 	if (page && docs.includes(page)) return `${page}.html${suffix}`;
 	const directory = statSync(join(root, target), { throwIfNoEntry: false })?.isDirectory();
@@ -115,7 +128,7 @@ function nav(current: string, titles: Record<string, string>): string {
 	const link = (href: string, label: string, page?: string) =>
 		`<a href="${href}"${page === current ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`;
 	return [
-		...NAV.map((name) => link(`${name}.html`, titles[name] ?? name, name)),
+		...NAV.map((name) => link(`${name}.html`, NAV_LABEL[name] ?? titles[name] ?? name, name)),
 		link('api/index.html', 'API'),
 		link('php/index.html', 'PHP'),
 		link(repo, 'GitHub')
@@ -139,7 +152,7 @@ function page(options: {
 }
 
 const sources = Object.fromEntries(
-	docs.map((name) => [name, readFileSync(join(root, 'docs', `${name}.md`), 'utf8')])
+	docs.map((name) => [name, readFileSync(join(root, sourcePath(name)), 'utf8')])
 );
 const titles = Object.fromEntries(docs.map((name) => [name, titleOf(sources[name]!, name)]));
 
@@ -181,7 +194,18 @@ emit(
 		titles
 	})
 );
-for (const name of docs)
+/** a contents list of the level-two headings, placed before the first one */
+function withContents(html: string): string {
+	const items = [...html.matchAll(/<h2 id="([^"]+)">(.*?)<\/h2>/g)].map(
+		([, id, text]) => `<li><a href="#${id}">${text}</a></li>`
+	);
+	if (!items.length) return html;
+	const toc = `<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol>${items.join('')}</ol></nav>`;
+	return html.replace('<h2', () => `${toc}<h2`);
+}
+
+for (const name of docs) {
+	const body = await render(sourcePath(name), sources[name]!);
 	emit(
 		`${name}.html`,
 		page({
@@ -189,10 +213,11 @@ for (const name of docs)
 			description: SUMMARY[name]!,
 			current: name,
 			hero: '',
-			body: await render(`docs/${name}.md`, sources[name]!),
+			body: name === REPORT ? withContents(body) : body,
 			titles
 		})
 	);
+}
 highlighter.dispose();
 
 for (const asset of ['CNAME', 'drupflare.ico', 'drupflare.png', 'drupflare_128.png'])

@@ -36,34 +36,29 @@ HTTP 301 for retired content, which `drupal/redirect` produces and the edge hono
 
 ## Search.gov Splits in Two
 
-Search.gov offers two integrations and this architecture hosts one of them.
+Search.gov offers two integrations. The crawl route is verified here and the Results API route is not.
 
-The crawl route works. Search.gov indexes the public site from an XML sitemap and renders results on
-a Search.gov-hosted page. Nothing outbound happens in PHP: `simple_sitemap` and `xmlsitemap` produce
+Search.gov indexes the public site from an XML sitemap and renders results on a Search.gov-hosted
+page. Nothing outbound happens in PHP: `simple_sitemap` and `xmlsitemap` produce
 the sitemap, `metatag_search_gov` produces the `searchgov_custom1-3` fields the index reads, and
 stored pages serve the crawler. All three are verified.
 
-The Results API route does not. `search_gov_results_api` renders results on the site's own page by
-calling `api.gsa.gov` while building the form, and the results are the page. This runtime performs an
-outbound call between invocations rather than inside one, so a deferred exchange returns nothing on
-the first request. The module is recorded untested with that mechanism: measured, the deferred tier
-does carry its GET across two renders, and what it lacks is a live Search.gov key.
+The Results API route is not verified. `search_gov_results_api` renders results on the site's own
+page by calling `api.gsa.gov` while building the form, and the results are the page. The call goes
+out through the park: `ParkFetchHandler` replaces Guzzle's transport with plain userland code, which
+is a frame the park can suspend under, so the response arrives inside the render that asked for it.
+`config/modules.yml` records the park carrying `api.gsa.gov` that way.
 
-`drupal/redis` was named here as refused for the same reason and no longer is. **Nor is HTTP**, which
-this page said could not take that route: PHP does reach HTTPS through a wrapper the runtime invokes
-from inside a C frame a suspended call cannot return through, and the answer was to stop going that
-way rather than to accept it. `ParkFetchHandler` replaces Guzzle's transport with plain userland
-code, which is a frame the park can suspend under, so an HTTP response arrives inside the render that
-asked for it. `config/modules.yml` records the park carrying `api.gsa.gov` that way.
-
-What keeps the module untested is now its own: a live Search.gov key, and its `#pre_render`
-behaviour. Neither is a runtime refusal.
+The module is recorded `untested` for two reasons. Seeing a result needs a live Search.gov key. The
+module also does not render what it fetched: `processResults()` renders each result child on its own,
+and `buildMultiple` is a `#pre_render` on the parent, so a detached child renders as an empty shell.
+That is an upstream defect and not a property of this runtime.
 
 ## The USWDS Theme
 
 `uswds_base` is a theme, and a theme reaches this runtime through a different installer than a
 module. `composer/installers` places it under `themes/contrib`, `extension.list.module` does not list
-themes, and `module_installer` cannot install one. The pack now sweeps the theme tree, `/__enable`
+themes, and `module_installer` cannot install one. The pack sweeps the theme tree, `/__enable`
 routes a theme to `theme_installer`, and `assets:static` copies the theme subtree alongside `core`
 and `modules`.
 

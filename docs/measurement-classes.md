@@ -2,8 +2,7 @@
 
 Every number this project produces belongs to one of four classes. The class decides which
 instrument may produce it, where it may be archived, and whether a regression in it can fail a
-build. Picking the wrong class is how a verdict moves without the system changing: of the free-tier
-verdicts that have moved here, four out of five moved because the instrument was wrong.
+build. Picking the wrong class is how a verdict moves without the system changing.
 
 | Class | What it is          | Instrument                  | CI     | Gated |
 | ----- | ------------------- | --------------------------- | ------ | ----- |
@@ -23,11 +22,9 @@ This is the only class a shared CI runner can produce reliably, so it is the onl
 emits one JSON document; `scripts/measure/metrics-gate.ts` compares it to the document archived by
 the last passing master run and exits non-zero when a metric crosses its tolerance.
 
-The baseline is that archived document, fetched with `gh run download`. There is no committed
-baseline file: the one that existed had to be refreshed by hand whenever master moved, so it was
-not, and it recorded 305,599 driver-pack bytes against an actual 331,533 and a case count no run
-had been able to collect. `--require-baseline` makes a download that produced nothing a failure
-rather than a thin pass on the two checks that need no baseline at all.
+The baseline is the document archived by the last passing master run, fetched with
+`gh run download`. No baseline file is committed. `--require-baseline` makes a download that produced
+nothing a failure rather than a thin pass on the two checks that need no baseline at all.
 
 The document carries no timestamp. Two runs on one commit produce identical bytes, so a diff
 between two archived documents is a real change rather than a clock reading.
@@ -42,8 +39,8 @@ Three rules keep the class honest:
   no step.
 - **Tolerances live in code, not in the baseline.** A newer master document moves the recorded
   values and cannot widen what is allowed. The baseline is data; `CHECKS` is the contract. What a
-  master-relative baseline gives up is the cumulative reading -- creep since a release rather than
-  since the previous commit -- which the absolute checks carry instead, and which any archived
+  master-relative baseline gives up is the cumulative reading: creep since a release rather than
+  since the previous commit; the absolute checks carry that instead, and which any archived
   document restores by being passed as `--baseline-metrics`.
 
 ### What the Toolchain Contributes
@@ -53,11 +50,9 @@ wrangler's own compressor prints, so the wrangler version travels with the numbe
 The collected case count comes from `vitest list`, which is collection without execution. A version
 bump moves either one, the gate reports it, and the next master document records the move.
 
-The case count is collected under `DRUPFLARE_LIST_ALL=1`, which is what keeps it a property of the
-checkout. `vitest list` otherwise honours the `ARTIFACT_SPECS` exclusion, so it read 1,862 in CI
-against 2,066 on a checkout carrying the pack: the same lane dependence that kept coverage out of
-Class A, in a metric that had already been accepted. The gap held still while the exclusion list
-did; the commit that added two files to it was reported as deleting 21 tests.
+The case count is collected under `DRUPFLARE_LIST_ALL=1`, which keeps it a property of the checkout.
+`vitest list` otherwise honours the `ARTIFACT_SPECS` exclusion, so the count depends on whether the
+pack is present.
 
 ### What Was Rejected From Class A
 
@@ -106,8 +101,7 @@ That is what `scripts/measure/vps-compare.ts` runs on. It executes under bun rat
 Worker, and every reading brackets a request from outside the thing serving it. It is still a Class C
 figure in one respect: it is a SAME-MACHINE RATIO between two arms, never an absolute, and the
 absolute for the drupflare side comes from Class D. The rig also measures its own ceiling first
-(`--workload=ceiling`), because the generator shares a machine with both arms and this project has
-produced three confidently wrong scaling curves from generator errors.
+(`--workload=ceiling`), because the generator shares a machine with both arms.
 
 ## Class D: Deployed CPU
 

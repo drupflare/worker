@@ -1,61 +1,54 @@
 # External Databases and Hyperdrive
 
 Drupflare stores a site in the Durable Object that serves it. There is one object per site and it
-holds both the interpreter and the SQLite database. That is the default and it stays the default.
+holds both the interpreter and the SQLite database. That is the default.
 
-**This page used to say an external database was not an option the product offers. It is one now,
-for the self-hosted tier, and the reasons below are why it is not one for the managed tier.** Every
-blocker this page lists is a property of a Cloudflare account -- the configuration cap, the daily
-query limit, the missing MySQL `COM_STMT_PREPARE` -- and a workerd an operator runs has no account
-behind it. An external database is also what makes a site portable in the sense the self-hosted tier
-promises, and it removes the 5 GB account-wide storage cap that is otherwise the only hard limit on
-fleet size.
+An external database is an option for self-hosted deployments. It is not offered on the managed tier.
+The limits listed below, such as the configuration cap, the daily query limit and the missing MySQL
+`COM_STMT_PREPARE`, are properties of a Cloudflare account, and a workerd an operator runs has no
+account behind it. An external database also makes a site portable, and it removes the 5 GB
+account-wide storage cap that is otherwise the only hard limit on fleet size.
 
 ## Selecting One
 
 `DB_BACKEND` chooses: `do-sqlite` (the default, the object's own storage) or `hyperdrive`. Choosing
-`hyperdrive` with no `HYPERDRIVE` binding is reported as misconfigured rather than falling back
-silently, because a site running on a different database from the one its operator chose is worse
-than one that refuses to start.
+`hyperdrive` with no `HYPERDRIVE` binding is reported as misconfigured and does not fall back, because
+a site running on a different database from the one its operator chose is worse than one that refuses
+to start.
 
 The clients are `pg` and `mysql2`, ordinary npm dependencies in the Worker. **Hyperdrive supplies no
-client** -- it supplies a pooled endpoint and a connection string, and Cloudflare's own get-started
-says "you will need a database driver". Together they cost about 1.1 MB of the 65,536 KiB bundle
-ceiling, and both are imported dynamically so a deployment that never selects this backend evaluates
-neither.
+client**. It supplies a pooled endpoint and a connection string, and Cloudflare's own get-started says
+"you will need a database driver". Both clients are imported dynamically, so a deployment that never
+selects this backend evaluates neither. A client is opened for each statement and closed after it, so
+the object holds no socket between statements.
 
-Which one answers is read from the connection string's scheme rather than from a second setting,
-because a setting that can disagree with the string is one that will. `postgres://`,
-`postgresql://` and `mysql://` are what Hyperdrive itself accepts.
+The connection string's scheme picks the client: `postgres://`, `postgresql://` and `mysql://` are
+what Hyperdrive itself accepts. There is no second setting to disagree with the string.
 
-Two differences between them are handled here rather than in the driver, which stays ignorant of
-which backend it is on:
+Two differences between the databases are handled in the adapter (`src/db/pg-exec.ts`), and the
+driver does not know which one it is on:
 
 - **Placeholders.** The driver emits `?`, which MySQL takes as-is and PostgreSQL does not, so a
-  PostgreSQL statement is rewritten to `$1..$n`. A `?` inside a string literal is left alone, which
-  is the case a regex gets wrong on the first row of real content.
+  PostgreSQL statement is rewritten to `$1..$n`. A `?` inside a quoted literal is left alone.
 - **No prepared statements on MySQL.** `mysql2`'s `execute()` sends `COM_STMT_PREPARE`, which
-  Hyperdrive does not support; `query()` interpolates client-side and sends one text statement,
-  which is what survives the pool. This is the blocker listed further down, met in code.
+  Hyperdrive does not support. `query()` interpolates client-side and sends one text statement, which
+  survives the pool.
 
-The two result shapes were measured against the rig rather than assumed. PostgreSQL 17.6 answers a
-`SELECT` as `{rows: [...], rowCount: n}` and an `INSERT` as `{rows: [], rowCount: n}`; MySQL 9.5
-answers a `SELECT` as an array and an `INSERT` as a header object carrying `affectedRows`. The
-adapter reduces both to the one shape the host's own SQL seam uses.
+PostgreSQL answers a `SELECT` as `{rows: [...], rowCount: n}` and an `INSERT` as
+`{rows: [], rowCount: n}`. MySQL answers a `SELECT` as an array and an `INSERT` as a header object
+carrying `affectedRows`. The adapter reduces both to the one shape the host's own SQL seam uses.
 
-What made this reachable is the park. `cfwSqlExec` is synchronous by construction -- the same
-property that puts KV, R2, D1 and `env.ASSETS.fetch()` out of reach of a read -- and a `pg` query is
-not. So the driver yields the statement instead: `rom`'s `CfwSqlClient` opens a
-`cfwpark+sql://` pseudo-socket, `ext/cfwpark` freezes the continuation, the Worker runs the query,
-and the chain resumes inside the same invocation. It needs no change to the extension, because the
-HTTP transport already rides the same trap under a different scheme.
+`cfwSqlExec` is synchronous, the same property that puts KV, R2, D1 and `env.ASSETS.fetch()` out of
+reach of a read, and a `pg` query is not. So the driver yields the statement instead: `rom`'s
+`CfwSqlClient` opens a `cfwpark+sql://` pseudo-socket, `ext/cfwpark` freezes the continuation, the
+Worker runs the query, and the chain resumes inside the same invocation. The HTTP transport rides the
+same trap under a different scheme.
 
-**A refused yield is an error rather than a fallback**, and that is the one place this differs from
-the parked HTTP transport. A refused fetch falls back to the deferred one; there is no local copy of
-an external database to answer from, so a refusal reaches Drupal as a database error instead of
-quietly answering from the wrong store.
+**A refused yield is an error and not a fallback.** A refused fetch falls back to the deferred one,
+but there is no local copy of an external database to answer from, so a refusal reaches Drupal as a
+database error.
 
-### Verifying It Without A Deploy
+### Verifying It Without a Deploy
 
 `localConnectionString` makes `wrangler dev` connect straight to a database, so the whole path is
 drivable against the rig:
@@ -66,14 +59,12 @@ export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgres://drup
 # mysql://drupflare:drupflarepass@127.0.0.1:3306/drupflare
 ```
 
-The `hyperdrive` binding is deliberately NOT in the canonical `wrangler.jsonc`. A binding naming a
-configuration that does not exist refuses the deploy, which is what `r2_buckets` did to the one-click
-button; it is an opt-in addition for a deployment that has one.
+The `hyperdrive` binding is not in the canonical `wrangler.jsonc`. A binding that names a
+configuration that does not exist refuses the deploy, so it is an opt-in addition for a deployment
+that has one.
 
-**A deployed worker answers the one thing the rig cannot**: whether a Hyperdrive binding works from
-inside a Durable Object rather than from a plain fetch handler. It does; see the section below.
 `/backend` (diagnostic-gated) runs `SELECT 1` through the binding from inside the object and reports
-the dialect and latency, without ever echoing the connection string.
+the dialect and latency. It never echoes the connection string.
 
 ## What Hyperdrive Is For
 
@@ -105,34 +96,35 @@ Exceeding the free query limit fails the operation with an error rather than bil
 Hyperdrive does not support MySQL `COM_STMT_PREPARE`, so prepared statements have to be removed from
 MySQL queries; named prepared statements work only through `postgres.js` and `node-postgres`.
 
-Two properties govern what the cache buys. **A cached query still counts** against the daily limit, so
-query caching buys latency and origin load, never quota. And **the cache is keyed on statement text**
-including comments, which means a comment naming a volatile function such as `NOW()` can make a
-query uncacheable; Cloudflare does not document SQL comments as a cache-control API and recommends a
-cache-disabled configuration where a guaranteed fresh read is needed.
+A cached query still counts against the daily limit, so query caching buys latency and origin load
+and no quota. The cache is keyed on statement text including comments, so a comment naming a
+volatile function such as `NOW()` can make a query uncacheable. Cloudflare does not document SQL
+comments as a cache-control API and recommends a cache-disabled configuration where a guaranteed
+fresh read is needed.
 
-**Local development is documented two ways and they disagree.** The Workers local-development page
-lists Hyperdrive among the bindings with no local simulation ("currently unsupported"), while a changelog entry and the Hyperdrive local-development page describe `localConnectionString` and
+Cloudflare documents local development two ways. The Workers local-development page lists
+Hyperdrive among the bindings with no local simulation ("currently unsupported"), while a changelog
+entry and the Hyperdrive local-development page describe `localConnectionString` and
 `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_<BINDING_NAME>` connecting `wrangler dev` to a real
-database, including a remote one over TLS. Treat the `localConnectionString` mechanism as the working
-answer and the local-development page as stale.
+database, including a remote one over TLS. The `localConnectionString` mechanism is the one that
+works.
 
-**A Hyperdrive binding is usable from inside a Durable Object**, verified 2026-09-25 on a paid
-throwaway. The origin was PostgreSQL 17 behind a Cloudflare Tunnel, reached through a Workers VPC
-service, and the object read `env.HYPERDRIVE.connectionString` and completed `SELECT 1` in 6-9 ms of
-query time on three consecutive requests.
+A Hyperdrive binding is usable from inside a Durable Object. On a paid account, with a PostgreSQL 17
+origin behind a Cloudflare Tunnel reached through a Workers VPC service, the object read
+`env.HYPERDRIVE.connectionString` and completed `SELECT 1` in 6-9 ms of query time on three
+consecutive requests.
 
-Three requirements surfaced while building that path:
+The path has three requirements:
 
 - **The origin must speak TLS.** Hyperdrive refuses a plaintext PostgreSQL (`code 2012`).
-- **A VPC-service origin takes no `--sslmode` or custom CA.** Hyperdrive answers `mtls cannot be
-used with service_id` (`code 2007`), so certificate verification is set on the VPC service
-  (`--cert-verification-mode`) rather than on the Hyperdrive configuration. A self-signed origin
+- **Certificate verification is set on the VPC service.** The origin takes no `--sslmode` or custom
+  CA on the Hyperdrive configuration; Hyperdrive answers `mtls cannot be used with service_id`
+  (`code 2007`). Set `--cert-verification-mode` on the VPC service instead. A self-signed origin
   certificate is otherwise refused with `CERTIFICATE_VERIFY_FAILED` (`code 2015`).
-- **An account API token may carry no Hyperdrive permission at all.** The configuration was created
-  through `wrangler login`, whose OAuth scopes include it.
+- **The token needs a Hyperdrive permission.** An account API token may carry none. A configuration
+  created through `wrangler login` works, because its OAuth scopes include Hyperdrive.
 
-## Why the Site Database Is Not External
+## Why the Default Is Not External
 
 ### The Configuration Cap Bounds the Product Shape
 
@@ -142,54 +134,34 @@ of traffic. Sharing one configuration across every site means sharing ~20 origin
 or ~100 on Paid, against a design where each site is an independently woken object that answers with
 no coordination.
 
-Today a new site costs one Durable Object and no account-level resource at all.
+A new site on the default backend costs one Durable Object and no account-level resource.
 
-### The Statement Boundary, Not the Await
+### Every Statement Parks
 
-The interpreter can await. `ext/cfwpark` freezes the Zend continuation, `longjmp`s out of `pib_run`,
-and lets the Worker perform I/O in JavaScript before resuming the same PHP call, so a Promise-based
-client is reachable from PHP; `drupal/redis` runs on that path against a real server.
-
-What survives is narrower and sits one level down. `SqlLike.exec()` in `src/db/migrate-sql.ts` is
-synchronous and returns a cursor, and every write path runs inside `ctx.storage.transactionSync()`.
-The park suspends a PHP call; it cannot suspend the host callback a statement is already executing
-inside. So an external database is reachable from PHP code that has not yet entered a statement, and
-unreachable from inside one -- which is where Drupal's driver spends a render.
-
-Costing it needs a number nobody has taken: **a single park's `cpuTime` on a deployed worker**. A
-database makes about fifteen calls per warm render, so fifteen parks is either negligible or the
-whole request depending on that figure, and no proposal here should be scored until it exists.
-
-Every documented Hyperdrive call is Promise-based. PostgreSQL usage is `env.HYPERDRIVE.connectionString`
-handed to `postgres.js` or `node-postgres` and awaited; MySQL usage is `mysql2/promise`. There is no
-synchronous form of either, and no synchronous escape hatch appears anywhere in Cloudflare's
-Hyperdrive documentation.
-
-The project already lives with this on the outbound HTTP path, and the shape of that workaround is
-the argument. PHP's HTTP goes through a stream wrapper and a queue drained on the alarm
-(`HTTP_DRAIN_LIMIT`), and `TECHNICAL_REPORT.md` records what it costs: `Drupal::httpClient()` cannot
-retrieve response headers through it at all, because only PHP's own http wrapper populates
-`$http_response_header`. That is one subsystem making a handful of calls. A database makes fifteen
-per warm render, and none of them can be deferred to an alarm, because the render is waiting on the
+The park suspends a PHP call, and it cannot suspend the host callback a statement is already
+executing inside. The external backend therefore yields each statement from PHP: `CfwSqlClient` hands
+it to the Worker, which performs it, and the call resumes with the result. Every statement is then a
+park and a network round trip, where the default backend answers it with a local read. A render issues 15 to 48
+statements (see below), and none of them can be deferred, because the render is waiting on the
 answer.
 
 ### The Consistency Story Lives in the Object
 
 One object per site is what makes the rest of the design work. The Durable Object gives strict
-serializability for free, which is what the generation counter, the resumable migration cursor in
+serializability, which is what the generation counter, the resumable migration cursor in
 `cfw_migrate`, and the chunked restore in `src/db/import-sql.ts` are all built on. Each of those
 assumes a single writer whose transactions cannot interleave with another writer's.
 
 Postgres behind Hyperdrive is a different concurrency model reached over a pooled connection from
-any isolate in any colo. Moving the data there does not swap a binding; it removes the property the
-migration, the invalidation and the restore are written against.
+any isolate in any colo. Moving the data there removes the property the migration, the invalidation
+and the restore are written against.
 
 The pooler runs in transaction mode, and Cloudflare documents three consequences that bear directly
 on Drupal. Session state does not persist, because connections are `RESET` when returned to the
 pool. A single Worker invocation may obtain several different connections. And wrapping multiple
-operations in one transaction to hold `SET` state is explicitly discouraged, since the connection
-cannot be reused while the transaction is open. Drupal opens transactions around entity saves, batch
-API runs and the installer.
+operations in one transaction to hold `SET` state is discouraged, since the connection cannot be
+reused while the transaction is open. Drupal opens transactions around entity saves, batch API runs
+and the installer.
 
 ### The Query Cache Cannot Be Used for a CMS on the Same Database
 
@@ -201,86 +173,83 @@ write" through it.
 
 For Drupal that list is `sessions`, `users_field_data`, `key_value`, `config`, `semaphore` and every
 `cache_*` bin. A 60-second uninvalidated window over `cache_config` or `semaphore` is a correctness
-failure rather than a staleness tradeoff. What remains after disabling the cache is connection
-pooling, which buys back a TCP, TLS and authentication handshake the current architecture never
-pays.
+failure and not a staleness tradeoff. What remains after disabling the cache is connection pooling,
+which buys back a TCP, TLS and authentication handshake the default backend never pays.
 
-Cache eligibility is also decided by text matching: both `VOLATILE` and `STABLE`
-PostgreSQL functions make a query uncacheable, and a function name such as `NOW()` appearing in a SQL
-comment is enough to trigger it.
+Cache eligibility is also decided by text matching: both `VOLATILE` and `STABLE` PostgreSQL
+functions make a query uncacheable, and a function name such as `NOW()` appearing in a SQL comment is
+enough to trigger it.
 
 ### Latency Moves From Zero to Regional
 
 Cloudflare quantifies an uncached query at 20-30 ms from a distant region and 1-3 ms when the Worker
-is placed near the database, and says that multiple queries compound. A first render here is 48 SQL
+is placed near the database, and says that multiple queries compound. A first render is 48 SQL
 statements and a repeat render 18, so a cold render would spend roughly 1 to 1.4 seconds in network
 alone at the distant figure, on top of the boot.
 
 The documented remedy is `placement.region`, which pins the Worker to the database's cloud region.
-That is the opposite of `SITE_LOCATION_HINT`, a per-call, KV-overridable lever that exists so a site
-can live near its visitors. Today those statements cost no network at all, because the storage is
-inside the object making the call.
+That is the opposite of `SITE_LOCATION_HINT`, a KV-overridable setting that places a site near its
+visitors. On the default backend those statements cost no network, because the storage is inside the
+object making the call.
 
 ### An Open Socket Bills Duration
 
-Independently of Hyperdrive, an outbound TCP connection held open inside a Durable Object blocks
-hibernation, defers eviction and continues to accrue duration charges, for up to 15 minutes per
-connection. A driver connection held across a render is therefore a billed residency decision. This
-is the same eligibility list `src/ops/hibernation.ts` transcribes.
+An outbound TCP connection held open inside a Durable Object blocks hibernation, defers eviction and
+accrues duration charges for up to 15 minutes per connection. The backend opens a connection for each
+statement and closes it, so no connection outlives a statement. A driver that held one across a render
+would make it a billed residency decision. `src/ops/hibernation.ts` transcribes the eligibility list.
 
-### The Arithmetic Does Not Help Either
+### The Query Budget
 
 Hyperdrive on Free allows 100,000 database queries/day. A warm render costs **15 host statements**,
 measured on a deployed throwaway with the `page` and `dynamic_page_cache` bins emptied and the rest
 warm (14 without the theme reset; 20 with `bootstrap` also emptied). So 100,000 queries is roughly
 **6,666 renders/day**.
 
-Score that against the two ceilings. The regeneration ceiling is **2,477 renders/day** cold and
-**9,685** windowed, bound by rows written once warming is subtracted. Hyperdrive's free query budget lands inside that
-range rather than above it, so it does not raise the ceiling it would have to raise to be a capacity
-lever. The serving ceiling is untouched: an edge cache hit never reaches the object and issues no
+Regeneration on the free plan is bound by rows written at **10,866 renders/day** with
+`MEMORY_CACHE_BINS=none` and **50,916** at the shipping default; `bun scripts/measure/free-envelope.ts`
+prints both. Hyperdrive's free query budget is below both, so it cannot raise the ceiling and would
+lower it. The serving ceiling is unaffected: an edge cache hit never reaches the object and issues no
 database query under either design, so 100,000 Worker requests/day still binds first.
 
-## What Hyperdrive Would Buy
+## What Hyperdrive Buys
 
-It is a real answer to a question this product does not ask. Someone who already runs a PostgreSQL
-or MySQL database and wants Drupal in front of it gets pooling, a shared query cache, and no egress
-charge. If that database is the system of record for something other than the Drupal site, keeping
-it where it is may be the only correct architecture.
+Someone who already runs a PostgreSQL or MySQL database and wants Drupal in front of it gets pooling,
+a shared query cache, and no egress charge. If that database is the system of record for something
+other than the Drupal site, keeping it where it is may be the only correct architecture.
 
-Where it fits this project, if anywhere, is the tier `src/ops/tcp.ts` already defines: a secondary,
-host-side, deferrable read against a database the operator owns, dispatched by scheme through
-`cfw_http_queue`, with the endpoint set by the operator and never by the caller. A search index, an
-analytics sink or an external content feed has that shape. The site's own database does not: the
-answer has to arrive inside the request that asked, and a deferred exchange always misses the first
-time.
+Beyond the site's own database, the tier `src/ops/tcp.ts` defines fits a secondary, host-side,
+deferrable read against a database the operator owns, dispatched by scheme through `cfw_http_queue`,
+with the endpoint set by the operator and never by the caller. A search index, an analytics sink or an
+external content feed has that shape.
 
-A socket protocol escapes this. A trapped socket call freezes PHP where it stands, the Worker
-performs the exchange, and the call returns with the answer in the same request, which is how
-`drupal/redis` runs. It costs a network round trip per exchange where the Durable Object's own
-SQLite costs a local read, which is why SQLite is still the cache backend.
+A socket exchange that has to answer inside the request uses the park instead. A trapped socket call
+freezes PHP where it stands, the Worker performs the exchange, and the call returns with the answer
+in the same request. That is how `drupal/redis` runs, and how the site database runs on an external
+backend. It costs a network round trip per exchange where the Durable Object's own SQLite costs a
+local read, which is why SQLite is the default and the cache backend.
 
-It would also close a set of compatibility gaps that come from Durable Object SQLite specifically
-rather than from SQLite: the 100 bound-parameter cap, the 50-byte LIKE/GLOB pattern limit, integer
-reads that lose precision above 2^53, and the absence of `NOCASE_UTF8` and `REGEXP`. Those are
-documented under Platform Constraints in `TECHNICAL_REPORT.md` and each one has broken something
-real. Hyperdrive is a compatibility escape hatch, and no kind of capacity lever.
+An external database also avoids the compatibility gaps that come from Durable Object SQLite and not
+from SQLite itself: the 100 bound-parameter cap, the 50-byte LIKE/GLOB pattern limit, integer reads
+that lose precision above 2^53, and the absence of `NOCASE_UTF8` and `REGEXP`. They are documented
+under Platform Constraints in `TECHNICAL_REPORT.md`. Hyperdrive is a compatibility option and not a
+capacity lever.
 
 ## What It Costs
 
-- **The one-click goal.** Standing a site up would require provisioning and paying for a database
-  first. There is no free tier of "a Postgres you own".
+- **The one-click goal.** Standing a site up requires provisioning and paying for a database first.
+  There is no free tier of "a Postgres you own".
 - **The consistency primitives.** The generation counter, the resumable migration and the chunked
-  restore would each need rewriting against a different concurrency model.
-- **An async bridge for every statement.** This is the blocking item, and the bridge exists at the
-  wrong level: the park suspends a PHP call, not the host callback a statement executes inside. JSPI
-  is not the answer either -- it is dominated by the park and is worth about 1% of the regeneration
-  ceiling on its own.
-- **A second failure domain.** Today a site is up when its object is up. With an external database it
-  is up when the object, Hyperdrive and the database are all up.
+  restore are written against a single writer in one object, and an external database has a
+  different concurrency model.
+- **A round trip per statement.** Each statement parks and waits on the network. JSPI does not
+  change that: JSPI is dominated by the park and is worth about 1% of the regeneration ceiling on
+  its own.
+- **A second failure domain.** On the default backend a site is up when its object is up. With an
+  external database it is up when the object, Hyperdrive and the database are all up.
 
 ## Related
 
-- `docs/recovery.md` -- what backs the site up and what restores it
-- `docs/configuration.md` -- every var and binding
-- `TECHNICAL_REPORT.md`, Platform Constraints -- the measured Durable Object SQLite limits
+- `docs/recovery.md`: what backs the site up and what restores it
+- `docs/configuration.md`: every var and binding
+- `TECHNICAL_REPORT.md`, Platform Constraints: the measured Durable Object SQLite limits

@@ -12,7 +12,7 @@ Scope: the interpreter only. Drupal core, contrib and the packed database move o
 A running Worker cannot swap its PHP binary. The change unit is a redeploy.
 
 - **The interpreter is a bundle-time module.** `src/runtime/php-binary-raw.ts` reaches it with
-  `import wasmModule from '../../.interp/php8.5.wasm'`, and `wrangler.jsonc` maps `**/*.wasm` to
+  `import wasmModule from '../../.interp/php8.5.tuned.wasm'`, and `wrangler.jsonc` maps `**/*.wasm` to
   module type `CompiledWasm`. Wrangler resolves a module import when the bundle is built. No runtime
   API adds a module to a deployed bundle.
 - **There is no compile step to pay.** A `CompiledWasm` import arrives already compiled, so the seam
@@ -29,7 +29,7 @@ storage as a source of interpreter bytes.
 
 Everything after the build is automatable. `wrangler versions upload` produces a version without
 deploying it, `wrangler versions deploy <id>@<pct>` splits traffic, and `wrangler rollback <id>`
-reverses it, all against wrangler 4.120.0.
+reverses it, all against the wrangler version pinned in `package.json`.
 
 ## The Pipeline
 
@@ -161,16 +161,17 @@ Two documented limits shape a revert:
 
 - Only the 100 most recent versions are reachable.
 - A rollback cannot cross a Durable Object class lifecycle change, and `wrangler versions upload`
-  cannot carry one. `wrangler.jsonc` holds
-  `migrations: [{ tag: "v1", new_sqlite_classes: ["SitePhpDurableObject"] }]`, so an interpreter
-  bump must never also add a migration tag. Lifecycle changes go out alone, through
+  cannot carry one. `wrangler.jsonc` holds the
+  migration tags `v1` (`SitePhpDurableObject`) and `v2` (`RenderLane`), so an interpreter bump must
+  never also add a migration tag. Lifecycle changes go out alone, through
   `wrangler deploy`.
 
 A rollback restores code, but a heap image is data and it is binary-specific. opcache runs
 `file_cache_only=1` in MEMFS, which belongs to the interpreter instance and outlives nothing. **The
-stored heap snapshot does outlive it.** `HEAP_SNAPSHOT` is on by default and each site holds
-31,784,960 bytes across 159 rows, so restoring an image taken on one interpreter into another is
-corruption rather than a slow path.
+stored heap snapshot does outlive it.** `HEAP_SNAPSHOT` is on unless it is set to `0` or the
+deployment carries environment variables or config. One measured site held 31,784,960 bytes of
+snapshot across 159 rows. Restoring an image taken on one interpreter into another is corruption
+rather than a slow path.
 
 `cfw_heap_snapshot` rows are keyed on the **pack generation** (`latestSnapshotMeta(sql,
 packGeneration())`), not on the interpreter. An interpreter bump that leaves the pack alone therefore
@@ -184,8 +185,7 @@ Cloudflare guarantees that "for a given deployment, requests to each Durable Obj
 the same Worker version". So `wrangler versions deploy <new>@10 <current>@90` puts roughly 10% of
 sites entirely on the new interpreter rather than scattering 10% of requests. An object reassigned a
 version is reset and drops its interpreter, so each rollout step costs one cold boot per object
-moved: 1,398 ms of edge cpuTime, n=3, on a platform whose 400-600 ms bimodality is unverified as a
-standing property.
+moved: about 1,398 ms of edge cpuTime (n=3).
 
 Percentages are the only lever wrangler exposes, so the canary set cannot be chosen. Treat the
 presence of a quarantined row (`isQuarantined()` in `src/ops/repair.ts`) in the canary set as a
@@ -202,9 +202,8 @@ Read the result out of `cfw_health`, which is capped at `LEDGER_MAX_ROWS` and in
 | `pack.generation_mismatch`                   | packed assets disagreeing with the database                                                                                                                        |
 | `budget.rows_written`                        | a regression in the meter that binds regeneration                                                                                                                  |
 
-Do not gate on CPU. An absolute figure comes only from `cpuTime` on a deployed version, and the
-platform's reported 400-600 ms spread did not reproduce across 640 requests on a warm object, but
-a canary window of n=1 or n=3 still carries no spread, so it cannot support a boot-time verdict.
+Do not gate on CPU. An absolute figure comes only from `cpuTime` on a deployed version. A canary
+window of n=1 or n=3 cannot show a spread, so it cannot support a boot-time verdict.
 
 An available upgrade must not enter `recordOutcome()`. `src/ops/repair.ts` counts consecutive
 same-code failures toward quarantine and rollback, and an upgrade is not a fault.
@@ -249,21 +248,21 @@ The only runtime cost is the cold boot each Durable Object pays when it is reass
 twice per rollout. At a few interpreter releases per year that does not appear in either ceiling,
 and a version change introduces no new row class.
 
-Free and paid stay equivalent. Versions, gradual deployments and rollbacks are not plan-gated. The
-one plan-sensitive number is the 3 MiB bundle ceiling against 10 MiB on paid, which the gate reads
-from wrangler.
+Free and paid stay equivalent. Versions, gradual deployments and rollbacks are not plan-gated, and the
+bundle ceiling is 64 MiB uncompressed on both plans. The gate reads it from wrangler's `Total Upload`
+line.
 
 ## Rejected Alternatives
 
 | rejected                                               | why                                                                                                                                                                                                                                      |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Runtime swap from R2, KV or DO storage                 | Request-time codegen is forbidden and startup I/O is forbidden. Both halves are needed and neither is available.                                                                                                                         |
-| Interpreter as a Workers Static Asset, fetched at boot | Same wall. `CLAUDE.md` records this as why the binary cannot live on the asset layer.                                                                                                                                                    |
+| Interpreter as a Workers Static Asset, fetched at boot | Same constraint as the runtime swap: the bytes must be present at bundle time.                                                                                                                                                           |
 | Dynamic Workers with `{data: ArrayBuffer}`             | PHP runs inside the Durable Object because `ctx.storage.sql` is synchronous only there and PHP's calls block. A Dynamic Worker is a different isolate, so every database call becomes async RPC out of synchronous wasm.                 |
 | A scheduled poll of phasm's releases                   | The dispatch delivers the same signal without a 6-hourly job, and GitHub disables `schedule` workflows after 60 days of repository inactivity.                                                                                           |
 | Polling GitHub from the Worker                         | The site cannot act on the answer. The unauthenticated GitHub API allows 60 requests/hour per source IP on a shared Worker egress, and free allows 5 Cron Triggers per account against 250 on paid, one of which the fill window spends. |
 | "Update available" as a repair-ladder rung             | `repair.ts` strikes drive quarantine and rollback. An upgrade is not a fault and would contaminate the counters that decide whether a site stops serving.                                                                                |
-| Fetching binaries into `vendor/`                       | 14 unreproducible binaries. A pipeline that writes there is one bad path expansion from the only permanent loss in the project. `.interp/` is gitignored and disposable.                                                                 |
+| Fetching binaries into `vendor/`                       | 15 hand-built binaries under `vendor/static*/` that this repository cannot reproduce. A pipeline that writes there is one bad path expansion from the only permanent loss in the project. `.interp/` is gitignored and disposable.       |
 | Committing the binary to either repository             | 9-12 MB per variant. phasm's `lint` job fails on a tracked `*.wasm`.                                                                                                                                                                     |
 | `wrangler deploy` on a green gate                      | The gate proves the bundle builds and fits. It cannot prove a new interpreter renders correctly on the edge.                                                                                                                             |
 
@@ -272,26 +271,23 @@ from wrangler.
 - **Deploying.** The pipeline ends at a pull request and an artifact. Promotion, canary and rollback
   are `wrangler` commands a human runs.
 - **Drupal.** `SHIPPED_LOCK_VERSIONS`, `assets/drupal/site.sqlite` and `assets/driver.json` are a
-  separate lane, and `site.sqlite` has no reproducible recipe. That lane reaches an existing site
+  separate lane, and `site.sqlite` is built by `scripts/drupal/install-site-db.php` (see [Site Database](database.md)). That lane reaches an existing site
   through `src/ops/reconcile.ts` rather than through a redeploy: a step observes the site's end state,
   and `container-driver-digest` compares `src/ops/driver-digest.ts` against what the site recorded, so
   a `#[Hook]` class added to a sibling after the bake is discovered on the next boot. A redeploy alone
   does not move it, because `DrupalKernel::getContainerCacheKey()` is composer's `VERSIONS_HASH` plus
   the PHP version and the OS.
 - **Attestation.** Covered in [Trust](#trust).
-- **PHP 8.5 on the edge.** The shipping seam is 8.5. A `cfw-*` deploy once returned 1101 with
-  `ExitStatus: Program terminated with exit(-2)`; the cause was opcache, which reads
-  `opcache.file_cache` during PHP's module startup, before the mount sequence creates
-  `/tmp/opcache`. `src/runtime/opcache.ts` sets it to `/tmp`, which emscripten's MEMFS always creates.
-  8.5 has rendered on a deployed worker since; the opcache file-cache counts in that comment were
-  read off one. Each new build still needs its own deploy to prove it renders; the gate proves the
-  bundle builds and fits.
+- **PHP 8.5 on the edge.** The shipping seam is 8.5. opcache reads `opcache.file_cache` during PHP's
+  module startup, before the mount sequence creates `/tmp/opcache`, and the boot exits with status -2.
+  `src/runtime/opcache.ts` sets it to `/tmp`, which emscripten's MEMFS always creates. Each new build
+  still needs its own deploy to prove it renders; the gate proves the bundle builds and fits.
 - **A minor-version bump.** 8.3 to 8.5 moves the glue filename, needs a new seam plus one line in
   wrangler's `alias`, changes `DEFAULT_PLATFORM.php` in `src/ops/packagist.ts`, and re-runs
   `tests/node/php-fragments.spec.ts` and `bun run test:health` under the new interpreter. The
-  version guard in step 2 of [Verification](#verification) refuses the fetch until the seam moves
+  version guard in step 1 of [Verification](#verification) refuses the fetch until the seam moves
   first.
 - **Multiple Worker scripts.** Gradual deployments split versions of a single script. A fleet on N
   independently deployed scripts is N rollouts.
-- **Toolchain pins are split.** The frame needs no external tool -- `node:zlib` packs it and
-  `node:zlib` inflates it on the edge -- and the interpreter is pinned to a builder image digest.
+- **Toolchain pins are split.** The frame needs no external tool: `node:zlib` packs it and
+  `node:zlib` inflates it on the edge. The interpreter is pinned to a builder image digest.

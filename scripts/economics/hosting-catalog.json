@@ -1,0 +1,450 @@
+{
+	"accessed": "2026-10-14",
+	"providers": {
+		"digitalocean": {
+			"name": "DigitalOcean",
+			"plans": [
+				{
+					"plan": "Basic 512 MiB",
+					"vcpu": 1,
+					"memoryGiB": 0.5,
+					"storageGB": 10,
+					"transferTB": 0.5,
+					"monthlyUSD": 4,
+					"source": "https://www.digitalocean.com/pricing/droplets",
+					"quote": "512 MiB | 1 vCPU | 500 GiB transfer | 10 GiB SSD | $4.00"
+				},
+				{
+					"plan": "Basic 1 GiB",
+					"vcpu": 1,
+					"memoryGiB": 1,
+					"storageGB": 25,
+					"transferTB": 1,
+					"monthlyUSD": 6,
+					"source": "https://www.digitalocean.com/pricing/droplets",
+					"quote": "1 GiB | 1 vCPU | 1000 GiB transfer | 25 GiB SSD | $6.00"
+				},
+				{
+					"plan": "Basic 2 GiB",
+					"vcpu": 1,
+					"memoryGiB": 2,
+					"storageGB": 50,
+					"transferTB": 2,
+					"monthlyUSD": 12,
+					"source": "https://www.digitalocean.com/pricing/droplets",
+					"quote": "2 GiB | 1 vCPU | 2000 GiB transfer | 50 GiB SSD | $12.00"
+				},
+				{
+					"plan": "Basic 2 GiB (2 vCPU)",
+					"vcpu": 2,
+					"memoryGiB": 2,
+					"storageGB": 60,
+					"transferTB": 3,
+					"monthlyUSD": 18,
+					"source": "https://www.digitalocean.com/pricing/droplets",
+					"quote": "2 GiB (2 vCPU) | 2 vCPU | 3000 GiB transfer | 60 GiB SSD | $18.00"
+				},
+				{
+					"plan": "Basic 4 GiB",
+					"vcpu": 2,
+					"memoryGiB": 4,
+					"storageGB": 80,
+					"transferTB": 4,
+					"monthlyUSD": 24,
+					"source": "https://www.digitalocean.com/pricing/droplets",
+					"quote": "4 GiB | 2 vCPU | 4000 GiB transfer | 80 GiB SSD | $24.00"
+				},
+				{
+					"plan": "Basic 8 GiB",
+					"vcpu": 4,
+					"memoryGiB": 8,
+					"storageGB": 160,
+					"transferTB": 5,
+					"monthlyUSD": 48,
+					"source": "https://www.digitalocean.com/pricing/droplets",
+					"quote": "8 GiB | 4 vCPU | 5000 GiB transfer | 160 GiB SSD | $48.00"
+				},
+				{
+					"plan": "Basic 16 GiB",
+					"vcpu": 8,
+					"memoryGiB": 16,
+					"storageGB": 320,
+					"transferTB": 6,
+					"monthlyUSD": 96,
+					"source": "https://www.digitalocean.com/pricing/droplets",
+					"quote": "16 GiB | 8 vCPU | 6000 GiB transfer | 320 GiB SSD | $96.00"
+				}
+			],
+			"egressUSDPerGB": {
+				"value": 0.01,
+				"source": "https://www.digitalocean.com/pricing",
+				"quote": "Public Internet Egress Overage Data transfer is $0.01 per GiB."
+			},
+			"backups": {
+				"fractionOfPlan": 0.2,
+				"source": "https://www.digitalocean.com/pricing/droplets",
+				"quote": "Percentage-based Backups, set at 20% (Weekly) or 30% (Daily) of Droplet cost."
+			},
+			"loadBalancerUSDMonth": {
+				"regional": 12,
+				"global": 15,
+				"source": "https://docs.digitalocean.com/products/networking/load-balancers/details/pricing/",
+				"quote": "Global load balancers cost $15.00 per month"
+			}
+		},
+		"vultr": {
+			"name": "Vultr",
+			"plans": [
+				{
+					"plan": "vc2-1c-1gb",
+					"vcpu": 1,
+					"memoryGiB": 1,
+					"storageGB": 25,
+					"transferTB": 1,
+					"monthlyUSD": 5,
+					"source": "https://api.vultr.com/v2/plans?type=vc2",
+					"quote": "vc2-1c-1gb | vcpu_count 1 | ram 1024 | disk 25 | bandwidth 1024 | monthly_cost 5"
+				},
+				{
+					"plan": "vc2-1c-2gb",
+					"vcpu": 1,
+					"memoryGiB": 2,
+					"storageGB": 55,
+					"transferTB": 2,
+					"monthlyUSD": 10,
+					"source": "https://api.vultr.com/v2/plans?type=vc2",
+					"quote": "vc2-1c-2gb | vcpu_count 1 | ram 2048 | disk 55 | bandwidth 2048 | monthly_cost 10"
+				},
+				{
+					"plan": "vc2-2c-2gb",
+					"vcpu": 2,
+					"memoryGiB": 2,
+					"storageGB": 65,
+					"transferTB": 3,
+					"monthlyUSD": 15,
+					"source": "https://api.vultr.com/v2/plans?type=vc2",
+					"quote": "vc2-2c-2gb | vcpu_count 2 | ram 2048 | disk 65 | bandwidth 3072 | monthly_cost 15"
+				},
+				{
+					"plan": "vc2-2c-4gb",
+					"vcpu": 2,
+					"memoryGiB": 4,
+					"storageGB": 80,
+					"transferTB": 3,
+					"monthlyUSD": 20,
+					"source": "https://api.vultr.com/v2/plans?type=vc2",
+					"quote": "vc2-2c-4gb | vcpu_count 2 | ram 4096 | disk 80 | bandwidth 3072 | monthly_cost 20"
+				},
+				{
+					"plan": "vc2-4c-8gb",
+					"vcpu": 4,
+					"memoryGiB": 8,
+					"storageGB": 160,
+					"transferTB": 4,
+					"monthlyUSD": 40,
+					"source": "https://api.vultr.com/v2/plans?type=vc2",
+					"quote": "vc2-4c-8gb | vcpu_count 4 | ram 8192 | disk 160 | bandwidth 4096 | monthly_cost 40"
+				},
+				{
+					"plan": "vc2-6c-16gb",
+					"vcpu": 6,
+					"memoryGiB": 16,
+					"storageGB": 320,
+					"transferTB": 5,
+					"monthlyUSD": 80,
+					"source": "https://api.vultr.com/v2/plans?type=vc2",
+					"quote": "vc2-6c-16gb | vcpu_count 6 | ram 16384 | disk 320 | bandwidth 5120 | monthly_cost 80"
+				},
+				{
+					"plan": "vc2-8c-32gb",
+					"vcpu": 8,
+					"memoryGiB": 32,
+					"storageGB": 640,
+					"transferTB": 6,
+					"monthlyUSD": 160,
+					"source": "https://api.vultr.com/v2/plans?type=vc2",
+					"quote": "vc2-8c-32gb | vcpu_count 8 | ram 32768 | disk 640 | bandwidth 6144 | monthly_cost 160"
+				},
+				{
+					"plan": "vc2-16c-64gb",
+					"vcpu": 16,
+					"memoryGiB": 64,
+					"storageGB": 1280,
+					"transferTB": 10,
+					"monthlyUSD": 320,
+					"source": "https://api.vultr.com/v2/plans?type=vc2",
+					"quote": "vc2-16c-64gb | vcpu_count 16 | ram 65536 | disk 1280 | bandwidth 10240 | monthly_cost 320"
+				}
+			],
+			"egressUSDPerGB": {
+				"value": 0.01,
+				"source": "https://docs.vultr.com/support/platform/billing/what-is-the-bandwidth-overage-rate",
+				"quote": "billed at an overage rate of $0.01 per GB"
+			},
+			"backups": {
+				"usdPerGBMonth": 0.05,
+				"source": "https://docs.vultr.com/support/platform/billing/does-vultr-charge-for-stored-snapshots",
+				"quote": "Vultr charges for stored snapshots based on their size at a rate of $0.05 per GB per month."
+			}
+		},
+		"linode": {
+			"name": "Akamai Cloud (Linode)",
+			"plans": [
+				{
+					"plan": "g6-nanode-1",
+					"vcpu": 1,
+					"memoryGiB": 1,
+					"storageGB": 25,
+					"transferTB": 1,
+					"monthlyUSD": 5,
+					"backupUSDMonth": 2,
+					"source": "https://api.linode.com/v4/linode/types",
+					"quote": "g6-nanode-1 | vcpus 1 | memory 1024 | disk 25600 | transfer 1000 | price.monthly 5 | backups.monthly 2"
+				},
+				{
+					"plan": "g6-standard-1",
+					"vcpu": 1,
+					"memoryGiB": 2,
+					"storageGB": 50,
+					"transferTB": 2,
+					"monthlyUSD": 12,
+					"backupUSDMonth": 2.5,
+					"source": "https://api.linode.com/v4/linode/types",
+					"quote": "g6-standard-1 | vcpus 1 | memory 2048 | disk 51200 | transfer 2000 | price.monthly 12 | backups.monthly 2.5"
+				},
+				{
+					"plan": "g6-standard-2",
+					"vcpu": 2,
+					"memoryGiB": 4,
+					"storageGB": 80,
+					"transferTB": 4,
+					"monthlyUSD": 24,
+					"backupUSDMonth": 5,
+					"source": "https://api.linode.com/v4/linode/types",
+					"quote": "g6-standard-2 | vcpus 2 | memory 4096 | disk 81920 | transfer 4000 | price.monthly 24 | backups.monthly 5"
+				},
+				{
+					"plan": "g6-standard-4",
+					"vcpu": 4,
+					"memoryGiB": 8,
+					"storageGB": 160,
+					"transferTB": 5,
+					"monthlyUSD": 48,
+					"backupUSDMonth": 10,
+					"source": "https://api.linode.com/v4/linode/types",
+					"quote": "g6-standard-4 | vcpus 4 | memory 8192 | disk 163840 | transfer 5000 | price.monthly 48 | backups.monthly 10"
+				},
+				{
+					"plan": "g6-standard-6",
+					"vcpu": 6,
+					"memoryGiB": 16,
+					"storageGB": 320,
+					"transferTB": 8,
+					"monthlyUSD": 96,
+					"backupUSDMonth": 20,
+					"source": "https://api.linode.com/v4/linode/types",
+					"quote": "g6-standard-6 | vcpus 6 | memory 16384 | disk 327680 | transfer 8000 | price.monthly 96 | backups.monthly 20"
+				},
+				{
+					"plan": "g6-standard-8",
+					"vcpu": 8,
+					"memoryGiB": 32,
+					"storageGB": 640,
+					"transferTB": 16,
+					"monthlyUSD": 192,
+					"backupUSDMonth": 40,
+					"source": "https://api.linode.com/v4/linode/types",
+					"quote": "g6-standard-8 | vcpus 8 | memory 32768 | disk 655360 | transfer 16000 | price.monthly 192 | backups.monthly 40"
+				},
+				{
+					"plan": "g6-standard-16",
+					"vcpu": 16,
+					"memoryGiB": 64,
+					"storageGB": 1280,
+					"transferTB": 20,
+					"monthlyUSD": 384,
+					"backupUSDMonth": 80,
+					"source": "https://api.linode.com/v4/linode/types",
+					"quote": "g6-standard-16 | vcpus 16 | memory 65536 | disk 1310720 | transfer 20000 | price.monthly 384 | backups.monthly 80"
+				}
+			],
+			"egressUSDPerGB": {
+				"value": 0.005,
+				"source": "https://www.akamai.com/cloud/pricing/cpu",
+				"quote": "Egress overage costs = US$0.005 per GB."
+			}
+		},
+		"lightsail": {
+			"name": "Amazon Lightsail",
+			"plans": [
+				{
+					"plan": "$5 bundle",
+					"vcpu": 2,
+					"memoryGiB": 0.5,
+					"storageGB": 20,
+					"transferTB": 1,
+					"monthlyUSD": 5,
+					"source": "https://aws.amazon.com/lightsail/pricing/",
+					"quote": "$5 | 0.5 GB | 2 | 20 GB | 1 TB"
+				},
+				{
+					"plan": "$7 bundle",
+					"vcpu": 2,
+					"memoryGiB": 1,
+					"storageGB": 40,
+					"transferTB": 2,
+					"monthlyUSD": 7,
+					"source": "https://aws.amazon.com/lightsail/pricing/",
+					"quote": "$7 | 1 GB | 2 | 40 GB | 2 TB"
+				},
+				{
+					"plan": "$12 bundle",
+					"vcpu": 2,
+					"memoryGiB": 2,
+					"storageGB": 60,
+					"transferTB": 3,
+					"monthlyUSD": 12,
+					"source": "https://aws.amazon.com/lightsail/pricing/",
+					"quote": "$12 | 2 GB | 2 | 60 GB | 3 TB"
+				},
+				{
+					"plan": "$24 bundle",
+					"vcpu": 2,
+					"memoryGiB": 4,
+					"storageGB": 80,
+					"transferTB": 4,
+					"monthlyUSD": 24,
+					"source": "https://aws.amazon.com/lightsail/pricing/",
+					"quote": "$24 | 4 GB | 2 | 80 GB | 4 TB"
+				},
+				{
+					"plan": "$44 bundle",
+					"vcpu": 2,
+					"memoryGiB": 8,
+					"storageGB": 160,
+					"transferTB": 5,
+					"monthlyUSD": 44,
+					"source": "https://aws.amazon.com/lightsail/pricing/",
+					"quote": "$44 | 8 GB | 2 | 160 GB | 5 TB"
+				},
+				{
+					"plan": "$84 bundle",
+					"vcpu": 4,
+					"memoryGiB": 16,
+					"storageGB": 320,
+					"transferTB": 6,
+					"monthlyUSD": 84,
+					"source": "https://aws.amazon.com/lightsail/pricing/",
+					"quote": "$84 | 16 GB | 4 | 320 GB | 6 TB"
+				},
+				{
+					"plan": "$164 bundle",
+					"vcpu": 8,
+					"memoryGiB": 32,
+					"storageGB": 640,
+					"transferTB": 7,
+					"monthlyUSD": 164,
+					"source": "https://aws.amazon.com/lightsail/pricing/",
+					"quote": "$164 | 32 GB | 8 | 640 GB | 7 TB"
+				},
+				{
+					"plan": "$384 bundle",
+					"vcpu": 16,
+					"memoryGiB": 64,
+					"storageGB": 1280,
+					"transferTB": 8,
+					"monthlyUSD": 384,
+					"source": "https://aws.amazon.com/lightsail/pricing/",
+					"quote": "$384 | 64 GB | 16 | 1280 GB | 8 TB"
+				}
+			],
+			"backups": {
+				"usdPerGBMonth": 0.05,
+				"source": "https://aws.amazon.com/lightsail/pricing/",
+				"quote": "\"$0.05 USD GB/mo\""
+			}
+		},
+		"azure": {
+			"name": "Microsoft Azure (East US)",
+			"plans": [
+				{
+					"plan": "Standard_B2pts_v2",
+					"vcpu": 2,
+					"memoryGiB": 1,
+					"storageGB": 0,
+					"transferTB": 0,
+					"monthlyUSD": 6.13,
+					"hourlyUSD": 0.0084,
+					"source": "https://prices.azure.com/api/retail/prices?$filter=armRegionName eq 'eastus' and priceType eq 'Consumption' and (armSkuName eq 'Standard_B2pts_v2' ...)",
+					"quote": "Standard_B2pts_v2 | Bpsv2 Series | B2pts v2 | 0.0084 | 1 Hour (monthly = hourly x 730 h)"
+				},
+				{
+					"plan": "Standard_B2pls_v2",
+					"vcpu": 2,
+					"memoryGiB": 4,
+					"storageGB": 0,
+					"transferTB": 0,
+					"monthlyUSD": 24.53,
+					"hourlyUSD": 0.0336,
+					"source": "https://prices.azure.com/api/retail/prices (armSkuName eq 'Standard_B2pls_v2', eastus, Consumption)",
+					"quote": "Standard_B2pls_v2 | Virtual Machines Bpsv2 Series | B2pls v2 | 0.0336 | 1 Hour (monthly = hourly x 730 h)"
+				},
+				{
+					"plan": "Standard_B4pls_v2",
+					"vcpu": 4,
+					"memoryGiB": 8,
+					"storageGB": 0,
+					"transferTB": 0,
+					"monthlyUSD": 86.87,
+					"hourlyUSD": 0.119,
+					"source": "https://prices.azure.com/api/retail/prices (armSkuName eq 'Standard_B4pls_v2', eastus, Consumption)",
+					"quote": "Standard_B4pls_v2 | Virtual Machines Bpsv2 Series | B4pls v2 | 0.119 | 1 Hour (monthly = hourly x 730 h)"
+				},
+				{
+					"plan": "Standard_B8pls_v2",
+					"vcpu": 8,
+					"memoryGiB": 16,
+					"storageGB": 0,
+					"transferTB": 0,
+					"monthlyUSD": 173.74,
+					"hourlyUSD": 0.238,
+					"source": "https://prices.azure.com/api/retail/prices (armSkuName eq 'Standard_B8pls_v2', eastus, Consumption)",
+					"quote": "Standard_B8pls_v2 | Virtual Machines Bpsv2 Series | B8pls v2 | 0.238 | 1 Hour (monthly = hourly x 730 h)"
+				},
+				{
+					"plan": "Standard_B16pls_v2",
+					"vcpu": 16,
+					"memoryGiB": 32,
+					"storageGB": 0,
+					"transferTB": 0,
+					"monthlyUSD": 347.48,
+					"hourlyUSD": 0.476,
+					"source": "https://prices.azure.com/api/retail/prices (armSkuName eq 'Standard_B16pls_v2', eastus, Consumption)",
+					"quote": "Standard_B16pls_v2 | Virtual Machines Bpsv2 Series | B16pls v2 | 0.476 | 1 Hour (monthly = hourly x 730 h)"
+				}
+			],
+			"freeEgressGB": 100,
+			"egressUSDPerGB": {
+				"value": 0.087,
+				"source": "https://azure.microsoft.com/en-us/pricing/details/bandwidth/",
+				"quote": "Next 10 TB/month $0.087 (Zone 1, Internet Egress); first 100 GB/month free; Data Transfer In Free"
+			},
+			"diskUSDPerGBMonth": {
+				"value": 0.075,
+				"source": "https://prices.azure.com/api/retail/prices?$filter=serviceName eq 'Storage' and armRegionName eq 'eastus' and productName eq 'Standard SSD Managed Disks'",
+				"quote": "E10 LRS Disk | 9.6 | 1/Month (128 GiB); E20 LRS Disk | 38.4 | 1/Month (512 GiB) (per GB derived: 9.6 / 128 GiB)"
+			},
+			"ipv4USDMonthPerBox": {
+				"value": 3.65,
+				"source": "https://prices.azure.com/api/retail/prices",
+				"quote": "Standard static IPv4 0.005 per hour (monthly = hourly x 730 h)"
+			},
+			"backups": {
+				"flatUSDPerBox": 10,
+				"usdPerGBMonth": 0.0224,
+				"source": "https://prices.azure.com/api/retail/prices?$filter=serviceName eq 'Backup' and armRegionName eq 'eastus'",
+				"quote": "Azure VM Protected Instance | 10.0 | 1/Month; Standard LRS Data Stored | 0.0224 | 1 GB/Month"
+			}
+		}
+	}
+}

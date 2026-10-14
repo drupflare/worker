@@ -25,45 +25,34 @@ import {
 	type ProductionShape
 } from './energy';
 import { asCar, asHome, asServers, f, n, nr, r, sfx } from './fmt';
+import {
+	CATALOG,
+	MEMORY_PER_BOX_GIB,
+	ORIGIN_RENDER_FRAC,
+	cheapestUsdMonth,
+	matchedUsdMonth,
+	needFor,
+	popularCloudUsdMonth,
+	popularVpsUsdMonth,
+	ranked
+} from './hosting';
 import { MJ_CACHED_VPS, MJ_RENDER_VPS } from './measured';
 import { drupflareKwhYearOnMix } from './perview';
 
 const VIEWS = sweep('views', [1_000, 10_000, 100_000, 1_000_000, 10_000_000]);
 const SITES = sweep('sites', [1, 10, 100, 1_000]);
 
-const VPS_USD_PER_2VCPU = num('vps-usd', 5.0); // about the cheapest real offer
-const RENDER_S_PER_CPU = num('render-s-per-cpu', 56.0); // MEASURED: 67 renders/s on 1.2 cores
-const ORIGIN_RENDER_FRAC = num('origin-render-frac', 1.0); // derived, not an assumed CDN hit rate
-const PEAK_RATIO = num('peak', 5.0);
-const TARGET_UTIL = num('util', 0.5);
-const SECONDS_MONTH = 2_629_800.0;
 // Pantheon Basic at $500 a year billed annually ($55 billed monthly), pricing page 2026-09-28
 const PANTHEON_BASIC = num('pantheon', 500 / 12);
-// a latency-matched conventional host: the floor box in each region plus one global load balancer.
-// DigitalOcean's global LB is $15/mo (docs, verified 2026-07-13). Three regions still leave most
-// visitors tens of ms from an origin where the edge answers from their colo, and no database
-// replication is priced, so this too is a floor
-const MATCHED_REGIONS = num('regions', 3);
-const GLOBAL_LB_USD = num('global-lb', 15.0);
 
-/**
- * One self-managed VPS per site, never below the smallest instance.
- *
- * IT IS THE BOX MINIMUM ACROSS MOST OF THIS RANGE rather than a capacity calculation. Even charging
- * the origin EVERY view as a render, 100,000 views a month is 0.04 renders a second, and the
- * measured stack does 67 a second on 1.2 cores while holding 172 MB. Capacity is not what bounds a
- * small site, so the price is not the comparison; read it against the latency and energy sections.
- */
-function vpsUsdMonth(views: number): number {
-	const renderS = (views * ORIGIN_RENDER_FRAC) / SECONDS_MONTH;
-	const need = (renderS * PEAK_RATIO) / TARGET_UTIL / RENDER_S_PER_CPU;
-	return (Math.max(2, Math.ceil(need) * 2) / 2) * VPS_USD_PER_2VCPU;
-}
-
-/** One site served from `MATCHED_REGIONS` regions behind a global load balancer. */
-function matchedUsdMonth(views: number): number {
-	return MATCHED_REGIONS * vpsUsdMonth(views / MATCHED_REGIONS) + GLOBAL_LB_USD;
-}
+/** the conventional hosts a bill is compared with, each priced from the sourced catalog */
+const HOSTS: { label: string; usdMonth: (views: number) => number }[] = [
+	{ label: 'cheapest VPS', usdMonth: cheapestUsdMonth },
+	{ label: 'most popular cloud', usdMonth: popularCloudUsdMonth },
+	{ label: 'latency-matched VPS', usdMonth: matchedUsdMonth },
+	{ label: 'managed floor', usdMonth: () => PANTHEON_BASIC }
+];
+const vpsUsdMonth = cheapestUsdMonth;
 
 const DENSITY = num('density', SMALL_VPS_DENSITY);
 const UTIL = num('vps-util', 0.15);
@@ -170,7 +159,7 @@ if (process.argv.includes('--crossover')) {
 		console.log(
 			`\n${n(sites, 0)} site${sites === 1 ? '' : 's'}: where drupflare stops being the cheaper bill`
 		);
-		console.log(`  VPS floor            ${band(sites, vpsUsdMonth)}`);
+		console.log(`  cheapest VPS         ${band(sites, cheapestUsdMonth)}`);
 		console.log(`  latency-matched VPS  ${band(sites, matchedUsdMonth)}`);
 		console.log(
 			`  managed floor        ${at(first(sites, () => PANTHEON_BASIC))} (held flat; a real plan at that traffic is far dearer)`
@@ -202,30 +191,104 @@ table(
 
 table(
 	'What hosting the same site costs conventionally, per site',
-	['views/site/mo', 'VPS floor', 'latency-matched VPS', 'managed floor'],
-	VIEWS.map((v) => [n(v, 0), usd(vpsUsdMonth(v)), usd(matchedUsdMonth(v)), usd(PANTHEON_BASIC)])
-);
-
-table(
-	'Against the VPS floor',
-	['views/site/mo', ...siteCols],
-	VIEWS.map((v) => [n(v, 0), ...SITES.map((st) => versus(st * vpsUsdMonth(v), account(st, v)))])
-);
-
-table(
-	'Against a latency-matched VPS',
-	['views/site/mo', ...siteCols],
+	[
+		'views/site/mo',
+		'cheapest VPS',
+		'DigitalOcean',
+		'most popular cloud',
+		'latency-matched VPS',
+		'managed floor'
+	],
 	VIEWS.map((v) => [
 		n(v, 0),
-		...SITES.map((st) => versus(st * matchedUsdMonth(v), account(st, v)))
+		usd(cheapestUsdMonth(v)),
+		usd(popularVpsUsdMonth(v)),
+		usd(popularCloudUsdMonth(v)),
+		usd(matchedUsdMonth(v)),
+		usd(PANTHEON_BASIC)
 	])
 );
 
+const HIGH_VIEWS = [30_000_000, 100_000_000, 1_000_000_000];
 table(
-	'Against the managed floor',
-	['views/site/mo', ...siteCols],
-	VIEWS.map((v) => [n(v, 0), ...SITES.map((st) => versus(st * PANTHEON_BASIC, account(st, v)))])
+	'The same prices at higher traffic, with drupflare at 1,000 sites',
+	[
+		'views/site/mo',
+		'cheapest VPS',
+		'DigitalOcean',
+		'latency-matched VPS',
+		'managed floor',
+		'drupflare'
+	],
+	HIGH_VIEWS.map((v) => [
+		n(v, 0),
+		usd(cheapestUsdMonth(v)),
+		usd(popularVpsUsdMonth(v)),
+		usd(matchedUsdMonth(v)),
+		usd(PANTHEON_BASIC),
+		usd(account(1_000, v).total / 1_000)
+	])
 );
+
+const FLOOR_VIEWS = [10_000, 100_000, 1_000_000, 3_000_000, 10_000_000, 30_000_000, 100_000_000];
+table(
+	'What a conventional host needs at each traffic level',
+	[
+		'views/site/mo',
+		'peak req/s',
+		'viable vCPU',
+		'matched vCPU',
+		'GiB a box',
+		'transfer GB',
+		'cheapest viable',
+		'cheapest matched'
+	],
+	FLOOR_VIEWS.map((v) => {
+		const label = (sizing: 'viable' | 'matched') => {
+			const q = ranked(needFor(v, sizing))[0]!;
+			return `${CATALOG.providers[q.provider]!.name.split(' ')[0]} ${q.plan} x${q.boxes}`;
+		};
+		const m = needFor(v);
+		return [
+			n(v, 0),
+			f(m.lambdaS, 1),
+			n(needFor(v, 'viable').vcpu, 0),
+			n(m.vcpu, 0),
+			f(MEMORY_PER_BOX_GIB, 2),
+			n(m.egressGB, 0),
+			label('viable'),
+			label('matched')
+		];
+	})
+);
+
+table(
+	'The providers priced, at the smallest box that meets the floor at 100,000 views a month',
+	['provider', 'plan', 'vCPU', 'GiB', 'transfer TB', 'plan', 'backups', 'other', 'total'],
+	ranked(needFor(100_000)).map((q) => {
+		const p = CATALOG.providers[q.provider]!;
+		const plan = p.plans.find((x) => x.plan === q.plan)!;
+		return [
+			p.name,
+			q.plan,
+			n(plan.vcpu, 0),
+			f(plan.memoryGiB, 0),
+			plan.transferTB ? f(plan.transferTB, 0) : 'none',
+			usd(q.planUSD),
+			usd(q.backupsUSD),
+			usd(q.otherUSD),
+			usd(q.usd)
+		];
+	})
+);
+
+const RATIO_SITES = [SITES[0]!, SITES[SITES.length - 1]!];
+for (const st of RATIO_SITES)
+	table(
+		`Against each host, ${n(st, 0)} site${st === 1 ? '' : 's'}`,
+		['views/site/mo', ...HOSTS.map((h) => h.label)],
+		VIEWS.map((v) => [n(v, 0), ...HOSTS.map((h) => versus(st * h.usdMonth(v), account(st, v)))])
+	);
 
 // the paid plan warms every site, so a fleet on it pays for the chain before a visitor arrives
 table(
@@ -234,32 +297,15 @@ table(
 	VIEWS.map((v) => [n(v, 0), ...SITES.map((st) => yours(account(st, v, 'always')))])
 );
 
-table(
-	'Kept warm, against the VPS floor',
-	['views/site/mo', ...siteCols],
-	VIEWS.map((v) => [
-		n(v, 0),
-		...SITES.map((st) => versus(st * vpsUsdMonth(v), account(st, v, 'always')))
-	])
-);
-
-table(
-	'Kept warm, against a latency-matched VPS',
-	['views/site/mo', ...siteCols],
-	VIEWS.map((v) => [
-		n(v, 0),
-		...SITES.map((st) => versus(st * matchedUsdMonth(v), account(st, v, 'always')))
-	])
-);
-
-table(
-	'Kept warm, against the managed floor',
-	['views/site/mo', ...siteCols],
-	VIEWS.map((v) => [
-		n(v, 0),
-		...SITES.map((st) => versus(st * PANTHEON_BASIC, account(st, v, 'always')))
-	])
-);
+for (const st of RATIO_SITES)
+	table(
+		`Kept warm, against each host, ${n(st, 0)} site${st === 1 ? '' : 's'}`,
+		['views/site/mo', ...HOSTS.map((h) => h.label)],
+		VIEWS.map((v) => [
+			n(v, 0),
+			...HOSTS.map((h) => versus(st * h.usdMonth(v), account(st, v, 'always')))
+		])
+	);
 
 table(
 	'Energy avoided per year',
@@ -329,7 +375,7 @@ console.log('              workload. `free` means the whole account fits inside 
 console.log('first cap     Which free meter is nearest its limit. At the shipping default it is');
 console.log('              Worker requests, one per view, until storage binds an idle fleet.');
 console.log(
-	'VPS floor     One self-managed VPS per site at about the cheapest real price. Excludes'
+	'cheapest VPS  One self-managed VPS per site, sized to the load, at the cheapest sourced list price. Excludes'
 );
 console.log(
 	'              the labour of running it, which for most people is the largest real cost.'

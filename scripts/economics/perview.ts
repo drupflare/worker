@@ -34,7 +34,7 @@ export interface HostShape {
 /** the opponents, in the order the document prints them */
 export const HOST_SHAPES: HostShape[] = [
 	{ name: 'stock nginx, 5 min, no purge', ttlS: 300, colos: 1, pagesPerSave: 0 },
-	{ name: 'Pantheon recommended, 1 h, one shield', ttlS: 3600, colos: 1, pagesPerSave: 5 },
+	{ name: 'one shield, 1 h, tag purge', ttlS: 3600, colos: 1, pagesPerSave: 5 },
 	{ name: '8-location CDN, 24 h, tag purge', ttlS: 86_400, colos: 8, pagesPerSave: 5 },
 	{ name: 'one shield, 24 h, tag purge', ttlS: 86_400, colos: 1, pagesPerSave: 5 }
 ];
@@ -138,7 +138,7 @@ export const OPPONENTS: Opponent[] = [
 		hit: COST.nginxHit
 	},
 	{
-		name: 'Pantheon 1 h shield, origin nginx hit',
+		name: 'one shield, 1 h, tag purge, nginx hit',
 		rate: (v) => renderRate(HOST_SHAPES[1]!, v),
 		hit: COST.nginxHit
 	},

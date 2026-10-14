@@ -171,7 +171,7 @@ export function opponentMj(
 }
 
 const NGINX_HIT_MS = SC * JVIEW_CPU_MS.vps.anonCached;
-/** the shielded 24 h tag-purged cache, the longest lifetime Pantheon does not call excessive */
+/** the shielded 24 h tag-purged cache, the longest lifetime modelled */
 const SHIELD = HOST_SHAPES[3]!;
 
 /** the opponent over drupflare, energy per view, so above 1 is drupflare ahead */

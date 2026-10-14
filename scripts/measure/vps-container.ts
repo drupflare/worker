@@ -89,6 +89,9 @@ function stage() {
 	}
 	// the installer's own settings.php lives here and carries a hash_salt; it is build output the
 	// runtime never reads, and leaving it in bakes a secret into the image
+	spawnSync('chmod', ['-R', 'u+w', resolve(CONTEXT, 'drupal-src/sites/build')], {
+		stdio: 'ignore'
+	});
 	rmSync(resolve(CONTEXT, 'drupal-src/sites/build'), { recursive: true, force: true });
 	console.log(`staged ${inputs.length} inputs into ${CONTEXT}`);
 }

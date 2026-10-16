@@ -58,15 +58,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PAYLOAD_TAG: ${{ inputs.payload_tag }}
         run: |
-          TAG="${PAYLOAD_TAG:-v$(jq -r .version package.json)}"
-          echo "RESOLVED_TAG=$TAG" >> "$GITHUB_ENV"
-          if gh release view "$TAG" > /dev/null 2>&1; then
+          if [ -z "$PAYLOAD_TAG" ]; then
+            echo "no payload_tag; this lane builds the pack from source"
+          elif gh release view "$PAYLOAD_TAG" > /dev/null 2>&1; then
+            echo "RESOLVED_TAG=$PAYLOAD_TAG" >> "$GITHUB_ENV"
             echo "HAVE_PAYLOAD=1" >> "$GITHUB_ENV"
-          elif [ -n "$PAYLOAD_TAG" ]; then
-            echo "::error::payload_tag '$TAG' names no release on this repository" >&2
-            exit 1
           else
-            echo "no release '$TAG'; this lane will build the pack from source"
+            echo "::error::payload_tag '$PAYLOAD_TAG' names no release on this repository" >&2
+            exit 1
           fi
 
       - name: Install Dependencies
@@ -173,7 +172,7 @@ jobs:
             if [ -n "$HAVE_PAYLOAD" ]; then
               echo "Hydrated from \`$RESOLVED_TAG\` and drove chromium against a real worker."
             else
-              echo "No release at \`$RESOLVED_TAG\`, so the pack was built from source with"
+              echo "No payload_tag was given, so the pack was built from the latest source with"
               echo "\`bun run build:local\` and chromium drove a real worker against it."
               echo
               echo "A source-built pack is a superset of a shipped one: the file list comes from a"

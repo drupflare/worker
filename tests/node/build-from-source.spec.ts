@@ -308,6 +308,13 @@ describe('planning is pure, so the resume decision is one testable function', ()
 		]);
 	});
 
+	it('still verifies the driver pack by its output after running it every time', () => {
+		const driver = LOCAL_STEPS.find((s) => s.id === 'driver');
+		expect(driver?.alwaysRun).toBe(true);
+		expect(stepSatisfied(satisfiedTree(), driver!)).toBe(true);
+		expect(stepSatisfied(scratch(), driver!)).toBe(false);
+	});
+
 	it('bakes the container again when the driver moved and the composer hash did not', () => {
 		const root = satisfiedTree();
 		bakeDigests(root, 'fedcba9876543210', BAKED_DRIVER);

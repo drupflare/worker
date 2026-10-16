@@ -108,6 +108,8 @@ export interface LocalStep {
 	finish?(root: string): void;
 	/** replaces the presence check, for a step whose completion is not a path of its own */
 	satisfied?(root: string): boolean;
+	/** runs on every build whatever is on disk; the outputs are still checked afterwards */
+	alwaysRun?: boolean;
 	/**
 	 * An input the step's outputs must be at least as new as.
 	 *
@@ -356,7 +358,7 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		produces: ['assets/driver.json'],
 		// the file is tracked, so it is always on disk and presence says nothing about whether a
 		// sibling moved; packing is cheap and writes the digest every later step reads
-		satisfied: () => false,
+		alwaysRun: true,
 		tools: ['bun'],
 		commands: () => [['bun', 'run', 'assets:driver']]
 	},
@@ -647,6 +649,7 @@ export function planLocalBuild(
 		}
 		if (skip.has(step.id)) return { step, run: false, reason: 'excluded by --skip' };
 		if (opts.force) return { step, run: true, reason: 'forced' };
+		if (step.alwaysRun) return { step, run: true, reason: 'runs on every build' };
 		if (stepSatisfied(root, step)) {
 			return {
 				step,

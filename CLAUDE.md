@@ -248,6 +248,23 @@ is
 `bunx wrangler r2 object get drupflare-cdn/<path> --remote --file=<path>`. A local delete is now
 recoverable rather than permanent; it is still a mistake nobody needs to make.
 
+**`bun run vendor` can no longer replace one of them.** It copies two builds out of the installed
+`php-wasm` package, and php-wasm 0.2.0 ships a different 8.3 build than 0.1.0 did (12,222,482 bytes
+against 13,165,354). `writeOnce()` in `scripts/vendor.ts` now fails on a file that already holds
+other bytes instead of overwriting it, so a renovate bump of the package cannot make
+`backup:drift` report a backed-up file as changed.
+
+**The worker runs on php-wasm 0.1.0 and 0.2.0.** What 0.2.0 changed, from a diff of the two
+`PhpBase.mjs` files: `_run()` strips a leading `<?php` and evaluates in PHP mode where 0.1.0
+prefixed `?>`, so every shim this file runs through `run()` evaluates the same; `_enqueue` is one
+serial `_drainQueue`, which the worker does not use because it calls `_run()` directly; a `variant`
+argument throws, which nothing here passes; `ENV.PHP_VERSION` is set only when the caller passes
+`version`, which nothing here does; and the factory is called without `new` unless it is a class,
+which the tuned glue's plain `function(moduleArg)` answers identically either way. Checked rather
+than read: the workers and node gate under 0.2.0 passed 6,489 tests and failed one,
+`heap-image-producer.spec.ts` ("ends the firing after imaging"), which passes alone on both versions
+and failed while a `wrangler dev` boot shared the machine; and a `wrangler dev` boot rendered Drupal.
+
 ## The PHP exists in TWO places, and the SIBLING REPO is the source of truth
 
 1. the sibling repos `../drupflare` and `../rom`, published as `drupflare/drupflare` and
@@ -2442,14 +2459,28 @@ sibling push does not start a worker run. The worker's lanes see it on their nex
 
 ## The lock is authoritative now, and the chain used to be a cycle
 
-`drupal-src/composer.lock` -> baked map -> core version -> `fetch:drupal` -> `drupal-src`.
+`drupal-src/composer.lock` -> a generated map -> core version -> `fetch:drupal` -> `drupal-src`.
 The tree's own lock chose the version that populated the tree, so the only thing it could confirm was
 itself, and the ROOT lock sat outside the loop with nothing reading it. That is how a `composer
 update` moved `drupal/core` to 11.4.6 for phpstan while the pack stayed at 11.4.5.
 
 `composer.json` requires `drupal/core-recommended` and the four contrib modules directly now, and
-`gen-lock-versions.ts` reads the root lock: manifest -> root lock -> `src/ops/shipped-lock.ts` ->
-fetched tree. `tests/node/shipped-lock.spec.ts` asserts the DIRECTION rather than mere agreement.
+the root lock is read directly (the runtime bundles it as text, the scripts read it from disk):
+manifest -> root lock -> fetched tree. `tests/node/shipped-lock.spec.ts` asserts the DIRECTION rather
+than mere agreement.
+
+**A core bump reaches the pack by itself.** Measured 2026-10-16 on renovate's 11.4.7 to 11.4.10:
+the tracked `site.sqlite` carried a `twig_extension_hash` and a baked container row from the old
+core, the `tree` step refused to replace the tree without `--force`, and every step after it stayed
+skipped because its output was still on disk. Now `tree` passes `--force` and `replacesTree` makes
+every later step rerun, `bake-twig.php` rewrites the shipped twig hash row to the tree's (prefix
+kept), and the `container` step rebakes when the versions hash or the driver digest the row recorded
+differs. The tracked database is rewritten in a build and republished by hand with
+`bun run backup:manifest` and `bun run backup:cdn`; a stale row costs speed, not correctness.
+
+**11.4.8 stopped BigPipe handling the navigation placeholder** (`NavigationRenderer` denies
+`BigPipeStrategy`), so an admin's navigation is rendered into the page and is no longer one more
+hole than a member has. `shell.spec.ts` and `static-sweep.spec.ts` accept either arrangement.
 
 **It was also a correctness fix.** With no `core-recommended` the root resolved symfony 8.1 while the
 site runs 7.4, so static analysis was reading a different framework. Two things not to break:

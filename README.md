@@ -158,8 +158,7 @@ automatic.
 
 ## What It Runs
 
-- **Drupal core 11.4.7**, from `SHIPPED_CORE_VERSION` in `src/ops/shipped-lock.ts`, with four
-  contributed modules in the pack: `admin_toolbar`, `ctools`, `pathauto` and `token`.
+- **Drupal core**, at the version `composer.lock` pins, with four contributed modules in the pack: `admin_toolbar`, `ctools`, `pathauto` and `token`.
 - **PHP 8.5** with 27 loaded extensions and stand-ins for curl, openssl, zip, exif, fileinfo and
   xmlwriter; see [Limitations](#limitations). The interpreter starts at 64 MiB of linear memory, and
   a boot after a dropped interpreter reuses its memory instead of allocating a second heap.

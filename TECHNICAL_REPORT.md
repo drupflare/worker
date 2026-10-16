@@ -751,6 +751,32 @@ size any interpreter reached, so `RECYCLE_ABOVE_BYTES` now sets the permanent li
 point memory returns from. The pressure-buffer collector it replaced read success off a weak reference
 to the small wrapper object, which dies in a scavenge while the heap needs a full collection.
 
+**Measured again with a probe on a deployed object, 2026-10-16 (v1.0.4).** A throwaway worker (deleted
+afterwards; the account matched its baseline) held `WebAssembly.Memory` and byte buffers in a fresh
+Durable Object per trial and read whether the object survived the next 8 to 15 s. Wasm memory held in
+8 MiB steps survived at 96, 128, 160 and 192 MiB on 6 of 6 objects, and all 6 reset on the step past
+200 MiB (the 224 and 256 MiB targets). Memory nobody wrote to resets at the same place (192 MiB
+survived 4 of 4; 224, 256 and 320 MiB reset 4 of 4), and so do byte buffers (192 survived 4 of 4; 208,
+224 and 240 reset 4 of 4). That agrees with the ~195 MiB budget and the 203-204 MiB kill line above, and
+it charges a memory at its full size again. A boot beside a resident interpreter, with one memory per
+interpreter as the worker has it (the resident memory, 19 MiB for the pack blob and index, then a second
+memory started at 64 MiB and grown to 78):
+
+| resident | total at the end | trials | result |
+| ---: | ---: | ---: | --- |
+| 76 MiB | 173 MiB | 4 | survived all 4 |
+| 101 MiB | 198 MiB | 4 | all 4 reset within the 8 s hold |
+| 121 MiB | 218 MiB | 4 | all 4 reset at the grow |
+| 121 MiB, no blobs | 199 MiB | 4 | all 4 reset (3 in the hold, 1 on the first allocation) |
+
+A second interpreter booted beside a live one is therefore fatal once the resident one is past roughly
+100 MiB, which is what `boot-beside-resident` reports (121 MB of linear memory seen locally), and the
+reuse of a dropped memory in `bootPhp()` is what keeps the shipping path out of it. This shows the
+platform's side only: nothing in it ran the worker, so it does not show that the shipping worker can
+reach that state on a deployed object. A fifth arm (121 MiB resident, blobs, a second memory left at
+64 MiB, 204 MiB) reset on its first 121 MiB allocation on 4 of 4 objects, which no other arm did, and
+it is left out because the cause is not known.
+
 **Re-derived on that binary 2026-09-24**, one incarnation read through `/__serve-stats`
 `isolateBytes` after each step (a scratch spec in the workers pool, deleted after):
 
@@ -3678,6 +3704,88 @@ then delivered by the lock a moment later, a prefilled required field the probe 
 redirected somewhere other than `/node/N`. Each read as a product gap. Before recording a row as
 unsupported, confirm on the site itself (the database row, the log, the page) that the capability did
 not work.
+
+**Fixed in v1.0.4, found by taking a real production site through `drangler preview`** (2026-10-16, a
+98 MB Drupal 11 database with a headless module, Redis behind `extension_loaded` and its module in a
+non-standard directory). Each entry names the guard that fails on the shape.
+
+**A request header that never reached Drupal.** The serve path handed the render the cookie, `Accept`,
+the content type and the client address and nothing else, so every bearer-token route on a headless
+site answered as anonymous. No anonymous page comparison can show it. It surfaced when an account
+journey (create, read with the returned token, update, log in, log out, delete) created the account
+and failed the next call. `forwardedHeaders()` in `src/ops/forwarded-headers.ts` now hands Drupal the
+request's headers and clears the previous request's from `$_SERVER`. A request carrying `Authorization`
+renders per caller and never reads or writes the stored page, the KV tier or the edge cache, and the
+deployment's own owner token is dropped before PHP sees it. Guards:
+`tests/unit/ops/forwarded-headers.spec.ts`, `tests/integration/forwarded-headers.spec.ts` (a real
+kernel) and the chain cases in `tests/integration/serve-chain.spec.ts`. Any check that calls a copy
+working has to make an authenticated call, not only anonymous GETs.
+
+**A whole number bound as a REAL.** `ctx.storage.sql.exec()` binds every JavaScript number as a REAL,
+so a PHP `0` arrived as `0.0`. Against an INTEGER column that is invisible. Against a TEXT column
+`varchar_col = 0.0` compares as `'0.0'` and matches nothing, which is how a module that keeps an enum
+ordinal in a string field listed nothing here while working on MySQL, PostgreSQL and PDO's SQLite.
+`bindIntegers()` in `src/db/integer-bindings.ts` rewrites each `?` bound to a whole number as
+`+CAST(? AS INTEGER)`, inside the counting wrapper so everything that classifies a statement by its
+text still reads the original. Guards: `tests/unit/db/integer-bindings.spec.ts` and
+`tests/integration/integer-bindings.spec.ts`.
+
+**A PHP extension the module needs and the interpreter does not ship.** The module reaches Redis
+behind `extension_loaded('redis')`, and the wasm interpreter has no phpredis. `Drupal\drupflare\Shim\Redis`
+in the drupflare module now stands in for the subset a Drupal module uses, stored in
+`key_value_expire` with one collection per database number so a dump and a backup carry the keys, and
+`src/site/php/standin/fix.php` maps `\Redis` and `\RedisException` to it. A dump of the SQL database
+does not hold keys that only ever lived in Redis; `drangler preview` reads those and writes them in.
+Guards: `tests/integration/redis-standin.spec.ts` and the Redis section of
+`drupflare/tests/health-suite.php`.
+
+**A followed module that landed beside the one it was meant to replace.** `/git` mounted a repository's
+module under `modules/custom/<name>`, so a site that kept it at `modules/mantle2` got a second copy
+there, and the first pull refused because the carried files belonged to another owner. A remote may now
+name a `mount`, a path inside `modules`, `themes` or `profiles` that is checked on `add` and again on
+every pull, and files carried from another host (`migrated/<dir>`) are taken over by the first pull that
+provides them. `vendor/` is still never delivered by git, so a module that bundles its dependencies
+keeps the ones it came with. Guard: `tests/unit/ops/git-sync.spec.ts`.
+
+**A `$settings` value only `settings.php` could carry.** `DRUPAL_CONFIG` reached `$config` and nothing
+reached `$settings`, so a site whose modules read `$settings['...']` had no way to set one on a Worker.
+`DRUPAL_SETTINGS` is a JSON object merged over `$settings` with `array_replace_recursive`, capped at
+64 KiB, and it cannot move the keys the Worker sets itself (`trusted_host_patterns`, the config and
+file paths, `container_yamls`). Guard: `tests/unit/ops/deployment-env.spec.ts`.
+
+**A local dev server that dies on the first request after a boot.** On the 98 MB database `wrangler dev`
+printed an empty `[ERROR]` and exited 1 during the first boot, and drangler had to start it again two
+or three times. Measured, with the worker cleared at each step. The first render finishes, the alarm
+then boots a second interpreter for about 2.6 s, and a request arriving in that window gets "Network
+connection lost" and ends the dev server: one arriving 0.2 s or 2 s after the render dies, one 4 s or
+12 s after is served. The same bundle driven through Miniflare directly, with no ProxyWorker and no
+inspector, answers the racing request 200 after 3.5 s, and a minimal Durable Object with a 3.4 s
+synchronous alarm does too. A stock site on a current container has no such window (a request 0 s after
+the first render answered in 53 ms on 4.127.1); it showed on a migrated site, whose first render
+rebuilt the container before the alarm booted again. Wrangler 4.129.0 dies and 4.129.1 serves it (bisected over 4.127.1 to
+4.151.0); 4.129.1's changelog names the cause (workers-sdk #15252, a request arriving as an idle
+internal connection closes took the whole dev server down). Not the cause: local observability,
+memory (workerd peaks near 320 MB), disk, the replay, the alarm code. `package.json` now floors
+`wrangler` at `^4.129.1` and `bun.lock` resolves 4.151.0. Guard: the two cases in
+`tests/node/deploy-build.spec.ts`.
+
+**A platform limit written down from memory.** A replay of 1,486 chunks in one invocation on a paid
+plan was flagged as past the 1,000 subrequests a comment in `src/db/migrate-sql.ts` gave for paid.
+Cloudflare's limits page lists 10,000 per invocation for paid (read 2026-10-16), and a throwaway worker
+made 1,500 `ASSETS.fetch` calls in one object invocation on a paid account without an error (69 s in
+all, about 46 ms each), and 1,100 plain `fetch` calls the same way. The comment is corrected and the
+paid replay stays one invocation.
+
+**A weak slot under test.** `keepSpareMemory()` holds the dropped interpreter's memory in a `WeakRef`, and
+`linear-memory.spec.ts` handed it a memory nothing else referenced, so V8 collected it before the boot
+on two of the first five runs and the boot started at the default size. The case now holds the memory until
+its assertions have run.
+
+**A bake that trusted the constants it had just written.** `bake-container.ts` skipped the rebake when
+`PACKED_CONTAINER_DIGEST` equalled `DRIVER_DIGEST`, and it writes the first from the second, so a
+`site.sqlite` put back to an older bake read as current while its `cfw_packed_container` row still
+named the older driver. `bakeIsCurrent()` in `scripts/container-current.ts` now reads the driver the
+database records. Guard: `tests/node/container-cid.spec.ts`.
 
 ---
 

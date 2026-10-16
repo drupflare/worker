@@ -200,6 +200,20 @@ value all fall through to the var.
 | `WINDOW_MAX_FILLS`       | 50       | fills one window may drive                                                                                |
 | `WINDOW_WALL_MS`         | 60,000   | wall-clock ms one window may run                                                                          |
 
+### Request Headers
+
+Drupal receives the request's headers, not only its cookie. `Authorization`, `X-Api-Key`, `Origin`,
+`User-Agent` and any other header an API reads reach `$request->headers` and `$_SERVER`. Before this
+the render was handed the cookie, `Accept`, the content type and the client address and nothing
+else, so every bearer-token route on a headless site answered as anonymous.
+
+Three rules keep that safe. A request that carries `Authorization` is treated like one that carries
+a session: it is rendered per caller and never read from or written to the stored page, the KV tier or
+the edge cache. An `Authorization` that is this deployment's owner token is dropped before PHP sees
+it. `cf-*`, `x-cfw-*` and the hop-by-hop headers are dropped too, and at most 64 headers and 16 KiB
+are forwarded, whole or not at all. The previous request's headers are removed from `$_SERVER` before
+the next is built, so a token never outlives the request that carried it.
+
 ### `OUTBOUND_GUARD`
 
 PHP names the URL for `cfwFetch` and `cfwQueueFetch`, so any module able to build a string chooses
@@ -423,20 +437,26 @@ host at all. `/enable` is the same next step either way.
 ## Migrated Project Settings
 
 A project moved from another host usually reads environment variables, `$config` overrides, header
-rules and redirects that the old host supplied. Four names carry them.
+rules and redirects that the old host supplied. Five names carry them.
 
 | name                | form                        | what it does                                                                   |
 | ------------------- | --------------------------- | ------------------------------------------------------------------------------ |
 | `DRUPAL_ENV_<NAME>` | var or secret, one per name | PHP reads it as `getenv('<NAME>')`, `$_ENV['<NAME>']` and `$_SERVER['<NAME>']` |
 | `DRUPAL_CONFIG`     | JSON object, as a secret    | merged over `$config` with `array_replace_recursive` at boot                   |
+| `DRUPAL_SETTINGS`   | JSON object, as a secret    | merged over `$settings` with `array_replace_recursive` at boot                 |
 | `RESPONSE_HEADERS`  | JSON array, KV-overridable  | `[{"path":"/blog/*","set":{"X-Frame-Options":"DENY"}}]`                        |
 | `REDIRECTS`         | JSON array, KV-overridable  | `[{"from":"/old/*","to":"/new/*","status":301}]`                               |
 
-Only the `DRUPAL_ENV_` prefix and `DRUPAL_CONFIG` reach PHP. The owner token, `PW_DIAGNOSTICS`, mail
-credentials and API tokens live on the same environment and are never read into it. A malformed
-value is ignored, and `/serve-stats` lists the names that were ignored under `deploymentEnv`. A heap
-image is not taken or restored while either is set, because the image would carry the old values.
-Values change with a redeploy.
+Only the `DRUPAL_ENV_` prefix, `DRUPAL_CONFIG` and `DRUPAL_SETTINGS` reach PHP. The owner token,
+`PW_DIAGNOSTICS`, mail credentials and API tokens live on the same environment and are never read
+into it. A malformed value is ignored, and `/serve-stats` lists the names that were ignored under
+`deploymentEnv`. A heap image is not taken or restored while any of them is set, because the image
+would carry the old values. Values change with a redeploy.
+
+`DRUPAL_SETTINGS` is for what `settings.php` carried on the old host, such as a module's
+`$settings['...']` entries. It is read up to 64 KiB, and it cannot move the keys the Worker sets
+itself: `trusted_host_patterns`, `config_sync_directory`, `container_yamls` and the public, private
+and temp file paths. A key it names that is protected is dropped and listed in the ignored names.
 
 `RESPONSE_HEADERS` matches an exact path or a `/prefix*`. It cannot set `Set-Cookie`, anything
 starting `x-cfw-`, or the headers that frame the body. `REDIRECTS` matches an exact path (a trailing
@@ -1593,6 +1613,16 @@ backoff that honours `Retry-After` and otherwise doubles to an hour.
 `selectFiles()` keeps PHP, YAML, Twig, JavaScript and CSS, and drops `tests/`, `vendor/`,
 `node_modules/`, `.github/` and dotfiles. Module names come from `*.info.yml`; a submodule inside
 another module's tree stays where it is and is mounted once.
+
+A module mounts under `modules/custom/<name>` unless the remote names a `mount`, a path inside
+`modules`, `themes` or `profiles` such as `modules/mantle2`. A site that kept a module somewhere
+else sets it so a pull updates the module where it already is instead of adding a second copy
+beside it. It applies when the repository holds one module, and with several each keeps its
+default. `/git?action=add&mount=` takes it, and a path with `..`, a dot segment, a leading slash or
+a `core/` prefix is refused, both when it is added and on every pull.
+
+`vendor/` is never delivered, so a module whose dependencies are bundled inside it keeps the ones
+it was carried with, and a new dependency in a later commit has to arrive another way.
 
 A pull is applied in one `transactionSync()` and then verified by booting the Drupal kernel. A boot
 failure restores the previous file set and records the reason on the remote.

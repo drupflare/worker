@@ -375,7 +375,7 @@ To take a specific release instead of the tip:
 ```bash
 git fetch --tags template
 git switch master
-git merge v1.0.3 --allow-unrelated-histories -m "chore: merge template v1.0.3"
+git merge v1.0.4 --allow-unrelated-histories -m "chore: merge template v1.0.4"
 ```
 
 Your own changes are the ones that conflict, and `wrangler.jsonc` is the usual place: it carries the
@@ -480,7 +480,7 @@ and carries it over; the worker accepts what it sends.
 - **Registry-first delivery.** `/install` resolves a composer graph: `replace`, stability flags,
   branch aliases, branch archives, metapackages, virtual packages and `InstalledVersions`.
   Composer plugins are skipped. `drangler build --project` covers patches and private repositories.
-- **Settings from the old host.** `DRUPAL_ENV_<NAME>` and `DRUPAL_CONFIG` reach PHP, and
+- **Settings from the old host.** `DRUPAL_ENV_<NAME>`, `DRUPAL_CONFIG` and `DRUPAL_SETTINGS` reach PHP, and
   `RESPONSE_HEADERS` and `REDIRECTS` carry a migrated site's header and redirect rules. See
   [`docs/configuration.md`](docs/configuration.md#migrated-project-settings).
 - **Hostnames.** One deployment is one site on any number of hostnames; see

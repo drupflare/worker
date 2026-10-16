@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - name: Check Out the Locked Siblings
+      - name: Check Out the Siblings
         uses: ./.github/actions/siblings
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -191,7 +191,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - name: Check Out the Locked Siblings
+      - name: Check Out the Siblings
         uses: ./.github/actions/siblings
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2

@@ -28,6 +28,7 @@ import {
 } from '../../scripts/build-local.ts';
 import { devBranch, resolvePayloadSource } from '../../scripts/hydrate.ts';
 import { PREFILL_PATHS } from '../../scripts/lift-prefill.ts';
+import { readLock } from '../../scripts/lock';
 import { packVersionsHash } from '../../scripts/pack-hash';
 import {
 	devKeyBase,
@@ -37,7 +38,6 @@ import {
 	releaseKeyBase
 } from '../../scripts/payload-cdn.ts';
 import { PAYLOAD_ASSETS, payloadName } from '../../scripts/release-payload.ts';
-import { SHIPPED_CORE_VERSION } from '../../src/ops/shipped-lock';
 
 /**
  * A clean checkout can build itself, and the ORDER is the product.
@@ -81,6 +81,22 @@ function rewriteNewer(root: string, path: string, contents: string): void {
 }
 
 /** a tree in which every step reports itself already built, so the resume decision can be read */
+/** the driver digest a finished build leaves in the row and in both generated constants */
+const BAKED_DRIVER = '0123456789abcdef';
+
+/** writes the two generated digest constants the container step reads off disk */
+function bakeDigests(root: string, driver: string, container: string): void {
+	mkdirSync(join(root, 'src/ops'), { recursive: true });
+	writeFileSync(
+		join(root, 'src/ops/driver-digest.ts'),
+		`export const DRIVER_DIGEST = '${driver}';\n`
+	);
+	writeFileSync(
+		join(root, 'src/ops/container-digest.ts'),
+		`export const PACKED_CONTAINER_DIGEST: string = '${container}';\n`
+	);
+}
+
 function satisfiedTree(): string {
 	const root = scratch();
 	const write = (path: string) => {
@@ -105,7 +121,7 @@ function satisfiedTree(): string {
 	// carry one -- a tree at the wrong version is exactly the case that used to skip silently
 	writeFileSync(
 		join(root, 'drupal-src/core/lib/Drupal.php'),
-		`<?php\nclass Drupal { const VERSION = '${SHIPPED_CORE_VERSION}'; }\n`
+		`<?php\nclass Drupal { const VERSION = '${readLock().core}'; }\n`
 	);
 	// `assets/drupal/site.sqlite` is RESTORED rather than produced, so no step names it and the loop
 	// above cannot write it. A complete tree has it, and the `container` step is satisfied by the
@@ -116,8 +132,10 @@ function satisfiedTree(): string {
 	writeFileSync(
 		join(root, 'assets/drupal/site.sqlite'),
 		`service_container:prod:${packVersionsHash()}::Linux:` +
-			'a:1:{i:0;s:34:"/drupal/sites/default/services.yml";}'
+			'a:1:{i:0;s:34:"/drupal/sites/default/services.yml";}' +
+			BAKED_DRIVER
 	);
+	bakeDigests(root, BAKED_DRIVER, BAKED_DRIVER);
 	const renderer = join(root, 'drupal-src/core/lib/Drupal/Core/Render/Renderer.php');
 	mkdirSync(dirname(renderer), { recursive: true });
 	writeFileSync(renderer, 'new \\PhpWasmSyncFiber(');
@@ -280,10 +298,32 @@ describe('planning is pure, so the resume decision is one testable function', ()
 		expect(planned.map((p) => p.step.id)).toEqual(LOCAL_STEPS.map((s) => s.id));
 	});
 
-	it('skips every step against a tree that already has the artifacts', () => {
+	it('skips every step but the driver pack against a tree that already has the artifacts', () => {
 		const planned = planLocalBuild(satisfiedTree());
 		const running = planned.filter((p) => p.run).map((p) => p.step.id);
-		expect(running, JSON.stringify(planned.map((p) => [p.step.id, p.reason]))).toEqual([]);
+		// the driver pack always runs: assets/driver.json is tracked, so it is on disk before a sibling
+		// has been read, and the digest every later step compares comes from packing it
+		expect(running, JSON.stringify(planned.map((p) => [p.step.id, p.reason]))).toEqual([
+			'driver'
+		]);
+	});
+
+	it('bakes the container again when the driver moved and the composer hash did not', () => {
+		const root = satisfiedTree();
+		bakeDigests(root, 'fedcba9876543210', BAKED_DRIVER);
+		const container = planLocalBuild(root).find((p) => p.step.id === 'container');
+		expect(container?.run).toBe(true);
+	});
+
+	it('bakes the container again when the row never recorded the driver it claims', () => {
+		const root = satisfiedTree();
+		writeFileSync(
+			join(root, 'assets/drupal/site.sqlite'),
+			`service_container:prod:${packVersionsHash()}::Linux:` +
+				'a:1:{i:0;s:34:"/drupal/sites/default/services.yml";}'
+		);
+		const container = planLocalBuild(root).find((p) => p.step.id === 'container');
+		expect(container?.run).toBe(true);
 	});
 
 	it('runs a step whose directory exists and is empty', () => {

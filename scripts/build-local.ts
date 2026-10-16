@@ -253,9 +253,25 @@ function containerRowMatchesPack(root: string): boolean {
 		const needle =
 			`service_container:prod:${packVersionsHash()}::Linux:` +
 			'a:1:{i:0;s:34:"/drupal/sites/default/services.yml";}';
-		return readFileSync(sqlite).includes(Buffer.from(needle, 'utf8'));
+		const bytes = readFileSync(sqlite);
+		if (!bytes.includes(Buffer.from(needle, 'utf8'))) return false;
+		// and the driver the row was baked against, which a sibling can move without moving the
+		// composer hash: a row keyed to an older driver is stale however well its cid reads
+		const driver = digestOn(root, 'src/ops/driver-digest.ts', 'DRIVER_DIGEST');
+		const baked = digestOn(root, 'src/ops/container-digest.ts', 'PACKED_CONTAINER_DIGEST');
+		return driver !== null && driver === baked && bytes.includes(Buffer.from(driver, 'utf8'));
 	} catch {
 		return false;
+	}
+}
+
+/** a generated digest constant, read from the file rather than imported so a run sees its own writes */
+function digestOn(root: string, file: string, name: string): string | null {
+	try {
+		const src = readFileSync(join(root, file), 'utf8');
+		return new RegExp(`${name}(?::\\s*string)?\\s*=\\s*'([0-9a-f]+)'`).exec(src)?.[1] ?? null;
+	} catch {
+		return null;
 	}
 }
 
@@ -338,6 +354,9 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		id: 'driver',
 		title: 'pack the modules into assets/driver.json',
 		produces: ['assets/driver.json'],
+		// the file is tracked, so it is always on disk and presence says nothing about whether a
+		// sibling moved; packing is cheap and writes the digest every later step reads
+		satisfied: () => false,
 		tools: ['bun'],
 		commands: () => [['bun', 'run', 'assets:driver']]
 	},

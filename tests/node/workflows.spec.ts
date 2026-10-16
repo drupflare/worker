@@ -253,9 +253,8 @@ describe('the payload publishing lanes', () => {
  * the renovate pull request that produced the bump was green on the same code because its prefix
  * happened to hit the 11.4.7 entry its own sibling job had just written.
  *
- * `fetch-drupal-tree.ts --print-version` imports `src/ops/shipped-lock.ts`, which postinstall
- * generates, so resolving the version before `bun install` prints nothing and exits non-zero --
- * and a failing command substitution inside `echo` is discarded by the echo that wraps it.
+ * A failing command substitution inside `echo` is discarded by the echo that wraps it, so a step
+ * that resolves the version has to be checked on its own output.
  */
 describe('the Drupal tree cache key', () => {
 	/** ids whose `outputs.version` some cache key in this job interpolates */
@@ -311,6 +310,30 @@ describe('the Drupal tree cache key', () => {
 					expect(run, `${file}:${name} would emit an empty version`).toMatch(
 						/test -n "\$version"/
 					);
+				}
+			}
+		}
+	});
+});
+
+/**
+ * Development builds follow the siblings and a release pins them.
+ *
+ * "Build from source" means the latest pushed code of the module, the driver and the stream client,
+ * so a push to any of them reaches the worker's own lanes without anyone cutting a tag. Only the
+ * release lane builds from the tags `composer.lock` names, because what it ships has to be
+ * reproducible from a version.
+ */
+describe('the sibling checkouts', () => {
+	const SIBLINGS = './.github/actions/siblings';
+
+	it('are pinned to composer.lock by the release workflow and by nothing else', () => {
+		for (const { file, doc } of workflows()) {
+			for (const [name, job] of Object.entries(doc.jobs ?? {})) {
+				for (const step of job.steps ?? []) {
+					if (step.uses !== SIBLINGS) continue;
+					const pinned = step.with?.pin === 'true';
+					expect(pinned, `${file}:${name} pin`).toBe(file === 'release.yml');
 				}
 			}
 		}

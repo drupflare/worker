@@ -51,6 +51,10 @@ export const ARTIFACT_SPECS = [
 	'tests/integration/image-toolkit.spec.ts',
 	// boots a kernel from the pack to drive the patched batch.inc and the module's stand-in classes
 	'tests/integration/standins.spec.ts',
+	// boots a kernel from the pack to check the `\Redis` alias and a key's life in key_value_expire
+	'tests/integration/redis-standin.spec.ts',
+	// boots a kernel from the pack to check that request headers reach $_SERVER and do not outlive it
+	'tests/integration/forwarded-headers.spec.ts',
 	// eight joined on 2026-09-08, found the same way: hide `assets/drupal-pf/core.pf.json` and run
 	// the gate. All eight reach the interpreter and several a real render. The park four and
 	// `mb-native` had landed EARLIER the same day without this reproduction being run, which is the

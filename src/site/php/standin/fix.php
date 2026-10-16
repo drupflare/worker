@@ -85,6 +85,8 @@ if (!function_exists('cfw_standins_installed')) {
 			'finfo' => 'Drupal\drupflare\Shim\Finfo',
 			'transliterator' => 'Drupal\drupflare\Shim\Transliterator',
 			'gdimage' => 'Drupal\drupflare\Shim\GdImage',
+			'redis' => 'Drupal\drupflare\Shim\Redis',
+			'redisexception' => 'Drupal\drupflare\Shim\RedisException',
 		];
 		$target = $map[strtolower(ltrim($class, '\\'))] ?? null;
 		if ($target !== null && class_exists($target)) {

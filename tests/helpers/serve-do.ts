@@ -60,6 +60,8 @@ export type RenderCall = {
 	clientIp: string;
 	/** the inbound `Accept`, which decides whether Drupal wraps an AJAX response for an iframe */
 	accept: string;
+	/** every other inbound header handed to Drupal, absent when there was none */
+	headers?: Record<string, string>;
 	code: string;
 };
 
@@ -615,7 +617,13 @@ export function decodeRenderCall(code: string): RenderCall {
 	const [, , , cookieArg, originArg, clientIp = '', accept = ''] = args;
 	void cookieArg;
 	void originArg;
-	return { path, bins, destruct, origin, clientIp, accept, code };
+	// the last argument is an object, so the string-literal match above never reads it
+	const rawHeaders = /json_decode\("(\{.*?\})", true\)/.exec(call)?.[1];
+	const headers =
+		rawHeaders === undefined || rawHeaders === '{}'
+			? {}
+			: { headers: JSON.parse(rawHeaders.replace(/\\"/g, '"')) as Record<string, string> };
+	return { path, bins, destruct, origin, clientIp, accept, ...headers, code };
 }
 
 /**

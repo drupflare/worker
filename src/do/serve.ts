@@ -1,4 +1,4 @@
-import { hasSessionCookie } from '../ops/auth-budget';
+import { isAuthenticatedRequest } from '../ops/auth-budget';
 import type { CacheTier } from '../ops/cache-tiers';
 import { ABSORBED_HEADER, foldAbsorbed, recordEncounter } from '../ops/cold-encounter';
 import { KV_GRANT_HEADER, kvWriteBudget, pageKvEnabled } from '../ops/page-store';
@@ -102,7 +102,7 @@ export function withKvGrant(site: SitePhpDurableObject, request: Request, res: R
 		if (new URL(request.url).pathname !== '/__serve') return res;
 		const cache = res.headers.get('x-cfw-cache');
 		if (cache !== 'HIT' && cache !== 'RENDER') return res;
-		if (res.headers.has('set-cookie') || hasSessionCookie(request.headers.get('cookie'))) {
+		if (res.headers.has('set-cookie') || isAuthenticatedRequest(request)) {
 			return res;
 		}
 		if (site.isReplica() || !pageKvEnabled(site.env as never)) return res;
@@ -149,7 +149,7 @@ export async function route(site: SitePhpDurableObject, request: Request): Promi
 		// condition 1: no DDL from this lane, so it only runs once the tables exist
 		site.serveTablesReady === true &&
 		// the stored row is an anonymous render; `fillOne()` refuses to store one for a session
-		!hasSessionCookie(request.headers.get('cookie')) &&
+		!isAuthenticatedRequest(request) &&
 		// a restore writes this cursor too: without the check a warm site answers 200 from
 		// `cfw_page` while a rollback overwrites the database (one indexed read, no DDL, no await)
 		site.migratePartial() === undefined &&

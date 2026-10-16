@@ -1,5 +1,6 @@
 import { evictDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { OWNER_TOKEN_KEY } from '../../src/ops/site-secrets';
 import { HeapRestoreIncomplete } from '../../src/site-do';
 import {
 	type FillOutcome,
@@ -1086,6 +1087,85 @@ describe('the render origin is pinned, not believed', () => {
 			return calls;
 		});
 		expect(out[0]?.accept).toBe('application/json, text/javascript, */*; q=0.01');
+	});
+
+	/**
+	 * A HEADLESS SITE AUTHENTICATES ON `Authorization`, and the render used to receive none.
+	 *
+	 * The serve path handed Drupal the cookie, Accept, the content type and the client address and
+	 * nothing else, so every bearer-token route answered as anonymous (measured on mantle2: signup
+	 * returned a token, and the very next call with that token was "Authentication required").
+	 */
+	it('hands the inbound Authorization and other headers to the render', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(
+				new Request('https://real.example/__serve?path=%2F', {
+					headers: {
+						authorization: 'Bearer visitor-token',
+						'x-api-key': 'k1',
+						'cf-ray': 'plumbing'
+					}
+				})
+			);
+			return calls;
+		});
+		expect(out[0]?.headers).toEqual({
+			authorization: 'Bearer visitor-token',
+			'x-api-key': 'k1'
+		});
+	});
+
+	it('answers a request that carries Authorization from a render, never from the stored page', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			const anonymous = await site.fetch(
+				new Request('https://real.example/__serve?path=%2F')
+			);
+			const first = anonymous.headers.get('x-cfw-cache');
+			const again = await site.fetch(new Request('https://real.example/__serve?path=%2F'));
+			const bearer = await site.fetch(
+				new Request('https://real.example/__serve?path=%2F', {
+					headers: { authorization: 'Bearer visitor-token' }
+				})
+			);
+			return {
+				first,
+				again: again.headers.get('x-cfw-cache'),
+				bearer: bearer.headers.get('x-cfw-cache'),
+				renders: calls.length
+			};
+		});
+		expect(out.again).toBe('HIT');
+		expect(out.bearer).not.toBe('HIT');
+		expect(out.renders).toBeGreaterThanOrEqual(2);
+	});
+
+	it('never hands the owner token to the render', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			site.metaSet(OWNER_TOKEN_KEY, 'owner-secret');
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(
+				new Request('https://real.example/__serve?path=%2F', {
+					headers: { authorization: 'Bearer owner-secret' }
+				})
+			);
+			return calls;
+		});
+		expect(out[0]?.headers).toBeUndefined();
+	});
+
+	it('CONTROL: emits no headers when the request carried only the usual ones', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(new Request('https://real.example/__serve?path=%2F'));
+			return calls;
+		});
+		expect(out[0]?.headers).toBeUndefined();
 	});
 
 	it('CONTROL: emits no address when the request carried none', async () => {

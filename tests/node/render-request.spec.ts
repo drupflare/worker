@@ -25,6 +25,16 @@ describe('renderPage threads the request', () => {
 		expect(call).toBe('$response = cfw_serve($path, false);');
 	});
 
+	it('carries the forwarded headers as one JSON object argument, never interpolated', () => {
+		const php = renderPage('/', ['page'], false, {
+			headers: { authorization: `Bearer a'b"c`, 'x-api-key': 'k' }
+		});
+		const call = /\$response = cfw_serve\([\s\S]*?\);\n/.exec(php)?.[0] ?? '';
+		expect(call).toMatch(/, json_decode\("\{.*\}", true\)\);/);
+		expect(call).toContain('x-api-key');
+		expect(php).not.toContain(`a'b"c`);
+	});
+
 	it('carries a POST method through to cfw_serve', () => {
 		const php = renderPage('/admin', ['page'], false, {
 			method: 'POST',

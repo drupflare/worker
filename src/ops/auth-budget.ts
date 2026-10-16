@@ -67,7 +67,17 @@ export function sessionCookieValue(cookieHeader: string | null | undefined): str
 export function isAuthenticatedRequest(request: {
 	headers: { get(name: string): string | null };
 }): boolean {
-	return hasSessionCookie(request.headers.get('cookie'));
+	return hasSessionCookie(request.headers.get('cookie')) || carriesAuthorization(request);
+}
+
+/**
+ * Whether a request presents an `Authorization` header, which a headless site reads in place of a
+ * session cookie. The page it answers is per caller, so no shared tier may store or answer it.
+ */
+export function carriesAuthorization(request: {
+	headers: { get(name: string): string | null };
+}): boolean {
+	return (request.headers.get('authorization') ?? '').trim() !== '';
 }
 
 /** methods that cannot change state, so they can be degraded to a stale read */

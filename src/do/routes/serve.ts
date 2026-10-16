@@ -5,17 +5,20 @@ import {
 	type AuthSpend,
 	authSpendHeaders,
 	hasSessionCookie,
+	isAuthenticatedRequest,
 	ROLES_HEADER,
 	secondsUntilUtcReset,
 	spendForToday
 } from '../../ops/auth-budget';
 import { cronIntervalMs, drupalCronEnabled } from '../../ops/cron-drive';
 import { readOnlyResponse } from '../../ops/degrade';
+import { forwardedHeaders } from '../../ops/forwarded-headers';
 import { hibernationEligible } from '../../ops/hibernation';
 import { isPaid } from '../../ops/plan';
 import { planProfile } from '../../ops/plan-profile';
 import { ReplicaRequiresPrimary } from '../../ops/replica';
 import { FIRST_RUN_KEY, needsSetup, setupResponse } from '../../ops/setup-page';
+import { OWNER_TOKEN_KEY } from '../../ops/site-secrets';
 import { warmingResponse } from '../../ops/warming-page';
 import type { SitePhpDurableObject } from '../../site-do';
 import { DIAG_EXEC_COUNTERS_PHP } from '../../site/generated/assets';
@@ -128,7 +131,7 @@ export async function serve(
 
 	// a submission is never answered from `cfw_page` (the row holds an anonymous `GET`, so a `POST`
 	// would get the empty form back with a 200 and never run Drupal); sessions likewise
-	const authenticated = hasSessionCookie(request.headers.get('cookie'));
+	const authenticated = isAuthenticatedRequest(request);
 	const cacheable = (request.method === 'GET' || request.method === 'HEAD') && !authenticated;
 	const hit = cacheable
 		? firstRow(
@@ -207,7 +210,12 @@ export async function serve(
 		}
 		// try the stored shell before a render, never for a submission or with the lever off; a
 		// fragment render (4-5 ms) beats the page (20-21 ms) even on a cold object
-		if (authenticated && !submission && shellAssemblyEnabled(site.env)) {
+		if (
+			authenticated &&
+			hasSessionCookie(request.headers.get('cookie')) &&
+			!submission &&
+			shellAssemblyEnabled(site.env)
+		) {
 			const cookieHeader = request.headers.get('cookie') ?? '';
 			const shellOrigin = site.canonicalOrigin(url.origin);
 			let assembled = await site.assembleFor(path, cookieHeader, shellOrigin);
@@ -264,6 +272,8 @@ export async function serve(
 		// `Request::create()` defaults the iframe-upload header to a match, which wraps every AJAX
 		// response in a textarea
 		const accept = request.headers.get('accept') ?? '';
+		const forwarded = forwardedHeaders(request.headers, site.metaGet(OWNER_TOKEN_KEY));
+		const headers = Object.keys(forwarded).length === 0 ? {} : { headers: forwarded };
 		const posted =
 			request.method === 'GET' || request.method === 'HEAD'
 				? null
@@ -273,12 +283,13 @@ export async function serve(
 		const inbound: RenderRequest =
 			posted === null
 				? cookie
-					? { origin, cookie, clientIp, accept }
-					: { origin, clientIp, accept }
+					? { origin, cookie, clientIp, accept, ...headers }
+					: { origin, clientIp, accept, ...headers }
 				: {
 						origin,
 						clientIp,
 						accept,
+						...headers,
 						method: request.method,
 						// decoded strictly, so a non-UTF-8 body (a file upload) travels as base64
 						...requestBody(posted),

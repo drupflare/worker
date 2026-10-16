@@ -70,6 +70,8 @@ function cfw_close_session(): string
  *   The visitor's address, or an empty string.
  * @param string $accept
  *   The raw Accept header, or an empty string.
+ * @param array $headers
+ *   Every other inbound header, lowercase name to value, such as authorization.
  *
  * @return Response
  *   The kernel's response.
@@ -84,6 +86,7 @@ function cfw_serve(
 	$origin = '',
 	$clientIp = '',
 	$accept = '',
+	$headers = [],
 ) {
 	$kernel = $GLOBALS['__pw_kernel'];
 
@@ -256,6 +259,18 @@ function cfw_serve(
 	if ($accept !== '') {
 		$server['HTTP_ACCEPT'] = $accept;
 	}
+	// EVERY OTHER HEADER, because a headless site authenticates on Authorization and this bag used
+	// to carry none: a bearer token reached the front worker and never Drupal, so each token route
+	// answered as anonymous. The keys are remembered so the NEXT request can remove them from
+	// $_SERVER, which outlives it on a persistent interpreter.
+	$forwarded = [];
+	foreach (is_array($headers) ? $headers : [] as $name => $value) {
+		$key = 'HTTP_' . strtoupper(str_replace('-', '_', (string) $name));
+		if (is_string($value) && !isset($server[$key])) {
+			$server[$key] = $value;
+			$forwarded[$key] = $value;
+		}
+	}
 
 	// THE COOKIE IS WHY AN AUTHENTICATED REQUEST EXISTS AT ALL. Without it every request is uid 0,
 	// so Drupal denies a create-entity route at the ROUTING layer and no form is ever built --
@@ -319,6 +334,14 @@ function cfw_serve(
 	} else {
 		unset($_SERVER['HTTP_COOKIE']);
 	}
+	// the previous request's headers are removed first, or visitor B inherits visitor A's token
+	foreach (array_keys($GLOBALS['__pw_forwarded_headers'] ?? []) as $stale) {
+		unset($_SERVER[$stale]);
+	}
+	foreach ($forwarded as $key => $value) {
+		$_SERVER[$key] = $value;
+	}
+	$GLOBALS['__pw_forwarded_headers'] = $forwarded;
 
 	// THE SESSION HAS TO BE ENDED BEFORE THE NEXT ONE IS READ, and this interpreter is where that
 	// stops being automatic. PHP holds $_SESSION and the active id on the PROCESS, and Symfony

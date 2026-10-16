@@ -66,6 +66,7 @@ export async function buildHop(f: FrontContext, auth: AuthState): Promise<HopReq
 		// stale mode: strip the session so the object answers the anonymous page (a cookie would
 		// spend the very budget that has run out)
 		innerRequest.headers.delete('cookie');
+		innerRequest.headers.delete('authorization');
 	}
 	return { innerRequest, buffered, attempt };
 }

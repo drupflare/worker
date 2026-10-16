@@ -284,6 +284,13 @@ export interface RenderRequest {
 	 * and `Request::create()` defaults to exactly that, so an absent header breaks every AJAX call.
 	 */
 	accept?: string;
+	/**
+	 * Every other inbound header worth handing Drupal (`Authorization`, `X-Api-Key`, `Origin`),
+	 * lowercase by name, from `forwardedHeaders()`.
+	 *
+	 * Without it a bearer-token route answers as anonymous.
+	 */
+	headers?: Record<string, string>;
 }
 
 /** a request body as the render takes it: text when it is UTF-8, base64 when it is not */
@@ -368,6 +375,7 @@ export function renderPage(
 	// a plain anonymous GET emits no extra arguments
 	const clientIp = String(request.clientIp ?? '');
 	const accept = String(request.accept ?? '');
+	const headers = request.headers ?? {};
 	const requestArgs =
 		method === 'GET' &&
 		!request.body &&
@@ -375,7 +383,8 @@ export function renderPage(
 		!request.cookie &&
 		origin === '' &&
 		clientIp === '' &&
-		accept === ''
+		accept === '' &&
+		Object.keys(headers).length === 0
 			? ''
 			: `, json_decode(${JSON.stringify(JSON.stringify(method))})` +
 				`, ${phpBodyExpression(request)}` +
@@ -383,7 +392,8 @@ export function renderPage(
 				`, json_decode(${JSON.stringify(JSON.stringify(String(request.cookie ?? '')))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(origin))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(clientIp))})` +
-				`, json_decode(${JSON.stringify(JSON.stringify(accept))})`;
+				`, json_decode(${JSON.stringify(JSON.stringify(accept))})` +
+				`, json_decode(${JSON.stringify(JSON.stringify(headers))}, true)`;
 
 	return phpRender(RENDER_PAGE_PHP, {
 		FIBER_SHIM,

@@ -1,4 +1,4 @@
-import lockText from '../../composer.lock';
+import lockText from '../../composer.lock' with { type: 'text' };
 import { shippedLock } from './lock-map';
 
 const shipped = shippedLock(JSON.parse(lockText));

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -79,6 +80,16 @@ describe('shippedLock', () => {
 	it('reports an empty core rather than throwing when the lock does not pin one', () => {
 		expect(shippedLock({ packages: [] }).core).toBe('');
 		expect(shippedLock({}).core).toBe('');
+	});
+
+	// bun resolves a bare `.lock` import to a file path, and every workflow resolves the Drupal
+	// version through a script that reaches this module, so the import has to say it is text
+	it('resolves under bun, which is what the workflows run', () => {
+		const out = execFileSync('bun', ['scripts/fetch-drupal-tree.ts', '--print-version'], {
+			cwd: ROOT,
+			encoding: 'utf8'
+		});
+		expect(out.trim()).toBe(readLock().core);
 	});
 
 	it('is what the bundled module exports, so the runtime and the scripts cannot disagree', () => {

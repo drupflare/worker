@@ -11,7 +11,7 @@ import {
 	remoteId
 } from '../ops/git-provider';
 import { type Advertisement, branchNames, discoverRefs, refSha } from '../ops/git-smart';
-import { clampInterval, DEFAULT_POLL_MINUTES, duePolls } from '../ops/git-sync';
+import { clampInterval, DEFAULT_POLL_MINUTES, duePolls, safeMount } from '../ops/git-sync';
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage } from '../util/errors';
 import { jsonError } from '../util/reply';
@@ -123,6 +123,14 @@ export async function handleGit(
 		}
 		const email = url.searchParams.get('email') ?? '';
 		const username = url.searchParams.get('username') ?? '';
+		const mountAsked = url.searchParams.get('mount') ?? '';
+		const mount = mountAsked === '' ? undefined : safeMount(mountAsked);
+		if (mountAsked !== '' && mount === undefined) {
+			return jsonError(
+				'mount must be a path inside modules, themes or profiles, with plain segments',
+				400
+			);
+		}
 		// Bitbucket's API takes the email and git takes the username, so one cannot serve both
 		if (provider === 'bitbucket' && (email === '' || username === '')) {
 			return jsonError(
@@ -139,7 +147,8 @@ export async function handleGit(
 			branch: url.searchParams.get('branch') || '',
 			...(parsed.host ? { host: parsed.host } : {}),
 			...(email ? { email } : {}),
-			...(username ? { username } : {})
+			...(username ? { username } : {}),
+			...(mount === undefined ? {} : { mount })
 		};
 		site.metaSet('git_token_pending', token);
 		site.metaSet('git_email_pending', email);
@@ -186,6 +195,7 @@ export async function handleGit(
 			branch,
 			head: sha,
 			id: remote.id,
+			...(remote.mount === undefined ? {} : { mount: remote.mount }),
 			branches: branchNames(ad)
 		});
 	}

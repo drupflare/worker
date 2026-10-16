@@ -12,6 +12,7 @@ import {
 	mountFor,
 	mountPlan,
 	planSync,
+	safeMount,
 	safeName,
 	selectFiles,
 	type SelectedFile
@@ -133,6 +134,91 @@ describe('selecting what may be mounted', () => {
 	});
 });
 
+describe('mounting where the site already keeps a module', () => {
+	const repo = [
+		file('mantle2.info.yml', 'type: module\nname: Mantle2\n'),
+		file('mantle2.module', '<?php'),
+		file('src/Service/Helper.php', '<?php'),
+		file('vendor/stripe/stripe-php/init.php', '<?php')
+	];
+
+	it('puts a one-module repository under modules/custom when no mount is named', () => {
+		const chosen = selectFiles(repo, 'mantle2');
+		expect(chosen.files.map((f) => f.path)).toEqual([
+			'modules/custom/mantle2/mantle2.info.yml',
+			'modules/custom/mantle2/mantle2.module',
+			'modules/custom/mantle2/src/Service/Helper.php'
+		]);
+	});
+
+	it('puts it at the named mount, flat under modules, when one is given', () => {
+		const chosen = selectFiles(repo, 'mantle2', 'modules/mantle2');
+		expect(chosen.files.map((f) => f.path)).toEqual([
+			'modules/mantle2/mantle2.info.yml',
+			'modules/mantle2/mantle2.module',
+			'modules/mantle2/src/Service/Helper.php'
+		]);
+	});
+
+	it('still never writes vendor, so the module keeps the dependencies it was carried with', () => {
+		const chosen = selectFiles(repo, 'mantle2', 'modules/mantle2');
+		expect(chosen.files.some((f) => f.path.includes('vendor/'))).toBe(false);
+		expect(chosen.skipped.find((s) => s.path.startsWith('vendor/'))?.why).toMatch(/mountable/);
+	});
+
+	it('applies to a repository whose module is not at the root, mounting that module', () => {
+		const nested = [
+			file('web/modules/x/x.info.yml', 'type: module\n'),
+			file('web/modules/x/x.module', '<?php')
+		];
+		expect(selectFiles(nested, 'x', 'modules/x').files.map((f) => f.path)).toEqual([
+			'modules/x/x.info.yml',
+			'modules/x/x.module'
+		]);
+	});
+
+	it('is ignored with several modules, which cannot share one destination', () => {
+		const two = [
+			file('a/a.info.yml', 'type: module\n'),
+			file('a/a.module', '<?php'),
+			file('b/b.info.yml', 'type: module\n'),
+			file('b/b.module', '<?php')
+		];
+		expect(selectFiles(two, 'x', 'modules/a').files.map((f) => f.path)).toEqual([
+			'modules/custom/a/a.info.yml',
+			'modules/custom/a/a.module',
+			'modules/custom/b/b.info.yml',
+			'modules/custom/b/b.module'
+		]);
+	});
+
+	it('uses the mount for a repository with no module of its own, as the fallback does', () => {
+		expect([...mountPlan([], 'x', 'modules/x')]).toEqual([['', 'modules/x']]);
+		expect([...mountPlan([], 'x')]).toEqual([['', 'modules/custom/x']]);
+	});
+
+	it('accepts a plain path inside an extension tree and nothing else', () => {
+		expect(safeMount('modules/mantle2')).toBe('modules/mantle2');
+		expect(safeMount(' modules/a/b/ ')).toBe('modules/a/b');
+		expect(safeMount('themes/t')).toBe('themes/t');
+		expect(safeMount('profiles/p')).toBe('profiles/p');
+		for (const bad of [
+			'',
+			'modules',
+			'/modules/x',
+			'modules/../core/lib',
+			'modules/./x',
+			'core/modules/x',
+			'sites/default/x',
+			'modules/x y',
+			'modules//x',
+			'modules/x;rm'
+		]) {
+			expect(safeMount(bad), bad).toBeUndefined();
+		}
+	});
+});
+
 describe('the plan', () => {
 	it('separates added, modified, removed and unchanged', () => {
 		const stored = new Map([
@@ -232,6 +318,41 @@ describe('conflicts', () => {
 			'github:me/token@main'
 		);
 		expect(found[0]?.owner).toBe('drupal/token');
+	});
+
+	it('lets a pull take over code that was carried from another host', () => {
+		const owners = new Map([
+			['modules/mantle2/mantle2.module', 'migrated/mantle2'],
+			['modules/mantle2/src/Helper.php', 'migrated/mantle2']
+		]);
+		expect(
+			detectConflicts(
+				[
+					sel('modules/mantle2/mantle2.module', 'y'),
+					sel('modules/mantle2/src/Helper.php', 'y')
+				],
+				owners,
+				'generic:earth-app/mantle2@master'
+			)
+		).toEqual([]);
+	});
+
+	it('still refuses a path a different remote owns, even beside carried code', () => {
+		const owners = new Map([
+			['modules/mantle2/a.php', 'migrated/mantle2'],
+			['modules/mantle2/b.php', 'github:other/repo@main']
+		]);
+		const found = detectConflicts(
+			[sel('modules/mantle2/a.php', 'y'), sel('modules/mantle2/b.php', 'y')],
+			owners,
+			'generic:earth-app/mantle2@master'
+		);
+		expect(found.map((c) => c.path)).toEqual(['modules/mantle2/b.php']);
+	});
+
+	it('does not treat a name that merely contains the carried prefix as carried', () => {
+		const owners = new Map([['a.php', 'notmigrated/x']]);
+		expect(detectConflicts([sel('a.php', 'y')], owners, 'me')).toHaveLength(1);
 	});
 });
 

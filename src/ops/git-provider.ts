@@ -47,6 +47,14 @@ export interface Remote {
 	clone?: string;
 	/** a pull/merge request head this remote is previewing instead of its branch */
 	previewOf?: string;
+	/**
+	 * Where in the Drupal tree this repository's one module lands, such as `modules/mantle2`.
+	 *
+	 * Unset, a module mounts under `modules/custom/<name>`. A site that kept a module somewhere
+	 * else sets this so a pull updates the module where it already is instead of adding a second
+	 * copy beside it. See `safeMount()` for what is accepted.
+	 */
+	mount?: string;
 }
 
 /** what the operator pasted, kept apart from the remote so a log line can carry the remote */

@@ -1,7 +1,14 @@
 import { BOOT_KERNEL, VERIFY_MODULES } from '../drupal/site-php';
 import type { Remote } from '../ops/git-provider';
 import { fetchCommit } from '../ops/git-smart';
-import { detectConflicts, planSync, safeName, selectFiles, type SyncPlan } from '../ops/git-sync';
+import {
+	detectConflicts,
+	planSync,
+	safeMount,
+	safeName,
+	selectFiles,
+	type SyncPlan
+} from '../ops/git-sync';
 import { portFibers } from '../ops/package-install';
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage } from '../util/errors';
@@ -23,7 +30,10 @@ export async function gitSync(
 		return { ok: false, error: `the remote has no branch ${remote.branch}` };
 	}
 	const tree = await fetchCommit(site.gitSmart(remote), sha);
-	const selection = selectFiles(tree, safeName(remote.repo));
+	// checked again on every pull, so a stored remote that was edited outside `add` still cannot
+	// aim the mount at the site's own code
+	const mount = remote.mount === undefined ? undefined : safeMount(remote.mount);
+	const selection = selectFiles(tree, safeName(remote.repo), mount);
 	if (selection.files.length === 0) {
 		return {
 			ok: false,

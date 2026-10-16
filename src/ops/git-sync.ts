@@ -63,14 +63,44 @@ const DEST: Record<ModuleRoot['type'], string> = {
 	profile: 'profiles/custom'
 };
 
-/** where one repository's files land in the Drupal tree */
-export function mountPlan(roots: readonly ModuleRoot[], fallback: string): Map<string, string> {
+/**
+ * A mount path a remote may name, or `undefined` for anything else.
+ *
+ * Relative to the Drupal root and inside one of the three extension trees, with plain path
+ * segments only: no `..`, no dot segment, no leading slash and nothing under `core/`, since a
+ * remote that could write there could replace the site's own code.
+ */
+export function safeMount(value: string): string | undefined {
+	const trimmed = value.trim().replace(/\/+$/, '');
+	if (!/^(modules|themes|profiles)\/[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+)*$/.test(trimmed)) {
+		return undefined;
+	}
+	return trimmed;
+}
+
+/**
+ * where one repository's files land in the Drupal tree
+ *
+ * `mount` moves the module to a path the site already uses. It applies when the repository holds
+ * one module, because two modules cannot share one destination; with several, each keeps its
+ * default and the override is ignored rather than guessed at.
+ */
+export function mountPlan(
+	roots: readonly ModuleRoot[],
+	fallback: string,
+	mount?: string
+): Map<string, string> {
 	const plan = new Map<string, string>();
 	if (roots.length === 0) {
-		plan.set('', `modules/custom/${safeName(fallback)}`);
+		plan.set('', mount ?? `modules/custom/${safeName(fallback)}`);
 		return plan;
 	}
-	for (const root of roots) plan.set(root.root, `${DEST[root.type]}/${root.name}`);
+	for (const root of roots) {
+		plan.set(
+			root.root,
+			roots.length === 1 && mount !== undefined ? mount : `${DEST[root.type]}/${root.name}`
+		);
+	}
 	return plan;
 }
 
@@ -121,7 +151,11 @@ export interface Selection {
 const decoder = new TextDecoder();
 
 /** filters a working tree to what a mounted Drupal tree can use (same allow-list as packages) */
-export function selectFiles(tree: readonly WorkingFile[], fallbackName: string): Selection {
+export function selectFiles(
+	tree: readonly WorkingFile[],
+	fallbackName: string,
+	mount?: string
+): Selection {
 	const sources = new Map<string, string>();
 	for (const file of tree) {
 		if (INFO.test(file.path)) sources.set(file.path, decoder.decode(file.bytes));
@@ -130,7 +164,7 @@ export function selectFiles(tree: readonly WorkingFile[], fallbackName: string):
 		tree.map((f) => f.path),
 		sources
 	);
-	const plan = mountPlan(roots, fallbackName);
+	const plan = mountPlan(roots, fallbackName, mount);
 
 	const files: SelectedFile[] = [];
 	const skipped: { path: string; why: string }[] = [];
@@ -285,8 +319,17 @@ export interface Conflict {
 }
 
 /**
+ * The owner `drangler preview` gives the code it carried from another host (`migrated/<dir>`).
+ * Carried code is what a remote is brought in to keep current, so a pull may take it over.
+ */
+const CARRIED_OWNER = 'migrated/';
+
+/**
  * Paths a pull would take from somebody else (a fork and its upstream both providing `mymodule`;
  * letting the later pull win yields a tree neither repository describes).
+ *
+ * Rows carried from another host are not somebody else's: the first pull that provides one of those
+ * paths becomes its owner, and the carried rows the repository does not provide stay as they are.
  */
 export function detectConflicts(
 	incoming: readonly SelectedFile[],
@@ -296,7 +339,7 @@ export function detectConflicts(
 	const out: Conflict[] = [];
 	for (const file of incoming) {
 		const owner = owners.get(file.path);
-		if (owner !== undefined && owner !== claimant) {
+		if (owner !== undefined && owner !== claimant && !owner.startsWith(CARRIED_OWNER)) {
 			out.push({ path: file.path, owner, claimant });
 		}
 	}

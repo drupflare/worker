@@ -1,7 +1,7 @@
 {
 	"private": true,
 	"name": "@drupflare/worker",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"type": "module",
 	"description": "Drupal on Cloudflare Workers",
 	"module": "src/index.js",
@@ -121,7 +121,7 @@
 		"typedoc": "^0.28.20",
 		"typescript": "^5.9.3",
 		"vitest": "^4.1.11",
-		"wrangler": "^4.127.1",
+		"wrangler": "^4.129.1",
 		"yaml": "2.9.1"
 	},
 	"dependencies": {

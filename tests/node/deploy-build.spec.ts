@@ -20,6 +20,7 @@ import { PLATFORM_PHP_VERSION } from '../../src/ops/packagist';
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as {
 	scripts: Record<string, string>;
+	devDependencies: Record<string, string>;
 };
 
 /** every script the named one expands to, following `bun run x` chains one level at a time */
@@ -107,5 +108,31 @@ describe('the PHP version the oracle claims, against the binary that ships', () 
 			PLATFORM_PHP_VERSION.split('.').slice(0, 2).join('.'),
 			`the oracle claims PHP ${PLATFORM_PHP_VERSION} and the seam imports ${shipped}`
 		).toBe(shipped);
+	});
+});
+
+describe('the wrangler a first local boot needs', () => {
+	// 4.129.0 ends `wrangler dev` with an empty error when a request arrives while the site boots
+	// its second interpreter; 4.129.1 serves it (bisected 2026-10-16, workers-sdk #15252)
+	const FIXED = [4, 129, 1];
+	const atLeast = (version: string): boolean => {
+		const parts = version.split('.').map(Number);
+		for (let i = 0; i < FIXED.length; i++) {
+			if (parts[i] !== FIXED[i]) return (parts[i] ?? 0) > (FIXED[i] ?? 0);
+		}
+		return true;
+	};
+
+	it('declares a floor at or above the release whose dev server survives that request', () => {
+		const declared = /^\^(\d+\.\d+\.\d+)$/.exec(pkg.devDependencies.wrangler ?? '')?.[1];
+		expect(declared, 'wrangler is not declared as ^x.y.z').toBeDefined();
+		expect(atLeast(declared!), `wrangler ^${declared} is below ${FIXED.join('.')}`).toBe(true);
+	});
+
+	it('locks a release at or above it', () => {
+		const lock = readFileSync('bun.lock', 'utf8');
+		const locked = /"wrangler": \["wrangler@(\d+\.\d+\.\d+)"/.exec(lock)?.[1];
+		expect(locked, 'bun.lock does not resolve wrangler').toBeDefined();
+		expect(atLeast(locked!), `bun.lock resolves wrangler ${locked}`).toBe(true);
 	});
 });

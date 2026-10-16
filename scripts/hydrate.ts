@@ -7,6 +7,7 @@
  * bun run hydrate -- --from=dist/x.tar.gz      # a local tarball, for testing the payload
  * bun run hydrate -- --payload-only            # refuse to build from source; fail instead
  * bun run hydrate -- --from-source             # skip the payload and build every artifact locally
+ * bun run hydrate -- --dev[=branch]            # the rolling payload of a branch tip, never a release
  * ```
  *
  * There are TWO routes to the same tree and this script picks between them.
@@ -45,7 +46,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { ORIGINS } from './backup-cdn';
 import { REENTRY_VAR, reentered } from './hydrating';
-import { devKeyBase, payloadBaseUrl, readSums, releaseKeyBase } from './payload-cdn';
+import { devKeyBase, devLabel, payloadBaseUrl, readSums, releaseKeyBase } from './payload-cdn';
 import { PAYLOAD_ROOTS, payloadName, sha256, type PayloadManifest } from './release-payload';
 
 /** where a payload is published, so the default path needs no argument */
@@ -139,8 +140,19 @@ function currentBranch(root: string): string {
  * into "download the tip". `master` is tried after the checkout's own branch because a fork or a
  * detached HEAD names a branch nothing publishes.
  */
-function networkBases(root: string, tag: string): { base: string; via: PayloadVia }[] {
+function networkBases(
+	root: string,
+	tag: string,
+	dev?: string
+): { base: string; via: PayloadVia }[] {
 	const bases: { base: string; via: PayloadVia }[] = [];
+	// an explicit dev line asks for the tip of that branch and nothing else
+	if (dev !== undefined) {
+		for (const origin of ORIGINS) {
+			bases.push({ base: payloadBaseUrl(origin, devKeyBase(dev)), via: 'cdn-dev' });
+		}
+		return bases;
+	}
 	for (const origin of ORIGINS) {
 		bases.push({ base: payloadBaseUrl(origin, releaseKeyBase(tag)), via: 'cdn' });
 	}
@@ -168,13 +180,20 @@ function networkBases(root: string, tag: string): { base: string; via: PayloadVi
  * built from whatever `package.json` said at that commit and a checkout cannot know which version
  * that was.
  *
+ * `dev` names a branch and takes the rolling payload of its tip, skipping the local `dist/` and every
+ * release. It is for a checkout of a branch whose `package.json` already names the next version, where
+ * a release payload of the PREVIOUS version would otherwise answer first and land older bytes under
+ * newer code.
+ *
  * @param probe - answers whether a URL exists; injected so the routing is testable without a network
+ * @param dev - a branch whose dev line to take, or undefined for the ordinary order
  */
 export async function resolvePayloadSource(
 	root: string,
 	tag: string,
 	given: string | undefined,
-	probe: (url: string) => Promise<boolean>
+	probe: (url: string) => Promise<boolean>,
+	dev?: string
 ): Promise<PayloadSource> {
 	if (given) {
 		if (!existsSync(given)) throw new Error(`--from=${given} does not exist`);
@@ -182,9 +201,9 @@ export async function resolvePayloadSource(
 	}
 
 	const local = join(root, 'dist', payloadName(tag.replace(/^v/, '')));
-	if (existsSync(local)) return { kind: 'dist', path: local };
+	if (dev === undefined && existsSync(local)) return { kind: 'dist', path: local };
 
-	for (const { base, via } of networkBases(root, tag)) {
+	for (const { base, via } of networkBases(root, tag, dev)) {
 		if (await probe(`${base}/SHA256SUMS`)) return { kind: 'release', tag, base, via };
 	}
 
@@ -192,9 +211,23 @@ export async function resolvePayloadSource(
 		kind: 'none',
 		tag,
 		reason:
-			`no ${local} on disk, and no ${tag} payload on the CDN, on ${REPO}'s releases, ` +
-			`or on the dev line for ${currentBranch(root)}`
+			dev === undefined
+				? `no ${local} on disk, and no ${tag} payload on the CDN, on ${REPO}'s releases, ` +
+					`or on the dev line for ${currentBranch(root)}`
+				: `no payload on the ${devLabel(dev)} line of the CDN`
 	};
+}
+
+/**
+ * The branch `--dev` names: `--dev=feat/x` is that branch, a bare `--dev` is the checkout's own.
+ *
+ * @internal exported for its test
+ */
+export function devBranch(argv: readonly string[], root: string): string | undefined {
+	const hit = argv.find((a) => a === '--dev' || a.startsWith('--dev='));
+	if (hit === undefined) return undefined;
+	const named = hit.slice('--dev='.length).trim();
+	return hit === '--dev' || named === '' ? currentBranch(root) : named;
 }
 
 function arg(name: string, fallback?: string): string | undefined {
@@ -491,12 +524,22 @@ async function main(): Promise<number> {
 		console.error('--from-source and --payload-only are opposites; pass one or neither');
 		return 2;
 	}
+	const dev = devBranch(process.argv, root);
+	if (
+		dev !== undefined &&
+		(fromSource || arg('from') !== undefined || arg('tag') !== undefined)
+	) {
+		console.error(
+			'--dev takes the tip of a branch; it cannot be combined with --from-source, --from or --tag'
+		);
+		return 2;
+	}
 	if (fromSource) {
 		buildFromSource(root, forwarded);
 		return 0;
 	}
 
-	const source = await resolvePayloadSource(root, tag, arg('from'), assetExists);
+	const source = await resolvePayloadSource(root, tag, arg('from'), assetExists, dev);
 	if (source.kind === 'none') {
 		if (payloadOnly) {
 			console.error(`no payload to hydrate from: ${source.reason}.`);

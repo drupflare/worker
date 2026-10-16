@@ -46,6 +46,13 @@ own branch first, then `master`. It lets a checkout on a commit no release was c
 tree in seconds instead of building one with a toolchain the deploy container does not have.
 `bun run build:local` is still there when you want the bytes regenerated rather than fetched.
 
+**`--dev[=branch]` takes the dev line directly.** `bun run hydrate -- --dev=master` skips `dist/`
+and every release and downloads the tip of that branch, and a bare `--dev` names the checkout's own
+branch. It is for a checkout whose `package.json` already carries the next version: without it, a
+release of the previous version answers first and lands older bytes under newer code. It refuses to
+combine with `--from`, `--tag` or `--from-source`, since each of those names a different payload. The
+bytes are a branch tip, so the next push replaces them and the run says so.
+
 Both lines are published by CI from the tarball the release job already built, so nothing is
 rebuilt to publish it. The keys come from `scripts/payload-cdn.ts`, which the resolver and the
 workflows both read; `tests/node/workflows.spec.ts` fails if a workflow starts spelling a key of its

@@ -26,7 +26,7 @@ import {
 	type StepId,
 	type ToolId
 } from '../../scripts/build-local.ts';
-import { resolvePayloadSource } from '../../scripts/hydrate.ts';
+import { devBranch, resolvePayloadSource } from '../../scripts/hydrate.ts';
 import { PREFILL_PATHS } from '../../scripts/lift-prefill.ts';
 import { packVersionsHash } from '../../scripts/pack-hash';
 import {
@@ -620,6 +620,58 @@ describe('hydrate picks between the payload and the source route', () => {
 			// both would answer; the release has to win, or a cut version silently serves a tip
 			const source = await resolvePayloadSource(scratch(), 'v1.0.0', undefined, yes);
 			expect((source as { via: string }).via).not.toBe('cdn-dev');
+		});
+
+		describe('an explicit dev line', () => {
+			it('asks only for that branch, so a release of the previous version cannot answer', async () => {
+				const seen: string[] = [];
+				const source = await resolvePayloadSource(
+					scratch(),
+					'v1.0.0',
+					undefined,
+					async (url) => {
+						seen.push(url);
+						return true;
+					},
+					'master'
+				);
+				expect(source).toMatchObject({ kind: 'release', via: 'cdn-dev' });
+				expect(seen.every((u) => u.includes('/dev-master/'))).toBe(true);
+			});
+
+			it('outranks a local dist tarball, which is a build of some other commit', async () => {
+				const root = scratch();
+				mkdirSync(join(root, 'dist'), { recursive: true });
+				writeFileSync(join(root, 'dist', payloadName('1.0.0')), 'x');
+				const source = await resolvePayloadSource(root, 'v1.0.0', undefined, yes, 'master');
+				expect(source.kind).toBe('release');
+			});
+
+			it('names the line when nothing answers there', async () => {
+				const source = await resolvePayloadSource(
+					scratch(),
+					'v1.0.0',
+					undefined,
+					no,
+					'feat/x'
+				);
+				expect(source).toMatchObject({
+					kind: 'none',
+					reason: expect.stringContaining('dev-feat-x')
+				});
+			});
+
+			it('reads the branch off the flag, and the checkout when the flag is bare', () => {
+				process.env['DRUPFLARE_DEV_BRANCH'] = 'feat/own';
+				try {
+					expect(devBranch(['--dev=master'], scratch())).toBe('master');
+					expect(devBranch(['--dev'], scratch())).toBe('feat/own');
+					expect(devBranch(['--dev='], scratch())).toBe('feat/own');
+					expect(devBranch(['--force'], scratch())).toBeUndefined();
+				} finally {
+					delete process.env['DRUPFLARE_DEV_BRANCH'];
+				}
+			});
 		});
 
 		it('asks for the checkout branch before master, so a feature branch gets its own', async () => {

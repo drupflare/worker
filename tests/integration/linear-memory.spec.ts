@@ -126,15 +126,15 @@ describe('the wasm heap on the shipping 8.5 build', () => {
 		const low = await readHeap();
 		// a start still below the render's demand, handed to the next boot as a dropped memory
 		const pages = Math.floor((low.afterRender * 0.9) / 65_536);
-		keepSpareMemory({
-			binary: {
-				wasmMemory: new WebAssembly.Memory({
-					initial: pages,
-					maximum: INTERPRETER_MEMORY.maximum
-				})
-			}
+		// held to the end of the case: the spare slot is weak, so an unreferenced memory is
+		// collected whenever V8 pleases and the boot then starts at the default
+		const spare = new WebAssembly.Memory({
+			initial: pages,
+			maximum: INTERPRETER_MEMORY.maximum
 		});
+		keepSpareMemory({ binary: { wasmMemory: spare } });
 		const high = await readHeap();
+		expect(spare.buffer.byteLength, 'the spare memory outlived the boot').toBeGreaterThan(0);
 		expect(high.bootedIdle, 'the boot took the larger start').toBe(pages * 65_536);
 		expect(high.afterRender).toBeGreaterThan(high.bootedIdle);
 		// both climb 1% rungs to the same demand, so they differ by less than one rung; anything the

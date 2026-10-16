@@ -15,9 +15,8 @@
  * The workflow calls this script rather than carrying its own `curl` line, so there is one mechanism
  * and one version. `tests/node/drupal-tree.spec.ts` fails if the workflow grows a second one.
  *
- * The version comes from `SHIPPED_CORE_VERSION`, which `bun run gen:lock` generates from the ROOT
- * `composer.lock` and `tests/node/shipped-lock.spec.ts` guards. The direction decides whether any of
- * it means anything: it read the TREE's lock until 2026-09-09, and this script materialises the
+ * The version is read from the ROOT `composer.lock` on every call. The direction decides whether any
+ * of it means anything: it read the TREE's lock until 2026-09-09, and this script materialises the
  * tree, so the tree's lock decided what version populated the tree and could only ever confirm
  * itself. `composer update` at the root is the one place a version moves now.
  *
@@ -29,7 +28,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { lockVersions } from '../src/ops/packagist';
-import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS } from '../src/ops/shipped-lock';
+import { readLock } from './lock';
 
 /**
  * Where the tree lands, fixed rather than an argument.
@@ -52,7 +51,7 @@ export type FetchTreeResult = {
 
 /** the version to fetch: `DRUPAL_VERSION` when set, otherwise what the repo says it ships */
 export function drupalVersion(env: NodeJS.ProcessEnv = process.env): string {
-	return env.DRUPAL_VERSION || SHIPPED_CORE_VERSION;
+	return env.DRUPAL_VERSION || readLock().core;
 }
 
 export function tarballUrl(version: string): string {
@@ -98,14 +97,13 @@ export async function downloadTarball(version: string, attempts = 3): Promise<st
 /**
  * The contributed modules the tarball does NOT carry, pinned to the versions the repo ships.
  *
- * The release tarball is core only, and `SHIPPED_LOCK_VERSIONS` names four contrib packages beyond
- * it. Extracting the tarball alone therefore produces a tree whose `composer.lock` disagrees with
- * the baked map, which `tests/node/shipped-lock.spec.ts` reports as drift -- correctly, because a
- * core-only tree is not the tree the shipped artifacts were built from.
+ * The release tarball is core only, and the root lock names four contrib packages beyond it.
+ * Extracting the tarball alone therefore produces a tree whose `composer.lock` disagrees with the
+ * root one, and a core-only tree is not the tree the shipped artifacts were built from.
  *
  * @returns `name:version` pins, sorted, ready to hand to `composer require`.
  */
-export function contribPins(versions = SHIPPED_LOCK_VERSIONS): string[] {
+export function contribPins(versions: Record<string, string> = readLock().versions): string[] {
 	return Object.entries(versions)
 		.filter(([name]) => name.startsWith('drupal/') && !name.startsWith('drupal/core'))
 		.map(([name, version]) => `${name}:${version}`)

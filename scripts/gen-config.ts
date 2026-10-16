@@ -6,8 +6,8 @@
  *
  * THE WORKER CANNOT READ YAML AT RUNTIME. There is no filesystem in a Worker, so a declaration that
  * has to reach the edge is compiled into the bundle or it does not exist. That is the whole reason
- * this generator exists rather than a loader, and it is the same pattern `src/ops/shipped-lock.ts`
- * and `src/ops/driver-digest.ts` already follow.
+ * this generator exists rather than a loader, and it is the same pattern `src/ops/driver-digest.ts`
+ * already follows.
  *
  * `composer.lock` stays authoritative for VERSIONS. `config/modules.yml` says which modules the
  * project has an opinion about and what that opinion is; it never names a version.

@@ -23,6 +23,11 @@
 			"type": "Data",
 			"globs": ["**/*.zst", "**/*.br"],
 			"fallthrough": true
+		},
+		{
+			"type": "Text",
+			"globs": ["**/composer.lock"],
+			"fallthrough": true
 		}
 	],
 	"build": { "command": "bun run hydrate" },

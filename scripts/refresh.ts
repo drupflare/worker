@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { drifted, driverDrift, installedDriverPackages } from './driver-drift';
 import { installedVersion } from './fetch-drupal-tree';
 import { buildDriverAssets } from './gen-driver-assets';
+import { readLock } from './lock';
 
 /**
  * Takes the whole tree from a Drupal release to a rebuilt pack, in ONE command.
@@ -19,14 +20,14 @@ import { buildDriverAssets } from './gen-driver-assets';
  * unpatched. A sequence that long, run by hand once a quarter, is a sequence that gets a step wrong,
  * and the failure mode is a pack that builds and ships the wrong thing.
  *
- * ## THE VERSION IS READ FROM THE LOCK ON DISK, NEVER FROM THE BAKED CONSTANT
+ * ## THE VERSION IS READ FROM THE LOCK ON DISK, NEVER FROM A CONSTANT
  *
- * `SHIPPED_CORE_VERSION` is a module-scope import, so a process that has just run `composer update`
- * and `gen:lock` still holds the value from before it started. The first version of this planned
- * from that constant: the lock said 11.4.6, the plan said "already at 11.4.5", the tree fetch was
- * skipped, and it built a database from the OLD core while reporting the new version. Nothing
- * failed. {@link lockedCore} re-reads `composer.lock` after every step that can move it, and the
- * fetch is handed `DRUPAL_VERSION` explicitly so the two cannot disagree.
+ * A module-scope constant is read once, so a process that has just run `composer update` still
+ * holds the value from before it started. The first version of this planned from one: the lock said
+ * 11.4.6, the plan said "already at 11.4.5", the tree fetch was skipped, and it built a database
+ * from the OLD core while reporting the new version. Nothing failed. {@link lockedCore} re-reads
+ * `composer.lock` after every step that can move it, and the fetch is handed `DRUPAL_VERSION`
+ * explicitly so the two cannot disagree.
  *
  * ## The diff REPORTS; an acceptance rule decides
  *
@@ -72,27 +73,10 @@ function capture(cmd: string, args: string[]): { ok: boolean; stdout: string } {
 	}
 }
 
-/**
- * The core version `composer.lock` names, RE-READ from disk on every call.
- *
- * Not `SHIPPED_CORE_VERSION`, which this process imported before `composer update` ran.
- */
+/** the core version `composer.lock` names, RE-READ from disk on every call */
 function lockedCore(): string | null {
 	try {
-		const lock = JSON.parse(readFileSync(join(ROOT, 'composer.lock'), 'utf8')) as {
-			packages?: { name: string; version: string }[];
-		};
-		return lock.packages?.find((p) => p.name === 'drupal/core')?.version ?? null;
-	} catch {
-		return null;
-	}
-}
-
-/** what the generated map says, read from the file rather than the import, for the same reason */
-function bakedCore(): string | null {
-	try {
-		const src = readFileSync(join(ROOT, 'src/ops/shipped-lock.ts'), 'utf8');
-		return /SHIPPED_CORE_VERSION = ['"]([^'"]+)['"]/.exec(src)?.[1] ?? null;
+		return readLock(ROOT).core || null;
 	} catch {
 		return null;
 	}
@@ -101,7 +85,6 @@ function bakedCore(): string | null {
 function report(label: string): void {
 	console.error(`[refresh] ${label}:`);
 	console.error(`  lock core        ${lockedCore() ?? '(none)'}`);
-	console.error(`  baked core       ${bakedCore() ?? '(none)'}`);
 	console.error(`  drupal-src       ${installedVersion() ?? '(absent)'}`);
 }
 
@@ -112,7 +95,7 @@ for (const p of installedDriverPackages(ROOT)) {
 
 if (DRY) {
 	console.error('\n[refresh] --dry-run. A real run would:');
-	console.error(`  1 composer update${NO_COMPOSER ? ' (skipped)' : ''}, then gen:lock`);
+	console.error(`  1 composer update${NO_COMPOSER ? ' (skipped)' : ''}`);
 	console.error('  2 report driver drift against the packages composer installed');
 	console.error(`  3 fetch drupal-src unless it is already at the lock's core`);
 	console.error('  4 mount the driver siblings into the tree');
@@ -127,9 +110,8 @@ if (DRY) {
 
 // #region 1, the version chain
 if (!NO_COMPOSER) {
-	console.error('\n[refresh] composer update, then rebake the map it feeds');
+	console.error('\n[refresh] composer update');
 	run('composer', ['update', '--no-interaction', '--no-audit']);
-	run('bun', ['run', 'gen:lock']);
 }
 // #endregion
 
@@ -159,8 +141,7 @@ if (want === null) {
 }
 if (installedVersion() !== want) {
 	console.error(`\n[refresh] tree: materialise drupal-src at ${want}`);
-	// DRUPAL_VERSION explicitly, because `fetch:drupal` otherwise resolves the BAKED constant and a
-	// subprocess started before `gen:lock` would read the previous one
+	// DRUPAL_VERSION explicitly, so the fetch cannot resolve a different version than the plan used
 	run('bun', ['run', 'fetch:drupal', '--', '--force'], { DRUPAL_VERSION: want });
 	const got = installedVersion();
 	if (got !== want) {

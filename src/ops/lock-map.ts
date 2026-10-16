@@ -35,3 +35,16 @@ export function lockProvides(lock: unknown): Record<string, string> {
 	}
 	return out;
 }
+
+/** what a root `composer.lock` says this site ships: versions, provided virtuals and the core */
+export type ShippedLock = {
+	versions: Record<string, string>;
+	provides: Record<string, string>;
+	core: string;
+};
+
+/** the three facts the runtime and the build scripts read, derived from one parsed lock */
+export function shippedLock(lock: unknown): ShippedLock {
+	const versions = lockVersions(lock);
+	return { versions, provides: lockProvides(lock), core: versions['drupal/core'] ?? '' };
+}

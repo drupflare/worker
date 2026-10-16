@@ -17,6 +17,15 @@ declare module '*.zst' {
 }
 
 /**
+ * The root `composer.lock` as text (wrangler's `Text` rule), which `src/ops/shipped-lock.ts` parses
+ * so the lock is the one place the shipped versions are written.
+ */
+declare module '*.lock' {
+	const text: string;
+	export default text;
+}
+
+/**
  * The brotli frame `src/runtime/php-binary-85.ts` imports (same `Data` rule as `*.zst`); not the
  * shipping seam.
  */

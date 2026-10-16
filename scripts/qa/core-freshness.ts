@@ -1,7 +1,7 @@
 /**
  * Whether the Drupal core this repo ships has fallen behind upstream.
  *
- * `SHIPPED_CORE_VERSION` is checked against the tree and against `composer.lock`, and never against
+ * The shipped core is checked against the tree and against `composer.lock`, and never against
  * drupal.org -- so the first notice of a core advisory was a human happening to read the security
  * page. This closes that: one read-only fetch of the release history, no credential.
  *
@@ -185,8 +185,8 @@ async function main(): Promise<void> {
 	const flag = (name: string) =>
 		args.find((a: string) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 
-	const { SHIPPED_CORE_VERSION } = await import('../../src/ops/shipped-lock.js');
-	const shipped = flag('shipped') ?? SHIPPED_CORE_VERSION;
+	const { readLock } = await import('../lock');
+	const shipped = flag('shipped') ?? readLock().core;
 
 	const offline = flag('offline');
 	const xml = offline

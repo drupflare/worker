@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readLock } from '../../scripts/lock';
 import {
 	assess,
 	branchOf,
@@ -7,12 +8,11 @@ import {
 	parseReleases,
 	parseSupportedBranches
 } from '../../scripts/qa/core-freshness';
-import { SHIPPED_CORE_VERSION } from '../../src/ops/shipped-lock';
 
 /**
  * The staleness check for the core this repo ships.
  *
- * Nothing compared `SHIPPED_CORE_VERSION` to upstream, so the first notice of a core advisory was a
+ * Nothing compared the shipped core to upstream, so the first notice of a core advisory was a
  * human reading drupal.org. The check needs the network and therefore cannot join the hermetic gate;
  * what CAN be gated is the parsing and the verdict, over a fixture shaped like the real feed.
  *
@@ -199,7 +199,8 @@ describe('the report', () => {
 
 describe('the version this repo actually ships', () => {
 	it('has a branch the feed could match, which is what the whole check rests on', () => {
-		expect(SHIPPED_CORE_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
-		expect(branchOf(SHIPPED_CORE_VERSION)).toMatch(/^\d+\.\d+\.$/);
+		const { core } = readLock();
+		expect(core).toMatch(/^\d+\.\d+\.\d+$/);
+		expect(branchOf(core)).toMatch(/^\d+\.\d+\.$/);
 	});
 });

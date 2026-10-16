@@ -4,6 +4,6 @@
 		"types": ["bun", "node"],
 		"lib": ["ES2022", "DOM"]
 	},
-	"include": ["./**/*.ts"],
+	"include": ["./**/*.ts", "../src/vendor.d.ts"],
 	"exclude": []
 }

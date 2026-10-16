@@ -124,13 +124,13 @@ has to go through Drupal's own connection.
 
 ## Upgrading Drupal Core
 
-The root `composer.lock` decides which core the pack is built from. `bun run gen:lock` bakes the
-version into `src/ops/shipped-lock.ts`, and `bun run fetch:drupal` materialises that version into
-`drupal-src`. So an upgrade is:
+The root `composer.lock` decides which core the pack is built from. The runtime bundles the lock and
+reads its versions from it, and `bun run fetch:drupal` materialises the locked core into
+`drupal-src`. Nothing else records the version, so a renovate bump of the lock is the whole change.
+An upgrade by hand is:
 
 ```sh
 composer update # or bump the pin in composer.json first
-bun run gen:lock
 bun run fetch:drupal -- --force
 bun run build:site-db /tmp/site.sqlite
 node scripts/diff-site-db.ts assets/drupal/site.sqlite /tmp/site.sqlite

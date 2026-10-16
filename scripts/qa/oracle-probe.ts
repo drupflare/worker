@@ -4,7 +4,7 @@ import {
 	verdictFor,
 	type Conflict
 } from '../../src/ops/packagist';
-import { SHIPPED_LOCK_VERSIONS } from '../../src/ops/shipped-lock';
+import { readLock } from '../lock';
 import { QA_MODULES } from './modules';
 
 /**
@@ -93,7 +93,7 @@ async function probe(name: string, url: string): Promise<Probe> {
 			conflicts: []
 		};
 	}
-	const { conflicts } = checkRequirements(newest.require, SHIPPED_LOCK_VERSIONS);
+	const { conflicts } = checkRequirements(newest.require, readLock().versions);
 	return {
 		composer: name,
 		url,

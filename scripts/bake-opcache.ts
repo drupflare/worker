@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { DRIVER_DIGEST } from '../src/ops/driver-digest.ts';
-import { SHIPPED_LOCK_VERSIONS } from '../src/ops/shipped-lock.ts';
 import { opcacheSourceKey } from '../src/runtime/opcache.ts';
 import { withWrangler } from './bake-container.ts';
+import { readLock } from './lock.ts';
 import { layerPath, serialiseOpcachePack, systemIdOf } from './opcache-layer.ts';
 
 /**
@@ -111,7 +111,7 @@ async function main(): Promise<void> {
 			systemId,
 			files: index.length,
 			bytes: offset,
-			source: opcacheSourceKey(DRIVER_DIGEST, SHIPPED_LOCK_VERSIONS)
+			source: opcacheSourceKey(DRIVER_DIGEST, readLock().versions)
 		})
 	);
 	console.log(

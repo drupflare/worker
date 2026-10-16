@@ -302,6 +302,20 @@ function workerLanes(): number {
 	return Math.max(ci ? 1 : 2, Math.min(byCores, byMemory, 8));
 }
 
+/**
+ * `src/ops/shipped-lock.ts` imports the root `composer.lock` as text, which wrangler's `Text` rule
+ * does in a bundle. Vite has no rule for the extension and would parse the file as JavaScript, so
+ * the projects that load source through vite get the same mapping here.
+ */
+const lockAsText = {
+	name: 'lock-as-text',
+	enforce: 'pre' as const,
+	transform(code: string, id: string) {
+		if (!id.endsWith('composer.lock')) return null;
+		return { code: `export default ${JSON.stringify(code)};`, map: null };
+	}
+};
+
 export default defineConfig({
 	test: {
 		projects: [
@@ -373,6 +387,7 @@ export default defineConfig({
 				}
 			},
 			{
+				plugins: [lockAsText],
 				test: {
 					name: 'node',
 					environment: 'node',
@@ -395,6 +410,7 @@ export default defineConfig({
 				}
 			},
 			{
+				plugins: [lockAsText],
 				test: {
 					name: 'e2e',
 					environment: 'node',

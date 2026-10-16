@@ -9,7 +9,7 @@ import {
 	missingContrib,
 	tarballUrl
 } from '../../scripts/fetch-drupal-tree';
-import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS } from '../../src/ops/shipped-lock';
+import { readLock } from '../../scripts/lock';
 
 /**
  * `drupal-src/` has one producer, and the workflow uses it too.
@@ -55,15 +55,15 @@ afterAll(() => {
 });
 
 describe('the version comes from what the repo says it ships', () => {
-	it('defaults to SHIPPED_CORE_VERSION, which gen:lock writes from the tree itself', () => {
-		expect(drupalVersion({})).toBe(SHIPPED_CORE_VERSION);
-		expect(SHIPPED_CORE_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+	it('defaults to the core the root composer.lock pins', () => {
+		expect(drupalVersion({})).toBe(readLock().core);
+		expect(readLock().core).toMatch(/^\d+\.\d+\.\d+$/);
 	});
 
 	it('honours DRUPAL_VERSION, so an upgrade can be tried without editing a constant', () => {
 		expect(drupalVersion({ DRUPAL_VERSION: '11.5.0' })).toBe('11.5.0');
 		// an empty string is not an override; it is an unset variable that CI exported anyway
-		expect(drupalVersion({ DRUPAL_VERSION: '' })).toBe(SHIPPED_CORE_VERSION);
+		expect(drupalVersion({ DRUPAL_VERSION: '' })).toBe(readLock().core);
 	});
 
 	it('builds the ftp.drupal.org URL the workflow used to build inline', () => {
@@ -95,11 +95,12 @@ describe('the release tarball is core only, so the contrib pins are part of the 
 		expect(contribPins().some((p) => p.startsWith('drupal/core'))).toBe(false);
 	});
 
-	it('reads the versions from SHIPPED_LOCK_VERSIONS rather than a second hardcoded list', () => {
+	it('reads the versions from the root lock rather than a second hardcoded list', () => {
 		expect(contribPins({ 'drupal/token': '9.9.9' })).toEqual(['drupal/token:9.9.9']);
+		const { versions } = readLock();
 		for (const pin of contribPins()) {
 			const at = pin.lastIndexOf(':');
-			expect(SHIPPED_LOCK_VERSIONS[pin.slice(0, at)]).toBe(pin.slice(at + 1));
+			expect(versions[pin.slice(0, at)]).toBe(pin.slice(at + 1));
 		}
 	});
 
@@ -114,14 +115,15 @@ describe('the release tarball is core only, so the contrib pins are part of the 
 	});
 
 	it('asks for a pin the tree holds at the WRONG version, not just a missing one', () => {
-		// the case a plain existence check would wave through, and the one that makes
-		// shipped-lock.spec.ts red with nothing else reporting it
-		const stale = { 'drupal/admin_toolbar': '3.0.0', 'drupal/ctools': '4.1.1' };
-		expect(missingContrib(treeFixture('11.4.5', stale))).toEqual([
-			'drupal/admin_toolbar:3.6.3',
-			'drupal/pathauto:1.15.0',
-			'drupal/token:1.17.0'
-		]);
+		// the case a plain existence check would wave through
+		const { versions } = readLock();
+		const stale = {
+			'drupal/admin_toolbar': '0.0.1',
+			'drupal/ctools': versions['drupal/ctools']!
+		};
+		expect(missingContrib(treeFixture('11.4.5', stale))).toEqual(
+			contribPins().filter((pin) => !pin.startsWith('drupal/ctools:'))
+		);
 	});
 
 	it('asks for all of them when there is no lock to read', () => {

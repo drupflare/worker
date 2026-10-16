@@ -73,10 +73,10 @@
 								<div class="accordion" style="margin-bottom: 0">
 		<div class="accordion-group">
 			<div class="accordion-heading">
-									<a class="accordion-toggle " data-toggle="collapse" data-target="#namespace-1477657373"></a>
+									<a class="accordion-toggle " data-toggle="collapse" data-target="#namespace-694775985"></a>
 								<a href="namespaces/default.html" style="margin-left: 30px; padding-left: 0">\</a>
 			</div>
-			<div id="namespace-1477657373" class="accordion-body collapse in">
+			<div id="namespace-694775985" class="accordion-body collapse in">
 				<div class="accordion-inner">
 
 					
@@ -3218,7 +3218,7 @@ had neither -- so a caller misreading -1 as &quot;forged&quot; was invisible fro
             <article class="method">
                 <h3 class=" ">cfw_serve()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
-                <pre class="signature" style="margin-right: 54px;">cfw_serve(string  <span class="argument">$path</span>, bool|string  <span class="argument">$destruct = true</span>, string  <span class="argument">$method = &#039;GET&#039;</span>, string  <span class="argument">$body = &#039;&#039;</span>, string  <span class="argument">$contentType = &#039;&#039;</span>, string  <span class="argument">$cookieHeader = &#039;&#039;</span>, string  <span class="argument">$origin = &#039;&#039;</span>, string  <span class="argument">$clientIp = &#039;&#039;</span>, string  <span class="argument">$accept = &#039;&#039;</span>) : \Symfony\Component\HttpFoundation\Response</pre>
+                <pre class="signature" style="margin-right: 54px;">cfw_serve(string  <span class="argument">$path</span>, bool|string  <span class="argument">$destruct = true</span>, string  <span class="argument">$method = &#039;GET&#039;</span>, string  <span class="argument">$body = &#039;&#039;</span>, string  <span class="argument">$contentType = &#039;&#039;</span>, string  <span class="argument">$cookieHeader = &#039;&#039;</span>, string  <span class="argument">$origin = &#039;&#039;</span>, string  <span class="argument">$clientIp = &#039;&#039;</span>, string  <span class="argument">$accept = &#039;&#039;</span>, array  <span class="argument">$headers = []</span>) : \Symfony\Component\HttpFoundation\Response</pre>
                 <p><em>Runs one request through the booted kernel and returns the response.</em></p>
                 
 
@@ -3276,6 +3276,12 @@ had neither -- so a caller misreading -1 as &quot;forged&quot; was invisible fro
                                 <td>string</td>
                                 <td>$accept </td>
                                 <td><p>The raw Accept header, or an empty string.</p>
+</td>
+                            </tr>
+                                                    <tr>
+                                <td>array</td>
+                                <td>$headers </td>
+                                <td><p>Every other inbound header, lowercase name to value, such as authorization.</p>
 </td>
                             </tr>
                                             </table>
@@ -9642,7 +9648,7 @@ Every caller treats the value as opaque, which is what makes the substitution sa
 							</a>
 							and authored
 							                    on
-							October 14th, 2026 at 19:34.
+							October 16th, 2026 at 16:11.
 						</section>
 					</section>
 				</section>

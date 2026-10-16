@@ -662,6 +662,17 @@ value all fall through to the var.</p>
 <td>wall-clock ms one window may run</td>
 </tr>
 </tbody></table></div>
+<h3 id="request-headers">Request Headers</h3>
+<p>Drupal receives the request&#39;s headers, not only its cookie. <code>Authorization</code>, <code>X-Api-Key</code>, <code>Origin</code>,
+<code>User-Agent</code> and any other header an API reads reach <code>$request-&gt;headers</code> and <code>$_SERVER</code>. Before this
+the render was handed the cookie, <code>Accept</code>, the content type and the client address and nothing
+else, so every bearer-token route on a headless site answered as anonymous.</p>
+<p>Three rules keep that safe. A request that carries <code>Authorization</code> is treated like one that carries
+a session: it is rendered per caller and never read from or written to the stored page, the KV tier or
+the edge cache. An <code>Authorization</code> that is this deployment&#39;s owner token is dropped before PHP sees
+it. <code>cf-*</code>, <code>x-cfw-*</code> and the hop-by-hop headers are dropped too, and at most 64 headers and 16 KiB
+are forwarded, whole or not at all. The previous request&#39;s headers are removed from <code>$_SERVER</code> before
+the next is built, so a token never outlives the request that carried it.</p>
 <h3 id="outbound_guard"><code>OUTBOUND_GUARD</code></h3>
 <p>PHP names the URL for <code>cfwFetch</code> and <code>cfwQueueFetch</code>, so any module able to build a string chooses
 where the Worker connects. The guard refuses a scheme other than <code>http</code>/<code>https</code>, a URL carrying
@@ -862,7 +873,7 @@ counters under <code>exec</code> on <code>/serve-stats?exec=1</code>.</p>
 host at all. <code>/enable</code> is the same next step either way.</p>
 <h2 id="migrated-project-settings">Migrated Project Settings</h2>
 <p>A project moved from another host usually reads environment variables, <code>$config</code> overrides, header
-rules and redirects that the old host supplied. Four names carry them.</p>
+rules and redirects that the old host supplied. Five names carry them.</p>
 <div class="table"><table>
 <thead>
 <tr>
@@ -882,6 +893,11 @@ rules and redirects that the old host supplied. Four names carry them.</p>
 <td>merged over <code>$config</code> with <code>array_replace_recursive</code> at boot</td>
 </tr>
 <tr>
+<td><code>DRUPAL_SETTINGS</code></td>
+<td>JSON object, as a secret</td>
+<td>merged over <code>$settings</code> with <code>array_replace_recursive</code> at boot</td>
+</tr>
+<tr>
 <td><code>RESPONSE_HEADERS</code></td>
 <td>JSON array, KV-overridable</td>
 <td><code>[{&quot;path&quot;:&quot;/blog/*&quot;,&quot;set&quot;:{&quot;X-Frame-Options&quot;:&quot;DENY&quot;}}]</code></td>
@@ -892,11 +908,15 @@ rules and redirects that the old host supplied. Four names carry them.</p>
 <td><code>[{&quot;from&quot;:&quot;/old/*&quot;,&quot;to&quot;:&quot;/new/*&quot;,&quot;status&quot;:301}]</code></td>
 </tr>
 </tbody></table></div>
-<p>Only the <code>DRUPAL_ENV_</code> prefix and <code>DRUPAL_CONFIG</code> reach PHP. The owner token, <code>PW_DIAGNOSTICS</code>, mail
-credentials and API tokens live on the same environment and are never read into it. A malformed
-value is ignored, and <code>/serve-stats</code> lists the names that were ignored under <code>deploymentEnv</code>. A heap
-image is not taken or restored while either is set, because the image would carry the old values.
-Values change with a redeploy.</p>
+<p>Only the <code>DRUPAL_ENV_</code> prefix, <code>DRUPAL_CONFIG</code> and <code>DRUPAL_SETTINGS</code> reach PHP. The owner token,
+<code>PW_DIAGNOSTICS</code>, mail credentials and API tokens live on the same environment and are never read
+into it. A malformed value is ignored, and <code>/serve-stats</code> lists the names that were ignored under
+<code>deploymentEnv</code>. A heap image is not taken or restored while any of them is set, because the image
+would carry the old values. Values change with a redeploy.</p>
+<p><code>DRUPAL_SETTINGS</code> is for what <code>settings.php</code> carried on the old host, such as a module&#39;s
+<code>$settings[&#39;...&#39;]</code> entries. It is read up to 64 KiB, and it cannot move the keys the Worker sets
+itself: <code>trusted_host_patterns</code>, <code>config_sync_directory</code>, <code>container_yamls</code> and the public, private
+and temp file paths. A key it names that is protected is dropped and listed in the ignored names.</p>
 <p><code>RESPONSE_HEADERS</code> matches an exact path or a <code>/prefix*</code>. It cannot set <code>Set-Cookie</code>, anything
 starting <code>x-cfw-</code>, or the headers that frame the body. <code>REDIRECTS</code> matches an exact path (a trailing
 slash is ignored) or a trailing <code>*</code> that carries the rest of the path into the target. It answers
@@ -2552,6 +2572,14 @@ backoff that honours <code>Retry-After</code> and otherwise doubles to an hour.<
 <p><code>selectFiles()</code> keeps PHP, YAML, Twig, JavaScript and CSS, and drops <code>tests/</code>, <code>vendor/</code>,
 <code>node_modules/</code>, <code>.github/</code> and dotfiles. Module names come from <code>*.info.yml</code>; a submodule inside
 another module&#39;s tree stays where it is and is mounted once.</p>
+<p>A module mounts under <code>modules/custom/&lt;name&gt;</code> unless the remote names a <code>mount</code>, a path inside
+<code>modules</code>, <code>themes</code> or <code>profiles</code> such as <code>modules/mantle2</code>. A site that kept a module somewhere
+else sets it so a pull updates the module where it already is instead of adding a second copy
+beside it. It applies when the repository holds one module, and with several each keeps its
+default. <code>/git?action=add&amp;mount=</code> takes it, and a path with <code>..</code>, a dot segment, a leading slash or
+a <code>core/</code> prefix is refused, both when it is added and on every pull.</p>
+<p><code>vendor/</code> is never delivered, so a module whose dependencies are bundled inside it keeps the ones
+it was carried with, and a new dependency in a later commit has to arrive another way.</p>
 <p>A pull is applied in one <code>transactionSync()</code> and then verified by booting the Drupal kernel. A boot
 failure restores the previous file set and records the reason on the remote.</p>
 <h3 id="what-gets-written-back">What Gets Written Back</h3>

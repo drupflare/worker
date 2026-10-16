@@ -1969,10 +1969,14 @@ bun run check:site-db      # diff a built database against the shipped one
 bun run vps:down           # tear it down, including its volume
 ```
 
-**`backup:verify` fails on Gregory's home network and that is not a defect.** The bucket is fronted
-by `drupflare-cdn.gmitch215.dev`, and the network blocklists `*.dev`, so it answers
-`UNABLE_TO_VERIFY_LEAF_SIGNATURE`. Run it behind a VPN or from CI. Do not debug the script, and do
-not conclude anything about the bucket's contents from a failure with that error.
+**The bucket is fronted by `cdn.drupflare.com` (authoritative) and `cdn.drupflare.app`**, with the
+older `drupflare-cdn.gmitch215.dev` and `.xyz` names still serving the same keys (checked
+2026-10-16: one site.sqlite, 5,832,704 bytes, the same ETag on all of them). `ORIGINS` in
+`scripts/backup-cdn.ts` tries them in that order, and the manifest names only the first.
+`backup:verify` used to fail on Gregory's home network because it blocklists `*.dev` and answers
+`UNABLE_TO_VERIFY_LEAF_SIGNATURE`; the verify reads the manifest's origin, which is now a `.com`, so
+that should no longer apply. It has not been run from that network since the change. Do not conclude
+anything about the bucket's contents from a failure with that error.
 
 **AND "RUN IT FROM CI" WAS ADVICE TO USE AN INSTRUMENT THAT HAD NEVER RUN.** Found 2026-09-14:
 `manifestFromDisk()` was called unconditionally at the top of `backup-cdn.ts`'s `import.meta.main`
@@ -2416,32 +2420,29 @@ returns. `/updb` hung past every timeout on a fresh object and read as a platfor
 `site-do.ts`. A helper written for `alarm()`, which is its own event, is not safe to call from a
 route without saying which one is holding what. `updbBeat(gated)` takes the flag for that reason.
 
-## CI CHECKS THE SIBLINGS OUT AT THE LOCKED TAG, and it used to take their default branch
+## CI CHECKS THE SIBLINGS OUT AT THEIR LATEST CODE, and only a release pins them
 
-`actions/checkout` with no `ref` takes the default branch, and every sibling checkout in every
-workflow was written that way -- so `composer.lock` could pin `drupflare/drupflare v0.3.1` while the
-lane packed whatever was on that repo's master. The lock was authoritative for static analysis and
-for `SHIPPED_CORE_VERSION`, and decorative for the bytes that actually ship.
+Reversed 2026-10-16. For a month every lane checked the siblings out at the tags `composer.lock`
+names, on the argument that a sibling commit should not be a silent release. The cost showed the same
+day: the worker's baked artifacts (the driver pack and digest, the container row in `site.sqlite`)
+were built from sibling code that no tag had been cut for, so Pack Suites, Browser Lane and Verify CDN
+Backup were red by construction until two other repositories had released and a lock bump had landed.
+"Build from source" means the latest pushed code, and nothing in a development build should wait on a
+release.
 
-**That made a sibling commit a silent release.** Push to a sibling's master and the next CI run packs
-it, with no commit here and nothing comparing the two. It is the same second-copy-with-no-check shape
-as the `ARCHIVED` constant and the generated `shipped-lock.ts`, and it defeats the point of making
-the lock authoritative in the first place -- syncing by commit is exactly what that change existed to
-stop.
+`.github/actions/siblings` is the single expression of it. Its default checks each sibling out at the
+branch this run is on when that branch exists there, and at the sibling's default branch otherwise.
+`pin: 'true'` checks out the tag `composer.lock` names and fails loudly on a package the lock does
+not pin; `release.yml` is the only caller that passes it, and `tests/node/workflows.spec.ts` fails if
+another one does. A release has to be reproducible from a version. A development build has to be
+current.
 
-`.github/actions/siblings` is the single expression of it: one composite action reads each version
-out of `composer.lock` and checks that tag out, used by all nine sibling checkouts across
-`browser`, `build`, `coverage`, `e2e`, `metrics` and `release`. **It fails loudly on a package the
-lock does not pin** rather than silently falling back to a branch, which is the failure mode it
-replaces. Verified against the live tags: `drupflare v0.3.1`, `rom v0.2.2`, `stream-http v0.1.3` all
-resolve.
-
-Consequence worth knowing: a sibling change now reaches CI only once `composer.lock` names the
-version, which is a renovate PR rather than a push. That is the intended cost.
+The consequence to know: a development build is only as reproducible as the siblings' branches, and a
+sibling push does not start a worker run. The worker's lanes see it on their next push or schedule.
 
 ## The lock is authoritative now, and the chain used to be a cycle
 
-`drupal-src/composer.lock` -> `gen:lock` -> `SHIPPED_CORE_VERSION` -> `fetch:drupal` -> `drupal-src`.
+`drupal-src/composer.lock` -> baked map -> core version -> `fetch:drupal` -> `drupal-src`.
 The tree's own lock chose the version that populated the tree, so the only thing it could confirm was
 itself, and the ROOT lock sat outside the loop with nothing reading it. That is how a `composer
 update` moved `drupal/core` to 11.4.6 for phpstan while the pack stayed at 11.4.5.

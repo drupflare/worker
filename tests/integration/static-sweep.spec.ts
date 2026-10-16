@@ -1221,9 +1221,12 @@ describe('the instrument itself', () => {
 			const [first = 0, ...rest] = emptied;
 			for (const bytes of rest) expect(Math.abs(bytes - first)).toBeLessThan(100);
 
-			// and left warm it is not, by more than 20 KB, which is the confound being pinned
+			// and left warm it is not, by a margin that dwarfs the jitter, which is the confound being
+			// pinned. It was 23 KB through 11.4.7, when the navigation went out as a BigPipe
+			// placeholder with a no-JS fallback; 11.4.8 keeps it off BigPipe and the difference is the
+			// 7 KB the other placeholders still make
 			const [warmFirst = 0, warmSecond = 0] = kept;
-			expect(warmFirst - warmSecond).toBeGreaterThan(20_000);
+			expect(warmFirst - warmSecond).toBeGreaterThan(5_000);
 		},
 		REQUEST_TIMEOUT
 	);

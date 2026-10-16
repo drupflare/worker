@@ -205,9 +205,15 @@ describe('P7: harvesting and normalising a shared shell', () => {
 				expect(who['ok']).toBe(true);
 				expect(placeholderIds(html(who)).length).toBeGreaterThan(0);
 			}
-			// admin carries one MORE hole than a plain member: the navigation toolbar
-			expect(placeholderIds(html(r.admin)).length).toBeGreaterThan(
-				placeholderIds(html(r.alice)).length
+			// admin carries the navigation, and how it arrives depends on core: through 11.4.7 it was
+			// one more BigPipe hole than a plain member has, and 11.4.8 denies BigPipe for that
+			// placeholder (NavigationRenderer), so it is rendered into the page and the hole counts
+			// are equal. Either way the admin page has to carry it.
+			const extraHole =
+				placeholderIds(html(r.admin)).length > placeholderIds(html(r.alice)).length;
+			const inline = html(r.admin).includes('class="admin-toolbar');
+			expect(extraHole || inline, 'the navigation reaches an admin as a hole or inline').toBe(
+				true
 			);
 		},
 		REQUEST_TIMEOUT

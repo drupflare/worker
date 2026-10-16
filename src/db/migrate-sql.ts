@@ -504,8 +504,9 @@ export function assetChunkLoader(env: MigrateAssetEnv, prefix = 'drupal-sql'): M
  *
  * The bound is subrequests, not the 10 ms cap (an object invocation read 1,882 ms of `cpuTime`
  * on free): free allows 50 and {@link assetChunkLoader} spends one fetch per chunk plus one for the
- * memoised manifest, so free replays 40 per invocation. Paid is one invocation (30 s CPU, 1,000
- * subrequests), so chunking there is only crash-resume.
+ * memoised manifest, so free replays 40 per invocation. Paid is one invocation (30 s CPU, 10,000
+ * subrequests by default, and 1,500 asset fetches in one object invocation ran clean on 2026-10-16),
+ * so chunking there is only crash-resume.
  */
 export function chunksPerInvocation(env?: MigratePlanEnv): number {
 	const explicit = Number(env?.MIGRATE_CHUNKS_PER_INVOCATION ?? 0);

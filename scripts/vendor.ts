@@ -2,10 +2,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 
-const require = createRequire(import.meta.url);
-const pkgRoot = dirname(require.resolve('php-wasm/package.json'));
-const outDir = resolve(import.meta.dirname, '../vendor');
-
 /**
  * The versions extracted from the npm `php-wasm` package, which ships 8.0 through 8.5.
  *
@@ -19,26 +15,59 @@ const outDir = resolve(import.meta.dirname, '../vendor');
  * no consumer and the report prices it as a dead end; it is kept only because `vendor/` is an
  * append-only historical store.
  */
-const VERSIONS = ['8.3', '8.4'];
+export const VERSIONS = ['8.3', '8.4'];
 
-await mkdir(outDir, { recursive: true });
-
-for (const version of VERSIONS) {
-	const glueName = `php${version}-web.mjs`;
-	const glue = await readFile(join(pkgRoot, glueName), 'utf8');
-
-	const hash = glue.match(/([0-9a-f]{40})\.wasm/)?.[1];
-	if (!hash) throw new Error(`no wasm hash found in ${glueName}`);
-
-	const wasm = await readFile(join(pkgRoot, `${hash}.wasm`));
-	await writeFile(join(outDir, `php${version}.wasm`), wasm);
-
-	// the glue resolves the binary itself; we hand it a prebuilt Module instead,
-	// so neutralize the fetch path rather than let it construct a bad URL
-	const patched = glue.replaceAll(`${hash}.wasm`, `php${version}.wasm`);
-	await writeFile(join(outDir, glueName), patched);
-
-	console.log(
-		`php ${version}: ${glueName} + php${version}.wasm (${wasm.length} bytes, hash ${hash.slice(0, 8)})`
+/**
+ * Writes a file into the append-only `vendor/` store, and refuses to change one that is there.
+ *
+ * `vendor/php8.3.wasm` is 13,165,354 bytes from php-wasm 0.1.0 and is named in `cdn-manifest.json`;
+ * 0.2.0 ships a different 8.3 build (12,222,482 bytes), so running this against a newer package
+ * replaced a backed-up file and made `backup:drift` report it as changed with nothing saying why.
+ *
+ * @returns whether the file was written, or `same` when it already held these bytes
+ */
+export async function writeOnce(
+	path: string,
+	bytes: Uint8Array | string
+): Promise<'written' | 'same'> {
+	const wanted = typeof bytes === 'string' ? Buffer.from(bytes) : Buffer.from(bytes);
+	const existing = await readFile(path).catch(() => null);
+	if (existing === null) {
+		await writeFile(path, wanted);
+		return 'written';
+	}
+	if (Buffer.compare(existing, wanted) === 0) return 'same';
+	throw new Error(
+		`${path} already holds different bytes. vendor/ is append-only and its files are backed up ` +
+			'under cdn-manifest.json, so the installed php-wasm is not the one they came from. ' +
+			'Leave the file alone, or copy the new build under a new name by hand.'
 	);
+}
+
+if (import.meta.main) {
+	const require = createRequire(import.meta.url);
+	const pkgRoot = dirname(require.resolve('php-wasm/package.json'));
+	const outDir = resolve(import.meta.dirname, '../vendor');
+
+	await mkdir(outDir, { recursive: true });
+
+	for (const version of VERSIONS) {
+		const glueName = `php${version}-web.mjs`;
+		const glue = await readFile(join(pkgRoot, glueName), 'utf8');
+
+		const hash = glue.match(/([0-9a-f]{40})\.wasm/)?.[1];
+		if (!hash) throw new Error(`no wasm hash found in ${glueName}`);
+
+		const wasm = await readFile(join(pkgRoot, `${hash}.wasm`));
+		const wrote = await writeOnce(join(outDir, `php${version}.wasm`), wasm);
+
+		// the glue resolves the binary itself; we hand it a prebuilt Module instead,
+		// so neutralize the fetch path rather than let it construct a bad URL
+		const patched = glue.replaceAll(`${hash}.wasm`, `php${version}.wasm`);
+		await writeOnce(join(outDir, glueName), patched);
+
+		console.log(
+			`php ${version}: ${glueName} + php${version}.wasm (${wasm.length} bytes, hash ${hash.slice(0, 8)}, ${wrote})`
+		);
+	}
 }

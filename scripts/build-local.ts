@@ -110,6 +110,8 @@ export interface LocalStep {
 	satisfied?(root: string): boolean;
 	/** runs on every build whatever is on disk; the outputs are still checked afterwards */
 	alwaysRun?: boolean;
+	/** replaces the Drupal tree, so every step after it reruns whatever its outputs say */
+	replacesTree?: boolean;
 	/**
 	 * An input the step's outputs must be at least as new as.
 	 *
@@ -375,8 +377,12 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		 * and upgraded nothing. Measured 2026-08-21 while rehearsing a core upgrade.
 		 */
 		satisfied: (root) => installedVersion(join(root, 'drupal-src')) === drupalVersion(),
+		replacesTree: true,
 		tools: ['bun', 'composer', 'tar'],
-		commands: () => [['bun', 'run', 'fetch:drupal']],
+		// the step only runs when the tree is absent or at another version than the lock names, and
+		// the fetch refuses to replace the second without --force: a renovate bump of core stopped
+		// every local build there
+		commands: () => [['bun', 'run', 'fetch:drupal', '--', '--force']],
 		note: '~180 MB: the pinned core tarball plus the four contrib modules it does not carry'
 	},
 	{
@@ -643,7 +649,7 @@ export function planLocalBuild(
 	const only = opts.only && opts.only.length > 0 ? new Set(opts.only) : null;
 	const skip = new Set(opts.skip ?? []);
 
-	return steps.map((step) => {
+	const decided = steps.map((step): PlannedStep => {
 		if (only && !only.has(step.id)) {
 			return { step, run: false, reason: 'not in --only' };
 		}
@@ -673,6 +679,16 @@ export function planLocalBuild(
 					: 'not done yet'
 		};
 	});
+
+	// a step that replaces what every later one reads makes their outputs stale however present
+	// they are: a new core left the pack, the twig bake and the database of the old one in place
+	const replaces = decided.findIndex((p) => p.run && p.step.replacesTree === true);
+	if (replaces < 0) return decided;
+	return decided.map((p, i) =>
+		i > replaces && !p.run && p.reason !== 'not in --only' && p.reason !== 'excluded by --skip'
+			? { ...p, run: true, reason: `the tree ${decided[replaces]?.step.id} replaced` }
+			: p
+	);
 }
 
 /** a tool a planned step needs and this machine does not have */

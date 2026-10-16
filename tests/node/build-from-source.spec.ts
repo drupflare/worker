@@ -308,6 +308,35 @@ describe('planning is pure, so the resume decision is one testable function', ()
 		]);
 	});
 
+	it('reruns every step after the tree when the tree is at another version than the lock', () => {
+		const root = satisfiedTree();
+		writeFileSync(
+			join(root, 'drupal-src/core/lib/Drupal.php'),
+			"<?php\nclass Drupal { const VERSION = '0.0.1'; }\n"
+		);
+		const planned = planLocalBuild(root);
+		const at = planned.findIndex((p) => p.step.id === 'tree');
+		expect(planned[at]?.run).toBe(true);
+		// the pack, the twig bake and the database were all built from the tree that is going away,
+		// and their outputs are on disk, so presence alone would have skipped them
+		for (const p of planned.slice(at + 1)) {
+			expect(p.run, `${p.step.id}: ${p.reason}`).toBe(true);
+		}
+		const before = planned.slice(0, at).filter((p) => p.step.id !== 'driver');
+		expect(before.every((p) => !p.run)).toBe(true);
+	});
+
+	it('leaves a step the caller excluded alone even when the tree is replaced', () => {
+		const root = satisfiedTree();
+		writeFileSync(
+			join(root, 'drupal-src/core/lib/Drupal.php'),
+			"<?php\nclass Drupal { const VERSION = '0.0.1'; }\n"
+		);
+		const planned = planLocalBuild(root, { skip: ['prefill'] });
+		expect(planned.find((p) => p.step.id === 'prefill')?.run).toBe(false);
+		expect(planned.find((p) => p.step.id === 'pack')?.run).toBe(true);
+	});
+
 	it('still verifies the driver pack by its output after running it every time', () => {
 		const driver = LOCAL_STEPS.find((s) => s.id === 'driver');
 		expect(driver?.alwaysRun).toBe(true);

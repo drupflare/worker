@@ -199,6 +199,19 @@ foreach ($extraTemplates as $name) {
 }
 $localHash = Drupal::getContainer()->getParameter('twig_extension_hash');
 
+// the hash follows the installed set, core included, so a core bump leaves the shipped row naming
+// the old one and the runtime discards the prefix and every file baked under it; the prefix stays
+$hashSynced = false;
+if (!$dry && is_array($shippedRow) && $localHash !== ($shippedRow['twig_extension_hash'] ?? null)) {
+	$shippedRow['twig_extension_hash'] = $localHash;
+	$pdo->prepare('UPDATE key_value SET value = ? WHERE collection = ? AND name = ?')->execute([
+		serialize($shippedRow),
+		'state',
+		'twig_extension_hash_prefix',
+	]);
+	$hashSynced = true;
+}
+
 // #region the retarget
 /**
  * optionsHash exactly as Twig\Environment::updateOptionsHash() builds it, with the PHP minor
@@ -408,6 +421,7 @@ echo json_encode(
 		'localExtensionHash' => $localHash,
 		'shippedExtensionHash' => $shippedRow['twig_extension_hash'] ?? null,
 		'extensionHashAgrees' => $localHash === ($shippedRow['twig_extension_hash'] ?? null),
+		'extensionHashSynced' => $hashSynced,
 		'templates' => count($files),
 		'selfCheckFailures' => $mismatched,
 		'bytes' => $bytes,

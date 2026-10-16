@@ -28,6 +28,7 @@ import { join, resolve } from 'node:path';
 import { PACKED_CONTAINER_DIGEST } from '../src/ops/container-digest.ts';
 import { DRIVER_DIGEST } from '../src/ops/driver-digest.ts';
 import { extensionFingerprint, PACKED_CONTAINER_TABLE } from '../src/ops/packed-container.ts';
+import { bakeIsCurrent } from './container-current';
 import { markHydrating } from './hydrating';
 import { PACK_BIN, packVersionsHash } from './pack-hash';
 
@@ -83,26 +84,26 @@ function ensureChunks(): void {
 	);
 }
 
-/**
- * Whether a cid came from the RUNTIME rather than from a native bake.
- *
- * THE HASH ALONE IS NOT ENOUGH, and checking only the hash shipped a broken row. `install-site-db.php`
- * bakes on the build machine, so the database it produces already carries a `cache_container` row
- * with the right `VERSIONS_HASH` and the wrong everything else -- `Darwin` and an absolute
- * `sites/build/services.yml`. The early exit below read the hash, matched, and left it in place.
- *
- * `getContainerCacheKey()` folds the OS and the services.yml paths in beside the hash, so both are
- * readable from the cid and neither needs the row opened.
- */
-function runtimeShaped(cid: string): boolean {
-	return cid.includes(':Linux:') && cid.includes('/drupal/sites/default/services.yml');
-}
-
 function currentCid(): string | null {
 	const db = new Database(SQLITE);
 	const row = db.query('SELECT cid FROM cache_container').get() as { cid: string } | null;
 	db.close();
 	return row?.cid ?? null;
+}
+
+/** the driver each packed variant row was baked against; none when the table is absent or empty */
+function recordedDrivers(): string[] {
+	const db = new Database(SQLITE);
+	try {
+		const rows = db.query(`SELECT DISTINCT driver FROM ${PACKED_CONTAINER_TABLE}`).all() as {
+			driver: string;
+		}[];
+		return rows.map((r) => r.driver);
+	} catch {
+		return [];
+	} finally {
+		db.close();
+	}
 }
 
 /**
@@ -350,10 +351,13 @@ async function main(): Promise<void> {
 	// container predating a sibling's newest hook ship as current
 	if (
 		process.env.CONTAINER_BAKE_FORCE !== '1' &&
-		before !== null &&
-		runtimeShaped(before) &&
-		before.includes(wanted) &&
-		PACKED_CONTAINER_DIGEST === DRIVER_DIGEST
+		bakeIsCurrent({
+			cid: before,
+			wanted,
+			constant: PACKED_CONTAINER_DIGEST,
+			driver: DRIVER_DIGEST,
+			recorded: recordedDrivers()
+		})
 	) {
 		console.log(`container row already keyed to ${wanted} and driver ${DRIVER_DIGEST}`);
 		return;

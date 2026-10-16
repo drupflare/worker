@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { bakeIsCurrent, type BakeState } from '../../scripts/container-current';
 import { packVersionsHash } from '../../scripts/pack-hash';
 import { artifactGate } from './helpers/artifact-gate';
 
@@ -76,5 +77,39 @@ describe.skipIf(!have)('the packed container row', () => {
 		expect(row!.cid).toContain('/drupal/sites/default/services.yml');
 		expect(row!.cid).toContain(':Linux:');
 		expect(row!.cid).not.toMatch(/\/(?:Users|home)\//);
+	});
+});
+
+describe('the bake leaves a row alone only when the database says it is current', () => {
+	const cid =
+		'service_container:prod:01b5b66bd61b00b1::Linux:a:1:{i:0;s:34:"/drupal/sites/default/services.yml";}';
+	const base: BakeState = {
+		cid,
+		wanted: '01b5b66bd61b00b1',
+		constant: 'f0c14ac6a3daa87d',
+		driver: 'f0c14ac6a3daa87d',
+		recorded: ['f0c14ac6a3daa87d']
+	};
+
+	it('accepts a row keyed to the pack and baked against the shipping driver', () => {
+		expect(bakeIsCurrent(base)).toBe(true);
+	});
+
+	it('refuses a database put back to an older bake while the constants say current', () => {
+		expect(bakeIsCurrent({ ...base, recorded: ['e73dca6077b26dd8'] })).toBe(false);
+		expect(bakeIsCurrent({ ...base, recorded: ['f0c14ac6a3daa87d', 'e73dca6077b26dd8'] })).toBe(
+			false
+		);
+	});
+
+	it('falls back to the constants when the pack has no extra variants to read', () => {
+		expect(bakeIsCurrent({ ...base, recorded: [] })).toBe(true);
+		expect(bakeIsCurrent({ ...base, recorded: [], constant: 'e73dca6077b26dd8' })).toBe(false);
+	});
+
+	it('refuses a native bake, a row for another pack and no row at all', () => {
+		expect(bakeIsCurrent({ ...base, cid: cid.replace(':Linux:', ':Darwin:') })).toBe(false);
+		expect(bakeIsCurrent({ ...base, wanted: 'ffffffffffffffff' })).toBe(false);
+		expect(bakeIsCurrent({ ...base, cid: null })).toBe(false);
 	});
 });

@@ -1,6 +1,6 @@
 {
 	"bucket": "drupflare-cdn",
-	"origin": "https://drupflare-cdn.gmitch215.dev",
+	"origin": "https://cdn.drupflare.com",
 	"version": 1,
 	"keys": [
 		{
@@ -329,6 +329,13 @@
 			"bytes": 5832704,
 			"sha256": "46255d6586d041bfcc461fa2c9fe013be6cff5a8143b177c94b471b03f1b9495",
 			"md5": "0a8f2d13654027f95eb3982e2c611e12",
+			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-10-16"
+		},
+		{
+			"key": "snapshots/site.sqlite.92bcbdea7054",
+			"bytes": 5832704,
+			"sha256": "92bcbdea7054e67c83d70200cf47ab5c6b78b7d521cf2f002e4527ebe63904c1",
+			"md5": "2dc5e9f31b7604a1db51574f53142fde",
 			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-10-16"
 		}
 	]

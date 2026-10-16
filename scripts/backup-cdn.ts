@@ -31,23 +31,34 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
-/** the bucket and the domain in front of it */
+/** the bucket and the domain in front of it, which is the authoritative one */
 export const BUCKET = 'drupflare-cdn';
-export const ORIGIN = 'https://drupflare-cdn.gmitch215.dev';
+export const ORIGIN = 'https://cdn.drupflare.com';
 
 /**
  * The same bucket under a second name, tried when the first is unreachable.
  *
  * Not a different store and not a different manifest -- every key, size and hash is identical, so a
- * fetch that falls through here is still verified against `cdn-manifest.json`. It exists because
- * some networks blocklist the whole `.dev` TLD, which surfaces as
- * `UNABLE_TO_VERIFY_LEAF_SIGNATURE` rather than as anything that reads like a DNS policy.
- * `ORIGIN` stays the documented one.
+ * fetch that falls through here is still verified against `cdn-manifest.json`. `ORIGIN` stays the
+ * documented one.
  */
-export const ORIGIN_FALLBACK = 'https://drupflare-cdn.gmitch215.xyz';
+export const ORIGIN_FALLBACK = 'https://cdn.drupflare.app';
+
+/**
+ * The names this bucket answered under before the drupflare domains, still serving it.
+ *
+ * Kept last so a checkout, a backup or a workflow that still names one keeps working. They are never
+ * written into the manifest. Some networks blocklist the whole `.dev` TLD, which surfaces as
+ * `UNABLE_TO_VERIFY_LEAF_SIGNATURE` rather than as anything that reads like a DNS policy, which is
+ * part of why they are no longer first.
+ */
+export const LEGACY_ORIGINS = [
+	'https://drupflare-cdn.gmitch215.dev',
+	'https://drupflare-cdn.gmitch215.xyz'
+];
 
 /** the origins to try, in order */
-export const ORIGINS = [ORIGIN, ORIGIN_FALLBACK];
+export const ORIGINS = [ORIGIN, ORIGIN_FALLBACK, ...LEGACY_ORIGINS];
 
 /**
  * Fetches one key, trying each origin in turn.

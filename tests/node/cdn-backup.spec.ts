@@ -9,6 +9,7 @@ import {
 	committedBytes,
 	driftBetween,
 	fetchFromCdn,
+	LEGACY_ORIGINS,
 	MANIFEST_PATH,
 	manifestFromDisk,
 	mirrorProblems,
@@ -186,7 +187,17 @@ describe('what the backup is allowed to contain', () => {
 
 	it('points at the bucket the recovery instructions name', () => {
 		expect(committed.bucket).toBe('drupflare-cdn');
-		expect(committed.origin).toBe('https://drupflare-cdn.gmitch215.dev');
+		expect(committed.origin).toBe('https://cdn.drupflare.com');
+	});
+
+	it('tries the drupflare domains first and keeps the old names as the last resort', () => {
+		expect(ORIGINS.slice(0, 2)).toEqual([
+			'https://cdn.drupflare.com',
+			'https://cdn.drupflare.app'
+		]);
+		expect(ORIGINS.slice(2)).toEqual(LEGACY_ORIGINS);
+		expect(LEGACY_ORIGINS.every((o) => o.includes('gmitch215'))).toBe(true);
+		expect(new Set(ORIGINS).size).toBe(ORIGINS.length);
 	});
 
 	it('keeps every superseded site.sqlite lineage', () => {
@@ -230,7 +241,7 @@ describe('what the backup is allowed to contain', () => {
 /**
  * THE SAME BUCKET UNDER A SECOND NAME.
  *
- * Some networks blocklist the whole `.dev` TLD, and it surfaces as
+ * Some networks block a domain outright, and it can surface as
  * `UNABLE_TO_VERIFY_LEAF_SIGNATURE` rather than as anything that reads like a DNS policy -- so a
  * restore or a verify fails in a way that looks like the bucket is wrong. The mirror is tried only
  * on a TRANSPORT failure: a reachable origin answering 404 is an answer, and retrying it elsewhere
@@ -239,8 +250,8 @@ describe('what the backup is allowed to contain', () => {
 describe('the CDN mirror, tried when the documented origin cannot be reached', () => {
 	it('keeps the documented origin first', () => {
 		expect(ORIGINS[0]).toBe(ORIGIN);
-		expect(ORIGIN).toContain('.dev');
-		expect(ORIGIN_FALLBACK).toContain('.xyz');
+		expect(ORIGIN).toBe('https://cdn.drupflare.com');
+		expect(ORIGIN_FALLBACK).toBe('https://cdn.drupflare.app');
 	});
 
 	it('falls through to the mirror when the first origin throws', async () => {

@@ -239,10 +239,12 @@ describe('compiling from renders', () => {
 
 	it('lets a spent key try again once the proof window has passed', () => {
 		const key = edgePlanKey(SITE, 1, ROLES, PATH);
-		const now = Date.now();
 		for (let attempt = 0; attempt < PLAN_COMPILE_ATTEMPTS; attempt++) {
 			feedOneCompile(key, opaquePage, attempt * 10);
 		}
+		// read after the feeding, because the refusal is stamped with the clock the feed ran on; a
+		// slow runner that spent a millisecond in the loop kept the key refused past `now + TTL + 1`
+		const now = Date.now();
 		expect(edgePlanRefused(key, now)).toBe(true);
 		expect(edgePlanRefused(key, now + PLAN_TTL_MS + 1)).toBe(false);
 		const later = now + PLAN_TTL_MS + 1;

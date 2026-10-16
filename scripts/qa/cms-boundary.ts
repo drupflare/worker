@@ -34,6 +34,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/db/file-store.ts': 'host',
 	'src/db/heap-store.ts': 'host',
 	'src/db/import-sql.ts': 'host',
+	'src/db/integer-bindings.ts': 'host',
 	'src/db/migrate-sql.ts': 'host',
 	'src/db/pg-exec.ts': 'host',
 	'src/db/wide-integers.ts': 'host',
@@ -183,6 +184,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/error-probe.ts': 'host',
 	'src/ops/fanout.ts': 'host',
 	'src/ops/fleet.ts': 'host',
+	'src/ops/forwarded-headers.ts': 'host',
 	// cachetags is Drupal's table
 	'src/ops/fragment-index.ts': 'mixed',
 	'src/ops/generated/modules.ts': 'cms',

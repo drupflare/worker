@@ -1,4 +1,5 @@
 import { firstRow } from '../util/sql';
+import { bindIntegers } from './integer-bindings';
 /**
  * The table a write statement targets, or `undefined` when the statement writes nothing.
  *
@@ -116,7 +117,9 @@ export function countingSql<T extends SqlLike>(
 ): T {
 	const wrapped: SqlLike = {
 		exec(text: string, ...bindings: unknown[]) {
-			const cursor = sql.exec(text, ...bindings);
+			// bound as integers here, at the last moment, so everything that classifies a statement
+			// by its text (the tally, the session sweep, the census) still reads the original
+			const cursor = sql.exec(bindIntegers(text, bindings), ...bindings);
 			// a `SELECT` cursor is a live iterator; reading rowsWritten would consume its rows
 			const isWrite = writeTargetTable(text) !== undefined;
 			if (!isWrite) return cursor;

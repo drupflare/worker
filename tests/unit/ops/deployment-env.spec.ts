@@ -5,7 +5,9 @@ import {
 	deploymentEnvPhp,
 	ENV_PREFIX,
 	hasDeploymentEnv,
-	phpQuote
+	phpQuote,
+	PROTECTED_SETTINGS,
+	SETTINGS_NAME
 } from '../../../src/ops/deployment-env';
 
 describe('reading the deployment environment', () => {
@@ -54,16 +56,46 @@ describe('reading the deployment environment', () => {
 	});
 
 	it('treats an absent env, null and an empty string as nothing', () => {
-		expect(deploymentEnv(undefined)).toEqual({ vars: {}, config: null, problems: [] });
+		expect(deploymentEnv(undefined)).toEqual({
+			vars: {},
+			config: null,
+			settings: null,
+			problems: []
+		});
 		expect(deploymentEnv({ [CONFIG_NAME]: '' }).config).toBeNull();
 		expect(deploymentEnv({ [CONFIG_NAME]: null }).problems).toEqual([]);
 	});
 
-	it('hasDeploymentEnv is true for a variable or a config and false otherwise', () => {
+	it('reads $settings overrides the way it reads $config, and keeps the keys it sets itself', () => {
+		expect(
+			deploymentEnv({ [SETTINGS_NAME]: '{"mantle2.cloud_endpoint":"https://cloud.example"}' })
+				.settings
+		).toEqual({ 'mantle2.cloud_endpoint': 'https://cloud.example' });
+		const parsed = deploymentEnv({
+			[SETTINGS_NAME]: { a: 1, trusted_host_patterns: ['.*'], container_yamls: [] }
+		});
+		expect(parsed.settings).toEqual({ a: 1 });
+		expect(parsed.problems).toEqual([
+			`${SETTINGS_NAME}: trusted_host_patterns is set by the Worker, ignored`,
+			`${SETTINGS_NAME}: container_yamls is set by the Worker, ignored`
+		]);
+		expect([...PROTECTED_SETTINGS]).toContain('config_sync_directory');
+		for (const bad of ['[1]', 'nope', 42, 'x'.repeat(64 * 1024 + 1)]) {
+			const refused = deploymentEnv({ [SETTINGS_NAME]: bad });
+			expect(refused.settings).toBeNull();
+			expect(refused.problems).toHaveLength(1);
+		}
+		expect(
+			deploymentEnv({ [SETTINGS_NAME]: { trusted_host_patterns: [] } }).settings
+		).toBeNull();
+	});
+
+	it('hasDeploymentEnv is true for a variable, a config or settings and false otherwise', () => {
 		expect(hasDeploymentEnv(undefined)).toBe(false);
 		expect(hasDeploymentEnv({ OTHER: 'x' })).toBe(false);
 		expect(hasDeploymentEnv({ [`${ENV_PREFIX}A`]: '1' })).toBe(true);
 		expect(hasDeploymentEnv({ [CONFIG_NAME]: '{"a":1}' })).toBe(true);
+		expect(hasDeploymentEnv({ [SETTINGS_NAME]: '{"a":1}' })).toBe(true);
 	});
 });
 
@@ -84,5 +116,21 @@ describe('the settings fragment', () => {
 		expect(php).toContain('putenv($cfw_k . "=" . $cfw_v);');
 		expect(php).toContain(`json_decode('{"x":{"y":1}}', true)`);
 		expect(php).toContain('array_replace_recursive');
+	});
+
+	it('merges $settings over $settings, and leaves it alone with none', () => {
+		const php = deploymentEnvPhp(
+			deploymentEnv({
+				[SETTINGS_NAME]: '{"mantle2.cloud_endpoint":"https://c.example/it\'s"}'
+			})
+		);
+		expect(php).toContain(
+			`json_decode('{"mantle2.cloud_endpoint":"https://c.example/it\\'s"}', true)`
+		);
+		expect(php).toContain('$settings = array_replace_recursive(');
+		expect(php).not.toContain('$config =');
+		expect(deploymentEnvPhp(deploymentEnv({ [CONFIG_NAME]: '{"a":1}' }))).not.toContain(
+			'$settings'
+		);
 	});
 });

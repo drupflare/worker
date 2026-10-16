@@ -73,6 +73,7 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 			return {
 				vars: Object.keys(d.vars),
 				config: d.config !== null,
+				settings: d.settings !== null,
 				problems: d.problems
 			};
 		})(),

@@ -100,6 +100,22 @@
 		"analyze:php": "./.composer-vendor/bin/phpstan analyse --memory-limit=1G",
 		"assets:agg": "bun scripts/pack-aggregates.ts"
 	},
+	"dependencies": {
+		"@drupflare/burrow": "^1.1.1",
+		"@drupflare/cartridge": "^0.3.1",
+		"@drupflare/durabledb": "^0.1.4",
+		"@drupflare/untarl": "^0.1.0",
+		"@gmitch215/tinyimg": "^1.1.0",
+		"@noble/ciphers": "^2.4.0",
+		"@noble/hashes": "^2.4.0",
+		"blakejs": "^1.2.1",
+		"edgeport": "^1.0.6",
+		"fflate": "^0.8.3",
+		"fzstd": "^0.1.1",
+		"mysql2": "^3.24.4",
+		"pg": "^8.23.0",
+		"php-wasm": "0.2.0"
+	},
 	"devDependencies": {
 		"@cloudflare/containers": "^0.3.7",
 		"@cloudflare/vitest-pool-workers": "^0.23.0",
@@ -122,22 +138,6 @@
 		"vitest": "^4.1.11",
 		"wrangler": "^4.129.1",
 		"yaml": "2.9.1"
-	},
-	"dependencies": {
-		"@drupflare/burrow": "^1.1.1",
-		"@drupflare/cartridge": "^0.3.1",
-		"@drupflare/durabledb": "^0.1.4",
-		"@drupflare/untarl": "^0.1.0",
-		"@gmitch215/tinyimg": "^1.1.0",
-		"@noble/ciphers": "^2.4.0",
-		"@noble/hashes": "^2.4.0",
-		"blakejs": "^1.2.1",
-		"edgeport": "^1.0.6",
-		"fflate": "^0.8.3",
-		"fzstd": "^0.1.1",
-		"mysql2": "^3.24.4",
-		"pg": "^8.23.0",
-		"php-wasm": "0.2.0"
 	},
 	"lint-staged": {
 		"*.{php,module,ts,js,mjs,html,css,md,json,jsonc}": "prettier --write"

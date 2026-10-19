@@ -39,7 +39,7 @@ instruments. The shape of the table is what is meant to last; the numbers in it 
 | `tests/`            | 5.2M | 438 of 438       | committed                                                                    | no               |
 | `scripts/`          | 2.2M | 198 of 198       | committed                                                                    | no               |
 | `docs/`             | 656K | yes              | committed                                                                    | no               |
-| `assets/`           | 133M | 4 files          | `bun run hydrate`; `bun run build:local` in full                             | no               |
+| `assets/`           | 133M | 5 files          | `bun run hydrate`; `bun run build:local` in full                             | no               |
 | `.interp/`          | 176M | no               | `bun install` restores 2 of 3; `bun run hydrate` or `build:local` the rest   | no               |
 | `.siblings/`        | --   | no               | `bun run build:local`, only when the modules are not checked out beside this | yes, regenerable |
 | `vendor/`           | 198M | no               | not reproducible; restored from `drupflare-cdn/vendor/`. Not a deploy input  | never            |
@@ -84,7 +84,8 @@ Assets content-hashes, caches and compresses what it serves, and a cache hit nev
 
 `assets/.assetsignore` denies by default and negates `/core/`. `tests/unit/runtime/assets-ignore.spec.ts`
 asserts that the negation reaches into the directory and that every `/core/**` URL a prefilled page
-references answers 200.
+references answers 200. The tracked `assets/_headers` sets the cache lifetimes of that tree; see
+Static Asset Cache Lifetimes in `docs/configuration.md`.
 
 ## `vendor/`
 

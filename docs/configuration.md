@@ -200,6 +200,32 @@ value all fall through to the var.
 | `WINDOW_MAX_FILLS`       | 50       | fills one window may drive                                                                                |
 | `WINDOW_WALL_MS`         | 60,000   | wall-clock ms one window may run                                                                          |
 
+### Static Asset Cache Lifetimes
+
+`assets/_headers` sets `Cache-Control` on the files the asset layer serves. Without it every asset
+answers `public, max-age=0, must-revalidate`, so a repeat view revalidates each stylesheet, script
+and font.
+
+| path                                 | `Cache-Control`                       |
+| ------------------------------------ | ------------------------------------- |
+| `/agg/*.css`, `/agg/*.js`            | `public, max-age=31536000, immutable` |
+| `/core/*`, `/modules/*`, `/themes/*` | `public, max-age=86400`               |
+
+An aggregate's file name is the first 16 hex characters of the SHA-256 of its body
+(`scripts/pack-aggregates.ts`), so a changed file gets a new URL and a year is safe. `/agg/manifest.json`
+has no hash in its name and keeps the default.
+
+The three Drupal prefixes get one day because the `?token` Drupal appends to those URLs is not tied
+to the shipped files. It comes from `state` key `asset.css_js_query_string`, and only
+`drupal_flush_all_caches()`, a site install and the `assets` flush step of the update chain reset it
+(`drupal-src/core/includes/common.inc:429`, `src/site/php/updb/unit.php:252`). Reconciliation does
+not, so a pack update that changes a `/core` file leaves an existing site's URLs the same and a
+visitor can keep the old copy for up to a day. Drupal's own `.htaccess` allows a year; raise the three
+rules to `31536000` once a pack update resets the token.
+
+HTML comes from the Worker and is not affected. `/robots.txt`, `/driver.json`, `/prefill.json`,
+`/drupal-pf/*` and `/drupal-sql/*` have no rule.
+
 ### Request Headers
 
 Drupal receives the request's headers, not only its cookie. `Authorization`, `X-Api-Key`, `Origin`,

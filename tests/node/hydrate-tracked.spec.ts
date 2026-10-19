@@ -42,6 +42,7 @@ describe('hydrate leaves the repository its own files', () => {
 
 	it('keeps the other repository-owned assets tracked', () => {
 		expect(tracked.has('assets/robots.txt')).toBe(true);
+		expect(tracked.has('assets/_headers')).toBe(true);
 		expect(tracked.has('assets/.assetsignore')).toBe(true);
 		expect(tracked.has('assets/drupal/site.sqlite')).toBe(true);
 	});

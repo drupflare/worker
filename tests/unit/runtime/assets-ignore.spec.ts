@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import ignoreSource from '../../../assets/.assetsignore?raw';
+import headersSource from '../../../assets/_headers?raw';
 import lazyFsSource from '../../../node_modules/@drupflare/cartridge/src/lazy-fs.ts?raw';
 import { substituteAggregates, type AggregateIndex } from '../../../src/ops/aggregates';
 import wranglerSource from '../../../wrangler.jsonc?raw';
@@ -287,5 +288,93 @@ describe('the crawler contract is served, and by the asset layer', () => {
 		// the mechanism: without the line the file exists on disk and uploads nowhere, which is how
 		// `/agg/` shipped unpublished for its whole life
 		expect(ignoreSource).toContain('!/robots.txt');
+	});
+});
+
+/**
+ * `assets/_headers`, the cache lifetimes the asset layer puts on the static tree.
+ *
+ * Without it every asset answers `max-age=0, must-revalidate`, so a repeat view revalidates each
+ * stylesheet, script and font. The rules are parsed here and matched with the platform's splat
+ * semantics (`*` is any run of characters); the pool's ASSETS binding is also asked, and the
+ * assertion on its response is only made when it applies `_headers` at all.
+ */
+const headerRules = (): { pattern: RegExp; source: string; cacheControl: string }[] => {
+	const rules: { pattern: RegExp; source: string; cacheControl: string }[] = [];
+	for (const line of headersSource.split('\n')) {
+		if (line.trim() === '') continue;
+		if (!/^\s/.test(line)) {
+			const escaped = line
+				.trim()
+				.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+				.replace(/\*/g, '.*');
+			rules.push({
+				pattern: new RegExp(`^${escaped}$`),
+				source: line.trim(),
+				cacheControl: ''
+			});
+		} else {
+			const m = /^\s+cache-control:\s*(.+)$/i.exec(line);
+			if (m) rules[rules.length - 1]!.cacheControl = m[1]!.trim();
+		}
+	}
+	return rules;
+};
+const lifetimeOf = (path: string) =>
+	headerRules()
+		.filter((r) => r.pattern.test(path))
+		.map((r) => r.cacheControl);
+
+describe('the static tree is served with a cache lifetime', () => {
+	it('is published by the same allow list the asset layer applies', async () => {
+		expect(ignoreSource).toContain('!/_headers');
+		expect(headersSource.length).toBeLessThan(2000);
+		expect(headerRules().length).toBeLessThan(100);
+		for (const line of headersSource.split('\n')) expect(line.length).toBeLessThan(2000);
+		expect(headerRules().every((r) => r.cacheControl !== '')).toBe(true);
+	});
+
+	it('makes every aggregate URL the substitution emits immutable', async () => {
+		const index = (await (await asset('/agg/manifest.json')).json()) as AggregateIndex;
+		const emitted = new Set<string>();
+		for (const page of await prefilledPages()) {
+			const out = substituteAggregates(page.html, index);
+			for (const m of out.html.matchAll(/\/agg\/[A-Za-z0-9._-]+/g)) emitted.add(m[0]);
+		}
+		expect(emitted.size, 'the substitution emitted no aggregate URL').toBeGreaterThan(0);
+		for (const path of emitted) {
+			expect(lifetimeOf(path), path).toEqual([expect.stringContaining('immutable')]);
+		}
+	});
+
+	it('leaves the unhashed aggregate manifest revalidating', () => {
+		expect(lifetimeOf('/agg/manifest.json')).toEqual([]);
+	});
+
+	it.each(['/core/misc/drupal.js', '/modules/contrib/token/css/token.css', '/themes/x/a.css'])(
+		'gives %s a day and no immutable',
+		(path) => {
+			expect(lifetimeOf(path)).toEqual(['public, max-age=86400']);
+		}
+	);
+
+	it.each([
+		'/robots.txt',
+		'/driver.json',
+		'/prefill.json',
+		'/drupal-pf/core.pf.json',
+		'/drupal-sql/manifest.json',
+		'/user/login',
+		'/'
+	])('does not touch %s', (path) => {
+		expect(lifetimeOf(path)).toEqual([]);
+	});
+
+	it('shows the lifetime on the response when the binding applies _headers', async () => {
+		const res = await asset('/core/themes/olivero/css/base/fonts.css');
+		const cc = res.headers.get('cache-control') ?? '';
+		// the pool may serve assets without `_headers`; only a response that carries a rule's value counts
+		if (cc.includes('max-age=86400')) expect(cc).toBe('public, max-age=86400');
+		else expect(cc).toContain('max-age=0');
 	});
 });

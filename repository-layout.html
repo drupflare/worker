@@ -383,7 +383,7 @@ instruments. The shape of the table is what is meant to last; the numbers in it 
 <tr>
 <td><code>assets/</code></td>
 <td>133M</td>
-<td>4 files</td>
+<td>5 files</td>
 <td><code>bun run hydrate</code>; <code>bun run build:local</code> in full</td>
 <td>no</td>
 </tr>
@@ -502,7 +502,8 @@ of the PHP MEMFS over HTTP, so these files reach the browser only through this d
 Assets content-hashes, caches and compresses what it serves, and a cache hit never reaches the Worker.</p>
 <p><code>assets/.assetsignore</code> denies by default and negates <code>/core/</code>. <code>tests/unit/runtime/assets-ignore.spec.ts</code>
 asserts that the negation reaches into the directory and that every <code>/core/**</code> URL a prefilled page
-references answers 200.</p>
+references answers 200. The tracked <code>assets/_headers</code> sets the cache lifetimes of that tree; see
+Static Asset Cache Lifetimes in <code>docs/configuration.md</code>.</p>
 <h2 id="vendor"><code>vendor/</code></h2>
 <p><code>wrangler deploy</code> does not read it. The canonical config aliases <code>./runtime/php-binary.js</code> to
 <code>src/runtime/php-binary-raw.ts</code>, which imports the interpreter from <code>.interp/</code>. <code>vendor/</code> reaches a

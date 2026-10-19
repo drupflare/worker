@@ -1993,6 +1993,82 @@ idle allocation and the marginal joules of its work, and across a ten-thousandfo
 the total moves by under a factor of two, 9.3 to 16.5 kWh a site, because the idle term dominates
 everywhere below the top of the range. That is the same result the headline reaches from the other
 direction.</p>
+<h2 id="visitor-devices">Visitor Devices</h2>
+<p>Every table above stops at the data centre. A visitor&#39;s browser also spends energy on each navigation.
+drupflare sets cache lifetimes on its static assets, a year for content-hashed aggregates and a day for
+core, module and theme files, so a repeat navigation within a day requests the page and little else.
+<a href="configuration.html">Configuration</a> lists the lifetimes. The measured run served every asset with a year,
+and its navigations came minutes apart, so they sit inside either lifetime.</p>
+<p>One repeat navigation, <code>measured</code> on a desktop CPU with RAPL package-0, idle subtracted per round, n=8
+rounds of 300 navigations a window, arm order rotated. The four demo pages sat on a static origin in
+the same container as headless Chromium, with a 40 ms emulated round trip:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">joules a navigation</th>
+<th>range</th>
+<th align="right">requests</th>
+<th align="right">wall time</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">1.45</td>
+<td>1.35-1.51</td>
+<td align="right">3.00</td>
+<td align="right">49.9 ms</td>
+</tr>
+</tbody></table></div>
+<p>The three requests are the HTML and two analytics beacons. The reading includes the origin&#39;s CPU, 0.33
+ms a navigation, and it leaves out the display, the radio, network equipment and the energy of
+Cloudflare&#39;s asset layer. It is a desktop reading. No phone has been measured, and a phone is expected
+to draw less per navigation.</p>
+<p>The yearly total depends on an input nobody has measured for a real site: the share of navigations that
+find every asset still fresh in the browser. A cold-cache navigation has no reading here, so the table
+covers the fresh ones alone. It sweeps that share, <code>derived (modelled)</code>, from
+<code>bun scripts/economics/device.ts</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">views a month</th>
+<th align="right">25% fresh</th>
+<th align="right">50% fresh</th>
+<th align="right">75% fresh</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">10,000</td>
+<td align="right">12.1 Wh</td>
+<td align="right">24.2 Wh</td>
+<td align="right">36.3 Wh</td>
+</tr>
+<tr>
+<td align="right">100,000</td>
+<td align="right">121 Wh</td>
+<td align="right">242 Wh</td>
+<td align="right">363 Wh</td>
+</tr>
+<tr>
+<td align="right">1,000,000</td>
+<td align="right">1.21 kWh</td>
+<td align="right">2.42 kWh</td>
+<td align="right">3.63 kWh</td>
+</tr>
+<tr>
+<td align="right">10,000,000</td>
+<td align="right">12.1 kWh</td>
+<td align="right">24.2 kWh</td>
+<td align="right">36.3 kWh</td>
+</tr>
+<tr>
+<td align="right">30,000,000</td>
+<td align="right">36.3 kWh</td>
+<td align="right">72.7 kWh</td>
+<td align="right">109 kWh</td>
+</tr>
+</tbody></table></div>
+<p>Those are kWh a year on visitors&#39; desktops. The server tables above don&#39;t include them, and the two
+sets of figures are not added or divided on this page: one is a measured desktop package reading, the
+other is modelled CPU time at 2.22 W a core.</p>
 <h2 id="carbon">Carbon</h2>
 <p><code>derived</code> from the energy totals above by <code>bun scripts/economics/fleet.ts</code>, at 384 g/kWh, the US
 average in Ember&#39;s Global Electricity Review 2025 [13]. Neither system controls the grid factor. The
@@ -2987,6 +3063,9 @@ the compiled plan can be answered from a stored shell, which renders a fragment 
 page. Lanes copy writes to every object of a busy site. The plan compiles from three agreeing
 sessions. None has an energy class here, and <a href="#how-the-lead-moves">How The Lead Moves</a> charges a
 missed plan as a render.</li>
+<li><strong>No visitor-device energy in any total above.</strong> <a href="#visitor-devices">Visitor Devices</a> prices a
+repeat navigation on its own. It is a desktop reading with the fresh-asset share swept, no phone has
+been measured, and it is never summed with the server figures.</li>
 <li><strong>Institutional rows use an assumed workload.</strong> The page views come from the case studies. The
 logged-in share, the saves a day and the pages a save invalidates are the model&#39;s, not theirs.</li>
 </ul>
@@ -2995,6 +3074,7 @@ logged-in share, the saves a day and the pages a save invalidates are the model&
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/measure/render-fraction.ts</span></span>
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/economics/perview.ts</span></span>
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/economics/states.ts</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/economics/device.ts</span></span>
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/economics/fleet.ts</span></span>
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/economics/comparison.ts</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --md</span></span>
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/economics/comparison.ts</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --crossover</span></span>

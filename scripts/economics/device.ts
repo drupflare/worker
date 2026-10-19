@@ -11,7 +11,7 @@
  */
 import { sweep } from './args';
 import { energyKwh, f, fr, l, n, pct, r } from './fmt';
-import { REPEAT_NAV } from './measured';
+import { REPEAT_NAV, REPEAT_NAV_DEPLOYED } from './measured';
 import { VIEWS } from './perview';
 
 /** shares of navigations that find every asset fresh: a sweep, since none is measured */
@@ -29,15 +29,21 @@ export const deviceKwhYear = (viewsMonth: number, share: number): number =>
 if (import.meta.main) {
 	const shares = sweep('share', FRESH_SHARES);
 	const views = sweep('views', VIEWS);
-	const [lo, hi] = REPEAT_NAV.joulesRange;
-
 	console.log(
 		`one repeat navigation, desktop RAPL package, idle subtracted, n=${REPEAT_NAV.rounds} rounds (measured)\n`
 	);
-	console.log(`${r('J', 7)} ${r('range', 11)} ${r('requests', 9)} ${r('wall ms', 8)}`);
 	console.log(
-		`${fr(REPEAT_NAV.joules, 7, 2)} ${r(`${f(lo, 2)}-${f(hi, 2)}`, 11)} ${fr(REPEAT_NAV.requests, 9, 2)} ${fr(REPEAT_NAV.wallMs, 8, 1)}`
+		`${l('setup', 28)} ${r('J', 6)} ${r('range', 11)} ${r('requests', 9)} ${r('wall ms', 8)}`
 	);
+	for (const [name, m] of [
+		['static mirror, 40 ms emulated', REPEAT_NAV],
+		['deployed worker, real network', REPEAT_NAV_DEPLOYED]
+	] as const) {
+		const [lo, hi] = m.joulesRange;
+		console.log(
+			`${l(name, 28)} ${fr(m.joules, 6, 2)} ${r(`${f(lo, 2)}-${f(hi, 2)}`, 11)} ${fr(m.requests, 9, 2)} ${fr(m.wallMs, 8, 1)}`
+		);
+	}
 
 	console.log(
 		'\nkWh a year on visitors desktops for the fresh navigations alone, by their share of views (derived (modelled))\n'

@@ -39,6 +39,7 @@ import {
 import {
 	BOOTED_FOOTPRINT_MIB,
 	REPEAT_NAV,
+	REPEAT_NAV_DEPLOYED,
 	WARM_FIRING_WALL_MS
 } from '../../scripts/economics/measured';
 import {
@@ -490,10 +491,13 @@ describe('watts for a busy core', () => {
 });
 
 describe('visitor device energy', () => {
-	it('keeps the reading inside its own range', () => {
-		const [lo, hi] = REPEAT_NAV.joulesRange;
-		expect(REPEAT_NAV.joules).toBeGreaterThan(lo);
-		expect(REPEAT_NAV.joules).toBeLessThan(hi);
+	it.each([
+		['mirror', REPEAT_NAV],
+		['deployed', REPEAT_NAV_DEPLOYED]
+	] as const)('keeps the %s reading inside its own range', (_name, m) => {
+		const [lo, hi] = m.joulesRange;
+		expect(m.joules).toBeGreaterThan(lo);
+		expect(m.joules).toBeLessThan(hi);
 	});
 
 	it('scales linearly with views and with the fresh share, and is zero with none', () => {

@@ -769,21 +769,24 @@ requests the page and little else. [Configuration](configuration.md) lists the l
 run served the same year on every asset, and its navigations came minutes apart.
 
 One repeat navigation, `measured` on a desktop CPU with RAPL package-0, idle subtracted per round, n=8
-rounds of 300 navigations a window, arm order rotated. The four demo pages sat on a static origin in
-the same container as headless Chromium, with a 40 ms emulated round trip:
+rounds of 300 navigations a window, arm order rotated. The first row put the four demo pages on a static
+origin in the same container as headless Chromium, with a 40 ms emulated round trip. The second drove a
+deployed free-plan worker over the lab's Wi-Fi, a 16 ms round trip:
 
-| joules a navigation | range     | requests | wall time |
-| ------------------: | --------- | -------: | --------: |
-|                1.45 | 1.35-1.51 |     3.00 |   49.9 ms |
+| setup                         | joules a navigation | range     | requests | wall time |
+| ----------------------------- | ------------------: | --------- | -------: | --------: |
+| static mirror, 40 ms emulated |                1.45 | 1.35-1.51 |     3.00 |   49.9 ms |
+| deployed worker, real network |                1.31 | 1.23-1.41 |     1.00 |   48.7 ms |
 
-The three requests are the HTML and two analytics beacons. The reading includes the origin's CPU, 0.33
-ms a navigation, and it leaves out the display, the radio, network equipment and the energy of
-Cloudflare's asset layer. It is a desktop reading. No phone has been measured, and a phone is expected
-to draw less per navigation.
+The mirror's three requests are the HTML and two analytics beacons. A workers.dev site has no beacon, so
+the deployed worker's one request is the HTML, and a fresh site references 19 to 20 assets a page where
+the demo references more. The readings include the origin's CPU on the mirror, and they leave out the
+display, the radio, network equipment and the energy of Cloudflare's asset layer. They are desktop
+readings. No phone has been measured, and a phone is expected to draw less per navigation.
 
 The yearly total depends on an input nobody has measured for a real site: the share of navigations that
 find every asset still fresh in the browser. A cold-cache navigation has no reading here, so the table
-covers the fresh ones alone. It sweeps that share, `derived (modelled)`, from
+covers the fresh ones alone. It sweeps that share, `derived (modelled)`, priced at the mirror's 1.45 J, the higher reading, from
 `bun scripts/economics/device.ts`:
 
 | views a month | 25% fresh | 50% fresh | 75% fresh |

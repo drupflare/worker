@@ -158,6 +158,20 @@ export const REPEAT_NAV = {
 	rounds: 8
 } as const;
 
+/**
+ * The same navigation against a deployed worker, `measured` on `paisley-park` 2026-10-19 over its Wi-Fi
+ * to a free-account workers.dev site, 16 ms round trip: n=8 rounds of 300 navigations, idle subtracted
+ * per round, desktop CPU package only. A fresh site references 19 to 20 assets a page and workers.dev
+ * carries no analytics beacon, so the one request is the HTML.
+ */
+export const REPEAT_NAV_DEPLOYED = {
+	joules: 1.312,
+	joulesRange: [1.229, 1.407],
+	requests: 1,
+	wallMs: 48.7,
+	rounds: 8
+} as const;
+
 // --- the constraint -------------------------------------------------------------------------
 
 /** above this share of views a cold-path measurement is the wrong input */

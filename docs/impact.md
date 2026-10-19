@@ -764,10 +764,9 @@ direction.
 ## Visitor Devices
 
 Every table above stops at the data centre. A visitor's browser also spends energy on each navigation.
-drupflare sets cache lifetimes on its static assets, a year for content-hashed aggregates and a day for
-core, module and theme files, so a repeat navigation within a day requests the page and little else.
-[Configuration](configuration.md) lists the lifetimes. The measured run served every asset with a year,
-and its navigations came minutes apart, so they sit inside either lifetime.
+drupflare gives its static assets a one-year cache lifetime, so a repeat navigation within that year
+requests the page and little else. [Configuration](configuration.md) lists the lifetimes. The measured
+run served the same year on every asset, and its navigations came minutes apart.
 
 One repeat navigation, `measured` on a desktop CPU with RAPL package-0, idle subtracted per round, n=8
 rounds of 300 navigations a window, arm order rotated. The four demo pages sat on a static origin in

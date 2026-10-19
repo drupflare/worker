@@ -28,8 +28,6 @@
 /*
 
 !/robots.txt
-# cache lifetimes for the static tree below
-!/_headers
 !/driver.json
 !/prefill.json
 

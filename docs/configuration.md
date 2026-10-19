@@ -223,6 +223,10 @@ site install and the `assets` flush step of the update chain reset it (`drupal-s
 file leaves an existing site's URLs the same, and a visitor keeps the old copy until it expires or
 the token changes.
 
+`_headers` has no allow line in `assets/.assetsignore` and must not get one. Wrangler ignores it by
+default and reads the rules from the directory; an allow line uploads it as an ordinary asset, and a
+deployed worker then answers `/_headers` with the file (200, 282 bytes, measured 2026-10-19).
+
 HTML comes from the Worker and is not affected. `/robots.txt`, `/driver.json`, `/prefill.json`,
 `/drupal-pf/*` and `/drupal-sql/*` have no rule.
 

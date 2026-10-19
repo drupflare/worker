@@ -73,7 +73,6 @@ export const PAYLOAD_ASSETS: readonly PlanEntry[] = [
 	// core's own crawler contract, published by the asset layer so it costs no Worker request.
 	// Tracked rather than generated, which is why no build step produces it
 	{ path: 'assets/robots.txt', tracked: true },
-	{ path: 'assets/_headers', tracked: true },
 	{ path: 'assets/driver.json' },
 	{ path: 'assets/prefill.json' },
 	{ path: 'assets/core', dir: true },

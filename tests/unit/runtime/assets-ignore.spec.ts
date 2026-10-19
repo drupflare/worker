@@ -326,8 +326,11 @@ const lifetimeOf = (path: string) =>
 		.map((r) => r.cacheControl);
 
 describe('the static tree is served with a cache lifetime', () => {
-	it('is published by the same allow list the asset layer applies', async () => {
-		expect(ignoreSource).toContain('!/_headers');
+	it('keeps the rules file out of the published set', async () => {
+		expect(
+			ignoreSource,
+			'an allow line uploads _headers as a file the edge serves'
+		).not.toContain('_headers');
 		expect(headersSource.length).toBeLessThan(2000);
 		expect(headerRules().length).toBeLessThan(100);
 		for (const line of headersSource.split('\n')) expect(line.length).toBeLessThan(2000);

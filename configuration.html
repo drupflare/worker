@@ -692,6 +692,9 @@ site install and the <code>assets</code> flush step of the update chain reset it
 <code>src/site/php/updb/unit.php:252</code>). Reconciliation does not, so a pack update that changes a <code>/core</code>
 file leaves an existing site&#39;s URLs the same, and a visitor keeps the old copy until it expires or
 the token changes.</p>
+<p><code>_headers</code> has no allow line in <code>assets/.assetsignore</code> and must not get one. Wrangler ignores it by
+default and reads the rules from the directory; an allow line uploads it as an ordinary asset, and a
+deployed worker then answers <code>/_headers</code> with the file (200, 282 bytes, measured 2026-10-19).</p>
 <p>HTML comes from the Worker and is not affected. <code>/robots.txt</code>, <code>/driver.json</code>, <code>/prefill.json</code>,
 <code>/drupal-pf/*</code> and <code>/drupal-sql/*</code> have no rule.</p>
 <h3 id="request-headers">Request Headers</h3>

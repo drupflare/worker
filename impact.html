@@ -1995,10 +1995,9 @@ everywhere below the top of the range. That is the same result the headline reac
 direction.</p>
 <h2 id="visitor-devices">Visitor Devices</h2>
 <p>Every table above stops at the data centre. A visitor&#39;s browser also spends energy on each navigation.
-drupflare sets cache lifetimes on its static assets, a year for content-hashed aggregates and a day for
-core, module and theme files, so a repeat navigation within a day requests the page and little else.
-<a href="configuration.html">Configuration</a> lists the lifetimes. The measured run served every asset with a year,
-and its navigations came minutes apart, so they sit inside either lifetime.</p>
+drupflare gives its static assets a one-year cache lifetime, so a repeat navigation within that year
+requests the page and little else. <a href="configuration.html">Configuration</a> lists the lifetimes. The measured
+run served the same year on every asset, and its navigations came minutes apart.</p>
 <p>One repeat navigation, <code>measured</code> on a desktop CPU with RAPL package-0, idle subtracted per round, n=8
 rounds of 300 navigations a window, arm order rotated. The four demo pages sat on a static origin in
 the same container as headless Chromium, with a 40 ms emulated round trip:</p>

@@ -679,19 +679,19 @@ and font.</p>
 </tr>
 <tr>
 <td><code>/core/*</code>, <code>/modules/*</code>, <code>/themes/*</code></td>
-<td><code>public, max-age=86400</code></td>
+<td><code>public, max-age=31536000</code></td>
 </tr>
 </tbody></table></div>
 <p>An aggregate&#39;s file name is the first 16 hex characters of the SHA-256 of its body
 (<code>scripts/pack-aggregates.ts</code>), so a changed file gets a new URL and a year is safe. <code>/agg/manifest.json</code>
 has no hash in its name and keeps the default.</p>
-<p>The three Drupal prefixes get one day because the <code>?token</code> Drupal appends to those URLs is not tied
-to the shipped files. It comes from <code>state</code> key <code>asset.css_js_query_string</code>, and only
-<code>drupal_flush_all_caches()</code>, a site install and the <code>assets</code> flush step of the update chain reset it
-(<code>drupal-src/core/includes/common.inc:429</code>, <code>src/site/php/updb/unit.php:252</code>). Reconciliation does
-not, so a pack update that changes a <code>/core</code> file leaves an existing site&#39;s URLs the same and a
-visitor can keep the old copy for up to a day. Drupal&#39;s own <code>.htaccess</code> allows a year; raise the three
-rules to <code>31536000</code> once a pack update resets the token.</p>
+<p>The three Drupal prefixes get a year, which is what Drupal&#39;s own <code>.htaccess</code> allows
+(<code>drupal-src/.htaccess:42</code>). The <code>?token</code> Drupal appends to those URLs is not tied to the shipped
+files. It comes from <code>state</code> key <code>asset.css_js_query_string</code>, and only <code>drupal_flush_all_caches()</code>, a
+site install and the <code>assets</code> flush step of the update chain reset it (<code>drupal-src/core/includes/common.inc:429</code>,
+<code>src/site/php/updb/unit.php:252</code>). Reconciliation does not, so a pack update that changes a <code>/core</code>
+file leaves an existing site&#39;s URLs the same, and a visitor keeps the old copy until it expires or
+the token changes.</p>
 <p>HTML comes from the Worker and is not affected. <code>/robots.txt</code>, <code>/driver.json</code>, <code>/prefill.json</code>,
 <code>/drupal-pf/*</code> and <code>/drupal-sql/*</code> have no rule.</p>
 <h3 id="request-headers">Request Headers</h3>

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { account } from '../../scripts/economics/bill';
+import { deviceKwhYear, freshNavs } from '../../scripts/economics/device';
 import {
 	CORES,
 	FLOOR_KWH_YEAR,
@@ -35,7 +36,11 @@ import {
 	inUnit,
 	sig3
 } from '../../scripts/economics/fmt';
-import { BOOTED_FOOTPRINT_MIB, WARM_FIRING_WALL_MS } from '../../scripts/economics/measured';
+import {
+	BOOTED_FOOTPRINT_MIB,
+	REPEAT_NAV,
+	WARM_FIRING_WALL_MS
+} from '../../scripts/economics/measured';
 import {
 	COST,
 	HOST_SHAPES,
@@ -481,5 +486,25 @@ describe('watts for a busy core', () => {
 		expect(linearUnderstatement(1)).toBeCloseTo(1, 9);
 		expect(linearUnderstatement(0.15)).toBeGreaterThan(1.2);
 		expect(linearUnderstatement(0.15)).toBeLessThan(1.3);
+	});
+});
+
+describe('visitor device energy', () => {
+	it('keeps the reading inside its own range', () => {
+		const [lo, hi] = REPEAT_NAV.joulesRange;
+		expect(REPEAT_NAV.joules).toBeGreaterThan(lo);
+		expect(REPEAT_NAV.joules).toBeLessThan(hi);
+	});
+
+	it('scales linearly with views and with the fresh share, and is zero with none', () => {
+		const base = deviceKwhYear(100_000, 0.5);
+		expect(deviceKwhYear(1_000_000, 0.5)).toBeCloseTo(base * 10, 9);
+		expect(deviceKwhYear(100_000, 0.25)).toBeCloseTo(base / 2, 9);
+		expect(deviceKwhYear(100_000, 0)).toBe(0);
+	});
+
+	it('converts joules a navigation into kWh a year', () => {
+		expect(freshNavs(1, 1)).toBe(12);
+		expect(deviceKwhYear(1, 1)).toBeCloseTo((12 * REPEAT_NAV.joules) / 3.6e6, 12);
 	});
 });

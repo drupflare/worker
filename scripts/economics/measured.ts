@@ -137,6 +137,27 @@ export const JVIEW_CPU_MS = {
 	}
 };
 
+// --- the repeat-view run ------------------------------------------------------------------------
+
+/**
+ * One repeat navigation of the demo's four pages in a browser, with the static-asset cache headers
+ * the product ships.
+ *
+ * `measured` on `paisley-park`, 2026-10-19: RAPL package-0, idle subtracted per round, n=8 rounds of
+ * 300 navigations, arm order rotated, headless Chromium with a 40 ms emulated round trip against a
+ * co-located static mirror. A desktop CPU reading: the origin's CPU (0.33 ms a navigation) is inside
+ * the package figure and display, radio and network gear are outside it. Every non-HTML file carried
+ * a lifetime far longer than the run, so each navigation found its assets fresh. The three requests
+ * are the HTML and two analytics beacons.
+ */
+export const REPEAT_NAV = {
+	joules: 1.453,
+	joulesRange: [1.355, 1.507],
+	requests: 3.0,
+	wallMs: 49.9,
+	rounds: 8
+} as const;
+
 // --- the constraint -------------------------------------------------------------------------
 
 /** above this share of views a cold-path measurement is the wrong input */

@@ -761,6 +761,44 @@ the total moves by under a factor of two, 9.3 to 16.5 kWh a site, because the id
 everywhere below the top of the range. That is the same result the headline reaches from the other
 direction.
 
+## Visitor Devices
+
+Every table above stops at the data centre. A visitor's browser also spends energy on each navigation.
+drupflare sets cache lifetimes on its static assets, a year for content-hashed aggregates and a day for
+core, module and theme files, so a repeat navigation within a day requests the page and little else.
+[Configuration](configuration.md) lists the lifetimes. The measured run served every asset with a year,
+and its navigations came minutes apart, so they sit inside either lifetime.
+
+One repeat navigation, `measured` on a desktop CPU with RAPL package-0, idle subtracted per round, n=8
+rounds of 300 navigations a window, arm order rotated. The four demo pages sat on a static origin in
+the same container as headless Chromium, with a 40 ms emulated round trip:
+
+| joules a navigation | range     | requests | wall time |
+| ------------------: | --------- | -------: | --------: |
+|                1.45 | 1.35-1.51 |     3.00 |   49.9 ms |
+
+The three requests are the HTML and two analytics beacons. The reading includes the origin's CPU, 0.33
+ms a navigation, and it leaves out the display, the radio, network equipment and the energy of
+Cloudflare's asset layer. It is a desktop reading. No phone has been measured, and a phone is expected
+to draw less per navigation.
+
+The yearly total depends on an input nobody has measured for a real site: the share of navigations that
+find every asset still fresh in the browser. A cold-cache navigation has no reading here, so the table
+covers the fresh ones alone. It sweeps that share, `derived (modelled)`, from
+`bun scripts/economics/device.ts`:
+
+| views a month | 25% fresh | 50% fresh | 75% fresh |
+| ------------: | --------: | --------: | --------: |
+|        10,000 |   12.1 Wh |   24.2 Wh |   36.3 Wh |
+|       100,000 |    121 Wh |    242 Wh |    363 Wh |
+|     1,000,000 |  1.21 kWh |  2.42 kWh |  3.63 kWh |
+|    10,000,000 |  12.1 kWh |  24.2 kWh |  36.3 kWh |
+|    30,000,000 |  36.3 kWh |  72.7 kWh |   109 kWh |
+
+Those are kWh a year on visitors' desktops. The server tables above don't include them, and the two
+sets of figures are not added or divided on this page: one is a measured desktop package reading, the
+other is modelled CPU time at 2.22 W a core.
+
 ## Carbon
 
 `derived` from the energy totals above by `bun scripts/economics/fleet.ts`, at 384 g/kWh, the US
@@ -1201,6 +1239,9 @@ $41.67, so the crossing comes from the flat price.
   page. Lanes copy writes to every object of a busy site. The plan compiles from three agreeing
   sessions. None has an energy class here, and [How The Lead Moves](#how-the-lead-moves) charges a
   missed plan as a render.
+- **No visitor-device energy in any total above.** [Visitor Devices](#visitor-devices) prices a
+  repeat navigation on its own. It is a desktop reading with the fresh-asset share swept, no phone has
+  been measured, and it is never summed with the server figures.
 - **Institutional rows use an assumed workload.** The page views come from the case studies. The
   logged-in share, the saves a day and the pages a save invalidates are the model's, not theirs.
 
@@ -1211,6 +1252,7 @@ bun scripts/measure/vps-energy.ts run --ssh="$HOST" --target="$VPS_ADDR" --targe
 bun scripts/measure/render-fraction.ts
 bun scripts/economics/perview.ts
 bun scripts/economics/states.ts
+bun scripts/economics/device.ts
 bun scripts/economics/fleet.ts
 bun scripts/economics/comparison.ts --md
 bun scripts/economics/comparison.ts --crossover

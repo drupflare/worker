@@ -352,9 +352,9 @@ describe('the static tree is served with a cache lifetime', () => {
 	});
 
 	it.each(['/core/misc/drupal.js', '/modules/contrib/token/css/token.css', '/themes/x/a.css'])(
-		'gives %s a day and no immutable',
+		'gives %s a year and no immutable',
 		(path) => {
-			expect(lifetimeOf(path)).toEqual(['public, max-age=86400']);
+			expect(lifetimeOf(path)).toEqual(['public, max-age=31536000']);
 		}
 	);
 
@@ -374,7 +374,7 @@ describe('the static tree is served with a cache lifetime', () => {
 		const res = await asset('/core/themes/olivero/css/base/fonts.css');
 		const cc = res.headers.get('cache-control') ?? '';
 		// the pool may serve assets without `_headers`; only a response that carries a rule's value counts
-		if (cc.includes('max-age=86400')) expect(cc).toBe('public, max-age=86400');
+		if (cc.includes('max-age=31536000')) expect(cc).toBe('public, max-age=31536000');
 		else expect(cc).toContain('max-age=0');
 	});
 });

@@ -1840,7 +1840,7 @@ from-source pack, copy the tree and build it:
 ```sh
 rsync -a --exclude '.git' ./ /tmp/ci-repro/ # NOT --exclude vendor/dist, see below
 cd /tmp/ci-repro
-find assets -mindepth 1 -maxdepth 1 ! -name '.assetsignore' ! -name 'robots.txt' ! -name drupal -exec rm -rf {} +
+find assets -mindepth 1 -maxdepth 1 ! -name '.assetsignore' ! -name 'robots.txt' ! -name '_headers' ! -name drupal -exec rm -rf {} +
 find assets/drupal -mindepth 1 ! -name site.sqlite -exec rm -rf {} + # a fresh checkout's state
 DRUPFLARE_SRC= ROM_SRC= STREAM_HTTP_SRC= < abs > /drupflare < abs > /rom < abs > /stream-http/src bun run build:local
 ```

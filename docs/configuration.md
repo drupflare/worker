@@ -209,19 +209,19 @@ and font.
 | path                                 | `Cache-Control`                       |
 | ------------------------------------ | ------------------------------------- |
 | `/agg/*.css`, `/agg/*.js`            | `public, max-age=31536000, immutable` |
-| `/core/*`, `/modules/*`, `/themes/*` | `public, max-age=86400`               |
+| `/core/*`, `/modules/*`, `/themes/*` | `public, max-age=31536000`            |
 
 An aggregate's file name is the first 16 hex characters of the SHA-256 of its body
 (`scripts/pack-aggregates.ts`), so a changed file gets a new URL and a year is safe. `/agg/manifest.json`
 has no hash in its name and keeps the default.
 
-The three Drupal prefixes get one day because the `?token` Drupal appends to those URLs is not tied
-to the shipped files. It comes from `state` key `asset.css_js_query_string`, and only
-`drupal_flush_all_caches()`, a site install and the `assets` flush step of the update chain reset it
-(`drupal-src/core/includes/common.inc:429`, `src/site/php/updb/unit.php:252`). Reconciliation does
-not, so a pack update that changes a `/core` file leaves an existing site's URLs the same and a
-visitor can keep the old copy for up to a day. Drupal's own `.htaccess` allows a year; raise the three
-rules to `31536000` once a pack update resets the token.
+The three Drupal prefixes get a year, which is what Drupal's own `.htaccess` allows
+(`drupal-src/.htaccess:42`). The `?token` Drupal appends to those URLs is not tied to the shipped
+files. It comes from `state` key `asset.css_js_query_string`, and only `drupal_flush_all_caches()`, a
+site install and the `assets` flush step of the update chain reset it (`drupal-src/core/includes/common.inc:429`,
+`src/site/php/updb/unit.php:252`). Reconciliation does not, so a pack update that changes a `/core`
+file leaves an existing site's URLs the same, and a visitor keeps the old copy until it expires or
+the token changes.
 
 HTML comes from the Worker and is not affected. `/robots.txt`, `/driver.json`, `/prefill.json`,
 `/drupal-pf/*` and `/drupal-sql/*` have no rule.

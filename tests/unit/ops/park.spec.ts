@@ -367,6 +367,31 @@ describe('the fetch descriptor parser', () => {
 		).toBeUndefined();
 	});
 
+	it('answers a redirect into a blocked host as an error reply, and only with the guard on', async () => {
+		const calls: string[] = [];
+		const doFetch = (async (url: string) => {
+			calls.push(url);
+			return url.startsWith('https://e.test')
+				? new Response(null, {
+						status: 302,
+						headers: { location: 'http://127.0.0.1/admin' }
+					})
+				: new Response('inside');
+		}) as unknown as typeof fetch;
+		const request = { method: 'GET', url: 'https://e.test/', headers: {} };
+		const refused = JSON.parse(
+			new TextDecoder().decode(await performFetch(request, doFetch))
+		) as { error?: string };
+		expect(refused.error).toMatch(/redirect to http:\/\/127\.0\.0\.1\/admin refused/);
+		expect(calls).toEqual(['https://e.test/']);
+		calls.length = 0;
+		const open = JSON.parse(
+			new TextDecoder().decode(await performFetch(request, doFetch, false))
+		) as { status?: number };
+		expect(open.status).toBe(200);
+		expect(calls).toHaveLength(2);
+	});
+
 	it('aborts a fetch at the timeout a module asked for', async () => {
 		let signal: AbortSignal | undefined;
 		const doFetch = (async (_url: string, init?: RequestInit) => {

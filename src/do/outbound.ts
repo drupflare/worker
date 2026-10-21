@@ -8,6 +8,7 @@ import {
 	isServableStale,
 	ttlFor
 } from '../ops/deferred-post';
+import { fetchGuarded } from '../ops/outbound-guard';
 import { installPark, type ParkClassName, parkEnabled, type ParkInstall } from '../ops/park';
 import { drivePark } from '../ops/park-drive';
 import { declaredFetches, pendingDeclared } from '../ops/prefetch';
@@ -238,12 +239,17 @@ export async function performOutbound(
 	if (isAiUrl(url)) return runAiExchange(url, body, site.env ?? {});
 	// bounded at 10 s: this runs on the alarm, and a host that never answers would hold the firing
 	// open and leave the fill queue undrained (a permanent 503 for visitors)
-	const http = await fetch(url, {
-		method,
-		signal: AbortSignal.timeout(10_000),
-		...(Object.keys(headers).length ? { headers } : {}),
-		...(body ? { body } : {})
-	});
+	const http = await fetchGuarded(
+		fetch,
+		url,
+		{
+			method,
+			signal: AbortSignal.timeout(10_000),
+			...(Object.keys(headers).length ? { headers } : {}),
+			...(body ? { body } : {})
+		},
+		(next) => site.refuseOutbound(next)
+	);
 	const received: Record<string, string> = {};
 	for (const [k, v] of http.headers) received[k.toLowerCase()] = v;
 	return { status: http.status, headers: received, body: await boundedText(http) };

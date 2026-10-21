@@ -20,7 +20,7 @@ import { backendExec } from '../db/pg-exec';
 import { binaryToBytes } from '../util/base64';
 import { errorMessage } from '../util/errors';
 import { runParkImage, type ParkImageRequest } from './image-runtime';
-import { outboundGuardEnabled, refuseOutbound } from './outbound-guard';
+import { fetchGuarded, outboundGuardEnabled, refuseOutbound } from './outbound-guard';
 import { resolveTcpEndpoint, type TcpEndpoint, type TcpEnv } from './tcp';
 
 /** what the loop needs of the environment: the socket endpoint plus the SSRF lever fetches read */
@@ -29,7 +29,7 @@ export type ParkEnv = TcpEnv & { OUTBOUND_GUARD?: string };
 /** how a park stopped, once the fn and its args are classified */
 export type ParkOp =
 	| { kind: 'open'; endpoint: TcpEndpoint }
-	| { kind: 'fetch'; request: ParkFetch }
+	| { kind: 'fetch'; request: ParkFetch; guarded: boolean }
 	| { kind: 'sql'; statement: ParkSql; selection: BackendSelection }
 	| { kind: 'sleep'; ms: number }
 	| { kind: 'image'; request: ParkImageRequest }
@@ -238,9 +238,10 @@ export function classifyParkOp(
 			const request = parseParkFetch(target.slice(PARK_FETCH_SCHEME.length));
 			if (!request) return { kind: 'refused', why: 'unreadable fetch descriptor' };
 			// same lever as the rest of outbound, or `OUTBOUND_GUARD=0` (the rig) would miss here
-			const refusal = outboundGuardEnabled(env) ? refuseOutbound(request.url) : undefined;
+			const guarded = outboundGuardEnabled(env);
+			const refusal = guarded ? refuseOutbound(request.url) : undefined;
 			if (refusal) return { kind: 'refused', why: `${refusal.reason}: ${refusal.url}` };
-			return { kind: 'fetch', request };
+			return { kind: 'fetch', request, guarded };
 		}
 		if (target.startsWith(PARK_SLEEP_SCHEME)) {
 			const ms = Number(target.slice(PARK_SLEEP_SCHEME.length));
@@ -526,7 +527,7 @@ async function perform(
 		return await collect(parkResumeToken(id));
 	}
 	if (op.kind === 'fetch') {
-		return await collect(parkResumeBytes(await performFetch(op.request, doFetch)));
+		return await collect(parkResumeBytes(await performFetch(op.request, doFetch, op.guarded)));
 	}
 	if (op.kind === 'image') {
 		return await collect(parkResumeBytes(await performImage(op.request)));
@@ -587,18 +588,24 @@ export async function performSql(
  */
 export async function performFetch(
 	request: ParkFetch,
-	doFetch: typeof fetch = fetch
+	doFetch: typeof fetch = fetch,
+	guarded = true
 ): Promise<Uint8Array> {
 	const reply = async (value: Record<string, unknown>) =>
 		new TextEncoder().encode(JSON.stringify(value));
 	try {
-		const res = await doFetch(request.url, {
-			method: request.method,
-			headers: request.headers,
-			...(request.body ? { body: bytes(request.body) } : {}),
-			redirect: request.redirect === 'manual' ? 'manual' : 'follow',
-			...(request.timeoutMs ? { signal: AbortSignal.timeout(request.timeoutMs) } : {})
-		});
+		const res = await fetchGuarded(
+			doFetch,
+			request.url,
+			{
+				method: request.method,
+				headers: request.headers,
+				...(request.body ? { body: bytes(request.body) } : {}),
+				redirect: request.redirect === 'manual' ? 'manual' : 'follow',
+				...(request.timeoutMs ? { signal: AbortSignal.timeout(request.timeoutMs) } : {})
+			},
+			guarded ? refuseOutbound : () => undefined
+		);
 		const headers: Record<string, string> = {};
 		res.headers.forEach((v, k) => {
 			headers[k] = v;

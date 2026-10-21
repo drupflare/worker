@@ -273,6 +273,66 @@ describe('the SSRF guard, through the real capability', () => {
 		expect(out.stats.httpQueue).toBe(0);
 		expect(String(out.drained.drained?.[0]?.refused ?? '')).not.toBe('');
 	});
+
+	it('refuses a redirect from an allowed host to a blocked one, and never fetches it', async () => {
+		const calls = stubFetch(async (url) =>
+			url.includes('redirector.test')
+				? new Response(null, {
+						status: 302,
+						headers: { location: 'http://169.254.169.254/latest/meta-data/' }
+					})
+				: new Response('should never be reached', { status: 200 })
+		);
+		const out = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, HTTP_DRAIN_ON_ALARM: '0' };
+			site.ensureHttpTables();
+			site.sql.exec(
+				`INSERT INTO cfw_http_queue (key, url, method, body, headers, queued_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`,
+				'redirected',
+				'https://redirector.test/hop',
+				'GET',
+				'',
+				'{}',
+				Date.now()
+			);
+			return await site.drainHttpQueue(5);
+		});
+
+		expect(calls('redirector.test')).toHaveLength(1);
+		expect(calls('169.254.169.254')).toEqual([]);
+		expect(String(out.drained?.[0]?.error ?? '')).toMatch(/redirect to .* refused/);
+	});
+
+	it('follows a redirect between allowed hosts when the guard is on', async () => {
+		const calls = stubFetch(async (url) =>
+			url.includes('first-hop.test')
+				? new Response(null, {
+						status: 301,
+						headers: { location: 'https://second-hop.test/x' }
+					})
+				: new Response('arrived', { status: 200 })
+		);
+		const out = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, HTTP_DRAIN_ON_ALARM: '0' };
+			site.ensureHttpTables();
+			site.sql.exec(
+				`INSERT INTO cfw_http_queue (key, url, method, body, headers, queued_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`,
+				'followed',
+				'https://first-hop.test/a',
+				'GET',
+				'',
+				'{}',
+				Date.now()
+			);
+			return await site.drainHttpQueue(5);
+		});
+
+		expect(calls('first-hop.test')).toHaveLength(1);
+		expect(calls('second-hop.test')).toHaveLength(1);
+		expect(out.drained?.[0]?.status).toBe(200);
+	});
 });
 
 describe('the re-drive record says a re-drive HAPPENED, not what one looks like', () => {

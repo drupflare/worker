@@ -109,3 +109,63 @@ export function refuseOutbound(rawUrl: string): OutboundRefusal {
 export function outboundGuardEnabled(env?: { OUTBOUND_GUARD?: string }): boolean {
 	return String(env?.OUTBOUND_GUARD ?? '1') !== '0';
 }
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/** the hops `fetch()` itself follows before it gives up */
+const MAX_REDIRECTS = 20;
+
+/** sent only to the origin they were meant for; `fetch()` drops the first two the same way */
+const CREDENTIAL_HEADERS = ['authorization', 'cookie', 'proxy-authorization'];
+
+/** describe the body, so they go when the body does */
+const BODY_HEADERS = ['content-type', 'content-length', 'content-encoding', 'content-language'];
+
+/** a redirect whose target the guard refuses, or one that never ends */
+export class RedirectRefused extends Error {}
+
+/**
+ * `fetch()` that checks every redirect target against the guard.
+ *
+ * A plain `redirect: 'follow'` checks only the URL it was handed, so an allowed host could answer
+ * 302 to a refused one. Hops follow the fetch spec: 301 and 302 turn a POST into a GET, 303 turns
+ * anything but GET and HEAD into a GET, and credentials do not cross an origin.
+ */
+export async function fetchGuarded(
+	doFetch: typeof fetch,
+	url: string,
+	init: RequestInit,
+	guard: (url: string) => OutboundRefusal = refuseOutbound
+): Promise<Response> {
+	if (init.redirect === 'manual' || init.redirect === 'error') return doFetch(url, init);
+	let target = url;
+	let method = String(init.method ?? 'GET').toUpperCase();
+	let body = init.body;
+	let headers = new Headers(init.headers);
+	for (let hop = 0; ; hop++) {
+		const res = await doFetch(target, { ...init, method, headers, body, redirect: 'manual' });
+		const location = res.headers.get('location');
+		if (!REDIRECT_STATUSES.has(res.status) || location === null) return res;
+		if (hop >= MAX_REDIRECTS) throw new RedirectRefused('too many redirects');
+		await res.body?.cancel();
+		const next = new URL(location, target).toString();
+		const refusal = guard(next);
+		if (refusal !== undefined) {
+			throw new RedirectRefused(`redirect to ${next} refused: ${refusal.reason}`);
+		}
+		if (new URL(next).origin !== new URL(target).origin) {
+			headers = new Headers(headers);
+			for (const name of CREDENTIAL_HEADERS) headers.delete(name);
+		}
+		const toGet =
+			((res.status === 301 || res.status === 302) && method === 'POST') ||
+			(res.status === 303 && method !== 'GET' && method !== 'HEAD');
+		if (toGet) {
+			method = 'GET';
+			body = undefined;
+			headers = new Headers(headers);
+			for (const name of BODY_HEADERS) headers.delete(name);
+		}
+		target = next;
+	}
+}

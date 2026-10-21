@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { outboundGuardEnabled, refuseOutbound } from '../../../src/ops/outbound-guard';
+import {
+	fetchGuarded,
+	outboundGuardEnabled,
+	RedirectRefused,
+	refuseOutbound
+} from '../../../src/ops/outbound-guard';
 
 describe('what PHP may make the Worker fetch', () => {
 	it.each([
@@ -100,5 +105,142 @@ describe('what PHP may make the Worker fetch', () => {
 		expect(outboundGuardEnabled({})).toBe(true);
 		expect(outboundGuardEnabled({ OUTBOUND_GUARD: '1' })).toBe(true);
 		expect(outboundGuardEnabled({ OUTBOUND_GUARD: '0' })).toBe(false);
+	});
+});
+
+type Hop = { status: number; location?: string };
+
+/** a fetch that answers each call from a script and records what it was asked */
+function scripted(hops: Hop[]) {
+	const calls: Array<{ url: string; init: RequestInit }> = [];
+	const doFetch = (async (url: string, init: RequestInit = {}) => {
+		calls.push({ url, init });
+		const hop = hops[calls.length - 1] ?? { status: 200 };
+		return new Response(hop.status === 200 ? 'done' : null, {
+			status: hop.status,
+			headers: hop.location ? { location: hop.location } : {}
+		});
+	}) as unknown as typeof fetch;
+	return { calls, doFetch };
+}
+
+describe('redirect targets are checked too', () => {
+	it('answers a plain response with one call and no redirect following', async () => {
+		const { calls, doFetch } = scripted([{ status: 200 }]);
+		const res = await fetchGuarded(doFetch, 'https://a.test/', { method: 'GET' });
+		expect(await res.text()).toBe('done');
+		expect(calls).toHaveLength(1);
+		expect(calls[0]!.init.redirect).toBe('manual');
+	});
+
+	it('follows an allowed hop, and a relative one against the current url', async () => {
+		const { calls, doFetch } = scripted([
+			{ status: 302, location: 'https://b.test/x' },
+			{ status: 301, location: '/y?q=1' },
+			{ status: 200 }
+		]);
+		const res = await fetchGuarded(doFetch, 'https://a.test/', {});
+		expect(res.status).toBe(200);
+		expect(calls.map((c) => c.url)).toEqual([
+			'https://a.test/',
+			'https://b.test/x',
+			'https://b.test/y?q=1'
+		]);
+	});
+
+	it.each([
+		['the metadata address', 'http://169.254.169.254/latest/meta-data/'],
+		['loopback', 'http://127.0.0.1:8080/admin'],
+		['an internal name', 'http://db.internal/'],
+		['a url with credentials', 'https://user:pass@c.test/']
+	])('refuses a redirect to %s without fetching it', async (_label, to) => {
+		const { calls, doFetch } = scripted([{ status: 302, location: to }]);
+		await expect(fetchGuarded(doFetch, 'https://a.test/', {})).rejects.toBeInstanceOf(
+			RedirectRefused
+		);
+		expect(calls).toHaveLength(1);
+	});
+
+	it('refuses the fourth hop when only the fourth is blocked', async () => {
+		const { calls, doFetch } = scripted([
+			{ status: 302, location: 'https://b.test/' },
+			{ status: 302, location: 'https://c.test/' },
+			{ status: 302, location: 'http://10.0.0.5/' }
+		]);
+		await expect(fetchGuarded(doFetch, 'https://a.test/', {})).rejects.toThrow(/10\.0\.0\.5/);
+		expect(calls.map((c) => c.url)).toEqual([
+			'https://a.test/',
+			'https://b.test/',
+			'https://c.test/'
+		]);
+	});
+
+	it('stops a loop after 20 hops', async () => {
+		const loop = Array.from({ length: 30 }, () => ({
+			status: 302,
+			location: 'https://a.test/'
+		}));
+		const { calls, doFetch } = scripted(loop);
+		await expect(fetchGuarded(doFetch, 'https://a.test/', {})).rejects.toThrow(/too many/);
+		expect(calls).toHaveLength(21);
+	});
+
+	it('drops credentials across an origin and keeps them within one', async () => {
+		const headers = { authorization: 'Bearer t', cookie: 'a=b', 'x-keep': '1' };
+		const cross = scripted([{ status: 302, location: 'https://b.test/' }, { status: 200 }]);
+		await fetchGuarded(cross.doFetch, 'https://a.test/', { headers });
+		const sent = new Headers(cross.calls[1]!.init.headers);
+		expect([sent.get('authorization'), sent.get('cookie'), sent.get('x-keep')]).toEqual([
+			null,
+			null,
+			'1'
+		]);
+		const same = scripted([{ status: 302, location: '/next' }, { status: 200 }]);
+		await fetchGuarded(same.doFetch, 'https://a.test/', { headers });
+		expect(new Headers(same.calls[1]!.init.headers).get('authorization')).toBe('Bearer t');
+	});
+
+	it.each([
+		['POST', 302, 'GET', false],
+		['POST', 301, 'GET', false],
+		['PUT', 303, 'GET', false],
+		['POST', 307, 'POST', true],
+		['PUT', 308, 'PUT', true]
+	])('sends %s through a %i as %s, body kept %s', async (method, status, expected, kept) => {
+		const { calls, doFetch } = scripted([{ status, location: '/n' }, { status: 200 }]);
+		await fetchGuarded(doFetch, 'https://a.test/', {
+			method,
+			body: 'payload',
+			headers: { 'content-type': 'text/plain', 'x-keep': '1' }
+		});
+		const hop = calls[1]!.init;
+		expect(hop.method).toBe(expected);
+		expect(hop.body === 'payload').toBe(kept);
+		const h = new Headers(hop.headers);
+		expect(h.has('content-type')).toBe(kept);
+		expect(h.get('x-keep')).toBe('1');
+	});
+
+	it('leaves a caller that asked for manual redirects alone', async () => {
+		const { calls, doFetch } = scripted([{ status: 302, location: 'http://127.0.0.1/' }]);
+		const res = await fetchGuarded(doFetch, 'https://a.test/', { redirect: 'manual' });
+		expect(res.status).toBe(302);
+		expect(calls).toHaveLength(1);
+	});
+
+	it('lets a disabled guard follow anything, which is the rig opt-out', async () => {
+		const { calls, doFetch } = scripted([
+			{ status: 302, location: 'http://127.0.0.1/' },
+			{ status: 200 }
+		]);
+		const res = await fetchGuarded(doFetch, 'https://a.test/', {}, () => undefined);
+		expect(res.status).toBe(200);
+		expect(calls).toHaveLength(2);
+	});
+
+	it('ends a non-redirect status carrying a location as the answer', async () => {
+		const { calls, doFetch } = scripted([{ status: 201, location: 'http://127.0.0.1/' }]);
+		expect((await fetchGuarded(doFetch, 'https://a.test/', {})).status).toBe(201);
+		expect(calls).toHaveLength(1);
 	});
 });

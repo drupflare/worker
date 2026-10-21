@@ -303,6 +303,7 @@
 					Drupflare
 				</a>
 				<a href="impact.html">Impact</a>
+				<a href="security.html">Security</a>
 				<a href="technical-report.html">Technical Report</a>
 				<a href="configuration.html">Configuration</a>
 				<a href="compatibility.html">Compatibility</a>
@@ -332,6 +333,7 @@
 <a class="card" href="php-update-delivery.html"><strong>PHP Interpreter Update Delivery</strong><span>How a new PHP interpreter build reaches a deployed site.</span></a>
 <a class="card" href="recovery.html"><strong>Recovery</strong><span>The four ways a site moves backwards and how to come back.</span></a>
 <a class="card" href="repository-layout.html"><strong>Repository Layout</strong><span>Every path outside src/ and how it arrives on a clean clone.</span></a>
+<a class="card" href="security.html"><strong>Security</strong><span>What the architecture removes, what it leaves, and a CVE and incident map.</span></a>
 <a class="card" href="technical-report.html"><strong>Technical Report: Drupal on Cloudflare Workers</strong><span>The engineering record: architecture, platform limits, costs and measurements.</span></a>
 </div>
 			<div class="readme">
@@ -743,6 +745,9 @@ Composer plugins are skipped. <code>drangler build --project</code> covers patch
 <li><strong>Settings from the old host.</strong> <code>DRUPAL_ENV_&lt;NAME&gt;</code>, <code>DRUPAL_CONFIG</code> and <code>DRUPAL_SETTINGS</code> reach PHP, and
 <code>RESPONSE_HEADERS</code> and <code>REDIRECTS</code> carry a migrated site&#39;s header and redirect rules. See
 <a href="configuration.html#migrated-project-settings"><code>docs/configuration.md</code></a>.</li>
+<li><strong>Security headers.</strong> Every response carries <code>X-Content-Type-Options</code>, <code>X-Frame-Options</code> and
+<code>Referrer-Policy</code>, and <code>Strict-Transport-Security</code> over https. <code>RESPONSE_HEADERS</code> replaces or
+removes any of them and is where a <code>Content-Security-Policy</code> goes.</li>
 <li><strong>Hostnames.</strong> One deployment is one site on any number of hostnames; see
 <a href="#url-routing">URL Routing</a>. <code>drangler domain add &lt;host&gt;</code> maps a hostname and adds its Custom
 Domain route.</li>

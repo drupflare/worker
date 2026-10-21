@@ -1,0 +1,1004 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Security - Drupflare</title>
+		<meta
+			name="description"
+			content="What the architecture removes, what it leaves, and a CVE and incident map."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Security - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="What the architecture removes, what it leaves, and a CVE and incident map."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 3rem;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="impact.html">Impact</a>
+				<a href="security.html" aria-current="page">Security</a>
+				<a href="technical-report.html">Technical Report</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="compatibility.html">Compatibility</a>
+				<a href="building-from-source.html">Building From Source</a>
+				<a href="recovery.html">Recovery</a>
+				<a href="database.html">The Site Database</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="security">Security</h1>
+<p>Drupflare runs unmodified Drupal 11 on PHP 8.5 compiled to WebAssembly, inside a Durable Object on
+Cloudflare Workers. This page says what that changes about the attacks a Drupal site faces, what it
+leaves alone, and how each statement was established. It is written for a security reviewer, so the
+parts that weaken the case are on the page as plainly as the parts that strengthen it.</p>
+<p>The short version: a bug in Drupal, a contributed module or PHP still compromises the site. What
+changes is the next step. On a conventional host an attacker who can run code gets a process on an
+operating system, with a shell, a filesystem, a network, neighbouring services and a kernel to
+attack. Here the attacker gets a PHP interpreter inside two sandboxes with a fixed list of host
+functions and no operating system to enumerate. Several well-known classes of server takeover have
+no path left to run. Application-layer bugs, and the data inside the same object, are exposed
+exactly as they were.</p>
+<h2 id="how-to-read-the-claims">How to Read the Claims</h2>
+<p>Every statement is tagged with how it was established.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Tag</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Read</td>
+<td>The source file or the primary document was read, and the line or quote is cited</td>
+</tr>
+<tr>
+<td>Measured</td>
+<td>A command was run against the shipping build, and the command is given</td>
+</tr>
+<tr>
+<td>Inferred</td>
+<td>It follows from the architecture and nothing was run against it</td>
+</tr>
+<tr>
+<td>Unknown</td>
+<td>It could not be established, and the page says what would settle it</td>
+</tr>
+</tbody></table></div>
+<p>No study measures how much a serverless or sandboxed runtime lowers breach probability. The page
+does not put a percentage on safety. It counts attack classes instead, and the count is only as good
+as the inference behind each row (see <a href="#how-much-safer">How Much Safer</a>).</p>
+<p>Sources were read on 2026-10-21. The quotes from Cloudflare&#39;s security model and Spectre post,
+SA-CORE-2026-014, the Lehmann and Stiévenart abstracts and the GTIG report were checked a second
+time against the live page. The rest were read once through a page extractor, so
+check the live page before quoting one to a third party. Cloudflare&#39;s pages and the PHP and Drupal
+advisories change.</p>
+<h2 id="what-is-claimed-and-what-is-not">What Is Claimed and What Is Not</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Claim</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>There is no operating system, shell, web server or PHP-FPM pool in the site&#39;s trust boundary</td>
+<td>Read: <a href="#the-layers">layers</a></td>
+</tr>
+<tr>
+<td>A PHP exploit runs inside WebAssembly linear memory and reaches the host only through imports</td>
+<td>Read: webassembly.org security page</td>
+</tr>
+<tr>
+<td>Cloudflare states a V8 patch gap under 24 hours</td>
+<td>Read: Cloudflare security model</td>
+</tr>
+<tr>
+<td>Server-takeover classes (FPM, CGI, Shellshock, Apache, container and kernel escapes) are gone</td>
+<td>Inferred: <a href="#the-cve-and-incident-map">map</a></td>
+</tr>
+<tr>
+<td>Arbitrary code execution is impossible</td>
+<td>False. Any Drupal RCE runs PHP in the sandbox</td>
+</tr>
+<tr>
+<td>A compromised PHP cannot read the site&#39;s own data</td>
+<td>False. The database sits in the same object</td>
+</tr>
+<tr>
+<td>WebAssembly makes memory corruption harder to exploit than native</td>
+<td>False. See <a href="#memory-corruption-inside-the-sandbox">Memory Corruption</a></td>
+</tr>
+</tbody></table></div>
+<h2 id="the-layers">The Layers</h2>
+<p>A request passes through these layers, from the attacker&#39;s side inward.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>What it is</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Drupal and contributed code</td>
+<td>Application authorization, SQL, templates</td>
+<td>the site itself</td>
+</tr>
+<tr>
+<td>PHP, compiled to wasm</td>
+<td>The interpreter in WebAssembly linear memory, built by <code>phasm</code></td>
+<td><code>interp.lock.json</code></td>
+</tr>
+<tr>
+<td>Glue and host functions</td>
+<td>103 JavaScript imports from the module, plus the <code>cfw*</code> functions</td>
+<td><a href="#host-surface">Host Surface</a></td>
+</tr>
+<tr>
+<td>V8 isolate in workerd</td>
+<td>The JavaScript sandbox that holds the module and the glue</td>
+<td>Cloudflare docs</td>
+</tr>
+<tr>
+<td>Cloudflare process sandbox</td>
+<td>Linux namespaces and seccomp around the process</td>
+<td>Cloudflare docs</td>
+</tr>
+<tr>
+<td>Cloudflare&#39;s hosts</td>
+<td>The machine, which belongs to the platform</td>
+<td>not in scope</td>
+</tr>
+</tbody></table></div>
+<p>Cloudflare&#39;s security model page describes the last two. &quot;The layer 2 sandbox uses Linux namespaces
+and seccomp to prohibit all access to the filesystem and network.&quot; It also says that &quot;Workers does
+not allow our customers to upload native-code binaries to run on the Cloudflare network&quot; and that
+&quot;the Workers patch gap is now under 24 hours&quot;, where the patch gap is the time between publishing a
+V8 fix and deploying it (<a href="https://developers.cloudflare.com/workers/reference/security-model/">Cloudflare</a>,
+read 2026-10-21). All three are Cloudflare&#39;s statements about its own platform. None was
+independently measured here.</p>
+<p>The same page carries two cautions. It says &quot;Local <code>workerd</code> processes do not include every
+defense-in-depth protection described here&quot;, and the workerd README is headed &quot;WARNING: <code>workerd</code>
+is not a hardened sandbox.&quot; The protections above belong to hosted Workers. A self-hosted <code>workerd</code>
+needs a microVM or equivalent boundary around it, which is what the <code>isolated</code> mode of
+<a href="https://github.com/drupflare/bastion">bastion</a> provides.</p>
+<p>The database sits inside the same object as PHP. There is no boundary between the interpreter and
+the site&#39;s own SQLite file, and none was ever claimed.</p>
+<h2 id="what-drupflare-provides-today">What Drupflare Provides Today</h2>
+<h3 id="host-surface">Host Surface</h3>
+<p>The interpreter reaches the outside through two routes: the imports of the wasm module, and the
+<code>cfw*</code> functions the Durable Object installs on the Emscripten <code>Module</code>.</p>
+<p>The shipping module, <code>.interp/php8.5.wasm</code> as pinned in <code>interp.lock.json</code>, imports 103 functions,
+all from <code>env</code> and <code>wasi_snapshot_preview1</code>, and the tuned copy derived from it imports 104
+(Measured: compile the file with <code>new WebAssembly.Module</code> and read <code>WebAssembly.Module.imports()</code>).
+They are Emscripten&#39;s libc layer, and what each one can do is decided by the glue that implements
+it. <code>posix_spawnp</code> is a stub that aborts (<code>.interp/php8.5-worker.mjs</code>, &quot;missing function:
+posix_spawnp&quot;), so there is no fork, no exec and no process table.</p>
+<p>The <code>cfw*</code> host functions are the intended capability set (<code>src/do/capabilities.ts</code>,
+<code>src/ops/park-drive.ts</code>, <code>src/ops/tcp.ts</code>, Read):</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Function</th>
+<th>What it reaches</th>
+<th>Limit</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>cfwSqlExec</code>, <code>cfwSqlTxn</code></td>
+<td>Any SQL on the site&#39;s own Durable Object SQLite</td>
+<td>It is Drupal&#39;s own database connection</td>
+</tr>
+<tr>
+<td><code>cfwFetch</code></td>
+<td>The fetch cache only; a miss queues a request and returns</td>
+<td>No synchronous network by construction</td>
+</tr>
+<tr>
+<td><code>cfwQueueFetch</code>, park <code>fetch</code></td>
+<td>Any public HTTP(S) URL, with PHP&#39;s headers and body</td>
+<td>Deny-list for private and metadata hosts, applied to every redirect hop</td>
+</tr>
+<tr>
+<td><code>cfwTcp</code>, park <code>socket</code></td>
+<td>Redis and syslog at the endpoint the operator configured</td>
+<td>PHP names no host; port must match the configured endpoint</td>
+</tr>
+<tr>
+<td><code>cfwMail</code></td>
+<td>A message queued through the site&#39;s mail transport</td>
+<td>From-domain check and size caps</td>
+</tr>
+<tr>
+<td><code>cfwFile*</code></td>
+<td>The site&#39;s own file tables</td>
+<td><code>..</code> rejected; flat keyspace inside one object</td>
+</tr>
+<tr>
+<td><code>cfwSettings</code></td>
+<td>Allow-listed levers</td>
+<td><code>PLAN</code> is refused; writes are scoped to the site</td>
+</tr>
+<tr>
+<td>image, zlib, signing, hashing</td>
+<td>Computation in JavaScript inside the object</td>
+<td>Canvas and operation caps</td>
+</tr>
+</tbody></table></div>
+<p>No host function names the <code>SITE</code> namespace, the fleet D1 database or <code>CONFIG_KV</code> directly, so PHP
+cannot address another site&#39;s object, the fleet table or raw KV (Read, by search of the install
+path; Inferred as a boundary because a search proves absence only for the code searched).</p>
+<p>Shell functions go through a router in the <code>drupflare</code> module (<code>src/Exec/Commands.php</code>) that serves
+a fixed program list, including <code>echo</code>, <code>zip</code>, <code>curl</code> and <code>wget</code>, and refuses pipes, redirection
+and every other program. The router is a compatibility layer written in PHP. It decides what
+ordinary PHP code can do. The property that matters for an attacker is different: the wasm module
+has no process to fork or exec into, because <code>posix_spawnp</code> aborts and there is no kernel.</p>
+<h3 id="request-path">Request Path</h3>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Where it is enforced</th>
+<th>Strength</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>__</code> object routes answer 404 from outside</td>
+<td>front worker, <code>src/site/entry.ts:174</code></td>
+<td>route table</td>
+</tr>
+<tr>
+<td>Owner routes need the owner token</td>
+<td>front worker, <code>src/site/owner.ts</code>; object check in <code>src/do/routes/auth.ts:233</code></td>
+<td>policy check</td>
+</tr>
+<tr>
+<td>Failed-token budget, 12 per 60 s per IP</td>
+<td>front worker, <code>src/ops/admin-session.ts:71-114</code></td>
+<td>policy check; in memory, not a brute-force defence</td>
+</tr>
+<tr>
+<td><code>?site=</code> ignored on visitor routes</td>
+<td>front worker, <code>src/site.ts:65</code></td>
+<td>policy check</td>
+</tr>
+<tr>
+<td>Forged <code>x-cfw-*</code> headers stripped</td>
+<td><code>src/ops/forwarded-headers.ts:32</code></td>
+<td>policy check</td>
+</tr>
+<tr>
+<td>Request body capped at 2 MiB</td>
+<td><code>src/site/guards.ts:62-93</code></td>
+<td>policy check</td>
+</tr>
+<tr>
+<td><code>PLAN</code> cannot be written by a tenant</td>
+<td><code>src/ops/plan.ts:148-154</code></td>
+<td>policy check</td>
+</tr>
+<tr>
+<td>One Durable Object per site, id from host</td>
+<td><code>src/ops/site-id.ts:26</code></td>
+<td>naming convention plus the platform&#39;s per-object storage</td>
+</tr>
+</tbody></table></div>
+<p>A hard boundary is one where the host has no such function. A policy check is one where the
+function exists and a list or a flag decides. The distinction matters for an attacker who can
+change what PHP asks for, because a policy check is a decision about that request and a missing
+function is not.</p>
+<h3 id="uploads-and-request-parsing">Uploads and Request Parsing</h3>
+<p>PHP&#39;s multipart handling is not entered for an inbound request. No SAPI delivers the request: the
+render fragment receives the method, body and cookies as arguments, parses multipart by hand and
+builds <code>UploadedFile</code> objects in userland (<code>src/site/php/pw-serve-inline.php:134-223</code>), and
+<code>$_FILES</code> is empty (<code>:323</code>). Nothing in <code>worker/src</code> or <code>phasm/src</code> calls <code>php_request_startup</code>,
+<code>sapi_activate</code> or <code>php_default_treat_data</code>, and <code>pib_run</code> runs no request-startup cycle (Read).</p>
+<p>The C-level answer is Inferred, not Measured, because php-src is fetched at build time and is not in
+the repository. A regression test that posts a multipart body and asserts that PHP&#39;s own upload
+handling never runs would turn the inference into a measurement (see
+<a href="#planned-work">Planned Work</a>).</p>
+<h3 id="response-headers">Response Headers</h3>
+<p>Until v1.0.3, the front worker sent none of <code>X-Content-Type-Options</code>, <code>X-Frame-Options</code>,
+<code>Referrer-Policy</code>, <code>Strict-Transport-Security</code> or <code>Content-Security-Policy</code> on a Drupal page. The
+render fragment forwards only <code>x-drupal-*</code> headers, so core&#39;s own <code>X-Content-Type-Options</code> and
+<code>X-Frame-Options</code> never reached a browser.</p>
+<p>The v1.0.4 line sends <code>X-Content-Type-Options: nosniff</code>, <code>X-Frame-Options: SAMEORIGIN</code> and
+<code>Referrer-Policy: strict-origin-when-cross-origin</code> on every response the Worker answers, and
+<code>Strict-Transport-Security: max-age=31536000</code> over https (<code>src/ops/edge-rules.ts</code>). A
+<code>RESPONSE_HEADERS</code> rule replaces or removes any of them. There is no default
+<code>Content-Security-Policy</code>, because core&#39;s own pages use inline script and style.</p>
+<p>Two limits remain. Headers a Drupal module sets, such as Security Kit&#39;s, are not forwarded. Static
+files served by the asset layer (<code>/core</code>, <code>/modules</code>, <code>/themes</code>, <code>/agg</code>) carry cache rules and none
+of these headers.</p>
+<h3 id="the-build">The Build</h3>
+<p>The shipping interpreter is built by <code>phasm</code>, which drives <code>seanmorris/php-wasm</code>&#39;s Makefile with an
+rc file per variant. The Makefile sets <code>TOTAL_STACK=32MB</code>. The extension list is short. <code>soap</code>, <code>phar</code>, <code>intl</code>, <code>gd</code>, <code>openssl</code>, <code>exif</code> and <code>sqlite</code> are not
+compiled in (<code>WITH_*</code> settings in <code>long64.rc</code>; the binary contains no <code>SoapServer</code> string, Measured
+with <code>grep -a -c</code>). Every extension left out is an extension its bugs cannot reach.</p>
+<h3 id="patching">Patching</h3>
+<p>Cloudflare patches V8 and the platform. Drupal core and the PHP interpreter are the project&#39;s to
+patch, and that path has a manual step. A new interpreter build travels from <code>phasm</code> to a pull
+request in this repository and ends there. The workflow has no deploy step, and a person merges,
+releases and deploys (<code>docs/php-update-delivery.md</code>). The pin records <code>.interp/php8.5.wasm</code> with its
+sha256.</p>
+<p>The interpreter reports PHP 8.5.2 (<code>CLAUDE.md</code>, measured on <code>.interp/php8.5.wasm</code>; <code>phasm/README.md</code>).
+Every PHP security release since then reaches a deployed site only through that pipeline. The
+root <code>composer.lock</code> pins Drupal core 11.4.10, the fixed release for the 11.4 line of
+SA-CORE-2026-014.</p>
+<h2 id="what-the-architecture-removes">What the Architecture Removes</h2>
+<p>These classes need a component the object does not have.</p>
+<ul>
+<li><strong>A server process to take over.</strong> There is no PHP-FPM pool, CGI handler, web server, SSH daemon
+or inbound socket. CVE-2019-11043 (PHP-FPM behind nginx), CVE-2024-4577 (PHP-CGI on Windows),
+CVE-2021-41773 (Apache path traversal) and CVE-2014-6271 (Shellshock through CGI) each need one.</li>
+<li><strong>A shell and delegates.</strong> <code>posix_spawnp</code> aborts and the module has no process table, so
+command-injection classes such as ImageMagick delegates (CVE-2016-3714) have nothing to run.
+GD is not compiled in, and image operations run as JavaScript.</li>
+<li><strong>A kernel and a container runtime in the tenant&#39;s boundary.</strong> Container and kernel escapes,
+including runc CVE-2019-5736, runc CVE-2024-21626, Dirty Pipe CVE-2022-0847 and Dirty COW
+CVE-2016-5195, start from a process on a shared Linux kernel. That kernel is Cloudflare&#39;s, and an
+attacker here needs a vulnerability in Cloudflare&#39;s runtime first.</li>
+<li><strong>An appliance in front of the application.</strong> The CitrixBleed class (CVE-2023-4966) is a memory
+disclosure on an edge appliance. TLS ends at Cloudflare&#39;s edge, and PHP has no OpenSSL (<code>WITH_OPENSSL=0</code>).</li>
+<li><strong>A native binary upload.</strong> Cloudflare accepts only JavaScript and WebAssembly.</li>
+<li><strong>A writable server filesystem that persists.</strong> The in-memory filesystem is rebuilt on a new
+instance, and uploads live in the site&#39;s own file tables.</li>
+</ul>
+<p>Google&#39;s Threat Intelligence Group counted 90 zero-days exploited in the wild in 2025, with 43
+(48%) in enterprise software and appliances and browsers under 10% of the total
+(<a href="https://cloud.google.com/blog/topics/threat-intelligence/2025-zero-day-review/">GTIG</a>, read
+2026-10-21). The count is about products in general. It shows where attackers spend zero-days, and
+it does not measure Drupflare.</p>
+<h2 id="what-it-does-not-remove">What It Does Not Remove</h2>
+<h3 id="application-bugs">Application Bugs</h3>
+<p>A SQL injection, an authorization bypass or a cross-site request forgery behaves as it does on any
+host. Drupalgeddon (CVE-2014-3704, SA-CORE-2014-005) is a SQL injection reachable by an anonymous
+user, and it reads the same database here. SA-CORE-2020-004 (CVE-2020-13663) is a CSRF flaw in the
+Form API, and a browser does not care where the server runs.</p>
+<h3 id="code-execution-inside-the-sandbox">Code Execution Inside the Sandbox</h3>
+<p>Drupalgeddon 2 (CVE-2018-7600, CVSS 9.8) and SA-CORE-2019-003 (CVE-2019-6340) execute PHP. So does
+SA-CORE-2026-014 (CVE-2026-108097), a Field UI remote code execution in core published 2026-10-14.
+Its advisory says &quot;At least one known exploit path does not require authentication&quot; and also says
+the flaw &quot;is not directly exploitable with core alone&quot;, with serious exploit paths through
+contributed modules. In each case the attacker runs PHP in the object, with the host functions
+above and the database in the same object. The architecture contains what that PHP can do
+outside the object. It does not stop the PHP from running.</p>
+<h3 id="memory-corruption-inside-the-sandbox">Memory Corruption Inside the Sandbox</h3>
+<p>WebAssembly does not make a C program&#39;s memory bugs harder to exploit. Lehmann, Kinder and Pradel
+(USENIX Security 2020) find that many classic vulnerabilities that common mitigations block in
+native code are exposed in WebAssembly, that the platform enables new attacks such as
+overwriting constant data, and that attacks can divert control flow or manipulate the host. Their
+conclusion is &quot;a perhaps surprising lack of binary security in WebAssembly&quot;
+(<a href="https://www.usenix.org/conference/usenixsecurity20/presentation/lehmann">USENIX</a>, abstract read
+2026-10-21). Stiévenart, De Roover and Ghafari compiled 4,469 C programs with known buffer
+overflows to x86 and to WebAssembly, found 1,088 whose outcome differed, and attribute it to &quot;the
+lack of security measures such as stack canaries in the generated WebAssembly&quot;
+(<a href="https://arxiv.org/abs/2111.01421">arXiv:2111.01421</a>, abstract read 2026-10-21).</p>
+<p>So treat an exploit of a PHP memory bug as no harder inside the sandbox than on a native build, and
+do not count on in-sandbox exploit difficulty. WebAssembly checks an indirect call&#39;s type
+signature, so a hijack is limited to functions of the same type
+(<a href="https://webassembly.org/docs/security/">webassembly.org</a>). What the sandbox changes is the step
+after: code in the module reaches the host only through the imports above.</p>
+<h3 id="data-in-the-same-object">Data in the Same Object</h3>
+<p>Code execution inside the sandbox reads and writes the whole site database, which is in the same
+object. Egress is open by design:
+<code>cfwQueueFetch</code> sends any public HTTP(S) request PHP builds, because the legitimate set (update
+servers, OIDC providers, webhooks) is open-ended. The deny-list protects private and metadata
+addresses and does not stop a site&#39;s own data leaving to a public host.</p>
+<h3 id="co-tenancy-and-side-channels">Co-Tenancy and Side Channels</h3>
+<p>Cloudflare runs many isolates in one process. On 2026-08-19 it published a revisit of remote Spectre
+attacks on Workers, reporting a leak of &quot;up to 12 bit/s with an accuracy of more than 99%&quot; of a JWT
+a researcher placed in a co-located Worker. It adds that &quot;The V8 sandbox is not a complete Spectre
+mitigation&quot; and &quot;MPK is not a complete answer to remediate Spectre, but it strictly reduces the
+leakage surface&quot;. It lists frozen timers, no shared memory, detection, memory shuffling, process
+isolation for suspicious scripts, the V8 sandbox and in-process isolation with memory protection
+keys, deployed in September 2025
+(<a href="https://blog.cloudflare.com/revisiting-spectre-attacks-on-workers/">Cloudflare</a>; paper
+<a href="https://arxiv.org/abs/2608.17043">arXiv:2608.17043</a>, abstract only). A site that holds a secret in a
+Durable Object is exposed to this class on any shared platform. The mitigations are Cloudflare&#39;s.</p>
+<h3 id="platform-failure-and-concentration">Platform Failure and Concentration</h3>
+<p>A bug in Cloudflare&#39;s own software reaches every tenant. Cloudbleed (2017) leaked memory from
+Cloudflare&#39;s HTML parser into responses for about 1 in every 3,300,000 requests during its worst
+window, and the post says the trigger was customer content
+(<a href="https://blog.cloudflare.com/incident-report-on-memory-leak-caused-by-cloudflare-parser-bug/">Cloudflare</a>).
+Two 2025 outages were not attacks: the 12 June Workers KV outage lasted 2 hours 28 minutes
+(<a href="https://blog.cloudflare.com/cloudflare-service-outage-june-12-2025/">post</a>), and the 18 November
+outage came from a database permissions change that doubled a feature file past a proxy limit
+(<a href="https://blog.cloudflare.com/18-november-2025-outage/">post</a>). Drupflare&#39;s design answer is that a
+site keeps serving with the control plane gone. It cannot keep serving with Cloudflare gone.</p>
+<h3 id="supply-chain">Supply Chain</h3>
+<p>Composer packages and the interpreter&#39;s own dependencies run as code in every host. The PHP
+project reverted two malicious commits to its source repository in March 2021 before any release
+carried them (<a href="https://www.php.net/archive/2021.php">php.net</a>). The same risk applies to a Composer
+package or an interpreter dependency here as anywhere.</p>
+<h3 id="cost-as-an-attack-and-visibility">Cost as an Attack and Visibility</h3>
+<p>No primary source on denial of wallet was found. The project&#39;s own rig has seen the mechanism: a
+bench site driven all night used 103.8% of its daily row quota and went read-only, so every login
+answered 503 (<code>CLAUDE.md</code>, measured). A busy site on the free plan can be degraded by traffic.
+There is also no host disk image and no host log to examine after an incident, so forensics rest on
+Workers observability events.</p>
+<h3 id="state-that-survives-between-requests">State That Survives Between Requests</h3>
+<p>A warm Durable Object keeps its interpreter between requests, and static state in PHP survives.
+Four cases are documented in this repository: an AJAX flag that randomised every later element id,
+an entity access cache that kept an unpublished node readable by anonymous visitors, a cached
+local-task list that rendered one node&#39;s tabs on another, and a <code>file_save_upload()</code> function static
+that handed one user&#39;s uploaded file to the next upload to the same field. Each was found and fixed,
+and each had no signal until a test looked for it
+(<code>CLAUDE.md</code>, &quot;The boundary sweep walks services now&quot;). This class is specific to a persistent
+runtime. A request-per-process server such as PHP-FPM resets it by design.</p>
+<h2 id="the-cve-and-incident-map">The CVE and Incident Map</h2>
+<p>Each row maps a published vulnerability or incident to what an attacker needs on a conventional
+host and what changes inside a Drupflare site. The verdicts are Inferred from the architecture
+above. No exploit was run against a Drupflare site.</p>
+<ul>
+<li><code>removed</code> means the attack path needs a component the object does not have.</li>
+<li><code>contained</code> means the flaw runs, and the sandbox limits what the attacker reaches outside the object.</li>
+<li><code>unchanged</code> means the flaw works the same way.</li>
+<li><code>unknown</code> means the answer depends on a fact not yet established.</li>
+</ul>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Year</th>
+<th>Class</th>
+<th>Verdict</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="https://www.drupal.org/sa-core-2014-005">CVE-2014-3704</a></td>
+<td>2014</td>
+<td>SQL injection, Drupal 7 core</td>
+<td>unchanged</td>
+<td>Reads the same database</td>
+</tr>
+<tr>
+<td><a href="https://www.drupal.org/sa-core-2018-002">CVE-2018-7600</a></td>
+<td>2018</td>
+<td>Unauthenticated RCE, Drupal core</td>
+<td>contained</td>
+<td>PHP runs in the sandbox; no shell for the observed miner payload (CVSS 9.8)</td>
+</tr>
+<tr>
+<td><a href="https://www.drupal.org/sa-core-2018-004">CVE-2018-7602</a></td>
+<td>2018</td>
+<td>RCE, Drupal 7 and 8</td>
+<td>contained</td>
+<td>As CVE-2018-7600</td>
+</tr>
+<tr>
+<td><a href="https://www.drupal.org/sa-core-2019-003">CVE-2019-6340</a></td>
+<td>2019</td>
+<td>RCE through REST input</td>
+<td>contained</td>
+<td>PHP runs in the sandbox</td>
+</tr>
+<tr>
+<td><a href="https://www.drupal.org/sa-core-2020-004">CVE-2020-13663</a></td>
+<td>2020</td>
+<td>CSRF in Form API</td>
+<td>unchanged</td>
+<td>Browser-side flaw</td>
+</tr>
+<tr>
+<td><a href="https://www.drupal.org/sa-core-2026-014">CVE-2026-108097</a></td>
+<td>2026</td>
+<td>RCE in Field UI, Drupal core</td>
+<td>contained</td>
+<td>PHP runs in the sandbox; lock pins 11.4.10, the fixed release</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2019-11043">CVE-2019-11043</a></td>
+<td>2019</td>
+<td>PHP-FPM buffer underflow via nginx</td>
+<td>removed</td>
+<td>No FPM, no nginx, no FastCGI socket</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2024-4577">CVE-2024-4577</a></td>
+<td>2024</td>
+<td>PHP-CGI argument injection, Windows</td>
+<td>removed</td>
+<td>Needs the CGI SAPI on Windows with Apache</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2014-6271">CVE-2014-6271</a></td>
+<td>2014</td>
+<td>Shellshock, Bash through CGI</td>
+<td>removed</td>
+<td>No Bash and no CGI</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2021-41773">CVE-2021-41773</a></td>
+<td>2021</td>
+<td>Apache 2.4.49 path traversal</td>
+<td>removed</td>
+<td>No Apache and no filesystem to traverse</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2016-3714">CVE-2016-3714</a></td>
+<td>2016</td>
+<td>ImageMagick delegate shell injection</td>
+<td>removed</td>
+<td>No ImageMagick; no process to spawn</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2023-4966">CVE-2023-4966</a></td>
+<td>2023</td>
+<td>CitrixBleed, edge appliance memory</td>
+<td>removed</td>
+<td>No appliance in the tenant&#39;s path</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2014-0160">CVE-2014-0160</a></td>
+<td>2014</td>
+<td>Heartbleed, OpenSSL</td>
+<td>removed</td>
+<td>PHP has no OpenSSL; TLS ends at Cloudflare</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2026-7261">CVE-2026-7261</a></td>
+<td>2026</td>
+<td>PHP SoapServer use-after-free</td>
+<td>removed</td>
+<td>ext/soap is not compiled in (no <code>SoapServer</code> string in the binary)</td>
+</tr>
+<tr>
+<td>runc <a href="https://nvd.nist.gov/vuln/detail/CVE-2019-5736">CVE-2019-5736</a>, <a href="https://github.com/opencontainers/runc/security/advisories/GHSA-xr7r-f8xq-vfvv">CVE-2024-21626</a></td>
+<td>2019, 2024</td>
+<td>Container runtime escape</td>
+<td>removed</td>
+<td>The tenant has no container runtime; the platform does</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2022-0847">CVE-2022-0847</a>, <a href="https://nvd.nist.gov/vuln/detail/CVE-2016-5195">CVE-2016-5195</a></td>
+<td>2022, 2016</td>
+<td>Linux kernel privilege escalation</td>
+<td>removed</td>
+<td>Needs a local process on a Linux kernel the tenant can reach</td>
+</tr>
+<tr>
+<td><a href="https://www.php.net/archive/2021.php">php-src malicious commits</a></td>
+<td>2021</td>
+<td>Source supply chain</td>
+<td>unchanged</td>
+<td>A bad commit reaching a build is the same risk on any host</td>
+</tr>
+<tr>
+<td><a href="https://blog.cloudflare.com/revisiting-spectre-attacks-on-workers/">Spectre on Workers</a></td>
+<td>2026</td>
+<td>Co-tenant timing leak</td>
+<td>unchanged</td>
+<td>Platform mitigations apply; not complete by Cloudflare&#39;s own statement</td>
+</tr>
+<tr>
+<td><a href="https://blog.cloudflare.com/incident-report-on-memory-leak-caused-by-cloudflare-parser-bug/">Cloudbleed</a></td>
+<td>2017</td>
+<td>Edge memory disclosure</td>
+<td>unchanged</td>
+<td>Platform-side; a tenant cannot prevent it</td>
+</tr>
+</tbody></table></div>
+<h2 id="how-much-safer">How Much Safer</h2>
+<p>No study compares breach outcomes for serverless and server hosting. The attack-surface literature
+(Manadhata and Wing, IEEE TSE 2011, and Howard&#39;s relative attack surface quotient) defines how to
+count entry points and capabilities, and neither measures this pair. The vendor surveys searched
+quote percentages that were read only through summaries, so none is repeated here.</p>
+<p>What can be counted is the map above. Its 19 rows carry these verdicts:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Verdict</th>
+<th>Rows</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>removed</td>
+<td>10</td>
+<td>The attack path needs a component the object lacks</td>
+</tr>
+<tr>
+<td>contained</td>
+<td>4</td>
+<td>The flaw runs; the sandbox limits the reach</td>
+</tr>
+<tr>
+<td>unchanged</td>
+<td>5</td>
+<td>The flaw works as it does anywhere</td>
+</tr>
+</tbody></table></div>
+<p>Read the 10 as a statement about classes of server takeover, and do not read it as a breach
+probability. The rows were chosen from incidents that reached the attacker&#39;s goal on conventional
+PHP hosting, so the selection favours the classes this architecture removes. None of the six Drupal
+advisories in the map is <code>removed</code>: each is <code>contained</code> or <code>unchanged</code>, because Drupal&#39;s own bugs
+run inside the sandbox. Sophos&#39;s 2025 education survey reports that higher education providers were
+more likely to be attacked through exploited vulnerabilities (35%), from 441 respondents across
+lower and higher education
+(<a href="https://www.sophos.com/en-us/blog/the-state-of-ransomware-in-education-2025">Sophos</a>). The
+figure concerns the entry vector and says nothing about the host.</p>
+<p>The measurable form of the claim is a comparison of authority retained after the same exploit. The
+planned experiment runs one pinned vulnerable Drupal against three arms (a minimally configured
+VPS, a hardened container and Drupflare) with a fixed list of post-exploitation actions, and
+publishes how many each arm blocked.</p>
+<h2 id="planned-work">Planned Work</h2>
+<p>These are the security items with a release against them. None is shipped except where marked.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Closes</th>
+<th>Release</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Security headers on every Worker response</td>
+<td>Missing headers on every page</td>
+<td>v1.0.4, in the working tree</td>
+</tr>
+<tr>
+<td>Multipart parsing regression test</td>
+<td>Reachability inference</td>
+<td>v1.0.4</td>
+</tr>
+<tr>
+<td>Host import census as a gate</td>
+<td>A new import joining the surface unreviewed</td>
+<td>v1.0.4</td>
+</tr>
+<tr>
+<td><code>SECURITY.md</code> and a reporting route for researchers</td>
+<td>A documented disclosure path</td>
+<td>v1.0.4</td>
+</tr>
+<tr>
+<td>Drupalgeddon 2 against three arms</td>
+<td>The comparison above, first case</td>
+<td>v1.0.4</td>
+</tr>
+<tr>
+<td>Module-set headers stored with the page</td>
+<td>Security Kit and similar headers dropped</td>
+<td>v1.1</td>
+</tr>
+<tr>
+<td>Content-Security-Policy with a report-only stage</td>
+<td>No default CSP</td>
+<td>v1.1</td>
+</tr>
+<tr>
+<td>Per-site egress allow-list</td>
+<td>Open egress</td>
+<td>v1.1</td>
+</tr>
+<tr>
+<td>Fleet security-release rollout, owner patching with rollback</td>
+<td>Manual PHP and Drupal patch delivery</td>
+<td>v1.1</td>
+</tr>
+<tr>
+<td>The full three-arm comparison</td>
+<td>The unmeasured claim</td>
+<td>v1.1</td>
+</tr>
+</tbody></table></div>
+<h2 id="references">References</h2>
+<p>Read on 2026-10-21 unless noted.</p>
+<ol>
+<li>Cloudflare, Workers security model: <a href="https://developers.cloudflare.com/workers/reference/security-model/">https://developers.cloudflare.com/workers/reference/security-model/</a></li>
+<li>Cloudflare, &quot;A revisit of remote Spectre attacks on Cloudflare Workers&quot;, 2026-08-19: <a href="https://blog.cloudflare.com/revisiting-spectre-attacks-on-workers/">https://blog.cloudflare.com/revisiting-spectre-attacks-on-workers/</a></li>
+<li>Schwarzl et al., &quot;Remote-Timer-as-a-Service&quot;, arXiv:2608.17043 (abstract only): <a href="https://arxiv.org/abs/2608.17043">https://arxiv.org/abs/2608.17043</a></li>
+<li>Cloudflare, Cloudbleed incident report, 2017-02-23: <a href="https://blog.cloudflare.com/incident-report-on-memory-leak-caused-by-cloudflare-parser-bug/">https://blog.cloudflare.com/incident-report-on-memory-leak-caused-by-cloudflare-parser-bug/</a></li>
+<li>Cloudflare, 12 June 2025 service outage: <a href="https://blog.cloudflare.com/cloudflare-service-outage-june-12-2025/">https://blog.cloudflare.com/cloudflare-service-outage-june-12-2025/</a></li>
+<li>Cloudflare, 18 November 2025 outage: <a href="https://blog.cloudflare.com/18-november-2025-outage/">https://blog.cloudflare.com/18-november-2025-outage/</a></li>
+<li>Lehmann, Kinder and Pradel, &quot;Everything Old is New Again: Binary Security of WebAssembly&quot;, USENIX Security 2020 (abstract): <a href="https://www.usenix.org/conference/usenixsecurity20/presentation/lehmann">https://www.usenix.org/conference/usenixsecurity20/presentation/lehmann</a></li>
+<li>Stiévenart, De Roover and Ghafari, &quot;The Security Risk of Lacking Compiler Protection in WebAssembly&quot;, arXiv:2111.01421 (abstract): <a href="https://arxiv.org/abs/2111.01421">https://arxiv.org/abs/2111.01421</a></li>
+<li>WebAssembly security documentation: <a href="https://webassembly.org/docs/security/">https://webassembly.org/docs/security/</a></li>
+<li>Google Threat Intelligence Group, &quot;2025 Zero-Days in Review&quot;, 2026-03-05: <a href="https://cloud.google.com/blog/topics/threat-intelligence/2025-zero-day-review/">https://cloud.google.com/blog/topics/threat-intelligence/2025-zero-day-review/</a></li>
+<li>Drupal security advisories SA-CORE-2014-005, 2018-002, 2018-004, 2019-003, 2020-004 and 2026-014: <a href="https://www.drupal.org/security">https://www.drupal.org/security</a></li>
+<li>NVD records for the CVE identifiers in the map: <a href="https://nvd.nist.gov/">https://nvd.nist.gov/</a></li>
+<li>PHP project, 2021 archive (malicious commits, 2021-03-30): <a href="https://www.php.net/archive/2021.php">https://www.php.net/archive/2021.php</a></li>
+<li>Sophos, &quot;The State of Ransomware in Education 2025&quot;: <a href="https://www.sophos.com/en-us/blog/the-state-of-ransomware-in-education-2025">https://www.sophos.com/en-us/blog/the-state-of-ransomware-in-education-2025</a></li>
+<li>workerd README, &quot;WARNING: workerd is not a hardened sandbox&quot;: <a href="https://github.com/cloudflare/workerd">https://github.com/cloudflare/workerd</a></li>
+</ol>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+	</body>
+</html>

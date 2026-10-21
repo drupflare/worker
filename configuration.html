@@ -303,6 +303,7 @@
 					Drupflare
 				</a>
 				<a href="impact.html">Impact</a>
+				<a href="security.html">Security</a>
 				<a href="technical-report.html">Technical Report</a>
 				<a href="configuration.html" aria-current="page">Configuration</a>
 				<a href="compatibility.html">Compatibility</a>
@@ -958,6 +959,16 @@ slash is ignored) or a trailing <code>*</code> that carries the rest of the path
 before routing, so a redirect costs no Durable Object request, and it never applies to the Worker&#39;s
 own routes such as <code>/settings</code>. Status is 301, 302, 307 or 308, 301 by default, and at most 100 rules
 are read.</p>
+<p>Every response the Worker answers carries <code>X-Content-Type-Options: nosniff</code>,
+<code>X-Frame-Options: SAMEORIGIN</code> and <code>Referrer-Policy: strict-origin-when-cross-origin</code>, and over https
+<code>Strict-Transport-Security: max-age=31536000</code>, with no <code>includeSubDomains</code> or <code>preload</code>. A
+<code>RESPONSE_HEADERS</code> rule that names one of them replaces it, and a rule value of <code>&quot;&quot;</code> removes it, which
+a site embedded in another page needs for <code>X-Frame-Options</code>. There is no default
+<code>Content-Security-Policy</code>, because core&#39;s own pages use inline script and style. A site sets one
+through a rule, and <code>Content-Security-Policy-Report-Only</code> shows what a policy would block before it
+enforces anything. Headers a Drupal module sets, such as Security Kit&#39;s, are not forwarded: the render
+fragment passes only <code>x-drupal-*</code>. Static files the asset layer answers (<code>/core</code>, <code>/modules</code>,
+<code>/themes</code>, <code>/agg</code>) carry the cache rules in <code>assets/_headers</code> and none of these.</p>
 <p><code>/enable</code> is not needed for a text asset a migrated module ships: a <code>.css</code>, <code>.js</code> or <code>.svg</code> file
 stored in <code>cfw_module_file</code> is served from <code>/modules</code>, <code>/themes</code>, <code>/profiles</code> and <code>/libraries</code> when
 the pack does not hold the path. Binary assets are not served this way, because the table stores

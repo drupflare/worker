@@ -30,12 +30,14 @@ const SUMMARY: Record<string, string> = {
 		'The four classes a number belongs to, and which instrument each allows.',
 	'php-update-delivery': 'How a new PHP interpreter build reaches a deployed site.',
 	recovery: 'The four ways a site moves backwards and how to come back.',
-	'repository-layout': 'Every path outside src/ and how it arrives on a clean clone.'
+	'repository-layout': 'Every path outside src/ and how it arrives on a clean clone.',
+	security: 'What the architecture removes, what it leaves, and a CVE and incident map.'
 };
 
 /** the header nav: the pages a new reader reaches for first */
 const NAV = [
 	'impact',
+	'security',
 	'technical-report',
 	'configuration',
 	'compatibility',

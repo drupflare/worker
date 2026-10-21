@@ -964,9 +964,55 @@ describe('RESPONSE_HEADERS and REDIRECTS shape what the front worker answers', (
 		const bare = await through('/blog/post');
 		const set = await through('/blog/post', { RESPONSE_HEADERS: rules });
 		const other = await through('/about', { RESPONSE_HEADERS: rules });
-		expect(bare.res.headers.get('x-frame-options')).toBeNull();
+		expect(bare.res.headers.get('x-frame-options')).toBe('SAMEORIGIN');
 		expect(set.res.headers.get('x-frame-options')).toBe('DENY');
-		expect(other.res.headers.get('x-frame-options')).toBeNull();
+		expect(other.res.headers.get('x-frame-options')).toBe('SAMEORIGIN');
+	});
+
+	it('sends the security defaults on a document, an owner route and a redirect', async () => {
+		const expected = {
+			'x-content-type-options': 'nosniff',
+			'x-frame-options': 'SAMEORIGIN',
+			'referrer-policy': 'strict-origin-when-cross-origin',
+			'strict-transport-security': 'max-age=31536000'
+		};
+		const moves = JSON.stringify([{ from: '/old', to: '/new' }]);
+		const answers = [
+			await through('/about'),
+			await through('/settings'),
+			await through('/__serve'),
+			await through('/old', { REDIRECTS: moves })
+		];
+		for (const { res } of answers) {
+			for (const [name, value] of Object.entries(expected)) {
+				expect(res.headers.get(name), `${res.status} ${name}`).toBe(value);
+			}
+			expect(res.headers.get('content-security-policy')).toBeNull();
+		}
+		expect(answers[3]!.res.status).toBe(301);
+	});
+
+	it('sends HSTS over https only', async () => {
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(
+			new Request('http://cfw.local/about'),
+			{ ...env, SITE: siteSpy().namespace } as unknown as typeof env,
+			ctx
+		);
+		await res.text();
+		await waitOnExecutionContext(ctx);
+		expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+		expect(res.headers.get('strict-transport-security')).toBeNull();
+	});
+
+	it('lets a rule replace a default and remove one with an empty value', async () => {
+		const set = JSON.stringify([
+			{ path: '/*', set: { 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': '' } }
+		]);
+		const { res } = await through('/about', { RESPONSE_HEADERS: set });
+		expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+		expect(res.headers.has('x-frame-options')).toBe(false);
+		expect(res.headers.get('x-content-type-options')).toBe('nosniff');
 	});
 
 	it("cannot set a cookie or overwrite this project's own headers", async () => {

@@ -82,7 +82,8 @@ export default {
 		try {
 			const res = edge.decorate(
 				visited,
-				await frontFetch(request, env, ctx, url, t0, resolvedSite)
+				await frontFetch(request, env, ctx, url, t0, resolvedSite),
+				url.protocol === 'https:'
 			);
 			// only a KV-mapped host: an operator wrote it, so a forged Host cannot reach this
 			if (resolvedFrom !== 'kv') return res;

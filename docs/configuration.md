@@ -495,6 +495,17 @@ before routing, so a redirect costs no Durable Object request, and it never appl
 own routes such as `/settings`. Status is 301, 302, 307 or 308, 301 by default, and at most 100 rules
 are read.
 
+Every response the Worker answers carries `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: SAMEORIGIN` and `Referrer-Policy: strict-origin-when-cross-origin`, and over https
+`Strict-Transport-Security: max-age=31536000`, with no `includeSubDomains` or `preload`. A
+`RESPONSE_HEADERS` rule that names one of them replaces it, and a rule value of `""` removes it, which
+a site embedded in another page needs for `X-Frame-Options`. There is no default
+`Content-Security-Policy`, because core's own pages use inline script and style. A site sets one
+through a rule, and `Content-Security-Policy-Report-Only` shows what a policy would block before it
+enforces anything. Headers a Drupal module sets, such as Security Kit's, are not forwarded: the render
+fragment passes only `x-drupal-*`. Static files the asset layer answers (`/core`, `/modules`,
+`/themes`, `/agg`) carry the cache rules in `assets/_headers` and none of these.
+
 `/enable` is not needed for a text asset a migrated module ships: a `.css`, `.js` or `.svg` file
 stored in `cfw_module_file` is served from `/modules`, `/themes`, `/profiles` and `/libraries` when
 the pack does not hold the path. Binary assets are not served this way, because the table stores

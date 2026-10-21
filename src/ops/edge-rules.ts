@@ -2,7 +2,8 @@
  * Response headers and redirects the front worker applies per site (no Durable Object request).
  *
  * `RESPONSE_HEADERS` and `REDIRECTS` are a JSON string (KV, `--var`) or the array itself (`vars`).
- * Headers: `[{ "path": "/prefix*" | "/exact", "set": { "Name": "value" } }]`.
+ * Headers: `[{ "path": "/prefix*" | "/exact", "set": { "Name": "value" } }]`, applied over
+ * {@link DEFAULT_HEADERS}; a value of `""` removes the header.
  * Redirects: `[{ "from": "/old" | "/old/*", "to": "/new" | "/new/*" | "https://..." }]`, with an
  * optional `status` (301 by default, or 302, 307, 308).
  * @module
@@ -166,12 +167,35 @@ export function redirectMatch(
 const headerMatches = (rule: HeaderRule, pathname: string): boolean =>
 	rule.path.endsWith('*') ? pathname.startsWith(rule.path.slice(0, -1)) : pathname === rule.path;
 
+/**
+ * Sent on every response a `RESPONSE_HEADERS` rule does not override. Core sets the first two
+ * itself, but the render fragment forwards only `x-drupal-*`, so they never reached a browser.
+ * No default `Content-Security-Policy`: core's own pages need inline script and style.
+ */
+export const DEFAULT_HEADERS: Readonly<Record<string, string>> = {
+	'x-content-type-options': 'nosniff',
+	'x-frame-options': 'SAMEORIGIN',
+	'referrer-policy': 'strict-origin-when-cross-origin'
+};
+
+/** one year, no `includeSubDomains` or `preload`: those reach hosts this worker does not serve */
+export const HSTS_VALUE = 'max-age=31536000';
+
+/** sets the defaults, and HSTS only where the request arrived over https */
+function applyDefaults(headers: Headers, https: boolean): void {
+	for (const [name, value] of Object.entries(DEFAULT_HEADERS)) headers.set(name, value);
+	if (https) headers.set('strict-transport-security', HSTS_VALUE);
+}
+
 /** the two appliers {@link edgeRules} builds */
 export type EdgeRules = {
 	/** the redirect response for this URL, or undefined */
 	redirect(url: URL): Response | undefined;
-	/** the response with every matching rule's headers set, later rules winning */
-	decorate(pathname: string, res: Response): Response;
+	/**
+	 * The response with {@link DEFAULT_HEADERS} and then every matching rule's headers set, later
+	 * rules winning. A rule value of `""` removes that header, defaults included.
+	 */
+	decorate(pathname: string, res: Response, https?: boolean): Response;
 };
 
 /** paths a redirect never applies to: this worker's own routes and the object's `__` routes */
@@ -189,18 +213,23 @@ export function edgeRules(
 			if (redirects.length === 0 || reserved(url.pathname)) return undefined;
 			const hit = redirectMatch(redirects, url);
 			if (hit === undefined) return undefined;
-			return new Response(null, {
-				status: hit.status,
-				headers: { location: new URL(hit.to, url.origin).toString(), 'x-cfw-redirect': '1' }
+			const moved = new Headers({
+				location: new URL(hit.to, url.origin).toString(),
+				'x-cfw-redirect': '1'
 			});
+			applyDefaults(moved, url.protocol === 'https:');
+			return new Response(null, { status: hit.status, headers: moved });
 		},
-		decorate(pathname, res) {
-			if (headers.length === 0 || res.status === 101) return res;
-			const matched = headers.filter((r) => headerMatches(r, pathname));
-			if (matched.length === 0) return res;
+		decorate(pathname, res, https = false) {
+			if (res.status === 101) return res;
 			const out = new Response(res.body, res);
-			for (const rule of matched) {
-				for (const [name, value] of Object.entries(rule.set)) out.headers.set(name, value);
+			applyDefaults(out.headers, https);
+			for (const rule of headers) {
+				if (!headerMatches(rule, pathname)) continue;
+				for (const [name, value] of Object.entries(rule.set)) {
+					if (value === '') out.headers.delete(name);
+					else out.headers.set(name, value);
+				}
 			}
 			return out;
 		}

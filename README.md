@@ -482,6 +482,9 @@ and carries it over; the worker accepts what it sends.
 - **Settings from the old host.** `DRUPAL_ENV_<NAME>`, `DRUPAL_CONFIG` and `DRUPAL_SETTINGS` reach PHP, and
   `RESPONSE_HEADERS` and `REDIRECTS` carry a migrated site's header and redirect rules. See
   [`docs/configuration.md`](docs/configuration.md#migrated-project-settings).
+- **Security headers.** Every response carries `X-Content-Type-Options`, `X-Frame-Options` and
+  `Referrer-Policy`, and `Strict-Transport-Security` over https. `RESPONSE_HEADERS` replaces or
+  removes any of them and is where a `Content-Security-Policy` goes.
 - **Hostnames.** One deployment is one site on any number of hostnames; see
   [URL Routing](#url-routing). `drangler domain add <host>` maps a hostname and adds its Custom
   Domain route.

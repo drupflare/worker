@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+	DEFAULT_HEADERS,
 	edgeRules,
+	HSTS_VALUE,
 	parseRedirects,
 	parseResponseHeaders,
 	redirectMatch,
@@ -78,10 +80,60 @@ describe('parsing and matching REDIRECTS', () => {
 });
 
 describe('the appliers', () => {
-	it('leaves a response untouched when no rule matches', () => {
-		const res = new Response('x');
+	it('adds no rule header when no rule matches, only the defaults', () => {
 		const rules = edgeRules({ RESPONSE_HEADERS: [{ path: '/a', set: { 'X-A': '1' } }] });
-		expect(rules.decorate('/b', res)).toBe(res);
+		const out = rules.decorate('/b', new Response('x'));
+		expect(out.headers.has('x-a')).toBe(false);
+		expect(Object.fromEntries(out.headers)).toMatchObject(DEFAULT_HEADERS);
+	});
+
+	it('sends HSTS only when told the request was https', () => {
+		const rules = edgeRules({});
+		expect(
+			rules.decorate('/', new Response('x'), true).headers.get('strict-transport-security')
+		).toBe(HSTS_VALUE);
+		expect(
+			rules.decorate('/', new Response('x')).headers.has('strict-transport-security')
+		).toBe(false);
+	});
+
+	it('lets a later rule win and an empty value remove a default', () => {
+		const rules = edgeRules({
+			RESPONSE_HEADERS: [
+				{ path: '/*', set: { 'X-Frame-Options': 'DENY', 'Referrer-Policy': '' } },
+				{ path: '/a', set: { 'X-Frame-Options': 'SAMEORIGIN' } }
+			]
+		});
+		const a = rules.decorate('/a', new Response('x'));
+		const b = rules.decorate('/b', new Response('x'));
+		expect(a.headers.get('x-frame-options')).toBe('SAMEORIGIN');
+		expect(b.headers.get('x-frame-options')).toBe('DENY');
+		expect(b.headers.has('referrer-policy')).toBe(false);
+	});
+
+	it('keeps the body, status and its own headers, and skips a websocket upgrade', async () => {
+		const rules = edgeRules({});
+		const out = rules.decorate(
+			'/',
+			new Response('body', { status: 404, headers: { 'x-own': '1' } })
+		);
+		expect([out.status, await out.text(), out.headers.get('x-own')]).toEqual([
+			404,
+			'body',
+			'1'
+		]);
+		const upgrade = { status: 101 } as Response;
+		expect(rules.decorate('/', upgrade)).toBe(upgrade);
+	});
+
+	it('puts the defaults on a redirect', () => {
+		const rules = edgeRules({ REDIRECTS: [{ from: '/a', to: '/b' }] });
+		const res = rules.redirect(new URL('https://x.test/a'))!;
+		expect(res.headers.get('x-frame-options')).toBe('SAMEORIGIN');
+		expect(res.headers.get('strict-transport-security')).toBe(HSTS_VALUE);
+		expect(
+			rules.redirect(new URL('http://x.test/a'))!.headers.has('strict-transport-security')
+		).toBe(false);
 	});
 
 	it('does not redirect a reserved path', () => {

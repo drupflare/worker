@@ -8,6 +8,7 @@
  * optional `status` (301 by default, or 302, 307, 308).
  * @module
  */
+import { cspBaselineHeader, type CspMode } from './csp';
 
 const MAX_RULES = 100;
 const MAX_HEADERS_PER_RULE = 20;
@@ -168,8 +169,8 @@ const headerMatches = (rule: HeaderRule, pathname: string): boolean =>
 	rule.path.endsWith('*') ? pathname.startsWith(rule.path.slice(0, -1)) : pathname === rule.path;
 
 /**
- * Sent on every response a `RESPONSE_HEADERS` rule does not override. Core sets the first two
- * itself, but the render fragment forwards only `x-drupal-*`, so they never reached a browser.
+ * Sent on every response a module or a `RESPONSE_HEADERS` rule does not override. The order is
+ * these defaults, then a header the module set, then the operator's rules.
  * No default `Content-Security-Policy`: core's own pages need inline script and style.
  */
 export const DEFAULT_HEADERS: Readonly<Record<string, string>> = {
@@ -181,10 +182,18 @@ export const DEFAULT_HEADERS: Readonly<Record<string, string>> = {
 /** one year, no `includeSubDomains` or `preload`: those reach hosts this worker does not serve */
 export const HSTS_VALUE = 'max-age=31536000';
 
-/** sets the defaults, and HSTS only where the request arrived over https */
+/**
+ * Sets each default the response does not already carry, and HSTS only over https.
+ * A header already on the response is one a module set (it passed `MODULE_HEADER_NAMES` on the
+ * way here), and it outranks the default.
+ */
 function applyDefaults(headers: Headers, https: boolean): void {
-	for (const [name, value] of Object.entries(DEFAULT_HEADERS)) headers.set(name, value);
-	if (https) headers.set('strict-transport-security', HSTS_VALUE);
+	for (const [name, value] of Object.entries(DEFAULT_HEADERS)) {
+		if (!headers.has(name)) headers.set(name, value);
+	}
+	if (https && !headers.has('strict-transport-security')) {
+		headers.set('strict-transport-security', HSTS_VALUE);
+	}
 }
 
 /** the two appliers {@link edgeRules} builds */
@@ -192,8 +201,9 @@ export type EdgeRules = {
 	/** the redirect response for this URL, or undefined */
 	redirect(url: URL): Response | undefined;
 	/**
-	 * The response with {@link DEFAULT_HEADERS} and then every matching rule's headers set, later
-	 * rules winning. A rule value of `""` removes that header, defaults included.
+	 * The response with {@link DEFAULT_HEADERS} for each header it lacks, so a module's header
+	 * stays, and then every matching rule's headers set, later rules winning. A rule value of `""`
+	 * removes that header, defaults and module headers included.
 	 */
 	decorate(pathname: string, res: Response, https?: boolean): Response;
 };
@@ -201,11 +211,19 @@ export type EdgeRules = {
 /** paths a redirect never applies to: this worker's own routes and the object's `__` routes */
 export type Reserved = (pathname: string) => boolean;
 
-/** builds the two appliers from a worker env; parsed on every call, which is a few microseconds */
+/**
+ * Builds the two appliers from a worker env; parsed on every call, which is a few microseconds.
+ *
+ * @param csp the baseline policy mode. A document already carrying an enforcing policy keeps
+ *   only its own in either mode, and one carrying a report-only policy keeps it in report-only
+ *   mode; in enforce mode a report-only policy enforces nothing, so the baseline is still added.
+ */
 export function edgeRules(
 	env: { RESPONSE_HEADERS?: unknown; REDIRECTS?: unknown } | undefined,
-	reserved: Reserved = () => false
+	reserved: Reserved = () => false,
+	csp: CspMode = 'off'
 ): EdgeRules {
+	const baseline = cspBaselineHeader(csp);
 	const headers = parseResponseHeaders(env?.RESPONSE_HEADERS).rules;
 	const redirects = parseRedirects(env?.REDIRECTS).rules;
 	return {
@@ -224,6 +242,14 @@ export function edgeRules(
 			if (res.status === 101) return res;
 			const out = new Response(res.body, res);
 			applyDefaults(out.headers, https);
+			if (
+				baseline !== undefined &&
+				(out.headers.get('content-type') ?? '').toLowerCase().includes('text/html') &&
+				!out.headers.has('content-security-policy') &&
+				!out.headers.has(baseline.name)
+			) {
+				out.headers.set(baseline.name, baseline.value);
+			}
 			for (const rule of headers) {
 				if (!headerMatches(rule, pathname)) continue;
 				for (const [name, value] of Object.entries(rule.set)) {

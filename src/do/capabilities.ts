@@ -37,6 +37,7 @@ import {
 	KV_OVERRIDABLE,
 	LEVER_DOMAINS,
 	leverRefusal,
+	OWNER_ONLY_LEVERS,
 	type PlanKv,
 	resetSettingsMemo,
 	writeSettings
@@ -265,7 +266,7 @@ export function installCapabilities(site: SitePhpDurableObject, binary: SiteBina
 		const invalid: { name: string; reason: string }[] = [];
 		for (const [name, value] of Object.entries(patch as Record<string, unknown>)) {
 			// `PLAN` is not on `KV_OVERRIDABLE`, so this refuses it at every spelling
-			if (!allowed.has(name)) {
+			if (!allowed.has(name) || OWNER_ONLY_LEVERS.has(name)) {
 				refused.push(name);
 				continue;
 			}

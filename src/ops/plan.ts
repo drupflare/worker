@@ -1,4 +1,5 @@
 import { OPCACHE_MODES } from '../runtime/opcache';
+import { CSP_MODES, type CspMode } from './csp';
 import { ruleDocumentRefusal } from './edge-rules';
 
 /** the subset of the environment a plan decision reads */
@@ -15,6 +16,18 @@ export function isPaid(env?: PlanEnv): boolean {
 /** true when the site is on the free plan (the complement of {@link isPaid}) */
 export function isFree(env?: PlanEnv): boolean {
 	return !isPaid(env);
+}
+
+/**
+ * The CSP mode in force: the `CSP_MODE` lever when it names one of the three, otherwise
+ * `report-only` on the paid plan and `off` on free. An unrecognised value falls back to that
+ * default rather than to `off`, so a typo cannot switch the baseline off on a paid site.
+ */
+export function cspMode(env?: PlanEnv & { CSP_MODE?: unknown }): CspMode {
+	const named = String(env?.CSP_MODE ?? '')
+		.trim()
+		.toLowerCase();
+	return CSP_MODES.find((mode) => mode === named) ?? (isPaid(env) ? 'report-only' : 'off');
 }
 
 /**
@@ -191,7 +204,10 @@ export const KV_OVERRIDABLE = [
 	// a migrated project's header and redirect rules; owner routes are exempt from redirects and
 	// cookies, and this project's own headers cannot be set
 	'RESPONSE_HEADERS',
-	'REDIRECTS'
+	'REDIRECTS',
+	// the baseline Content-Security-Policy: off, report-only or enforce; a wrong value is a
+	// blocked embed or a report line, and the writer refuses PHP (see `OWNER_ONLY_LEVERS`)
+	'CSP_MODE'
 ] as const;
 
 /** one name on {@link KV_OVERRIDABLE} */
@@ -249,8 +265,16 @@ export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
 	MEMORY_CACHE_BINS: { kind: 'bins' },
 	MEMORY_CACHE_MAX_ITEMS: { kind: 'int', min: 1, max: 4_096 },
 	RESPONSE_HEADERS: { kind: 'rules' },
-	REDIRECTS: { kind: 'rules' }
+	REDIRECTS: { kind: 'rules' },
+	CSP_MODE: { kind: 'enum', values: CSP_MODES }
 };
+
+/**
+ * Levers the owner routes and KV may write but Drupal's own settings form may not.
+ * A site administrator is one tenant's administrator, and a policy that limits what a compromised
+ * administrator session can load should not be one form submission from off.
+ */
+export const OWNER_ONLY_LEVERS: ReadonlySet<string> = new Set<KvOverridable>(['CSP_MODE']);
 
 /**
  * Why a value is outside its lever's domain, or undefined when inside; an empty value clears the

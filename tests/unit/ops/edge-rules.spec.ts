@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CSP_BASELINE } from '../../../src/ops/csp';
 import {
 	DEFAULT_HEADERS,
 	edgeRules,
@@ -109,6 +110,124 @@ describe('the appliers', () => {
 		expect(a.headers.get('x-frame-options')).toBe('SAMEORIGIN');
 		expect(b.headers.get('x-frame-options')).toBe('DENY');
 		expect(b.headers.has('referrer-policy')).toBe(false);
+	});
+
+	it('keeps a header the module set over the default, and fills only what is missing', () => {
+		const rules = edgeRules({});
+		const page = new Response('x', {
+			headers: { 'x-frame-options': 'DENY', 'strict-transport-security': 'max-age=1' }
+		});
+		const out = rules.decorate('/', page, true);
+		expect(out.headers.get('x-frame-options')).toBe('DENY');
+		expect(out.headers.get('strict-transport-security')).toBe('max-age=1');
+		expect(out.headers.get('x-content-type-options')).toBe('nosniff');
+		expect(out.headers.get('referrer-policy')).toBe(DEFAULT_HEADERS['referrer-policy']);
+	});
+
+	it('lets a rule beat the module header, and an empty rule value remove it', () => {
+		const rules = edgeRules({
+			RESPONSE_HEADERS: [
+				{ path: '/a', set: { 'X-Frame-Options': 'SAMEORIGIN' } },
+				{ path: '/b', set: { 'X-Frame-Options': '' } }
+			]
+		});
+		const page = () => new Response('x', { headers: { 'x-frame-options': 'DENY' } });
+		expect(rules.decorate('/a', page()).headers.get('x-frame-options')).toBe('SAMEORIGIN');
+		expect(rules.decorate('/b', page()).headers.has('x-frame-options')).toBe(false);
+		expect(rules.decorate('/c', page()).headers.get('x-frame-options')).toBe('DENY');
+	});
+
+	describe('the CSP baseline', () => {
+		const html = (headers: Record<string, string> = {}) =>
+			new Response('x', {
+				headers: { 'content-type': 'text/html; charset=UTF-8', ...headers }
+			});
+
+		it('adds nothing when the mode is off, which is the default', () => {
+			const out = edgeRules({}).decorate('/', html());
+			expect(out.headers.has('content-security-policy')).toBe(false);
+			expect(out.headers.has('content-security-policy-report-only')).toBe(false);
+		});
+
+		it('sends the report-only header or the enforcing one by mode, on a document', () => {
+			const report = edgeRules({}, undefined, 'report-only').decorate('/', html());
+			expect(report.headers.get('content-security-policy-report-only')).toBe(CSP_BASELINE);
+			expect(report.headers.has('content-security-policy')).toBe(false);
+			const enforce = edgeRules({}, undefined, 'enforce').decorate('/', html());
+			expect(enforce.headers.get('content-security-policy')).toBe(CSP_BASELINE);
+			expect(enforce.headers.has('content-security-policy-report-only')).toBe(false);
+		});
+
+		it('leaves a response that is not a document alone', () => {
+			const json = new Response('{}', { headers: { 'content-type': 'application/json' } });
+			const out = edgeRules({}, undefined, 'enforce').decorate('/', json);
+			expect(out.headers.has('content-security-policy')).toBe(false);
+		});
+
+		it.each(['report-only', 'enforce'] as const)(
+			'loses to a module-set enforcing policy in %s mode, which stays as the module wrote it',
+			(mode) => {
+				const out = edgeRules({}, undefined, mode).decorate(
+					'/',
+					html({ 'content-security-policy': "default-src 'none'" })
+				);
+				expect(out.headers.get('content-security-policy')).toBe("default-src 'none'");
+				expect(out.headers.has('content-security-policy-report-only')).toBe(false);
+			}
+		);
+
+		it('loses to a module-set report-only policy in report-only mode', () => {
+			const out = edgeRules({}, undefined, 'report-only').decorate(
+				'/',
+				html({ 'content-security-policy-report-only': "default-src 'none'" })
+			);
+			expect(out.headers.get('content-security-policy-report-only')).toBe(
+				"default-src 'none'"
+			);
+			expect(out.headers.has('content-security-policy')).toBe(false);
+		});
+
+		it('still enforces the baseline when the module only reports, because a report enforces nothing', () => {
+			const out = edgeRules({}, undefined, 'enforce').decorate(
+				'/',
+				html({ 'content-security-policy-report-only': "default-src 'none'" })
+			);
+			expect(out.headers.get('content-security-policy')).toBe(CSP_BASELINE);
+			expect(out.headers.get('content-security-policy-report-only')).toBe(
+				"default-src 'none'"
+			);
+		});
+
+		it('loses to an operator rule, and an empty rule value removes it', () => {
+			const rules = edgeRules(
+				{
+					RESPONSE_HEADERS: [
+						{ path: '/a', set: { 'Content-Security-Policy': "default-src 'self'" } },
+						{ path: '/b', set: { 'Content-Security-Policy-Report-Only': '' } }
+					]
+				},
+				undefined,
+				'enforce'
+			);
+			expect(rules.decorate('/a', html()).headers.get('content-security-policy')).toBe(
+				"default-src 'self'"
+			);
+			const removing = edgeRules(
+				{
+					RESPONSE_HEADERS: [
+						{ path: '/b', set: { 'Content-Security-Policy-Report-Only': '' } }
+					]
+				},
+				undefined,
+				'report-only'
+			);
+			expect(
+				removing.decorate('/b', html()).headers.has('content-security-policy-report-only')
+			).toBe(false);
+			expect(
+				removing.decorate('/c', html()).headers.get('content-security-policy-report-only')
+			).toBe(CSP_BASELINE);
+		});
 	});
 
 	it('keeps the body, status and its own headers, and skips a websocket upgrade', async () => {

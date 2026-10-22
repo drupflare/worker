@@ -1,3 +1,5 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 import { describe, expect, it } from 'vitest';
 import {
 	DEFAULT_CHUNK_BYTES,
@@ -9,6 +11,7 @@ import {
 	captureHandles,
 	captureStreams,
 	chunkHeap,
+	createHeapRoot,
 	digestBytes,
 	elideZeroPages,
 	fdTableProblems,
@@ -18,6 +21,7 @@ import {
 	replayStreams,
 	toStorableBytes,
 	type HandleIndex,
+	type HeapRootFields,
 	type StreamFS,
 	type StreamRecord
 } from '../../../src/db/heap-store';
@@ -504,6 +508,56 @@ describe('the vrzno handle table is part of a restore, and the restore probe mis
 		expect(out.failed[0]?.error).toContain('cannot hold a handle');
 	});
 
+	it('names and re-registers the sealed wrapper the closed bridge hands PHP, not the function under it', () => {
+		// the tuned glue seals a host function in a null-prototype wrapper and roots `new Vrzno()` in an
+		// empty object; a heap taken there holds the wrapper's id, so capture and replay both go
+		// through the glue's own seal
+		const sealed = new WeakMap<object, object>();
+		const seal = (f: unknown) => {
+			const fn = f as () => string;
+			let w = sealed.get(fn);
+			if (!w) {
+				w = () => fn();
+				sealed.set(fn, w);
+			}
+			return w;
+		};
+		const cfwSqlExec = () => 'rows';
+		const empty = Object.freeze(Object.create(null)) as object;
+		const module = { cfwSqlExec, __cfwSeal: seal, __cfwRoot: empty };
+		const src = fakeHandleIndex();
+		src.add(empty);
+		src.add(seal(cfwSqlExec));
+
+		const captured = captureHandles(src, module);
+		expect(captured.unnameable).toEqual([]);
+		expect(captured.handles).toEqual([
+			{ id: 1, name: GLOBAL_HANDLE_NAME },
+			{ id: 2, name: 'cfwSqlExec' }
+		]);
+
+		// a fresh instance: its own root, and the same wrapper once seal() is asked again
+		const dst = fakeHandleIndex();
+		dst.add(empty);
+		const out = replayHandles(dst, module, captured.handles);
+		expect(out.failed).toEqual([]);
+		expect(dst.get(2)).toBe(seal(cfwSqlExec));
+		expect(dst.get(2)).not.toBe(cfwSqlExec);
+	});
+
+	it('refuses to replay a handle the sealed bridge could not have issued', () => {
+		// an image taken on a glue with the open bridge can name any Module key
+		const seal = (f: unknown) => f;
+		const root = Object.freeze(Object.create(null)) as object;
+		const fresh = fakeHandleIndex();
+		fresh.add(root);
+		const out = replayHandles(fresh, { FS: { mkdir() {} }, __cfwSeal: seal, __cfwRoot: root }, [
+			{ id: 2, name: 'FS' }
+		]);
+		expect(out.replayed).toEqual([]);
+		expect(out.failed[0]?.error).toContain('not a cfw host function');
+	});
+
 	it('fails every handle when the binary has no table at all', () => {
 		const out = replayHandles(undefined, {}, [{ id: 1, name: GLOBAL_HANDLE_NAME }]);
 		expect(out.replayed).toEqual([]);
@@ -656,5 +710,136 @@ describe('the digest is wide enough to key a shared page store', () => {
 			seen.add(digestBytes(page));
 		}
 		expect(seen.size).toBe(2_000);
+	});
+});
+
+describe('the integrity root of a stored image', () => {
+	const fields: HeapRootFields = {
+		id: 4,
+		byteLength: 512,
+		pageBytes: 64,
+		totalPages: 8,
+		keptPages: 2,
+		pageIndex: '[0,3]',
+		chunkBytes: 100,
+		generation: 'gen-a',
+		fdTable: '[]',
+		handleTable: '[{"id":1,"name":"@globalThis"}]'
+	};
+	const chunk = (fill: number, length = 40) => new Uint8Array(length).fill(fill);
+	const rootOf = (
+		f: HeapRootFields,
+		chunks: Array<[seq: number, raw: number, bytes: Uint8Array]>
+	) => {
+		const root = createHeapRoot(f);
+		for (const [seq, raw, bytes] of chunks) root.addChunk(seq, raw, bytes);
+		return root.finish();
+	};
+	const base = rootOf(fields, [
+		[0, 100, chunk(1)],
+		[1, 100, chunk(2)]
+	]);
+
+	it('is 64 hex digits, stable, and has one digest per chunk', () => {
+		expect(base.root).toMatch(/^[0-9a-f]{64}$/);
+		expect(base.chunkDigests).toHaveLength(2);
+		expect(
+			rootOf(fields, [
+				[0, 100, chunk(1)],
+				[1, 100, chunk(2)]
+			])
+		).toEqual(base);
+	});
+
+	it.each(Object.keys(fields) as Array<keyof HeapRootFields>)(
+		'changes when %s changes',
+		(key) => {
+			const changed = { ...fields, [key]: typeof fields[key] === 'number' ? 99 : 'x' };
+			const again = rootOf(changed, [
+				[0, 100, chunk(1)],
+				[1, 100, chunk(2)]
+			]);
+			expect(again.root).not.toBe(base.root);
+		}
+	);
+
+	it('changes with a chunk byte, the inflated length, the order, and a chunk added or dropped', () => {
+		const a = chunk(1);
+		const b = chunk(2);
+		const flipped = chunk(2);
+		flipped[39] = 3;
+		const variants = [
+			[
+				[0, 100, a],
+				[1, 100, flipped]
+			],
+			[
+				[0, 100, a],
+				[1, 101, b]
+			],
+			[
+				[0, 100, b],
+				[1, 100, a]
+			],
+			[
+				[0, 100, a],
+				[2, 100, b]
+			],
+			[
+				[0, 100, a],
+				[1, 100, b],
+				[2, 100, b]
+			],
+			[[0, 100, a]]
+		] as Array<Array<[number, number, Uint8Array]>>;
+		const roots = new Set([base.root, ...variants.map((v) => rootOf(fields, v).root)]);
+		expect(roots.size).toBe(variants.length + 1);
+	});
+
+	it('does not let a field slide into its neighbour', () => {
+		const left = rootOf({ ...fields, generation: 'a', fdTable: 'b' }, []);
+		const right = rootOf({ ...fields, generation: 'ab', fdTable: '' }, []);
+		expect(left.root).not.toBe(right.root);
+	});
+
+	/**
+	 * What hashing costs on this engine. Printed, never asserted: the magnitude is a property of the
+	 * machine. The one assertion is that the two implementations agree, which is what the choice
+	 * between them rests on.
+	 */
+	it('prices the root of a cold image against noble, on the local workerd', () => {
+		const time = (fn: () => void) => {
+			const t = performance.now();
+			fn();
+			return +(performance.now() - t).toFixed(1);
+		};
+		const make = (bytes: number, chunkBytes: number) => {
+			const chunks: Uint8Array[] = [];
+			for (let at = 0; at < bytes; at += chunkBytes) {
+				const c = new Uint8Array(Math.min(chunkBytes, bytes - at));
+				for (let i = 0; i < c.length; i += 7) c[i] = (i * 2654435761 + at) & 0xff;
+				chunks.push(c);
+			}
+			return chunks;
+		};
+		const typical = make(11_206_656, 200_000);
+		const spec = make(50_000_000, 200_000);
+		let digest = '';
+		const cost = {
+			typicalStoredBytes: 11_206_656,
+			typicalMs: time(() => {
+				const r = createHeapRoot(fields);
+				typical.forEach((c, i) => r.addChunk(i, c.length, c));
+				digest = r.finish().chunkDigests[0] as string;
+			}),
+			fiftyMbMs: time(() => {
+				const r = createHeapRoot(fields);
+				spec.forEach((c, i) => r.addChunk(i, c.length, c));
+				r.finish();
+			}),
+			nobleTypicalMs: time(() => typical.forEach((c) => sha256(c)))
+		};
+		console.info(`heap root cost, local workerd: ${JSON.stringify(cost)}`);
+		expect(bytesToHex(sha256(typical[0] as Uint8Array))).toBe(digest);
 	});
 });

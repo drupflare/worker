@@ -1,8 +1,12 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+	closeSockets,
+	closeVrznoBridge,
+	emitTunedGlue,
 	emitVariant,
 	growthLadder,
 	plugCallableLeak,
@@ -14,10 +18,13 @@ import {
 	safeHeapSubarray,
 	SHIPPING_GLUE,
 	SHIPPING_STEP,
+	SOCKET_CLOSURE,
 	SUBARRAY_LIMIT,
 	TUNED_GLUE,
-	variantPath
+	variantPath,
+	VRZNO_CLOSURE
 } from '../../scripts/measure/growth-glue';
+import { closedProblems, runAttempts } from '../helpers/vrzno-bridge';
 
 /**
  * The heap-growth rewrite, and the guard that stops it becoming a silent no-op.
@@ -476,5 +483,305 @@ describe('reallocarray, which the glue stubbed with an abort', () => {
 			'a();function _reallocarray(){abort("missing function: reallocarray")}_reallocarray.stub=true;b();';
 		expect(provideReallocarray(stub)).toBe(`a();${REALLOCARRAY};b();`);
 		expect(provideReallocarray('a();b();')).toBe('a();b();');
+	});
+});
+
+const SOCKET_WASM = resolve(process.cwd(), '.interp/php8.5.wasm');
+
+/** a tuned glue emitted from the shipping glue into a scratch root, plus the shipping glue as a control */
+function socketArms() {
+	const root = mkdtempSync(join(tmpdir(), 'cfw-sockets-'));
+	mkdirSync(join(root, '.interp'));
+	const pristine = readFileSync(resolve(process.cwd(), SHIPPING_GLUE));
+	writeFileSync(join(root, SHIPPING_GLUE), pristine);
+	const tuned = emitTunedGlue(root);
+	const control = join(root, '.interp/control-worker.mjs');
+	writeFileSync(control, pristine);
+	return { root, tuned, control };
+}
+
+/** boots the interpreter on a glue, keeping the import object so a raw syscall can be called */
+async function bootOn(glue: string, extra: Record<string, unknown> = {}) {
+	const g = globalThis as Record<string, unknown>;
+	g['location'] ??= new URL(pathToFileURL(process.cwd() + '/').href);
+	g['self'] ??= globalThis;
+	const { PhpBase } = await import('php-wasm/PhpBase');
+	const { default: PHPFactory } = (await import(pathToFileURL(glue).href)) as {
+		default: unknown;
+	};
+	const module = await WebAssembly.compile(readFileSync(SOCKET_WASM));
+	const out: string[] = [];
+	let imports!: WebAssembly.Imports;
+	const php = new PhpBase(
+		Promise.resolve({ default: PHPFactory }) as never,
+		{
+			...extra,
+			ini: ['opcache.enable=0', 'memory_limit=256M'].join('\n'),
+			printErr: () => {},
+			instantiateWasm(
+				given: WebAssembly.Imports,
+				receive: (i: WebAssembly.Instance, m: WebAssembly.Module) => void
+			) {
+				imports = given;
+				WebAssembly.instantiate(module, given).then((i) => receive(i, module));
+				return {};
+			}
+		} as never
+	) as InstanceType<typeof PhpBase> & {
+		_run(code: string): Promise<unknown>;
+		binary: Promise<unknown>;
+	};
+	php.addEventListener('output', (e) => out.push(String((e as CustomEvent).detail)));
+	await php.binary;
+	const env = imports.env as Record<string, (...a: number[]) => number>;
+	const run = async (code: string) => {
+		out.length = 0;
+		await php._run(code);
+		return JSON.parse(out.join('')) as Record<string, unknown>;
+	};
+	/** one script's printed output, and the error it raised if it raised one */
+	const raw = async (code: string) => {
+		out.length = 0;
+		try {
+			await php._run(code);
+		} catch (e) {
+			return { out: out.join(''), error: e instanceof Error ? e.message : String(e) };
+		}
+		return { out: out.join(''), error: undefined };
+	};
+	return { env, run, raw };
+}
+
+/** swaps in a WebSocket that records each construction and refuses it, for the length of a run */
+async function recordingWebSockets<T>(body: (made: string[]) => Promise<T>): Promise<T> {
+	const g = globalThis as { WebSocket?: unknown };
+	const had = g.WebSocket;
+	const made: string[] = [];
+	g.WebSocket = class {
+		constructor(url: string) {
+			made.push(String(url));
+			throw new Error('recorded');
+		}
+	};
+	try {
+		return await body(made);
+	} finally {
+		g.WebSocket = had;
+	}
+}
+
+const REACH = `<?php
+$r = [];
+$r['fsockopen'] = @fsockopen('127.0.0.1', 9, $e1, $s1, 1) !== false;
+$r['fsockopenErrno'] = $e1;
+$r['streamClient'] = @stream_socket_client('tcp://127.0.0.1:9', $e2, $s2, 1) !== false;
+$r['streamServer'] = @stream_socket_server('tcp://127.0.0.1:0', $e3, $s3) !== false;
+$r['sockets'] = extension_loaded('sockets');
+$r['socketCreate'] = function_exists('socket_create') ? (@socket_create(AF_INET, SOCK_STREAM, 0) !== false) : null;
+$r['byName'] = @fsockopen('probe.invalid', 80, $e4, $s4, 1) !== false;
+echo json_encode($r);`;
+
+describe.skipIf(!have)('the socket path in the tuned glue', () => {
+	it('replaces every socket syscall body and getaddrinfo, and nothing else', () => {
+		const glue = readFileSync(resolve(process.cwd(), SHIPPING_GLUE), 'utf8');
+		const closed = closeSockets(glue);
+		for (const { name, returns, body } of SOCKET_CLOSURE) {
+			expect(closed).toContain(`function ${name}(`);
+			const at = closed.indexOf(`function ${name}(`);
+			const head = closed.slice(at).match(/^function \w+\([^)]*\)/)![0];
+			expect(closed.slice(at + head.length).startsWith(body ?? `{return ${returns}}`)).toBe(
+				true
+			);
+		}
+		expect(closed).not.toContain('Asyncify');
+		expect(closeSockets(closed)).toBe(closed);
+		// the fake-DNS helpers touch no network and are left as emitted
+		expect(closed).toContain(
+			'function __emscripten_lookup_name(name){name>>>=0;var nameString'
+		);
+		expect(closed).toContain('function _getnameinfo(');
+	});
+
+	it('throws when a function or its body is not what emscripten emitted', () => {
+		expect(() => closeSockets('a();b()')).toThrow(
+			/__asyncjs__php_stream_fetch_real_open not found/
+		);
+		const glue = readFileSync(resolve(process.cwd(), SHIPPING_GLUE), 'utf8');
+		const changed = glue.replace(
+			'function ___syscall_connect(fd,addr,addrlen,d1,d2,d3){',
+			'function ___syscall_connect(fd,addr,addrlen,d1,d2,d3){return -1;'
+		);
+		expect(changed).not.toBe(glue);
+		expect(() => closeSockets(changed.replace(/getSocketFromFD\(/g, 'x('))).toThrow(
+			/no longer carries/
+		);
+	});
+
+	it('never constructs a WebSocket, where the unstubbed glue constructs one', async () => {
+		const { root, tuned, control } = socketArms();
+		try {
+			expect(readFileSync(tuned, 'utf8')).toContain(
+				'function ___syscall_socket(domain,type,protocol){return -13}'
+			);
+			const before = await recordingWebSockets(async (made) => {
+				const { run } = await bootOn(control);
+				const reach = await run(REACH);
+				return { made: [...made], reach };
+			});
+			// the control: the recorder sees the construction, so a zero below means something
+			expect(
+				before.made.length,
+				'the unstubbed glue did not reach WebSocket'
+			).toBeGreaterThan(0);
+
+			const after = await recordingWebSockets(async (made) => {
+				const { env, run } = await bootOn(tuned);
+				const reach = await run(REACH);
+				return {
+					made,
+					reach,
+					socket: env['__syscall_socket']!(2, 1, 0),
+					connect: env['__syscall_connect']!(3, 0, 16, 0, 0, 0),
+					bind: env['__syscall_bind']!(3, 0, 16, 0, 0, 0),
+					sendto: env['__syscall_sendto']!(3, 0, 0, 0, 0, 0),
+					addr: env['getaddrinfo']!(0, 0, 0, 0)
+				};
+			});
+			console.log(`[growth-glue] sockets ${JSON.stringify({ before, after })}`);
+			expect(after.made, 'a WebSocket was constructed').toEqual([]);
+			expect(after.reach['fsockopen']).toBe(false);
+			expect(after.reach['streamClient']).toBe(false);
+			expect(after.reach['streamServer']).toBe(false);
+			expect(after.reach['byName'], 'a host name got past getaddrinfo').toBe(false);
+			expect(after.reach['socketCreate'] ?? false).toBe(false);
+			expect(after.socket).toBe(-13);
+			expect([after.connect, after.bind, after.sendto]).toEqual([-88, -88, -88]);
+			expect(after.addr).toBe(-4);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	}, 120_000);
+
+	it('refuses the two asyncjs imports without Asyncify, where the unstubbed glue reaches fetch', async () => {
+		const { root, tuned, control } = socketArms();
+		const g = globalThis as { Asyncify?: unknown; fetch: unknown };
+		const had = { Asyncify: g.Asyncify, fetch: g.fetch };
+		try {
+			const arm = async (glue: string) => {
+				const { env } = await bootOn(glue);
+				const handled: number[] = [];
+				const fetched: string[] = [];
+				g.Asyncify = {
+					handleAsync: (body: () => Promise<number>) => {
+						handled.push(1);
+						return body();
+					}
+				};
+				g.fetch = (url: unknown) => {
+					fetched.push(String(url));
+					return Promise.reject(new Error('recorded'));
+				};
+				const open = await env['__asyncjs__php_stream_fetch_real_open']!(0, 0, 8, 0, 0);
+				const wait = await env['__asyncjs__vrzno_await_internal']!(0, 8);
+				return { handled: handled.length, fetched, open, wait };
+			};
+			const before = await arm(control);
+			// the control: with Asyncify defined the stock bodies run and reach fetch
+			expect(before.handled, 'the unstubbed glue did not reach Asyncify').toBe(2);
+			expect(before.fetched.length, 'the unstubbed glue did not reach fetch').toBe(1);
+			const after = await arm(tuned);
+			console.log(`[growth-glue] asyncjs ${JSON.stringify({ before, after })}`);
+			expect(after.handled, 'Asyncify was reached').toBe(0);
+			expect(after.fetched, 'fetch was called').toEqual([]);
+			expect(typeof after.open).toBe('number');
+			expect(after.wait).toBeUndefined();
+		} finally {
+			g.Asyncify = had.Asyncify;
+			g.fetch = had.fetch;
+			rmSync(root, { recursive: true, force: true });
+		}
+	}, 120_000);
+
+	it('closes the vrzno bridge to everything but the cfw host functions, where the unstubbed glue is open', async () => {
+		const { root, tuned, control } = socketArms();
+		const g = globalThis as Record<string, unknown>;
+		const had = { fetch: g['fetch'], WebSocket: g['WebSocket'] };
+		try {
+			const arm = async (glue: string) => {
+				const calls: string[] = [];
+				const { raw } = await bootOn(glue, {
+					cfwStats: () => '{"queryCount":3}',
+					cfwObject: () => ({ a: 1 })
+				});
+				// installed after boot, so only what PHP does can reach them
+				g['fetch'] = (url: unknown) => {
+					calls.push(`fetch ${String(url)}`);
+					return Promise.resolve(undefined);
+				};
+				g['WebSocket'] = class {
+					constructor(url: unknown) {
+						calls.push(`WebSocket ${String(url)}`);
+						throw new Error('recorded');
+					}
+				};
+				try {
+					const rows = await runAttempts(raw);
+					rows['object reply'] = await raw(
+						`<?php $f = vrzno_env('cfwObject'); echo json_encode(['type' => get_debug_type($f())]);`
+					);
+					return { rows, calls };
+				} finally {
+					g['fetch'] = had.fetch;
+					g['WebSocket'] = had.WebSocket;
+				}
+			};
+			const before = await arm(control);
+			// the control: the recorders see the global fetch and a WebSocket from userland PHP, so
+			// the empty lists below mean something
+			expect(before.calls, 'the unstubbed glue did not reach the globals').toEqual([
+				'fetch http://169.254.169.254/latest/meta-data/',
+				'WebSocket wss://socket.invalid/',
+				'fetch http://x.invalid/'
+			]);
+			expect(closedProblems(before.rows).length).toBeGreaterThan(0);
+
+			const after = await arm(tuned);
+			expect(after.calls, 'PHP reached fetch or a WebSocket').toEqual([]);
+			expect(closedProblems(after.rows)).toEqual([]);
+			// the control hands PHP the object, and the tuned glue hands it a null
+			expect(before.rows['object reply']?.out).toContain('"type":"Vrzno');
+			expect(after.rows['object reply']?.out).toBe('{"type":"null"}');
+		} finally {
+			g['fetch'] = had.fetch;
+			g['WebSocket'] = had.WebSocket;
+			rmSync(root, { recursive: true, force: true });
+		}
+	}, 120_000);
+
+	it('rewrites each vrzno body once, throws when one is gone, and is idempotent', () => {
+		const glue = readFileSync(resolve(process.cwd(), SHIPPING_GLUE), 'utf8');
+		const closed = closeVrznoBridge(glue);
+		expect(closeVrznoBridge(closed)).toBe(closed);
+		for (const { from, to } of VRZNO_CLOSURE) {
+			expect(closed.includes(from), `${from} survived`).toBe(false);
+			expect(closed.includes(to)).toBe(true);
+		}
+		expect(closed).not.toContain('Module.targets.add(globalThis)');
+		for (const { name, from } of VRZNO_CLOSURE) {
+			expect(() => closeVrznoBridge(glue.replace(from, 'x'))).toThrow(
+				new RegExp(`${name} not found`)
+			);
+			expect(() => closeVrznoBridge(`${glue}${from}`)).toThrow(/appears twice/);
+		}
+	});
+
+	it('is what the tuned glue on disk carries, so a stale file fails here', () => {
+		const tuned = resolve(process.cwd(), TUNED_GLUE);
+		if (!existsSync(tuned)) return;
+		const glue = readFileSync(tuned, 'utf8');
+		expect(glue).toContain('function ___syscall_socket(domain,type,protocol){return -13}');
+		expect(glue).not.toContain('Asyncify');
+		expect(glue).not.toContain('Module.targets.add(globalThis)');
+		expect(glue).not.toContain('globalThis[funcName]');
 	});
 });

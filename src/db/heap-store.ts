@@ -7,6 +7,7 @@
  */
 
 import { deflateSync, inflateSync } from 'fflate';
+import { createHash } from 'node:crypto';
 
 // local copies of the `../util` helpers: `scripts/measure/heap-digest-cost.ts` runs this file under
 // plain node, which resolves no extensionless relative import
@@ -300,6 +301,70 @@ function fmix(h: number): string {
 	return ((h ^ (h >>> 16)) >>> 0).toString(16).padStart(8, '0');
 }
 
+/** sha256 hex of stored bytes, synchronous because a restore cannot await between chunks */
+function sha256Hex(bytes: Uint8Array): string {
+	return createHash('sha256').update(bytes).digest('hex');
+}
+
+/** the metadata that steers a restore, as the integrity root covers it */
+export type HeapRootFields = {
+	id: number;
+	byteLength: number;
+	pageBytes: number;
+	totalPages: number;
+	keptPages: number;
+	pageIndex: string;
+	chunkBytes: number;
+	generation: string;
+	fdTable: string;
+	handleTable: string;
+};
+
+/** what hashing a stored image yields: the root a sealed record holds, and one digest per chunk */
+export type HeapRootResult = { root: string; chunkDigests: string[] };
+
+/**
+ * Starts the integrity root of an image: sha256 over the metadata that steers a restore, then each
+ * chunk's `seq`, inflated length, stored length and sha256 in order.
+ *
+ * It covers the stored (deflated) bytes, so a verify never inflates, and the writer and the
+ * verifier share this one definition. The FNV digests in the rows prove nothing against a writer
+ * that can also write them.
+ */
+export function createHeapRoot(fields: HeapRootFields): {
+	addChunk(seq: number, rawBytes: number, stored: Uint8Array): void;
+	finish(): HeapRootResult;
+} {
+	const hash = createHash('sha256');
+	hash.update(
+		JSON.stringify([
+			'heap-image-1',
+			fields.id,
+			fields.byteLength,
+			fields.pageBytes,
+			fields.totalPages,
+			fields.keptPages,
+			fields.pageIndex,
+			fields.chunkBytes,
+			fields.generation,
+			fields.fdTable,
+			fields.handleTable
+		])
+	);
+	const chunkDigests: string[] = [];
+	return {
+		addChunk(seq, rawBytes, stored) {
+			const digest = sha256Hex(stored);
+			chunkDigests.push(digest);
+			hash.update(`\n${seq}:${rawBytes}:${stored.length}:${digest}`);
+		},
+		finish() {
+			hash.update(`\nend:${chunkDigests.length}`);
+			return { root: hash.digest('hex'), chunkDigests };
+		}
+	};
+}
+
 /**
  * The open file descriptors a restored heap needs, at the same fd numbers (inodes do not matter).
  *
@@ -447,6 +512,19 @@ export interface HandleIndex {
 	id: number;
 }
 
+/** the names the tuned glue's `vrzno_env` answers; anything else is null there */
+const CFW_NAME = /^cfw[A-Za-z0-9]*$/;
+
+/**
+ * The glue's `Module.__cfwSeal`, which wraps a host function the way `vrzno_env()` does, or
+ * undefined on a glue without the closed bridge. The same function and its cache, so the wrapper
+ * a restored handle points at is the one a later `vrzno_env()` call returns.
+ */
+function sealOf(module: Record<string, unknown>): ((f: unknown) => unknown) | undefined {
+	const seal = module['__cfwSeal'];
+	return typeof seal === 'function' ? (seal as (f: unknown) => unknown) : undefined;
+}
+
 /** what a capture found, split into what can be restored and what cannot */
 export type HandleCapture = {
 	handles: HandleRecord[];
@@ -473,11 +551,12 @@ function describeValue(value: unknown): string {
 export function captureHandles(
 	index: HandleIndex | undefined,
 	module: Record<string, unknown>,
-	root: unknown = globalThis
+	root: unknown = module['__cfwRoot'] ?? globalThis
 ): HandleCapture {
 	const out: HandleCapture = { handles: [], unnameable: [] };
 	if (!index) return out;
 
+	const seal = sealOf(module);
 	const names = new Map<unknown, string>();
 	names.set(root, GLOBAL_HANDLE_NAME);
 	for (const key of Object.keys(module)) {
@@ -490,6 +569,11 @@ export function captureHandles(
 		const holdable =
 			typeof value === 'function' || (typeof value === 'object' && value !== null);
 		if (holdable && !names.has(value)) names.set(value, key);
+		// the sealed glue hands PHP a wrapper, so the wrapper is what the heap names
+		if (seal && typeof value === 'function' && CFW_NAME.test(key)) {
+			const wrapper = seal(value);
+			if (!names.has(wrapper)) names.set(wrapper, key);
+		}
 	}
 
 	for (const [id, obj] of index.byInteger) {
@@ -522,7 +606,7 @@ export function replayHandles(
 	index: HandleIndex | undefined,
 	module: Record<string, unknown>,
 	handles: HandleRecord[],
-	root: unknown = globalThis
+	root: unknown = module['__cfwRoot'] ?? globalThis
 ): HandleReplayResult {
 	const out: HandleReplayResult = { replayed: [], failed: [], nextId: index?.id ?? 0 };
 	if (!index) {
@@ -536,6 +620,7 @@ export function replayHandles(
 		return out;
 	}
 
+	const seal = sealOf(module);
 	for (const h of [...handles].sort((a, b) => a.id - b.id)) {
 		let value: unknown;
 		try {
@@ -543,6 +628,19 @@ export function replayHandles(
 		} catch (e) {
 			out.failed.push({ id: h.id, name: h.name, error: errorMessage(e) });
 			continue;
+		}
+		if (seal && h.name !== GLOBAL_HANDLE_NAME) {
+			// a heap that named anything else was taken on a glue with a wider bridge; the sealed
+			// glue holds no handle to it, so the restore is refused rather than reopening it
+			if (!CFW_NAME.test(h.name)) {
+				out.failed.push({
+					id: h.id,
+					name: h.name,
+					error: 'is not a cfw host function, which the sealed bridge is limited to'
+				});
+				continue;
+			}
+			if (typeof value === 'function') value = seal(value);
 		}
 		if (typeof value !== 'function' && (typeof value !== 'object' || value === null)) {
 			out.failed.push({
@@ -679,6 +777,8 @@ export function writeHeapSnapshot(
 	storedBytes: number;
 	compressedBytes: number;
 	digest: string;
+	/** the integrity root of what was written, for the caller to seal outside SQL */
+	root: string;
 	keptPages: number;
 } {
 	const pageBytes = opts.pageBytes ?? WASM_PAGE_BYTES;
@@ -707,6 +807,9 @@ export function writeHeapSnapshot(
 		bytesLength: elidedLength
 	};
 	const digest = digestBytes(heap);
+	const pageIndexText = JSON.stringify(elided.pageIndex);
+	const fdTableText = JSON.stringify(opts.streams);
+	const handleTableText = JSON.stringify(opts.handles ?? []);
 
 	const row = firstRow(
 		sql.exec(
@@ -718,16 +821,28 @@ export function writeHeapSnapshot(
 			pageBytes,
 			elided.totalPages,
 			elided.pageIndex.length,
-			JSON.stringify(elided.pageIndex),
+			pageIndexText,
 			chunkBytes,
 			digest,
 			opts.generation,
-			JSON.stringify(opts.streams),
-			JSON.stringify(opts.handles ?? [])
+			fdTableText,
+			handleTableText
 		)
 	);
 	const id = Number(row?.id ?? 0);
 	if (!id) throw new Error('snapshot insert returned no id');
+	const root = createHeapRoot({
+		id,
+		byteLength: elided.byteLength,
+		pageBytes,
+		totalPages: elided.totalPages,
+		keptPages: elided.pageIndex.length,
+		pageIndex: pageIndexText,
+		chunkBytes,
+		generation: opts.generation,
+		fdTable: fdTableText,
+		handleTable: handleTableText
+	});
 
 	// one staging buffer refilled in place; the stream equals elideZeroPages() + chunkHeap(), so
 	// `seq * chunkBytes` still locates a chunk
@@ -740,6 +855,7 @@ export function writeHeapSnapshot(
 		// real length (the last chunk is short; padding would restore zeroes)
 		const bytes = staging.slice(0, filled);
 		const { stored, rawBytes } = packChunk(bytes);
+		root.addChunk(seq, rawBytes, stored);
 		// per-chunk digest over the heap bytes: a streaming restore must refuse a chunk before it
 		// lands, and this also catches a bad inflate and verifies rows written before packing
 		sql.exec(
@@ -776,6 +892,7 @@ export function writeHeapSnapshot(
 		// because restore offsets are in those coordinates
 		compressedBytes,
 		digest,
+		root: root.finish().root,
 		keptPages: elided.pageIndex.length
 	};
 }
@@ -846,6 +963,50 @@ export function snapshotPageIndex(
 		streams: JSON.parse(String(row.fd_table ?? '[]')) as StreamRecord[],
 		handles: JSON.parse(String(row.handle_table ?? '[]')) as HandleRecord[]
 	};
+}
+
+/**
+ * Hashes the image stored under `id` the way {@link createHeapRoot} did when it was written, one
+ * chunk row at a time and without inflating, or undefined when there is no such snapshot row.
+ *
+ * @throws when a chunk's bytes column is not a blob (the writer binds a blob, so anything else was
+ *   written by somebody else)
+ */
+export function hashStoredSnapshot(sql: HeapSql, id: number): HeapRootResult | undefined {
+	const row = firstRow(
+		sql.exec(
+			`SELECT id, byte_length, page_bytes, total_pages, kept_pages, page_index, chunk_bytes,
+				generation, fd_table, handle_table FROM cfw_heap_snapshot WHERE id = ?`,
+			id
+		)
+	);
+	if (!row) return undefined;
+	const root = createHeapRoot({
+		id: Number(row.id),
+		byteLength: Number(row.byte_length),
+		pageBytes: Number(row.page_bytes),
+		totalPages: Number(row.total_pages),
+		keptPages: Number(row.kept_pages),
+		pageIndex: String(row.page_index),
+		chunkBytes: Number(row.chunk_bytes),
+		generation: String(row.generation),
+		fdTable: String(row.fd_table),
+		handleTable: String(row.handle_table)
+	});
+	const cursor = sql.exec(
+		'SELECT seq, bytes, raw_bytes FROM cfw_heap_chunk WHERE snapshot_id = ? ORDER BY seq',
+		id
+	);
+	for (const chunk of cursor) {
+		const raw = chunk.bytes;
+		if (typeof raw !== 'object' || raw === null) {
+			throw new Error(`snapshot ${id} chunk ${String(chunk.seq)} is not a blob`);
+		}
+		// a view over the row's bytes, not a copy
+		const stored = raw instanceof Uint8Array ? raw : new Uint8Array(raw as ArrayBufferLike);
+		root.addChunk(Number(chunk.seq), Number(chunk.raw_bytes ?? 0), stored);
+	}
+	return root.finish();
 }
 
 /**
@@ -998,12 +1159,20 @@ export type StreamRestoreResult = {
  *
  * @param sql - the Durable Object's own SQL
  * @param target - the live heap, written in place
- * @param opts - `from`/`limit` slice the chunk sequence so a restore divides across alarm firings
+ * @param opts - `from`/`limit` slice the chunk sequence so a restore divides across alarm firings;
+ *   `chunkDigests` is the sha256 of each stored chunk from a verified root, and each chunk is
+ *   checked against it as it is read, so rows rewritten after the verify cannot land
  */
 export function streamRestoreInto(
 	sql: HeapSql,
 	target: Uint8Array,
-	opts: { meta: SnapshotMeta; pageIndex: number[]; from?: number; limit?: number }
+	opts: {
+		meta: SnapshotMeta;
+		pageIndex: number[];
+		from?: number;
+		limit?: number;
+		chunkDigests?: readonly string[];
+	}
 ): StreamRestoreResult {
 	const { meta, pageIndex } = opts;
 	if (target.length !== meta.byteLength) {
@@ -1013,13 +1182,19 @@ export function streamRestoreInto(
 	const from = opts.from ?? 0;
 	const limit = opts.limit ?? Number.MAX_SAFE_INTEGER;
 
-	const totalChunks = Number(
-		(
-			firstRow(
-				sql.exec('SELECT COUNT(*) AS n FROM cfw_heap_chunk WHERE snapshot_id = ?', meta.id)
-			) as { n: number | bigint } | undefined
-		)?.n ?? 0
-	);
+	const verified = opts.chunkDigests;
+	const totalChunks =
+		verified?.length ??
+		Number(
+			(
+				firstRow(
+					sql.exec(
+						'SELECT COUNT(*) AS n FROM cfw_heap_chunk WHERE snapshot_id = ?',
+						meta.id
+					)
+				) as { n: number | bigint } | undefined
+			)?.n ?? 0
+		);
 	const out: StreamRestoreResult = {
 		chunks: 0,
 		bytesWritten: 0,
@@ -1041,14 +1216,28 @@ export function streamRestoreInto(
 	for (const row of cursor) {
 		if (out.chunks >= limit) break;
 		const seq = Number(row.seq);
+		const refuse = (expected: string, actual: string): never => {
+			throw new HeapChunkDigestError({
+				seq,
+				expected,
+				actual,
+				bytesWritten: out.bytesWritten,
+				chunksApplied: out.chunks
+			});
+		};
+		const stored = toStorableBytes(row.bytes as ArrayBufferLike | Uint8Array);
+		if (verified) {
+			// the sealed root said what each chunk is; a row out of sequence or with other bytes is a
+			// row somebody wrote after that
+			const want = verified[out.nextChunk];
+			const got = seq === out.nextChunk ? sha256Hex(stored) : `out of sequence at ${seq}`;
+			if (want === undefined || got !== want) refuse(want ?? 'no such chunk', got);
+		}
 		// a chunk that will not inflate is corrupt: report it as a digest error so the caller
 		// gets `bytesWritten`
 		let bytes: Uint8Array;
 		try {
-			bytes = unpackChunk(
-				toStorableBytes(row.bytes as ArrayBufferLike | Uint8Array),
-				Number(row.raw_bytes ?? 0)
-			);
+			bytes = unpackChunk(stored, Number(row.raw_bytes ?? 0));
 		} catch (e) {
 			throw new HeapChunkDigestError({
 				seq,
@@ -1106,6 +1295,16 @@ export function streamRestoreInto(
 		out.chunks++;
 		out.nextChunk = seq + 1;
 	}
+	// rows removed after the verify end the loop early, which would read as complete
+	if (verified && out.chunks < limit && out.nextChunk < totalChunks) {
+		throw new HeapChunkDigestError({
+			seq: out.nextChunk,
+			expected: verified[out.nextChunk] ?? 'no such chunk',
+			actual: 'missing',
+			bytesWritten: out.bytesWritten,
+			chunksApplied: out.chunks
+		});
+	}
 	out.complete = out.nextChunk >= totalChunks;
 	return out;
 }
@@ -1126,6 +1325,12 @@ export function gcHeapSnapshots(sql: HeapSql, keep = 1): number {
 		sql.exec('DELETE FROM cfw_heap_snapshot WHERE id = ?', id);
 	}
 	return doomed.length;
+}
+
+/** deletes one snapshot, chunks first so a crash leaves metadata rather than megabytes */
+export function dropSnapshotById(sql: HeapSql, id: number): void {
+	sql.exec('DELETE FROM cfw_heap_chunk WHERE snapshot_id = ?', id);
+	sql.exec('DELETE FROM cfw_heap_snapshot WHERE id = ?', id);
 }
 
 /**

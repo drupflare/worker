@@ -155,7 +155,11 @@ export function emitTunedGlue(root = process.cwd(), abi: Abi = null): string {
 		out,
 		stripExportWrappers(
 			provideReallocarray(
-				safeHeapSubarray(recordDecodeFailure(recordGrowth(plugCallableLeak(stepped))))
+				safeHeapSubarray(
+					recordDecodeFailure(
+						recordGrowth(plugCallableLeak(closeVrznoBridge(closeSockets(stepped))))
+					)
+				)
 			)
 		).source
 	);
@@ -188,6 +192,188 @@ export function plugCallableLeak(glue: string): string {
 			'"number",[$2],[Module.ccall("vrzno_expose_array",$2,[$2],[zv])])===2)' +
 			'?Module.ccall("vrzno_expose_callable",$1,[$2],[zv]):0;'
 	);
+}
+
+/**
+ * The socket imports the glue binds to stock emscripten SOCKFS, which opens a `WebSocket` per
+ * connect, each with the marker its unstubbed body carries and the value the stub returns.
+ *
+ * The legitimate network paths perform their I/O in JavaScript (`src/ops/park-drive.ts`,
+ * `src/ops/tcp.ts`) and never reach these imports, so refusing them removes only what a
+ * memory-corrupting PHP could use to skip the userland refusals. `socket` is refused with EACCES
+ * and no fd is ever a socket afterwards, so the rest answer ENOTSOCK; `getaddrinfo` answers
+ * EAI_FAIL, a musl code. The fake-DNS helpers (`_emscripten_lookup_name`, `getnameinfo`) touch no
+ * network and stay.
+ *
+ * The two `__asyncjs__` imports call `fetch()` and `await` behind `Asyncify.handleAsync`. They are
+ * closed in this build only because `Asyncify` is undefined, so they get a body of their own: the
+ * fetch import answers as its own catch branch does for a failed request (status -1, no headers),
+ * and the await import hands PHP a null.
+ */
+export const SOCKET_CLOSURE: readonly {
+	name: string;
+	marker: string;
+	returns?: number;
+	body?: string;
+}[] = [
+	{
+		name: '__asyncjs__php_stream_fetch_real_open',
+		marker: 'Asyncify.handleAsync(',
+		body:
+			'{const parsed={status:-1,buffer:(new TextEncoder).encode("refused"),context:{}};' +
+			'Module.tacked.add(parsed);return Module.targets.add(parsed)}'
+	},
+	{
+		name: '__asyncjs__vrzno_await_internal',
+		marker: 'Asyncify.handleAsync(',
+		body: '{Module.jsToZval(undefined,rv)}'
+	},
+	{ name: '___syscall_socket', marker: 'SOCKFS.createSocket(', returns: -13 },
+	{ name: '___syscall_connect', marker: 'getSocketFromFD(', returns: -88 },
+	{ name: '___syscall_bind', marker: 'getSocketFromFD(', returns: -88 },
+	{ name: '___syscall_listen', marker: 'getSocketFromFD(', returns: -88 },
+	{ name: '___syscall_accept4', marker: 'getSocketFromFD(', returns: -88 },
+	{ name: '___syscall_sendto', marker: 'getSocketFromFD(', returns: -88 },
+	{ name: '___syscall_recvfrom', marker: 'getSocketFromFD(', returns: -88 },
+	{ name: '___syscall_getsockname', marker: 'getSocketFromFD(', returns: -88 },
+	{ name: '___syscall_getpeername', marker: 'getSocketFromFD(', returns: -88 },
+	{ name: '___syscall_getsockopt', marker: 'getSocketFromFD(', returns: -88 },
+	{ name: '_getaddrinfo', marker: 'allocaddrinfo(', returns: -4 }
+];
+
+/** the index one past the `}` that closes the block opening at `open`, or -1 */
+function blockEnd(source: string, open: number): number {
+	let depth = 0;
+	for (let i = open; i < source.length; i++) {
+		const c = source[i];
+		if (c === '{') depth++;
+		else if (c === '}' && --depth === 0) return i + 1;
+	}
+	return -1;
+}
+
+/**
+ * Makes every function in {@link SOCKET_CLOSURE} return its refusal without touching SOCKFS.
+ *
+ * Keyed on the declaration and on a marker inside the body, so an emscripten that renames a
+ * function or rewrites its body throws here instead of shipping a socket path that looks closed.
+ * A body that is already the stub is left alone, so the transform is idempotent.
+ */
+export function closeSockets(glue: string): string {
+	let out = glue;
+	for (const { name, marker, returns, body: replacement } of SOCKET_CLOSURE) {
+		const head = new RegExp(`function ${name}\\(([^)]*)\\)\\{`).exec(out);
+		if (!head) {
+			throw new Error(`${name} not found in the glue; emscripten changed its emitted form`);
+		}
+		const open = head.index + head[0].length - 1;
+		const end = blockEnd(out, open);
+		if (end < 0) throw new Error(`${name} has no closing brace in the glue`);
+		const stub = replacement ?? `{return ${returns}}`;
+		const body = out.slice(open, end);
+		if (body === stub) continue;
+		if (!body.includes(marker)) {
+			throw new Error(`${name} no longer carries ${marker}; emscripten changed its body`);
+		}
+		out = out.slice(0, open) + stub + out.slice(end);
+	}
+	return out;
+}
+
+/** the root a PHP `new Vrzno()` reaches: no properties and no prototype, so nothing is on the path */
+const EMPTY_ROOT = 'Module.__cfwRoot||(Module.__cfwRoot=Object.freeze(Object.create(null)))';
+
+/**
+ * `Module.__cfwSeal`, which seals a host function for PHP: a wrapper with no prototype, so
+ * `.constructor`, `.call` and `.bind` are not there to climb to `Function`, and a result that is an
+ * object or a function comes back as null, so a value with a prototype chain never reaches PHP
+ * either. Strings, numbers and booleans pass untouched, which is every reply the host functions
+ * send. Cached per function so the handle stays stable.
+ *
+ * It is defined at init and not inline in `vrzno_env`, so the heap image can name a sealed wrapper
+ * the way it names the function under it: a restored heap holds the wrapper's `Module.targets` id,
+ * and `captureHandles()` and `replayHandles()` reach the same wrapper through this function.
+ */
+const SEAL_FUNCTION =
+	'Module.__cfwSealed=new WeakMap;Module.__cfwSeal=f=>{let w=Module.__cfwSealed.get(f);' +
+	'if(!w){w=(...a)=>{const r=f(...a);' +
+	'return r!==null&&(typeof r==="object"||typeof r==="function")?null:r};' +
+	'Object.setPrototypeOf(w,null);Module.__cfwSealed.set(f,w)}return w};';
+
+/**
+ * The vrzno bridge rewrites, each as the exact text the glue carries and its replacement.
+ *
+ * Userland PHP reaches these through `vrzno_*()` and `new Vrzno()`, and the shipping PHP uses
+ * only `vrzno_env('cfw...')`: `vrzno_eval`, `vrzno_run` and `vrzno_import` reach a JS eval, a
+ * global function call and a dynamic import, `vrzno_shared` reads a table nothing here fills,
+ * `vrzno_env` read any `Module` property, and the default root of `new Vrzno()` was `globalThis`
+ * (so `$g->fetch(...)`, `->process->env`, `->WebSocket` and `->Function` were all live). Eval, run,
+ * import and shared answer a fixed string or null, `vrzno_env` answers only a name matching
+ * `cfw[A-Za-z0-9]*` and wraps a function in {@link SEAL_FUNCTION}, and the root is an empty frozen
+ * object with a null prototype. Nothing here throws into the module: a throw from an import
+ * unwinds through wasm frames with no longjmp to catch it.
+ */
+export const VRZNO_CLOSURE: readonly { name: string; from: string; to: string }[] = [
+	{
+		name: 'vrzno_eval',
+		from: 'const str=String(eval(UTF8ToString($0)));',
+		to: 'const str="vrzno: eval is closed";'
+	},
+	{
+		name: 'vrzno_run',
+		from: 'const func=globalThis[funcName];const args=JSON.parse(argJson||"[]")||[];const str=String(func(...args));',
+		to: 'const str="vrzno: run is closed";'
+	},
+	{
+		name: 'vrzno_import',
+		from: 'Module.jsToZval(import(/* webpackIgnore: true */ name),rv)',
+		to: 'Module.jsToZval("vrzno: import is closed",rv)'
+	},
+	{
+		name: 'vrzno_shared',
+		from: 'Module.jsToZval(Module.shared[name],rv)',
+		to: 'Module.jsToZval(null,rv)'
+	},
+	{
+		name: 'vrzno_env',
+		from: 'const name=UTF8ToString($0);const rv=$1;Module.jsToZval(Module[name],rv)',
+		to:
+			'const name=UTF8ToString($0);const rv=$1;Module.jsToZval(/^cfw[A-Za-z0-9]*$/.test(name)?' +
+			'(typeof Module[name]==="function"?Module.__cfwSeal(Module[name]):Module[name]):null,rv)'
+	},
+	{
+		name: 'the vrzno init root',
+		from: 'Module.targets.add(globalThis);Module.PdoParams',
+		to: `Module.targets.add(${EMPTY_ROOT});${SEAL_FUNCTION}Module.PdoParams`
+	},
+	{
+		name: 'the default Vrzno target',
+		from: 'return Module.targets.add(globalThis)}',
+		to: `return Module.targets.add(${EMPTY_ROOT})}`
+	}
+];
+
+/**
+ * Closes the vrzno PHP-to-JavaScript bridge to everything but the `cfw*` host functions.
+ *
+ * Keyed on the exact text of each body, so an emscripten or php-wasm that changes one throws here
+ * instead of shipping a bridge that looks closed. A body already rewritten is left alone, which
+ * makes the transform idempotent.
+ */
+export function closeVrznoBridge(glue: string): string {
+	let out = glue;
+	for (const { name, from, to } of VRZNO_CLOSURE) {
+		const at = out.indexOf(from);
+		if (at < 0) {
+			if (out.includes(to)) continue;
+			throw new Error(`${name} not found in the glue; php-wasm changed its emitted form`);
+		}
+		if (out.indexOf(from, at + 1) >= 0) {
+			throw new Error(`${name} appears twice in the glue; php-wasm changed its emitted form`);
+		}
+		out = out.slice(0, at) + to + out.slice(at + from.length);
+	}
+	return out;
 }
 
 const GROW_SITE =

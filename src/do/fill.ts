@@ -5,6 +5,7 @@ import { crossingsSince, emptyCrossings, snapshotCrossings } from '../ops/crossi
 import { isIdempotent } from '../ops/deferred-post';
 import { tagChecksum } from '../ops/fragment-index';
 import { parseTransformPath } from '../ops/image-transform';
+import { encodeModuleHeaders } from '../ops/module-headers';
 import { queuePageMirror } from '../ops/page-mirror';
 import {
 	derivativeUri,
@@ -16,7 +17,7 @@ import { recordArrival } from '../ops/thermal';
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage } from '../util/errors';
 import { firstRow } from '../util/sql';
-import { pageTagList, passThroughHeaders } from './helpers';
+import { pageTagList, passThroughHeaders, variesByRequest } from './helpers';
 import { httpDrainEnabled } from './levers';
 import { FILL_BINS } from './limits';
 import type { FillOutcome, Payload, Row } from './types';
@@ -205,8 +206,11 @@ export async function fillOne(
 	// an active session is a warming signal the anonymous rate estimate cannot see (uid from
 	// Drupal, not the cookie)
 	if (renderedFor > 0) site.lastAuthenticatedAt = site.nowMs();
-	// honour what Drupal asked for (`page_cache_kill_switch` and other opt-outs)
-	const refused = /(^|,)\s*(no-store|private)\s*(,|$)/i.test(String(result.cacheControl ?? ''));
+	// honour what Drupal asked for (`page_cache_kill_switch` and other opt-outs), and a response
+	// that says it varies by a header the page key does not carry
+	const refused =
+		/(^|,)\s*(no-store|private)\s*(,|$)/i.test(String(result.cacheControl ?? '')) ||
+		variesByRequest(result.vary);
 	const cacheable =
 		(request.method ?? 'GET').toUpperCase() === 'GET' &&
 		!request.cookie &&
@@ -240,8 +244,8 @@ export async function fillOne(
 			? result.cacheTags.map((t) => String(t))
 			: [];
 		site.sql.exec(
-			`INSERT INTO cfw_page (path, status, content_type, html, rendered_at, render_ms, tags, tag_checksum)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO cfw_page (path, status, content_type, html, rendered_at, render_ms, tags, tag_checksum, headers)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(path) DO UPDATE SET
          status = excluded.status,
          content_type = excluded.content_type,
@@ -250,6 +254,7 @@ export async function fillOne(
          render_ms = excluded.render_ms,
          tags = excluded.tags,
          tag_checksum = excluded.tag_checksum,
+         headers = excluded.headers,
          stale_at = NULL`,
 			path,
 			status,
@@ -260,7 +265,9 @@ export async function fillOne(
 			// same statement, not a second update (a separate write cost a row per fill, 9 to 10)
 			pageTagList(pageTags),
 			// null for no tags: a zero sum would read as never stale
-			pageTags.length === 0 ? null : tagChecksum(site.sql, pageTags)
+			pageTags.length === 0 ? null : tagChecksum(site.sql, pageTags),
+			// the module-set policy headers, in the same statement (no extra row per fill)
+			encodeModuleHeaders(result.passHeaders)
 		);
 	}
 	// record unstorable paths, or the serve path re-queues the same page on every request

@@ -7,6 +7,7 @@
  * @module
  */
 import { leverInt } from '../util/lever';
+import { moduleHeaderRecord } from './module-headers';
 import { isPaid, type PlanEnv } from './plan';
 
 /** the KV surface this tier uses; narrowed so a test can supply a plain object */
@@ -33,6 +34,8 @@ export type StoredPage = {
 	status: number;
 	contentType: string;
 	html: string;
+	/** the policy headers a module set on the render; absent for a page stored before they were */
+	headers?: Record<string, string>;
 	/** when written, in ms; absent reads as unbounded age to {@link readStalePage}, not zero */
 	storedAt?: number;
 };
@@ -96,7 +99,10 @@ export async function readPage(
 		if (raw === null) return undefined;
 		const parsed = JSON.parse(raw) as Partial<StoredPage>;
 		if (typeof parsed.html !== 'string') return undefined;
+		// the boundary again: a KV document is data, and a hostile one must not replay `set-cookie`
+		const headers = moduleHeaderRecord(parsed.headers);
 		return {
+			...(Object.keys(headers).length > 0 ? { headers } : {}),
 			status: typeof parsed.status === 'number' ? parsed.status : 200,
 			contentType:
 				typeof parsed.contentType === 'string'

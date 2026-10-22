@@ -1,3 +1,4 @@
+import { moduleHeadersOf } from '../ops/module-headers';
 import { KV_GRANT_HEADER, pageKvEnabled, writePage } from '../ops/page-store';
 import { putPage } from './edge-cache';
 import type { AuthState, FrontContext, Learned, StoreOutcome } from './types';
@@ -41,6 +42,7 @@ export function storeEdge(
 			const copy = res.clone();
 			const status = res.status;
 			const contentType = res.headers.get('content-type') ?? 'text/html; charset=utf-8';
+			const headers = moduleHeadersOf(res.headers);
 			const generationForKv = doGeneration;
 			defer(
 				copy
@@ -49,7 +51,8 @@ export function storeEdge(
 						writePage(env, site, generationForKv, path, {
 							status,
 							contentType,
-							html
+							html,
+							...(Object.keys(headers).length > 0 ? { headers } : {})
 						})
 					)
 					.catch(() => undefined)

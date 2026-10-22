@@ -1,6 +1,7 @@
 import { isAuthenticatedRequest } from '../ops/auth-budget';
 import type { CacheTier } from '../ops/cache-tiers';
 import { ABSORBED_HEADER, foldAbsorbed, recordEncounter } from '../ops/cold-encounter';
+import { decodeModuleHeaders } from '../ops/module-headers';
 import { KV_GRANT_HEADER, kvWriteBudget, pageKvEnabled } from '../ops/page-store';
 import { ReplicaRequiresPrimary } from '../ops/replica';
 import { FIRST_RUN_KEY, needsSetup } from '../ops/setup-page';
@@ -27,6 +28,8 @@ export function pageResponse(
 ): Response {
 	const headers: Record<string, string> = {
 		...extra,
+		// re-run through the boundary: a row written by SQL must not replay `set-cookie`
+		...decodeModuleHeaders(row.headers),
 		'content-type': String(row.content_type ?? 'text/html; charset=utf-8'),
 		// the edge copy has its own longer max-age; clients revalidate so a bump wins
 		'cache-control': 'public, max-age=0, must-revalidate',
@@ -260,7 +263,7 @@ export function serveFromStorage(site: SitePhpDurableObject, url: URL): Response
 					tag_checksum?: number | null;
 				}
 			>(
-				'SELECT status, content_type, html, rendered_at, render_ms, stale_at, tags, tag_checksum FROM cfw_page WHERE path = ?',
+				'SELECT status, content_type, html, rendered_at, render_ms, stale_at, tags, tag_checksum, headers FROM cfw_page WHERE path = ?',
 				path
 			)
 		);

@@ -1,4 +1,5 @@
 import type { SiteEnv } from '../env';
+import { moduleHeadersOf } from '../ops/module-headers';
 
 /** how long an edge-cached page stays fresh, in seconds */
 export const EDGE_PAGE_TTL_S = 300;
@@ -135,6 +136,10 @@ export function putPage(
 	for (const h of ['x-cfw-render-ms', 'x-cfw-rendered-at']) {
 		const v = res.headers.get(h);
 		if (v !== null) headers.set(h, v);
+	}
+	// the policy a module set belongs to the page, so a hit replays it
+	for (const [name, value] of Object.entries(moduleHeadersOf(res.headers))) {
+		headers.set(name, value);
 	}
 
 	// cloned now: a clone taken after the caller consumes the body is empty

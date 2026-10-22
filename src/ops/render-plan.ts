@@ -52,6 +52,8 @@ export type RenderPlan = {
 	sample: Record<string, string>;
 	/** and on the second, which is what makes the substitution proof possible */
 	sampleB: Record<string, string>;
+	/** the module-set headers both renders carried, replayed with the page; absent on an older plan */
+	headers?: Record<string, string>;
 };
 
 /** one 43-character base64url token from 32 random bytes, the shape PHP's Crypt produces */

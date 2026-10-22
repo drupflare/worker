@@ -93,7 +93,7 @@ describe('what a render has to NOT say for a page to be stored', () => {
 	 * lane cannot import -- so the source is the seam.
 	 */
 	const SOURCE = siteDoText();
-	const literal = /const refused = \/(.+?)\/([a-z]*)\.test\(/.exec(SOURCE);
+	const literal = /const refused =\s*\/(.+?)\/([a-z]*)\.test\(/.exec(SOURCE);
 
 	it('finds the refusal literal in fillOne, which is what makes the cases below mean anything', () => {
 		expect(

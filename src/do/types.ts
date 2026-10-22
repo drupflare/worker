@@ -42,6 +42,8 @@ export type PageRow = Row<{
 	html: string;
 	rendered_at: number;
 	render_ms: number | null;
+	/** JSON of the module-set headers; absent from a read that did not select it */
+	headers?: string | null;
 }>;
 
 /**

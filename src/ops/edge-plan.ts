@@ -32,6 +32,7 @@
  * @module
  */
 
+import { moduleHeaderRecord } from './module-headers';
 import { pageKvEnabled, planKvWritesEnabled, type PageKv, type PageStoreEnv } from './page-store';
 import {
 	compilePlan,
@@ -108,6 +109,8 @@ type Entry = {
 	samples: string[];
 	/** which session produced each sample, positionally; see {@link noteEdgeRender} */
 	witnesses: string[];
+	/** the module-set headers each sample carried, positionally */
+	sampleHeaders: Record<string, string>[];
 	/** sessions whose own live render has agreed with the stored plan */
 	agreed: Set<string>;
 	bytes: number;
@@ -292,7 +295,14 @@ function evict(): void {
 function entryFor(key: string, owned = false): Entry {
 	let entry = store.get(key);
 	if (!entry) {
-		entry = { samples: [], witnesses: [], agreed: new Set(), bytes: 0, owned };
+		entry = {
+			samples: [],
+			witnesses: [],
+			sampleHeaders: [],
+			agreed: new Set(),
+			bytes: 0,
+			owned
+		};
 		store.set(key, entry);
 		evict();
 	}
@@ -377,6 +387,7 @@ export function storeEdgePlan(
 	entry.plan = plan;
 	entry.samples = [];
 	entry.witnesses = [];
+	entry.sampleHeaders = [];
 	entry.agreed.clear();
 	entry.bytes = planBytes(plan);
 	entry.provenUntil = nowMs + PLAN_TTL_MS;
@@ -397,6 +408,12 @@ function planBytes(plan: RenderPlan): number {
  * against Drupal's render and may differ only where the plan has slots. A changed page, or an ended
  * session now rendering as somebody else, moves a constant.
  */
+/** whether two header records hold the same names and values */
+function sameHeaders(a: Record<string, string>, b: Record<string, string>): boolean {
+	const names = Object.keys(a);
+	return names.length === Object.keys(b).length && names.every((name) => a[name] === b[name]);
+}
+
 function stillAgrees(plan: RenderPlan, html: string): boolean {
 	// the token is from the render being checked (the session's own)
 	const values = fillSlots(plan, { csrf: sessionCsrf(html) });
@@ -423,6 +440,10 @@ function stillAgrees(plan: RenderPlan, html: string): boolean {
  * `owned` marks a key that names one session ({@link privatePlanKey}); it drops only the
  * two-witness requirement, which has no work to do when nobody else is served from the key.
  *
+ * `headers` are the module-set headers the render carried. They are part of what a plan holds, so
+ * two witnesses must agree on them like on the markup, and a live render whose headers differ from
+ * the plan's drops it (a plan stored before headers existed re-proves into one that has them).
+ *
  * @returns the plan when this render completed a compile, so the caller can mirror it to KV;
  *   undefined for a re-proof (KV already holds it) and for a private plan (never mirrored)
  */
@@ -432,7 +453,8 @@ export function noteEdgeRender(
 	html: string,
 	nowMs: number = Date.now(),
 	witness = '',
-	owned = false
+	owned = false,
+	headers: Record<string, string> = {}
 ): RenderPlan | undefined {
 	const entry = entryFor(key, owned);
 	if (entry.plan) {
@@ -440,7 +462,7 @@ export function noteEdgeRender(
 		// has not agreed is worth a diff, since `lookupEdgePlan()` will not serve it until it does
 		const owed = witness !== '' && !entry.agreed.has(witness);
 		if (!owed && nowMs < (entry.provenUntil ?? 0)) return undefined;
-		if (stillAgrees(entry.plan, html)) {
+		if (stillAgrees(entry.plan, html) && sameHeaders(entry.plan.headers ?? {}, headers)) {
 			// the session's own render now agrees, which `lookupEdgePlan()` requires
 			if (witness !== '') entry.agreed.add(witness);
 			if (nowMs >= (entry.provenUntil ?? 0)) entry.provenUntil = nowMs + PLAN_TTL_MS;
@@ -459,6 +481,7 @@ export function noteEdgeRender(
 	}
 	entry.samples.push(html);
 	entry.witnesses.push(witness);
+	entry.sampleHeaders.push(headers);
 	if (entry.samples.length < SAMPLES_PER_COMPILE) return undefined;
 
 	// sample 0 is the asset-library warm-up and is discarded; see SAMPLES_PER_COMPILE
@@ -466,17 +489,23 @@ export function noteEdgeRender(
 	const b = entry.samples[SAMPLES_PER_COMPILE - 1] as string;
 	const wa = entry.witnesses[SAMPLES_PER_COMPILE - 2] ?? '';
 	const wb = entry.witnesses[SAMPLES_PER_COMPILE - 1] ?? '';
+	const ha = entry.sampleHeaders[SAMPLES_PER_COMPILE - 2] ?? {};
+	const hb = entry.sampleHeaders[SAMPLES_PER_COMPILE - 1] ?? {};
 	entry.samples = [];
 	entry.witnesses = [];
+	entry.sampleHeaders = [];
 	// two different sessions are required (one session's per-user region, such as the toolbar
 	// name, would be a constant served to the whole role set); keep the samples and wait
 	if (wa === '' || wb === '' || (wa === wb && !owned)) {
 		entry.samples = [a, b];
 		entry.witnesses = [wa, wb];
+		entry.sampleHeaders = [ha, hb];
 		return undefined;
 	}
 	const plan = compilePlan(a, b, path);
+	if (Object.keys(ha).length > 0) plan.headers = ha;
 	if (
+		!sameHeaders(ha, hb) ||
 		unservableSlots(plan).length > 0 ||
 		!planExplainsBoth(plan, a, b) ||
 		!generatorAgrees(plan)
@@ -668,6 +697,10 @@ export async function readEdgePlan(
 		if (!Array.isArray(parsed?.ops) || typeof parsed?.slots !== 'object') return undefined;
 		// the proofs are re-applied on the way in: a record this isolate did not compile is input
 		if (unservableSlots(parsed).length > 0 || !generatorAgrees(parsed)) return undefined;
+		// the headers are replayed to a visitor, so they cross the same boundary a stored page's do
+		const headers = moduleHeaderRecord(parsed.headers);
+		if (Object.keys(headers).length > 0) parsed.headers = headers;
+		else delete parsed.headers;
 		return parsed;
 	} catch {
 		return undefined;

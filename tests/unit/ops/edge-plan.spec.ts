@@ -638,3 +638,143 @@ describe('a redirect as a plan', () => {
 		expect(edgePlanStats().plans).toBe(0);
 	});
 });
+
+describe('module-set headers on a plan', () => {
+	beforeEach(() => resetEdgePlans());
+
+	const at = 1_000_000;
+	const FRAME = { 'x-frame-options': 'DENY' };
+	const POLICY = { 'content-security-policy': "object-src 'none'" };
+
+	/** three renders, the last from a second session, each carrying the headers given */
+	const compiledWith = (key: string, first: Record<string, string>, second = first) => {
+		noteEdgeRender(key, PATH, staticPage(0), at, COOKIE_A, false, first);
+		noteEdgeRender(key, PATH, staticPage(1), at, COOKIE_A, false, first);
+		return noteEdgeRender(key, PATH, staticPage(1), at, COOKIE_B, false, second);
+	};
+
+	it('keeps the headers two witnesses agree on, and replays them from the stored plan', () => {
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+		const plan = compiledWith(key, { ...FRAME, ...POLICY });
+		expect(plan?.headers).toEqual({ ...FRAME, ...POLICY });
+		expect(lookupEdgePlan(key, at, COOKIE_A)?.headers).toEqual({ ...FRAME, ...POLICY });
+	});
+
+	it('stores no headers field for a page that carried none', () => {
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+		const plan = compiledWith(key, {});
+		expect(plan).not.toBeUndefined();
+		expect(plan).not.toHaveProperty('headers');
+	});
+
+	it('refuses to compile when the two witnesses disagree on a header', () => {
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+		expect(compiledWith(key, FRAME, { 'x-frame-options': 'SAMEORIGIN' })).toBeUndefined();
+		expect(lookupEdgePlan(key, at, COOKIE_B)).toBeUndefined();
+		expect(edgePlanStats().plans).toBe(0);
+	});
+
+	it('refuses when only one witness carried a header', () => {
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+		expect(compiledWith(key, FRAME, {})).toBeUndefined();
+		expect(edgePlanStats().plans).toBe(0);
+	});
+
+	it('counts a header disagreement as a refusal, so the key gives up after the bound', () => {
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+		for (let i = 0; i < PLAN_COMPILE_ATTEMPTS; i++) {
+			compiledWith(key, FRAME, { 'x-frame-options': 'SAMEORIGIN' });
+		}
+		expect(edgePlanRefused(key, at)).toBe(true);
+	});
+
+	it('drops a plan when a live render carries other headers, and recompiles with them', () => {
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+		compiledWith(key, FRAME);
+		const later = at + PLAN_TTL_MS;
+		const changed = { 'x-frame-options': 'SAMEORIGIN' };
+		expect(
+			noteEdgeRender(key, PATH, staticPage(1), later, COOKIE_A, false, changed)
+		).toBeUndefined();
+		expect(lookupEdgePlan(key, later)).toBeUndefined();
+		noteEdgeRender(key, PATH, staticPage(1), later, COOKIE_A, false, changed);
+		const plan = noteEdgeRender(key, PATH, staticPage(1), later, COOKIE_B, false, changed);
+		expect(plan?.headers).toEqual(changed);
+	});
+
+	it('renews on a live render whose headers match', () => {
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+		compiledWith(key, FRAME);
+		const later = at + PLAN_TTL_MS;
+		expect(
+			noteEdgeRender(key, PATH, staticPage(1), later, COOKIE_A, false, FRAME)
+		).toBeUndefined();
+		expect(lookupEdgePlan(key, later)?.headers).toEqual(FRAME);
+	});
+
+	it('replaces a plan stored before headers existed once a render carries them', () => {
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+		storeEdgePlan(key, compilePlan(staticPage(1), staticPage(1), PATH), at);
+		const later = at + PLAN_TTL_MS;
+		expect(
+			noteEdgeRender(key, PATH, staticPage(1), later, COOKIE_A, false, FRAME)
+		).toBeUndefined();
+		expect(lookupEdgePlan(key, later)).toBeUndefined();
+	});
+
+	it('round trips the headers through KV', async () => {
+		const { env } = fakeKv();
+		const headers = { ...FRAME, ...POLICY };
+		const plan = { ...compilePlan(staticPage(), staticPage(), PATH), headers };
+		await writeEdgePlan(env, SITE, 5, ROLES, PATH, plan);
+		expect((await readEdgePlan(env, SITE, 5, ROLES, PATH))?.headers).toEqual(headers);
+	});
+
+	it('reads a plan record that has no headers as a plan with none', async () => {
+		const { env } = fakeKv();
+		await writeEdgePlan(
+			env,
+			SITE,
+			5,
+			ROLES,
+			PATH,
+			compilePlan(staticPage(), staticPage(), PATH)
+		);
+		const back = await readEdgePlan(env, SITE, 5, ROLES, PATH);
+		expect(back).not.toBeUndefined();
+		expect(back).not.toHaveProperty('headers');
+	});
+
+	it('runs a hostile KV record through the header boundary', async () => {
+		const { env, map } = fakeKv();
+		const plan = compilePlan(staticPage(), staticPage(), PATH);
+		const hostile = {
+			...plan,
+			headers: {
+				'x-frame-options': 'DENY',
+				'set-cookie': 'SESS=stolen',
+				location: 'https://evil.test/',
+				'x-cfw-cache': 'PLAN',
+				'content-security-policy': 'default-src *\r\nset-cookie: a=b',
+				'permissions-policy': 'camera=()☃',
+				'referrer-policy': 7
+			}
+		};
+		const key = edgePlanKvKey(SITE, 5, await cookieFingerprint(ROLES), PATH);
+		map.set(key, JSON.stringify(hostile));
+		const back = await readEdgePlan(env, SITE, 5, ROLES, PATH);
+		expect(back?.headers).toEqual({ 'x-frame-options': 'DENY' });
+	});
+
+	it('drops a headers field that is not a record', async () => {
+		const { env, map } = fakeKv();
+		const plan = compilePlan(staticPage(), staticPage(), PATH);
+		const key = edgePlanKvKey(SITE, 5, await cookieFingerprint(ROLES), PATH);
+		for (const headers of ['x-frame-options: DENY', ['x-frame-options'], 7, null]) {
+			map.set(key, JSON.stringify({ ...plan, headers }));
+			const back = await readEdgePlan(env, SITE, 5, ROLES, PATH);
+			expect(back).not.toBeUndefined();
+			expect(back).not.toHaveProperty('headers');
+		}
+	});
+});

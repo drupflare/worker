@@ -23,7 +23,7 @@ export type MemoPage = {
 	body: Uint8Array;
 	status: number;
 	contentType: string;
-	/** every `x-cfw-*` header the stored response carried (so a measurement reads the same) */
+	/** every `x-cfw-*` header the stored response carried, and the module policy headers */
 	headers: [string, string][];
 };
 

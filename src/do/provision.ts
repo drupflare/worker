@@ -44,6 +44,10 @@ export function ensureServeTables(site: SitePhpDurableObject): void {
 	if (!pageColumns.includes('tag_checksum')) {
 		site.sql.exec('ALTER TABLE cfw_page ADD COLUMN tag_checksum INTEGER');
 	}
+	// the policy headers a module set on the render (JSON), replayed with the page by every tier
+	if (!pageColumns.includes('headers')) {
+		site.sql.exec('ALTER TABLE cfw_page ADD COLUMN headers TEXT');
+	}
 	site.sql.exec(
 		`CREATE TABLE IF NOT EXISTS cfw_plan (
         path TEXT PRIMARY KEY,

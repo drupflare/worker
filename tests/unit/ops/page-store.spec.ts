@@ -233,4 +233,42 @@ describe('reads and writes, including everything it refuses to store', () => {
 			html: '<p>x</p>'
 		});
 	});
+
+	it('round-trips the module-set headers with the page', async () => {
+		const kv = fakeKv();
+		const headers = {
+			'content-security-policy': "frame-ancestors 'none'",
+			'x-frame-options': 'DENY'
+		};
+		await writePage(paid(kv), 's', 7, '/', { ...PAGE, headers });
+		expect((await readPage(paid(kv), 's', 7, '/'))?.headers).toEqual(headers);
+	});
+
+	it('reads a page stored before headers existed as one with none, and does not throw', async () => {
+		const kv = fakeKv();
+		await writePage(paid(kv), 's', 7, '/', PAGE);
+		const back = await readPage(paid(kv), 's', 7, '/');
+		expect(back?.html).toBe(PAGE.html);
+		expect(back).not.toHaveProperty('headers');
+	});
+
+	it('drops a hostile header in a stored document: a cookie, a newline, an oversized value', async () => {
+		const kv = fakeKv();
+		kv.store.set(
+			pageKvKey('s', 7, '/'),
+			JSON.stringify({
+				html: '<p>x</p>',
+				headers: {
+					'set-cookie': 'a=b',
+					location: 'https://evil.example',
+					'content-security-policy': 'a\r\nset-cookie: b=c',
+					'permissions-policy': 'a'.repeat(5000),
+					'x-frame-options': 'DENY'
+				}
+			})
+		);
+		expect((await readPage(paid(kv), 's', 7, '/'))?.headers).toEqual({
+			'x-frame-options': 'DENY'
+		});
+	});
 });

@@ -130,20 +130,25 @@ try {
 	// what Drupal said about storing this, which page_cache_kill_switch and any module with a
 	// reason to opt out both express here and nowhere else
 	$out['cacheControl'] = $response->headers->get('cache-control');
+	// the request headers this response says it depends on; `cfw_page` is keyed by path alone
+	$out['vary'] = implode(', ', $response->headers->all('vary'));
 	// EVERY x-drupal-* HEADER, because dropping one silently changed what the BROWSER does.
 	// ajax.js refuses a response whose url is not in drupalSettings.ajaxTrustedUrl unless it carries
 	// X-Drupal-Ajax-Token, and answers "The response failed verification so will not be processed."
 	// -- so every AJAX interaction that was not a plain form submit died at the client with a valid
 	// response in hand. Measured on Add field. A prefix rather than a list, so the next one core adds
 	// is carried without anybody having to notice.
+	// EVERY OTHER HEADER TOO, joined, because a module's CSP or X-Frame-Options is set on the
+	// response and the host decides which names reach a browser (set-cookie has its own path)
 	$passed = [];
 	foreach ($response->headers->all() as $name => $values) {
-		if (stripos((string) $name, 'x-drupal-') !== 0) {
-			continue;
-		}
-		$first = is_array($values) ? $values[0] ?? null : $values;
-		if ($first !== null) {
-			$passed[(string) $name] = (string) $first;
+		$values = is_array($values) ? $values : [$values];
+		if (stripos((string) $name, 'x-drupal-') === 0) {
+			if (isset($values[0])) {
+				$passed[(string) $name] = (string) $values[0];
+			}
+		} elseif (strcasecmp((string) $name, 'set-cookie') !== 0 && $values !== []) {
+			$passed[(string) $name] = implode(', ', array_map('strval', $values));
 		}
 	}
 	$out['passHeaders'] = $passed;

@@ -1,3 +1,4 @@
+import { MODULE_HEADER_NAMES } from '../ops/module-headers';
 import { lookupPageMemo, pageMemoHeaders, storePageMemo } from '../ops/page-memo';
 import { readPage, readStalePage } from '../ops/page-store';
 import { pageKeyUrl, readGeneration } from './edge-cache';
@@ -51,12 +52,14 @@ export async function readEdgeTiers(
 						status: cached.status,
 						contentType:
 							cached.headers.get('content-type') ?? 'text/html; charset=utf-8',
-						// only the object's verdict travels (a memo hit must not claim an edge hit)
+						// only the object's verdict and the module policy travel (a memo hit must
+						// not claim an edge hit)
 						headers: [...cached.headers].filter(
 							([name]) =>
-								name.startsWith('x-cfw-') &&
-								name !== 'x-cfw-cache' &&
-								name !== 'x-cfw-edge'
+								MODULE_HEADER_NAMES.has(name) ||
+								(name.startsWith('x-cfw-') &&
+									name !== 'x-cfw-cache' &&
+									name !== 'x-cfw-edge')
 						)
 					},
 					t0
@@ -88,13 +91,17 @@ export async function readKvTier(f: FrontContext, edge: EdgeRead): Promise<Respo
 					body: new TextEncoder().encode(stored.html),
 					status: stored.status,
 					contentType: stored.contentType,
-					headers: [['x-cfw-generation', String(generation)]]
+					headers: [
+						['x-cfw-generation', String(generation)],
+						...Object.entries(stored.headers ?? {})
+					]
 				},
 				t0
 			);
 			return new Response(stored.html, {
 				status: stored.status,
 				headers: {
+					...stored.headers,
 					'content-type': stored.contentType,
 					'x-cfw-cache': 'KV',
 					'x-cfw-edge': 'MISS',
@@ -119,6 +126,7 @@ export async function readKvTier(f: FrontContext, edge: EdgeRead): Promise<Respo
 			return new Response(stale.page.html, {
 				status: stale.page.status,
 				headers: {
+					...stale.page.headers,
 					'content-type': stale.page.contentType,
 					'x-cfw-cache': 'KV',
 					'x-cfw-edge': 'STALE',

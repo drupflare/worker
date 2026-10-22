@@ -1,3 +1,4 @@
+import { acceptModuleHeader } from '../ops/module-headers';
 import { MAX_MAIL_ATTEMPTS, MAX_OUTBOUND_BODY_BYTES } from './limits';
 
 export { forwardTo } from '../util/forward';
@@ -16,27 +17,47 @@ export function pageTagList(tags: unknown): string {
 }
 
 /**
+ * Whether a render's `Vary` names a request header the page key does not carry.
+ *
+ * `cfw_page`, the KV tier and `caches.default` key a page on its path and generation alone, so a
+ * stored 200 reaches every visitor. `Cookie` is fine because a request with a cookie is never
+ * stored or served from those tiers, and `Accept-Encoding` is the platform's to negotiate. Any
+ * other member (`Accept`, `Origin`, `User-Agent`, `*`) is the response saying it differs by
+ * something the key lacks, so it is not stored.
+ */
+export function variesByRequest(vary: unknown): boolean {
+	if (typeof vary !== 'string') return false;
+	return vary
+		.split(',')
+		.map((name) => name.trim().toLowerCase())
+		.some((name) => name !== '' && name !== 'cookie' && name !== 'accept-encoding');
+}
+
+/**
  * The response headers a render is allowed to set on the way out.
  *
- * `x-drupal-*` only: browser-facing headers such as `X-Drupal-Ajax-Token` (ajax.js discards a
- * response without it). The prefix is a boundary: arbitrary headers could set `set-cookie`,
- * `location` or CORS.
+ * `x-drupal-*` (browser-facing headers such as `X-Drupal-Ajax-Token`, which ajax.js needs) and the
+ * names in `MODULE_HEADER_NAMES` (a policy a module sets). The prefix and the list are the
+ * boundary: arbitrary headers could set `set-cookie`, `location` or CORS.
  *
  * @param raw
  *   Whatever the render fragment reported, which is unvalidated JSON.
  *
  * @returns
- *   Header name to value, lowercased, with anything outside the prefix dropped.
+ *   Header name to value, lowercased, with anything outside the prefix and the list dropped.
  */
 export function passThroughHeaders(raw: unknown): Record<string, string> {
 	if (raw === null || typeof raw !== 'object') return {};
 	const out: Record<string, string> = {};
 	for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
 		const key = String(name).toLowerCase();
-		if (!key.startsWith('x-drupal-')) continue;
-		// a newline would split the response
-		if (/[\r\n]/.test(key) || typeof value !== 'string' || /[\r\n]/.test(value)) continue;
-		out[key] = value;
+		if (key.startsWith('x-drupal-')) {
+			// a newline would split the response
+			if (/[\r\n]/.test(key) || typeof value !== 'string' || /[\r\n]/.test(value)) continue;
+			out[key] = value;
+		} else if (acceptModuleHeader(key, value)) {
+			out[key] = value;
+		}
 	}
 	return out;
 }

@@ -25,6 +25,7 @@ import {
 	writeEdgePlan,
 	type PlanTier
 } from '../ops/edge-plan';
+import { moduleHeadersOf } from '../ops/module-headers';
 import { sessionCsrf } from '../ops/render-plan';
 import type { AuthState, FrontContext, Learned, PlanRead } from './types';
 
@@ -85,6 +86,7 @@ export async function readPlanTier(f: FrontContext, auth: AuthState): Promise<Re
 				new Response(body, {
 					status,
 					headers: {
+						...held?.headers,
 						...head,
 						'cache-control': 'private, no-store',
 						'x-cfw-cache': 'PLAN',
@@ -152,6 +154,7 @@ export function compilePlan(
 		const generationForPlan = doGeneration;
 		const rolesForPlan = reportedRoles;
 		const witness = planCookie;
+		const moduleHeaders = moduleHeadersOf(res.headers);
 		planTier = 'sampling';
 		// a redirect has no body; its whole content is the status and the target, expressed as a
 		// body so the compiler's proofs run on it unchanged
@@ -166,7 +169,15 @@ export function compilePlan(
 					// the csrf slot value cannot be generated here; keep the session's own
 					rememberCsrf(witness, sessionCsrf(html), Date.now());
 					// the cookie is the witness (two sessions must agree before a plan is stored)
-					const compiled = noteEdgeRender(key, path, html, Date.now(), witness);
+					const compiled = noteEdgeRender(
+						key,
+						path,
+						html,
+						Date.now(),
+						witness,
+						false,
+						moduleHeaders
+					);
 					if (compiled === undefined) {
 						// a lone session gets a private plan (skipped once a shared one serves)
 						if (!hasEdgePlan(key)) {
@@ -176,7 +187,8 @@ export function compilePlan(
 								html,
 								Date.now(),
 								witness,
-								true
+								true,
+								moduleHeaders
 							);
 						}
 						return undefined;

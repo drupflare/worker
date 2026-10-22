@@ -17,9 +17,9 @@
 <div class="tsd-signature tsd-anchor-link" id="passthroughheaders"><span class="tsd-kind-call-signature">passThroughHeaders</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">raw</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><a href="#passthroughheaders" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>The response headers a render is allowed to set on the way out.</p>
-<p><code>x-drupal-*</code> only: browser-facing headers such as <code>X-Drupal-Ajax-Token</code> (ajax.js discards a
-response without it). The prefix is a boundary: arbitrary headers could set <code>set-cookie</code>,
-<code>location</code> or CORS.</p>
+<p><code>x-drupal-*</code> (browser-facing headers such as <code>X-Drupal-Ajax-Token</code>, which ajax.js needs) and the
+names in <code>MODULE_HEADER_NAMES</code> (a policy a module sets). The prefix and the list are the
+boundary: arbitrary headers could set <code>set-cookie</code>, <code>location</code> or CORS.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -27,10 +27,10 @@ response without it). The prefix is a boundary: arbitrary headers could set <cod
 <li><span><span class="tsd-kind-parameter">raw</span>: <span class="tsd-signature-type">unknown</span></span>
 <div class="tsd-comment tsd-typography"><p>Whatever the render fragment reported, which is unvalidated JSON.</p>
 </div></li></ul></div>
-<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span></h4><p>Header name to value, lowercased, with anything outside the prefix dropped.</p>
+<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span></h4><p>Header name to value, lowercased, with anything outside the prefix and the list dropped.</p>
 <aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6bef65f54a1d985d3981a859e18b32b2cf4f5474/src/do/helpers.ts#L31">src/do/helpers.ts:31</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/0d20eccceaf68a46580e6685fefacf673ed33da2/src/do/helpers.ts#L49">src/do/helpers.ts:49</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

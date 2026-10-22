@@ -12,12 +12,12 @@
 <li><a href="" aria-current="page">DEFAULT_HEADERS</a></li></ul>
 <h1>Variable DEFAULT_HEADERS<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">DEFAULT_HEADERS</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Readonly</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></div>
-<div class="tsd-comment tsd-typography"><p>Sent on every response a <code>RESPONSE_HEADERS</code> rule does not override. Core sets the first two
-itself, but the render fragment forwards only <code>x-drupal-*</code>, so they never reached a browser.
+<div class="tsd-comment tsd-typography"><p>Sent on every response a module or a <code>RESPONSE_HEADERS</code> rule does not override. The order is
+these defaults, then a header the module set, then the operator's rules.
 No default <code>Content-Security-Policy</code>: core's own pages need inline script and style.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6bef65f54a1d985d3981a859e18b32b2cf4f5474/src/ops/edge-rules.ts#L175">src/ops/edge-rules.ts:175</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/0d20eccceaf68a46580e6685fefacf673ed33da2/src/ops/edge-rules.ts#L176">src/ops/edge-rules.ts:176</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -588,6 +588,11 @@ value all fall through to the var.</p>
 <td>largest non-file request body the edge forwards</td>
 </tr>
 <tr>
+<td><code>MAX_UPLOAD_BYTES</code></td>
+<td>100 MiB</td>
+<td>largest <code>multipart/form-data</code> body the edge forwards</td>
+</tr>
+<tr>
 <td><code>OUTBOUND_GUARD</code></td>
 <td>on</td>
 <td>refuse an outbound fetch to a private, loopback or metadata address; <code>0</code> off</td>
@@ -611,6 +616,11 @@ value all fall through to the var.</p>
 <td><code>EDGE_PLAN</code></td>
 <td>on</td>
 <td>serve an authenticated page from a compiled plan in the front worker; <code>0</code> off</td>
+</tr>
+<tr>
+<td><code>CSP_MODE</code></td>
+<td>per plan</td>
+<td>baseline Content-Security-Policy on HTML: <code>off</code>, <code>report-only</code> or <code>enforce</code>; paid defaults to report-only</td>
 </tr>
 <tr>
 <td><code>NEVER_STALE</code></td>
@@ -727,16 +737,16 @@ site at containers on the host.</p>
 128 MB isolate, and <code>foo[][][][][]=bar</code> repeated turns a few hundred kilobytes of wire into far more
 of it. Drupal&#39;s own <code>post_max_size</code> default is 8 MB; this is tighter, because there is no separate
 process to lose here.</p>
-<p>The check reads <code>Content-Length</code> and nothing else, the only measurement available before the body has
-been consumed, and consuming it to measure it is the cost the guard exists to avoid. A chunked
-request declares none and falls through to the object&#39;s own limits. <code>GET</code> and <code>HEAD</code> are not checked.</p>
-<p><code>multipart/form-data</code> is exempt. That is the file-upload shape, its size is what a caller is asking
-for, and it never reaches <code>parse_str()</code> as a nested array, so a 2 MiB cap on uploads would be a
-functional regression.</p>
-<p>Over the limit, the edge answers <strong>413 before any Durable Object hop</strong>. <code>0</code> disables the guard
-entirely. Raising it trades isolate headroom for larger non-upload submissions; the failure mode of
-too high is an object that runs out of memory mid-parse.</p>
-<p>Consumer: <code>bodyTooLarge()</code> in <code>src/site/guards.ts</code>.</p>
+<p>A body that declares a <code>Content-Length</code> is checked against it, which the platform holds the body to.
+A chunked body declares none, so the edge reads it under the same ceiling and stops at the first
+chunk that crosses it. <code>GET</code> and <code>HEAD</code> are not checked.</p>
+<p><code>multipart/form-data</code> has its own ceiling, <code>MAX_UPLOAD_BYTES</code>, because a 2 MiB cap on uploads would
+be a functional regression. It defaults to 100 MiB, the platform&#39;s own request limit, which is the
+only limit a multipart body had before the edge counted it.</p>
+<p>Over either limit, the edge answers <strong>413 before any Durable Object hop</strong>. <code>0</code> disables that guard
+entirely. Raising <code>MAX_BODY_BYTES</code> trades isolate headroom for larger non-upload submissions; the
+failure mode of too high is an object that runs out of memory mid-parse.</p>
+<p>Consumer: <code>bodyTooLarge()</code> and <code>readBounded()</code> in <code>src/site/guards.ts</code>.</p>
 <h3 id="the-kv-page-tier">The KV Page Tier</h3>
 <p><code>PAGE_KV</code> is a cross-colo tier between the edge cache and the Durable Object, on for both plans
 whenever the namespace is bound. It still costs one Worker request, since the Worker has to run to
@@ -963,12 +973,44 @@ are read.</p>
 <code>X-Frame-Options: SAMEORIGIN</code> and <code>Referrer-Policy: strict-origin-when-cross-origin</code>, and over https
 <code>Strict-Transport-Security: max-age=31536000</code>, with no <code>includeSubDomains</code> or <code>preload</code>. A
 <code>RESPONSE_HEADERS</code> rule that names one of them replaces it, and a rule value of <code>&quot;&quot;</code> removes it, which
-a site embedded in another page needs for <code>X-Frame-Options</code>. There is no default
-<code>Content-Security-Policy</code>, because core&#39;s own pages use inline script and style. A site sets one
-through a rule, and <code>Content-Security-Policy-Report-Only</code> shows what a policy would block before it
-enforces anything. Headers a Drupal module sets, such as Security Kit&#39;s, are not forwarded: the render
-fragment passes only <code>x-drupal-*</code>. Static files the asset layer answers (<code>/core</code>, <code>/modules</code>,
-<code>/themes</code>, <code>/agg</code>) carry the cache rules in <code>assets/_headers</code> and none of these.</p>
+a site embedded in another page needs for <code>X-Frame-Options</code>.</p>
+<p>A Drupal module can set a header too. Security Kit&#39;s policy and a custom subscriber&#39;s
+<code>X-Frame-Options: DENY</code> reach the browser, from the object, the edge cache, the isolate memo, KV, the
+stale answer and the compiled plan for a signed-in page. The render reports
+the response headers and the host keeps only these names: <code>Content-Security-Policy</code>,
+<code>Content-Security-Policy-Report-Only</code>, <code>Permissions-Policy</code>, <code>X-Frame-Options</code>,
+<code>X-Content-Type-Options</code>, <code>Referrer-Policy</code>, <code>Strict-Transport-Security</code>, <code>Cross-Origin-Opener-Policy</code>,
+<code>Cross-Origin-Embedder-Policy</code>, <code>Cross-Origin-Resource-Policy</code> and <code>X-Permitted-Cross-Domain-Policies</code>.
+A value with a line break, a character outside printable ASCII, or more than 4,096 bytes is dropped,
+and <code>Set-Cookie</code>, <code>Location</code>, <code>Access-Control-*</code>, <code>Content-*</code> and <code>Link</code> are never forwarded. The
+stored page carries them in the <code>headers</code> column of <code>cfw_page</code>, written by the same statement as the
+page, so a fill costs no extra row. The order is the Worker&#39;s default, then the module&#39;s header, then
+the operator&#39;s <code>RESPONSE_HEADERS</code> rule, so a module&#39;s <code>X-Frame-Options: DENY</code> replaces the default
+<code>SAMEORIGIN</code> and a rule replaces both. A compiled plan holds the headers its two sample renders
+agreed on, and sessions whose renders disagree on one do not compile a plan. The page mirror in R2
+does not carry them (R2 serves a fixed header set).</p>
+<p><code>CSP_MODE</code> adds a baseline <code>Content-Security-Policy</code> to every HTML response: <code>off</code>,
+<code>report-only</code> or <code>enforce</code>. It defaults to <code>report-only</code> on the paid plan and <code>off</code> on free, and an
+unrecognised value falls back to that default. The policy is
+<code>object-src &#39;none&#39;; base-uri &#39;self&#39;; frame-ancestors &#39;self&#39;; report-uri /csp-report</code>. It sets no
+<code>default-src</code>, <code>script-src</code> or <code>style-src</code>, so core&#39;s inline script and style keep working, and it
+has no <code>form-action</code>, because Chromium applies that directive to the redirect after a form
+submission, so a form that posts here and redirects to another origin (a login button for an
+identity provider) would be blocked. A page
+that already carries an enforcing policy, from a module or from a rule, keeps only its own in either
+mode. One that carries only a report-only policy keeps it in <code>report-only</code> mode; in <code>enforce</code> mode
+the baseline is still added, because a report enforces nothing. <code>CSP_MODE</code>
+is on <code>KV_OVERRIDABLE</code>, so <code>PUT /settings</code> and the <code>settings</code> document set it, and Drupal&#39;s settings
+form cannot: the form&#39;s submit reports it under <code>refused</code>. A strict <code>script-src</code> with nonces is not
+part of it.</p>
+<p>Browsers post a violation to <code>POST /csp-report</code>, which the Worker answers with <code>204</code> and never
+passes to the Durable Object. It takes <code>application/csp-report</code> and <code>application/reports+json</code>, up
+to 8 KiB, and writes one <code>cfw-csp-report</code> line per report to Workers observability with the blocked
+URI (no query), the violated directive, the page path (no query) and the first 80 characters of the
+sample. Each address may send 60 reports a minute and an isolate takes 600, counted in memory; past
+either limit the answer is still <code>204</code> and nothing is logged. Static files the asset layer answers
+(<code>/core</code>, <code>/modules</code>, <code>/themes</code>, <code>/agg</code>) carry the cache rules in <code>assets/_headers</code> and none of
+these.</p>
 <p><code>/enable</code> is not needed for a text asset a migrated module ships: a <code>.css</code>, <code>.js</code> or <code>.svg</code> file
 stored in <code>cfw_module_file</code> is served from <code>/modules</code>, <code>/themes</code>, <code>/profiles</code> and <code>/libraries</code> when
 the pack does not hold the path. Binary assets are not served this way, because the table stores
@@ -1308,6 +1350,38 @@ read every object, so tenants must never hold KV API access.</li>
 <li>The token is not rotated. Whatever else holds it keeps working.</li>
 <li>A local <code>wrangler dev</code> site has local KV, which the Cloudflare API cannot write; the route is
 meant for a deployed site.</li>
+</ul>
+<h2 id="owner-audit-log">Owner Audit Log</h2>
+<p>The object records every owner call that changes state or reads a secret, and <code>GET /audit</code> returns
+the log. A call is recorded when it carries the owner token and reaches one of these: <code>/install</code>,
+<code>/enable</code>, <code>/modify</code>, <code>/restore</code>, <code>/export</code>, <code>/migrate</code>, <code>/bump</code>, <code>/invalidate</code>, <code>/pitr</code> (POST),
+<code>/updb</code> (POST), <code>/reconcile</code> (POST), <code>/firstrun?force=1</code>, <code>/git</code> with any action but <code>list</code>,
+<code>check</code>, <code>branches</code>, <code>prs</code>, <code>diff</code> and <code>status</code>, <code>/queue?action=drop</code>, <code>/ops</code> with an <code>op</code>, the
+<code>/setup/*</code> pages when they write, <code>/health?clear=1</code>, and a <code>/settings</code> write. A token recovery is
+recorded with the actor <code>proof</code>, since it presents no token. Reads and polling (<code>/serve-stats</code>,
+<code>/health</code>, <code>/queue?action=list</code>) are not, and neither is a call with no valid owner token.</p>
+<p>An entry is <code>{seq, at, route, method, status, actor, prev, hash}</code>. <code>actor</code> is the first 8 hex
+characters of the SHA-256 of the presented token, and <code>hash</code> is the SHA-256 of <code>prev</code> followed by
+the entry&#39;s JSON without its hash, keys in that order. The route carries only <code>action</code>, <code>force</code>,
+<code>secrets</code>, <code>all</code>, <code>op</code> and <code>clear</code> from the query. The log lives in <code>ctx.storage</code> key-value storage,
+which the SQL bridge cannot read or write (the platform reserves the <code>_cf_</code> tables behind it), as a
+ring of the last 1,000 entries, a head pointer, and the hash of the last entry the ring dropped.
+Each entry costs two key-value writes, three when it overwrites an older one.</p>
+<p><code>GET /audit</code> answers <code>verified</code> and, when the chain breaks, <code>firstBadSeq</code>. <code>drangler audit --verify</code>
+recomputes the chain on the caller&#39;s machine and does not use that field. Every appended entry also
+writes <code>{&quot;audit&quot;:{&quot;seq&quot;:N,&quot;hash&quot;:&quot;...&quot;}}</code> to Workers observability, which a site-level attacker
+cannot rewrite.</p>
+<p>Failed token checks are a count (<code>failedAttempts</code>, kept in memory and written with the next entry
+or read), never an entry: a row per attempt is the amplification the failure budget removes.</p>
+<p>Limits:</p>
+<ul>
+<li>Whoever holds the Cloudflare account can edit Durable Object storage, so the log is evidence
+against an attacker on the site and not against the account holder.</li>
+<li>A point-in-time restore rewinds the key-value table with the database, and the object cannot
+append after the rewind, so no <code>restore</code> entry is written for it. Compare the head against the
+anchor in observability: the <code>/pitr</code> entry&#39;s <code>seq</code> and <code>hash</code> there are the pre-restore head.</li>
+<li>A call made with <code>PW_DIAGNOSTICS=1</code> and no owner token, and the internal calls that carry none
+(provisioning, the claim), are not recorded.</li>
 </ul>
 <h2 id="cron">Cron</h2>
 <div class="table"><table>

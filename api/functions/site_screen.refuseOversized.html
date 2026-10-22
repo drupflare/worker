@@ -14,17 +14,21 @@
 <section class="tsd-panel">
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="refuseoversized"><span class="tsd-kind-call-signature">refuseOversized</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">f</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/site_types.FrontContext.html" class="tsd-signature-type tsd-kind-interface">FrontContext</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Response</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><a href="#refuseoversized" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="refuseoversized"><span class="tsd-kind-call-signature">refuseOversized</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">f</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/site_types.FrontContext.html" class="tsd-signature-type tsd-kind-interface">FrontContext</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Response</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span><a href="#refuseoversized" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Refuses an oversized body before it reaches the interpreter.</p>
+<div class="tsd-comment tsd-typography"><p>Refuses an oversized body before it reaches the object.</p>
+<p>Refused before the object (no DO request, no interpreter): <code>parse_str()</code> of a nested-array bomb
+(<code>foo[][][]=bar</code>) costs far more heap than wire bytes. A declared length is checked first; a body
+that declares none (chunked) is read here under the same ceiling, so the hop buffers what was
+already counted.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li><span><span class="tsd-kind-parameter">f</span>: <a href="../interfaces/site_types.FrontContext.html" class="tsd-signature-type tsd-kind-interface">FrontContext</a></span></li></ul></div>
-<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Response</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span></h4><aside class="tsd-sources">
+<h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Response</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6bef65f54a1d985d3981a859e18b32b2cf4f5474/src/site/screen.ts#L6">src/site/screen.ts:6</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/0d20eccceaf68a46580e6685fefacf673ed33da2/src/site/screen.ts#L31">src/site/screen.ts:31</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

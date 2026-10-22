@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">EdgeRules</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-call-signature" href="#decorate-1">decorate</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">pathname</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">res</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Response</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">https</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Response</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#redirect-1">redirect</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">url</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">URL</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Response</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6bef65f54a1d985d3981a859e18b32b2cf4f5474/src/ops/edge-rules.ts#L191">src/ops/edge-rules.ts:191</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/0d20eccceaf68a46580e6685fefacf673ed33da2/src/ops/edge-rules.ts#L200">src/ops/edge-rules.ts:200</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -36,8 +36,9 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="decorate-1"><span class="tsd-kind-call-signature">decorate</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">pathname</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">res</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Response</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">https</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Response</span><a href="#decorate-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>The response with <a href="../variables/ops_edge-rules.DEFAULT_HEADERS.html" class="tsd-kind-variable">DEFAULT_HEADERS</a> and then every matching rule's headers set, later
-rules winning. A rule value of <code>&quot;&quot;</code> removes that header, defaults included.</p>
+<div class="tsd-comment tsd-typography"><p>The response with <a href="../variables/ops_edge-rules.DEFAULT_HEADERS.html" class="tsd-kind-variable">DEFAULT_HEADERS</a> for each header it lacks, so a module's header
+stays, and then every matching rule's headers set, later rules winning. A rule value of <code>&quot;&quot;</code>
+removes that header, defaults and module headers included.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -47,7 +48,7 @@ rules winning. A rule value of <code>&quot;&quot;</code> removes that header, de
 <li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">https</span>: <span class="tsd-signature-type">boolean</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Response</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6bef65f54a1d985d3981a859e18b32b2cf4f5474/src/ops/edge-rules.ts#L198">src/ops/edge-rules.ts:198</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/0d20eccceaf68a46580e6685fefacf673ed33da2/src/ops/edge-rules.ts#L208">src/ops/edge-rules.ts:208</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="redirect"><span>redirect</span><a href="#redirect" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -62,7 +63,7 @@ rules winning. A rule value of <code>&quot;&quot;</code> removes that header, de
 <li><span><span class="tsd-kind-parameter">url</span>: <span class="tsd-signature-type">URL</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Response</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6bef65f54a1d985d3981a859e18b32b2cf4f5474/src/ops/edge-rules.ts#L193">src/ops/edge-rules.ts:193</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/0d20eccceaf68a46580e6685fefacf673ed33da2/src/ops/edge-rules.ts#L202">src/ops/edge-rules.ts:202</a></li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -16,8 +16,8 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="recovertoken"><span class="tsd-kind-call-signature">recoverToken</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">site</span><span class="tsd-signature-symbol">:</span> <a href="../classes/site-do.SitePhpDurableObject.html" class="tsd-signature-type tsd-kind-class">SitePhpDurableObject</a><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">request</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Request</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">url</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">URL</span><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Response</span><span class="tsd-signature-symbol">&gt;</span><a href="#recovertoken" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Spends a recovery proof and returns the owner token (inner route; the front worker applies the
-failure budget around it).</p>
+<div class="tsd-comment tsd-typography"><p>Spends a recovery proof and returns a NEW owner token; the previous one stops working (inner
+route; the front worker applies the failure budget around it).</p>
 <p>Every refusal names a <code>reason</code> the client branches on. Only <code>unknown</code> is retryable, because a
 record written seconds ago may not have reached this colo yet.</p>
 </div>
@@ -29,7 +29,7 @@ record written seconds ago may not have reached this colo yet.</p>
 <li><span><span class="tsd-kind-parameter">url</span>: <span class="tsd-signature-type">URL</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Response</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/6bef65f54a1d985d3981a859e18b32b2cf4f5474/src/do/routes/auth.ts#L167">src/do/routes/auth.ts:167</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/0d20eccceaf68a46580e6685fefacf673ed33da2/src/do/routes/auth.ts#L174">src/do/routes/auth.ts:174</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

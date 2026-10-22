@@ -87,6 +87,10 @@ jobs:
             '') ;;
             *[!0-9]*) echo "::error::artifact id '$ARTIFACT_ID' is not numeric" >&2; exit 1 ;;
           esac
+          case "$SOURCE_COMMIT" in
+            '') ;;
+            *[!0-9a-f]*) echo "::error::commit '$SOURCE_COMMIT' is not a sha" >&2; exit 1 ;;
+          esac
           {
             echo "VARIANT=$VARIANT"
             echo "PHP_VERSION=$PHP_VERSION"
@@ -186,6 +190,28 @@ jobs:
             ARGS+=("$ARTIFACT_ID")
           fi
           bun scripts/fetch-interpreter.ts "${ARGS[@]}" --pin | tee /tmp/fetch.txt
+
+      - name: Verify the Interpreter Attestation
+        if: ${{ !env.SKIPPED }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for FILE in ".interp/php${PHP_VERSION}.wasm" ".interp/php${PHP_VERSION}-worker.mjs"; do
+            if [ ! -s "$FILE" ]; then
+              echo "::error::$FILE is missing, so there is nothing to verify" >&2
+              exit 1
+            fi
+            ARGS=(--repo drupflare/phasm
+              --signer-workflow drupflare/phasm/.github/workflows/build.yml)
+            if [ -n "$SOURCE_COMMIT" ]; then
+              ARGS+=(--source-digest "$SOURCE_COMMIT")
+            fi
+            if ! gh attestation verify "$FILE" "${ARGS[@]}"; then
+              echo "::error::$FILE has no valid build provenance from drupflare/phasm, so it is not used" >&2
+              exit 1
+            fi
+          done
 
       - name: Price the New Bundle Against the Free Ceiling
         if: ${{ !env.SKIPPED && env.HAVE_PAYLOAD }}

@@ -29,6 +29,7 @@ type Workflow = {
 			steps?: {
 				id?: string;
 				name?: string;
+				if?: string;
 				run?: string;
 				uses?: string;
 				env?: Record<string, string>;
@@ -149,6 +150,28 @@ describe('the interpreter lane', () => {
 
 	it('reconciles rather than creating a branch per artifact', () => {
 		expect(runs(doc())).toContain('interp-proposal.ts');
+	});
+
+	// the pin is only worth reading if the bytes under it came from phasm's own build workflow
+	it('verifies the fetched interpreter against phasm provenance before anything prices or proposes it', () => {
+		const steps = doc().jobs.interpreter?.steps ?? [];
+		const at = (name: string) => steps.findIndex((s) => s.name === name);
+		const verify = at('Verify the Interpreter Attestation');
+		expect(verify).toBeGreaterThan(at('Fetch and Pack the New Interpreter'));
+		for (const later of [
+			'Price the New Bundle Against the Free Ceiling',
+			'Build the Deploy Payload',
+			'Upload the Payload',
+			'Reconcile the Pin into One Pull Request'
+		]) {
+			expect(verify, later).toBeLessThan(at(later));
+		}
+		const run = steps[verify]?.run ?? '';
+		expect(run).toContain('gh attestation verify');
+		expect(run).toContain('--signer-workflow drupflare/phasm/.github/workflows/build.yml');
+		expect(run).toContain('set -euo pipefail');
+		expect(run).toContain('exit 1');
+		expect(steps[verify]?.if).toContain('SKIPPED');
 	});
 });
 

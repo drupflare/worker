@@ -184,11 +184,13 @@ value all fall through to the var.
 | ------------------------ | -------- | --------------------------------------------------------------------------------------------------------- |
 | `GEN_BUCKET_MS`          | 5,000    | how long the edge reuses a resolved site generation before re-reading it                                  |
 | `MAX_BODY_BYTES`         | 2 MiB    | largest non-file request body the edge forwards                                                           |
+| `MAX_UPLOAD_BYTES`       | 100 MiB  | largest `multipart/form-data` body the edge forwards                                                      |
 | `OUTBOUND_GUARD`         | on       | refuse an outbound fetch to a private, loopback or metadata address; `0` off                              |
 | `PAGE_KV_ENABLED`        | on       | the cross-colo KV page tier; `0` off, `1` also lets free store compiled plans                             |
 | `PAGE_KV_TTL`            | 86,400   | seconds a stored page lives; floored at KV's own 60 s minimum                                             |
 | `KV_WRITES_PER_DAY`      | per plan | page writes to `PAGE_KV` one site may make a UTC day; 800 on free, no limit on paid                       |
 | `EDGE_PLAN`              | on       | serve an authenticated page from a compiled plan in the front worker; `0` off                             |
+| `CSP_MODE`               | per plan | baseline Content-Security-Policy on HTML: `off`, `report-only` or `enforce`; paid defaults to report-only |
 | `NEVER_STALE`            | unset    | extra path prefixes that may never be served from a previous generation                                   |
 | `AGED_SERVE_MAX_MS`      | 60,000   | how long a page a save superseded may still be answered while it refills; 0 off                           |
 | `ASSET_AGGREGATES`       | unset    | substitute the build's CSS and JS aggregates into a stored page; `1` on, and the canonical config sets it |
@@ -268,19 +270,19 @@ This guards the heap, and leaves bandwidth alone. `parse_str()` on a form body a
 of it. Drupal's own `post_max_size` default is 8 MB; this is tighter, because there is no separate
 process to lose here.
 
-The check reads `Content-Length` and nothing else, the only measurement available before the body has
-been consumed, and consuming it to measure it is the cost the guard exists to avoid. A chunked
-request declares none and falls through to the object's own limits. `GET` and `HEAD` are not checked.
+A body that declares a `Content-Length` is checked against it, which the platform holds the body to.
+A chunked body declares none, so the edge reads it under the same ceiling and stops at the first
+chunk that crosses it. `GET` and `HEAD` are not checked.
 
-`multipart/form-data` is exempt. That is the file-upload shape, its size is what a caller is asking
-for, and it never reaches `parse_str()` as a nested array, so a 2 MiB cap on uploads would be a
-functional regression.
+`multipart/form-data` has its own ceiling, `MAX_UPLOAD_BYTES`, because a 2 MiB cap on uploads would
+be a functional regression. It defaults to 100 MiB, the platform's own request limit, which is the
+only limit a multipart body had before the edge counted it.
 
-Over the limit, the edge answers **413 before any Durable Object hop**. `0` disables the guard
-entirely. Raising it trades isolate headroom for larger non-upload submissions; the failure mode of
-too high is an object that runs out of memory mid-parse.
+Over either limit, the edge answers **413 before any Durable Object hop**. `0` disables that guard
+entirely. Raising `MAX_BODY_BYTES` trades isolate headroom for larger non-upload submissions; the
+failure mode of too high is an object that runs out of memory mid-parse.
 
-Consumer: `bodyTooLarge()` in `src/site/guards.ts`.
+Consumer: `bodyTooLarge()` and `readBounded()` in `src/site/guards.ts`.
 
 ### The KV Page Tier
 
@@ -499,12 +501,47 @@ Every response the Worker answers carries `X-Content-Type-Options: nosniff`,
 `X-Frame-Options: SAMEORIGIN` and `Referrer-Policy: strict-origin-when-cross-origin`, and over https
 `Strict-Transport-Security: max-age=31536000`, with no `includeSubDomains` or `preload`. A
 `RESPONSE_HEADERS` rule that names one of them replaces it, and a rule value of `""` removes it, which
-a site embedded in another page needs for `X-Frame-Options`. There is no default
-`Content-Security-Policy`, because core's own pages use inline script and style. A site sets one
-through a rule, and `Content-Security-Policy-Report-Only` shows what a policy would block before it
-enforces anything. Headers a Drupal module sets, such as Security Kit's, are not forwarded: the render
-fragment passes only `x-drupal-*`. Static files the asset layer answers (`/core`, `/modules`,
-`/themes`, `/agg`) carry the cache rules in `assets/_headers` and none of these.
+a site embedded in another page needs for `X-Frame-Options`.
+
+A Drupal module can set a header too. Security Kit's policy and a custom subscriber's
+`X-Frame-Options: DENY` reach the browser, from the object, the edge cache, the isolate memo, KV, the
+stale answer and the compiled plan for a signed-in page. The render reports
+the response headers and the host keeps only these names: `Content-Security-Policy`,
+`Content-Security-Policy-Report-Only`, `Permissions-Policy`, `X-Frame-Options`,
+`X-Content-Type-Options`, `Referrer-Policy`, `Strict-Transport-Security`, `Cross-Origin-Opener-Policy`,
+`Cross-Origin-Embedder-Policy`, `Cross-Origin-Resource-Policy` and `X-Permitted-Cross-Domain-Policies`.
+A value with a line break, a character outside printable ASCII, or more than 4,096 bytes is dropped,
+and `Set-Cookie`, `Location`, `Access-Control-*`, `Content-*` and `Link` are never forwarded. The
+stored page carries them in the `headers` column of `cfw_page`, written by the same statement as the
+page, so a fill costs no extra row. The order is the Worker's default, then the module's header, then
+the operator's `RESPONSE_HEADERS` rule, so a module's `X-Frame-Options: DENY` replaces the default
+`SAMEORIGIN` and a rule replaces both. A compiled plan holds the headers its two sample renders
+agreed on, and sessions whose renders disagree on one do not compile a plan. The page mirror in R2
+does not carry them (R2 serves a fixed header set).
+
+`CSP_MODE` adds a baseline `Content-Security-Policy` to every HTML response: `off`,
+`report-only` or `enforce`. It defaults to `report-only` on the paid plan and `off` on free, and an
+unrecognised value falls back to that default. The policy is
+`object-src 'none'; base-uri 'self'; frame-ancestors 'self'; report-uri /csp-report`. It sets no
+`default-src`, `script-src` or `style-src`, so core's inline script and style keep working, and it
+has no `form-action`, because Chromium applies that directive to the redirect after a form
+submission, so a form that posts here and redirects to another origin (a login button for an
+identity provider) would be blocked. A page
+that already carries an enforcing policy, from a module or from a rule, keeps only its own in either
+mode. One that carries only a report-only policy keeps it in `report-only` mode; in `enforce` mode
+the baseline is still added, because a report enforces nothing. `CSP_MODE`
+is on `KV_OVERRIDABLE`, so `PUT /settings` and the `settings` document set it, and Drupal's settings
+form cannot: the form's submit reports it under `refused`. A strict `script-src` with nonces is not
+part of it.
+
+Browsers post a violation to `POST /csp-report`, which the Worker answers with `204` and never
+passes to the Durable Object. It takes `application/csp-report` and `application/reports+json`, up
+to 8 KiB, and writes one `cfw-csp-report` line per report to Workers observability with the blocked
+URI (no query), the violated directive, the page path (no query) and the first 80 characters of the
+sample. Each address may send 60 reports a minute and an isolate takes 600, counted in memory; past
+either limit the answer is still `204` and nothing is logged. Static files the asset layer answers
+(`/core`, `/modules`, `/themes`, `/agg`) carry the cache rules in `assets/_headers` and none of
+these.
 
 `/enable` is not needed for a text asset a migrated module ships: a `.css`, `.js` or `.svg` file
 stored in `cfw_module_file` is served from `/modules`, `/themes`, `/profiles` and `/libraries` when
@@ -715,6 +752,43 @@ Limits worth knowing:
 - The token is not rotated. Whatever else holds it keeps working.
 - A local `wrangler dev` site has local KV, which the Cloudflare API cannot write; the route is
   meant for a deployed site.
+
+## Owner Audit Log
+
+The object records every owner call that changes state or reads a secret, and `GET /audit` returns
+the log. A call is recorded when it carries the owner token and reaches one of these: `/install`,
+`/enable`, `/modify`, `/restore`, `/export`, `/migrate`, `/bump`, `/invalidate`, `/pitr` (POST),
+`/updb` (POST), `/reconcile` (POST), `/firstrun?force=1`, `/git` with any action but `list`,
+`check`, `branches`, `prs`, `diff` and `status`, `/queue?action=drop`, `/ops` with an `op`, the
+`/setup/*` pages when they write, `/health?clear=1`, and a `/settings` write. A token recovery is
+recorded with the actor `proof`, since it presents no token. Reads and polling (`/serve-stats`,
+`/health`, `/queue?action=list`) are not, and neither is a call with no valid owner token.
+
+An entry is `{seq, at, route, method, status, actor, prev, hash}`. `actor` is the first 8 hex
+characters of the SHA-256 of the presented token, and `hash` is the SHA-256 of `prev` followed by
+the entry's JSON without its hash, keys in that order. The route carries only `action`, `force`,
+`secrets`, `all`, `op` and `clear` from the query. The log lives in `ctx.storage` key-value storage,
+which the SQL bridge cannot read or write (the platform reserves the `_cf_` tables behind it), as a
+ring of the last 1,000 entries, a head pointer, and the hash of the last entry the ring dropped.
+Each entry costs two key-value writes, three when it overwrites an older one.
+
+`GET /audit` answers `verified` and, when the chain breaks, `firstBadSeq`. `drangler audit --verify`
+recomputes the chain on the caller's machine and does not use that field. Every appended entry also
+writes `{"audit":{"seq":N,"hash":"..."}}` to Workers observability, which a site-level attacker
+cannot rewrite.
+
+Failed token checks are a count (`failedAttempts`, kept in memory and written with the next entry
+or read), never an entry: a row per attempt is the amplification the failure budget removes.
+
+Limits:
+
+- Whoever holds the Cloudflare account can edit Durable Object storage, so the log is evidence
+  against an attacker on the site and not against the account holder.
+- A point-in-time restore rewinds the key-value table with the database, and the object cannot
+  append after the rewind, so no `restore` entry is written for it. Compare the head against the
+  anchor in observability: the `/pitr` entry's `seq` and `hash` there are the pre-restore head.
+- A call made with `PW_DIAGNOSTICS=1` and no owner token, and the internal calls that carry none
+  (provisioning, the claim), are not recorded.
 
 ## Cron
 

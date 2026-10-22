@@ -1179,8 +1179,9 @@ An unrecognised value is the default and not an error.
 The largest non-file request body the edge forwards, defaulting to 2 MiB. Over it, the request is
 refused with 413 before any Durable Object hop. It guards the heap and not bandwidth: `parse_str()`
 on a form body allocates inside a 128 MB isolate, and `foo[][][][][]=bar` repeated turns a few
-hundred kilobytes of wire into far more of it. `multipart/form-data` is exempt, so file uploads are
-unaffected. `0` disables the guard.
+hundred kilobytes of wire into far more of it. A chunked body is counted as it is read. `multipart/form-data`
+has its own ceiling, `MAX_UPLOAD_BYTES`, which defaults to 100 MiB (the platform's request limit). `0`
+disables either guard.
 
 ### Connecting a Cloudflare Account
 

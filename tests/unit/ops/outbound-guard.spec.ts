@@ -29,7 +29,11 @@ describe('what PHP may make the Worker fetch', () => {
 		'https://100.63.0.1/',
 		'https://100.128.0.1/',
 		// 223 is the last unicast /8; 224 begins multicast
-		'https://223.255.255.255/'
+		'https://223.255.255.255/',
+		// a trailing dot on a public name, and a v6 prefix next to the refused ones
+		'https://example.com./',
+		'https://[64:ff9a::1]/',
+		'https://[fe00::1]/'
 	])('allows %s', (url) => {
 		expect(refuseOutbound(url)).toBeUndefined();
 	});
@@ -49,6 +53,25 @@ describe('what PHP may make the Worker fetch', () => {
 		['IPv6 link-local', 'http://[fe80::1]/'],
 		['a v4 literal smuggled through v6', 'http://[::ffff:169.254.169.254]/'],
 		['google metadata by name', 'http://metadata.google.internal/'],
+		// a trailing dot is a fully qualified name that resolves like the bare one
+		['a trailing-dot localhost', 'http://localhost./admin'],
+		['a trailing-dot metadata name', 'http://metadata.google.internal./computeMetadata/v1/'],
+		['a trailing-dot suffix', 'https://vault.internal./v1/secret'],
+		// the URL parser rewrites these to 127.0.0.1 before the guard sees them
+		['a decimal v4 loopback', 'http://2130706433/'],
+		['an octal v4 loopback', 'http://0177.0.0.1/'],
+		['a hex v4 loopback', 'http://0x7f.1/'],
+		['a dotted loopback with a trailing dot', 'http://127.0.0.1./'],
+		['a decimal metadata address', 'http://2852039166/latest/meta-data/'],
+		// NAT64 carries the v4 address inside the v6 one
+		['NAT64 holding the metadata address', 'http://[64:ff9b::a9fe:a9fe]/'],
+		['NAT64 holding loopback', 'http://[64:ff9b::7f00:1]/'],
+		['NAT64 local-use', 'http://[64:ff9b:1::1]/'],
+		['IPv6 site-local', 'http://[fec0::1]/'],
+		['IPv6 multicast', 'http://[ff02::1]/'],
+		// userinfo: the guard refuses credentials before it reads the host
+		['userinfo hiding the real host', 'http://169.254.169.254@example.com/'],
+		['userinfo in front of loopback', 'http://user@127.0.0.1/'],
 		['an .internal suffix', 'https://vault.internal/v1/secret'],
 		['an .local suffix', 'https://printer.local/'],
 		['a file url', 'file:///etc/passwd'],

@@ -48,6 +48,11 @@ function blockedIpv6(host: string): string | undefined {
 	// fc00::/7 unique-local, fe80::/10 link-local
 	if (/^f[cd][0-9a-f]{2}:/.test(lower)) return 'unique-local (fc00::/7)';
 	if (/^fe[89ab][0-9a-f]:/.test(lower)) return 'link-local (fe80::/10)';
+	if (/^fe[cdef][0-9a-f]:/.test(lower)) return 'site-local (fec0::/10)';
+	if (/^ff[0-9a-f]{2}:/.test(lower)) return 'multicast (ff00::/8)';
+	// NAT64 carries a v4 address inside it, so a translator can reach a private v4 from a v6 URL
+	if (lower.startsWith('64:ff9b::')) return 'NAT64 (64:ff9b::/96)';
+	if (lower.startsWith('64:ff9b:1:')) return 'NAT64 local-use (64:ff9b:1::/48)';
 	// v4-mapped addresses: `new URL()` rewrites the dotted form to hex (`::ffff:a9fe:a9fe`), so
 	// both spellings must be matched or the metadata address passes
 	const dotted = lower.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
@@ -87,7 +92,8 @@ export function refuseOutbound(rawUrl: string): OutboundRefusal {
 		return { reason: 'the url carries credentials', url };
 	}
 
-	const host = parsed.hostname.toLowerCase();
+	// `localhost.` resolves like `localhost` but misses the exact and suffix tests
+	const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
 	if (host === '') return { reason: 'the url names no host', url };
 	if (BLOCKED_HOSTS.has(host)) return { reason: `${host} names this machine`, url };
 	for (const suffix of BLOCKED_SUFFIXES) {

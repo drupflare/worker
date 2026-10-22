@@ -36,15 +36,16 @@ advisories change.
 
 ## What Is Claimed and What Is Not
 
-| Claim                                                                                         | Status                                                                |
-| --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| There is no operating system, shell, web server or PHP-FPM pool in the site's trust boundary  | Read: [layers](#the-layers)                                           |
-| A PHP exploit runs inside WebAssembly linear memory and reaches the host only through imports | Read: webassembly.org security page                                   |
-| Cloudflare states a V8 patch gap under 24 hours                                               | Read: Cloudflare security model                                       |
-| Server-takeover classes (FPM, CGI, Shellshock, Apache, container and kernel escapes) are gone | Inferred: [map](#the-cve-and-incident-map)                            |
-| Arbitrary code execution is impossible                                                        | False. Any Drupal RCE runs PHP in the sandbox                         |
-| A compromised PHP cannot read the site's own data                                             | False. The database sits in the same object                           |
-| WebAssembly makes memory corruption harder to exploit than native                             | False. See [Memory Corruption](#memory-corruption-inside-the-sandbox) |
+| Claim                                                                                         | Status                                                                                                        |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| There is no operating system, shell, web server or PHP-FPM pool in the site's trust boundary  | Read: [layers](#the-layers)                                                                                   |
+| A PHP exploit runs inside WebAssembly linear memory and reaches the host only through imports | Read: webassembly.org security page                                                                           |
+| Cloudflare states a V8 patch gap under 24 hours                                               | Read: Cloudflare security model                                                                               |
+| Server-takeover classes (FPM, CGI, Shellshock, Apache, container and kernel escapes) are gone | Inferred: [map](#the-cve-and-incident-map)                                                                    |
+| Arbitrary code execution is impossible                                                        | False. Any Drupal RCE runs PHP in the sandbox                                                                 |
+| A compromised PHP cannot read the site's own data                                             | False. The database sits in the same object                                                                   |
+| WebAssembly makes memory corruption harder to exploit than native                             | False. See [Memory Corruption](#memory-corruption-inside-the-sandbox)                                         |
+| A published PHP2Shell chain works against a Drupflare site                                    | No. Each needs a per-request startup and shutdown cycle that does not exist here; see [PHP2Shell](#php2shell) |
 
 ## The Layers
 
@@ -178,7 +179,8 @@ releases and deploys (`docs/php-update-delivery.md`). The pin records `.interp/p
 sha256.
 
 The interpreter reports PHP 8.5.2 (`CLAUDE.md`, measured on `.interp/php8.5.wasm`; `phasm/README.md`).
-Every PHP security release since then reaches a deployed site only through that pipeline. The
+Every PHP security release since then reaches a deployed site only through that pipeline.
+PHP 8.5.12 is the first 8.5 release that carries the PHP2Shell fixes. The
 root `composer.lock` pins Drupal core 11.4.10, the fixed release for the 11.4 line of
 SA-CORE-2026-014.
 
@@ -314,29 +316,107 @@ above. No exploit was run against a Drupflare site.
 - `removed` means the attack path needs a component the object does not have.
 - `contained` means the flaw runs, and the sandbox limits what the attacker reaches outside the object.
 - `unchanged` means the flaw works the same way.
-- `unknown` means the answer depends on a fact not yet established.
 
-| Id                                                                                                                                                                     | Year       | Class                                | Verdict   | Reason                                                                      |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------ | --------- | --------------------------------------------------------------------------- |
-| [CVE-2014-3704](https://www.drupal.org/sa-core-2014-005)                                                                                                               | 2014       | SQL injection, Drupal 7 core         | unchanged | Reads the same database                                                     |
-| [CVE-2018-7600](https://www.drupal.org/sa-core-2018-002)                                                                                                               | 2018       | Unauthenticated RCE, Drupal core     | contained | PHP runs in the sandbox; no shell for the observed miner payload (CVSS 9.8) |
-| [CVE-2018-7602](https://www.drupal.org/sa-core-2018-004)                                                                                                               | 2018       | RCE, Drupal 7 and 8                  | contained | As CVE-2018-7600                                                            |
-| [CVE-2019-6340](https://www.drupal.org/sa-core-2019-003)                                                                                                               | 2019       | RCE through REST input               | contained | PHP runs in the sandbox                                                     |
-| [CVE-2020-13663](https://www.drupal.org/sa-core-2020-004)                                                                                                              | 2020       | CSRF in Form API                     | unchanged | Browser-side flaw                                                           |
-| [CVE-2026-108097](https://www.drupal.org/sa-core-2026-014)                                                                                                             | 2026       | RCE in Field UI, Drupal core         | contained | PHP runs in the sandbox; lock pins 11.4.10, the fixed release               |
-| [CVE-2019-11043](https://nvd.nist.gov/vuln/detail/CVE-2019-11043)                                                                                                      | 2019       | PHP-FPM buffer underflow via nginx   | removed   | No FPM, no nginx, no FastCGI socket                                         |
-| [CVE-2024-4577](https://nvd.nist.gov/vuln/detail/CVE-2024-4577)                                                                                                        | 2024       | PHP-CGI argument injection, Windows  | removed   | Needs the CGI SAPI on Windows with Apache                                   |
-| [CVE-2014-6271](https://nvd.nist.gov/vuln/detail/CVE-2014-6271)                                                                                                        | 2014       | Shellshock, Bash through CGI         | removed   | No Bash and no CGI                                                          |
-| [CVE-2021-41773](https://nvd.nist.gov/vuln/detail/CVE-2021-41773)                                                                                                      | 2021       | Apache 2.4.49 path traversal         | removed   | No Apache and no filesystem to traverse                                     |
-| [CVE-2016-3714](https://nvd.nist.gov/vuln/detail/CVE-2016-3714)                                                                                                        | 2016       | ImageMagick delegate shell injection | removed   | No ImageMagick; no process to spawn                                         |
-| [CVE-2023-4966](https://nvd.nist.gov/vuln/detail/CVE-2023-4966)                                                                                                        | 2023       | CitrixBleed, edge appliance memory   | removed   | No appliance in the tenant's path                                           |
-| [CVE-2014-0160](https://nvd.nist.gov/vuln/detail/CVE-2014-0160)                                                                                                        | 2014       | Heartbleed, OpenSSL                  | removed   | PHP has no OpenSSL; TLS ends at Cloudflare                                  |
-| [CVE-2026-7261](https://nvd.nist.gov/vuln/detail/CVE-2026-7261)                                                                                                        | 2026       | PHP SoapServer use-after-free        | removed   | ext/soap is not compiled in (no `SoapServer` string in the binary)          |
-| runc [CVE-2019-5736](https://nvd.nist.gov/vuln/detail/CVE-2019-5736), [CVE-2024-21626](https://github.com/opencontainers/runc/security/advisories/GHSA-xr7r-f8xq-vfvv) | 2019, 2024 | Container runtime escape             | removed   | The tenant has no container runtime; the platform does                      |
-| [CVE-2022-0847](https://nvd.nist.gov/vuln/detail/CVE-2022-0847), [CVE-2016-5195](https://nvd.nist.gov/vuln/detail/CVE-2016-5195)                                       | 2022, 2016 | Linux kernel privilege escalation    | removed   | Needs a local process on a Linux kernel the tenant can reach                |
-| [php-src malicious commits](https://www.php.net/archive/2021.php)                                                                                                      | 2021       | Source supply chain                  | unchanged | A bad commit reaching a build is the same risk on any host                  |
-| [Spectre on Workers](https://blog.cloudflare.com/revisiting-spectre-attacks-on-workers/)                                                                               | 2026       | Co-tenant timing leak                | unchanged | Platform mitigations apply; not complete by Cloudflare's own statement      |
-| [Cloudbleed](https://blog.cloudflare.com/incident-report-on-memory-leak-caused-by-cloudflare-parser-bug/)                                                              | 2017       | Edge memory disclosure               | unchanged | Platform-side; a tenant cannot prevent it                                   |
+| Id                                                                                                                                                                     | Year       | Class                                | Verdict   | Reason                                                                                                                    |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------- |
+| [CVE-2014-3704](https://www.drupal.org/sa-core-2014-005)                                                                                                               | 2014       | SQL injection, Drupal 7 core         | unchanged | Reads the same database                                                                                                   |
+| [CVE-2018-7600](https://www.drupal.org/sa-core-2018-002)                                                                                                               | 2018       | Unauthenticated RCE, Drupal core     | contained | PHP runs in the sandbox; no shell for the observed miner payload (CVSS 9.8)                                               |
+| [CVE-2018-7602](https://www.drupal.org/sa-core-2018-004)                                                                                                               | 2018       | RCE, Drupal 7 and 8                  | contained | As CVE-2018-7600                                                                                                          |
+| [CVE-2019-6340](https://www.drupal.org/sa-core-2019-003)                                                                                                               | 2019       | RCE through REST input               | contained | PHP runs in the sandbox                                                                                                   |
+| [CVE-2020-13663](https://www.drupal.org/sa-core-2020-004)                                                                                                              | 2020       | CSRF in Form API                     | unchanged | Browser-side flaw                                                                                                         |
+| [CVE-2026-108097](https://www.drupal.org/sa-core-2026-014)                                                                                                             | 2026       | RCE in Field UI, Drupal core         | contained | PHP runs in the sandbox; lock pins 11.4.10, the fixed release                                                             |
+| [CVE-2019-11043](https://nvd.nist.gov/vuln/detail/CVE-2019-11043)                                                                                                      | 2019       | PHP-FPM buffer underflow via nginx   | removed   | No FPM, no nginx, no FastCGI socket                                                                                       |
+| [CVE-2024-4577](https://nvd.nist.gov/vuln/detail/CVE-2024-4577)                                                                                                        | 2024       | PHP-CGI argument injection, Windows  | removed   | Needs the CGI SAPI on Windows with Apache                                                                                 |
+| [CVE-2014-6271](https://nvd.nist.gov/vuln/detail/CVE-2014-6271)                                                                                                        | 2014       | Shellshock, Bash through CGI         | removed   | No Bash and no CGI                                                                                                        |
+| [CVE-2021-41773](https://nvd.nist.gov/vuln/detail/CVE-2021-41773)                                                                                                      | 2021       | Apache 2.4.49 path traversal         | removed   | No Apache and no filesystem to traverse                                                                                   |
+| [CVE-2016-3714](https://nvd.nist.gov/vuln/detail/CVE-2016-3714)                                                                                                        | 2016       | ImageMagick delegate shell injection | removed   | No ImageMagick; no process to spawn                                                                                       |
+| [CVE-2023-4966](https://nvd.nist.gov/vuln/detail/CVE-2023-4966)                                                                                                        | 2023       | CitrixBleed, edge appliance memory   | removed   | No appliance in the tenant's path                                                                                         |
+| [CVE-2014-0160](https://nvd.nist.gov/vuln/detail/CVE-2014-0160)                                                                                                        | 2014       | Heartbleed, OpenSSL                  | removed   | PHP has no OpenSSL; TLS ends at Cloudflare                                                                                |
+| [CVE-2026-7261](https://nvd.nist.gov/vuln/detail/CVE-2026-7261)                                                                                                        | 2026       | PHP SoapServer use-after-free        | removed   | ext/soap is not compiled in (no `SoapServer` string in the binary)                                                        |
+| runc [CVE-2019-5736](https://nvd.nist.gov/vuln/detail/CVE-2019-5736), [CVE-2024-21626](https://github.com/opencontainers/runc/security/advisories/GHSA-xr7r-f8xq-vfvv) | 2019, 2024 | Container runtime escape             | removed   | The tenant has no container runtime; the platform does                                                                    |
+| [CVE-2022-0847](https://nvd.nist.gov/vuln/detail/CVE-2022-0847), [CVE-2016-5195](https://nvd.nist.gov/vuln/detail/CVE-2016-5195)                                       | 2022, 2016 | Linux kernel privilege escalation    | removed   | Needs a local process on a Linux kernel the tenant can reach                                                              |
+| [php-src malicious commits](https://www.php.net/archive/2021.php)                                                                                                      | 2021       | Source supply chain                  | unchanged | A bad commit reaching a build is the same risk on any host                                                                |
+| [Spectre on Workers](https://blog.cloudflare.com/revisiting-spectre-attacks-on-workers/)                                                                               | 2026       | Co-tenant timing leak                | unchanged | Platform mitigations apply; not complete by Cloudflare's own statement                                                    |
+| [Cloudbleed](https://blog.cloudflare.com/incident-report-on-memory-leak-caused-by-cloudflare-parser-bug/)                                                              | 2017       | Edge memory disclosure               | unchanged | Platform-side; a tenant cannot prevent it                                                                                 |
+| [CVE-2026-109618](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w)                                                                              | 2026       | RCE via OOM corruption, PHP          | removed   | The chain needs a request startup and shutdown cycle and a `memory_limit` bailout, and neither exists here                |
+| [CVE-2026-109619](https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp)                                                                              | 2026       | RCE via stale global state, PHP      | removed   | The consumers run at request startup, which does not happen per request here, and no request memory is freed between runs |
+
+## PHP2Shell
+
+PHP2Shell is the name given to two critical remote code execution vulnerabilities in PHP,
+CVE-2026-109618 and CVE-2026-109619, published on 2026-10-21 and fixed in PHP 8.5.12, 8.4.27,
+8.3.36 and 8.2.35. This section says what the advisories require, what the shipping interpreter does
+about each requirement. The result: the published PHP2Shell chains do not work against a Drupflare
+site, and the map marks both `removed`. The reason is the lifecycle described below. The sandbox is
+not the reason, because WebAssembly does not stop corruption inside the module.
+
+### What the Advisories Say
+
+CVE-2026-109618, "RCE via OOM corruption"
+([GHSA-w8hw-w9fx-j79w](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w)):
+"PHP uses `longjmp()` for out-of-memory (OOM) errors to exit the current context and abort handling
+of the request", and "does not properly account for the early exit and leaves the request memory in
+an invalid state". Request shutdown then reads that state. The validated exploit is against Apache
+mod_php, where body parsing at request startup can exhaust `memory_limit` and shutdown still runs.
+For PHP-FPM the advisory says "no complete FPM exploit has been demonstrated".
+
+CVE-2026-109619, "RCE via stale global state"
+([GHSA-6wmf-4rv5-p3rp](https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp)):
+state owned by one request survives after its memory is freed, and a later operation on the same
+worker reads it before normal initialization resets it. The exploit needs a producer, which is a fatal
+error, timeout or OOM that skips a reset, and a consumer that runs before initialization. The
+confirmed consumers are INI diagnostics raised while settings are applied and session upload
+progress. The confirmed producer on PHP 8.5 is `fatal_error_backtraces`.
+
+Both are CVSS v4 9.2, unauthenticated and network reachable. PHP's announcement says "there are no
+complete mitigations, updating is the only safe choice" and names PHP-FPM, Apache with mod_php,
+php-cgi, FrankenPHP and LiteSpeed as at risk
+([php.net](https://www.php.net/archive/2026.php#2026-10-21-5)). It does not address embedded SAPIs.
+Wiz reports working exploits on standard SAPIs against WordPress, Drupal and Joomla, including one
+against Drupal that uses the fatal-error backtrace state
+([Wiz](https://www.wiz.io/blog/php2shell-php-rce)).
+
+### What the Shipping Interpreter Does
+
+| Fact                                                                                      | Value                                         | Basis                                                       |
+| ----------------------------------------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------- |
+| PHP version                                                                               | 8.5.2                                         | Measured: `tests/integration/interpreter-lifecycle.spec.ts` |
+| SAPI                                                                                      | `embed`                                       | Measured                                                    |
+| A fatal error in one run leaves `$GLOBALS` and `error_get_last()` visible to the next run | yes                                           | Measured                                                    |
+| Multipart bodies parsed by PHP's request startup                                          | no, parsed in userland                        | Read: `src/site/php/pw-serve-inline.php:134-223`            |
+| `USE_ZEND_ALLOC`                                                                          | `0`, the system allocator                     | Measured                                                    |
+| `memory_limit` enforced                                                                   | no: an 8M cap held 40 MB                      | Measured                                                    |
+| Where PHP 8.5.12 checks `memory_limit`                                                    | inside `zend_mm` paths a custom heap bypasses | Read: php-src `PHP-8.5.12` `Zend/zend_alloc.c`              |
+| `malloc` failure under the system allocator                                               | `exit(1)`, no bailout                         | Read: the same file (8.5.2 was not diffed)                  |
+| `session.upload_progress.enabled`, `fatal_error_backtraces`                               | both `1`                                      | Measured                                                    |
+| OPcache                                                                                   | loaded, `opcache.enable=0`                    | Measured                                                    |
+| `soap`, `phar`                                                                            | not compiled in                               | Measured                                                    |
+
+The two settings PHP lists as interim mitigations are at their defaults, which is on. They are not
+part of the analysis below.
+
+### What Follows and What Does Not
+
+These are Inferred from the table.
+
+- The CVE-2026-109618 chain that was demonstrated starts at request startup and ends in request
+  shutdown. This runtime runs code through `pib_run` inside one retained request and performs
+  neither per request. Its allocator does not enforce `memory_limit`, so the `longjmp()` the
+  advisory describes has no limit to fire on, and allocation failure ends the instance through
+  `exit(1)` instead of leaving partial state behind.
+- The CVE-2026-109619 consumers run before a request's normal initialization: per-request INI
+  application and the upload-progress handler inside multipart startup. Neither happens per
+  request here. A producer does leave state behind, but request memory is never freed between
+  runs, so a stale pointer aims at live memory and not at reclaimed memory.
+
+Neither published chain has a path in this runtime, which is the decision recorded in the map. Two
+things sit beside it. The interpreter contains the vulnerable code, because 8.5.2 is below every
+fixed release, and PHP says updating is the only complete mitigation, so the interpreter is rebuilt
+at PHP 8.5.12 or later. And a retained request can keep per-extension state across a fatal error that
+a request shutdown would reset. That is a logic hazard, of the kind documented in
+[State That Survives Between Requests](#state-that-survives-between-requests), and not a
+use-after-free, because request memory is never freed between runs. What would reverse the decision
+is a working chain against this runtime. The public write-ups use standard SAPIs and report none.
 
 ## How Much Safer
 
@@ -345,15 +425,15 @@ No study compares breach outcomes for serverless and server hosting. The attack-
 count entry points and capabilities, and neither measures this pair. The vendor surveys searched
 quote percentages that were read only through summaries, so none is repeated here.
 
-What can be counted is the map above. Its 19 rows carry these verdicts:
+What can be counted is the map above. Its 21 rows carry these verdicts:
 
 | Verdict   | Rows | Meaning                                            |
 | --------- | ---- | -------------------------------------------------- |
-| removed   | 10   | The attack path needs a component the object lacks |
+| removed   | 12   | The attack path needs a component the object lacks |
 | contained | 4    | The flaw runs; the sandbox limits the reach        |
 | unchanged | 5    | The flaw works as it does anywhere                 |
 
-Read the 10 as a statement about classes of server takeover, and do not read it as a breach
+Read the 12 as a statement about classes of server takeover and published exploit chains, and do not read it as a breach
 probability. The rows were chosen from incidents that reached the attacker's goal on conventional
 PHP hosting, so the selection favours the classes this architecture removes. None of the six Drupal
 advisories in the map is `removed`: each is `contained` or `unchanged`, because Drupal's own bugs
@@ -399,8 +479,10 @@ Read on 2026-10-21 unless noted.
 8. Stiévenart, De Roover and Ghafari, "The Security Risk of Lacking Compiler Protection in WebAssembly", arXiv:2111.01421 (abstract): <https://arxiv.org/abs/2111.01421>
 9. WebAssembly security documentation: <https://webassembly.org/docs/security/>
 10. Google Threat Intelligence Group, "2025 Zero-Days in Review", 2026-03-05: <https://cloud.google.com/blog/topics/threat-intelligence/2025-zero-day-review/>
-11. Drupal security advisories SA-CORE-2014-005, 2018-002, 2018-004, 2019-003, 2020-004 and 2026-014: <https://www.drupal.org/security>
-12. NVD records for the CVE identifiers in the map: <https://nvd.nist.gov/>
-13. PHP project, 2021 archive (malicious commits, 2021-03-30): <https://www.php.net/archive/2021.php>
-14. Sophos, "The State of Ransomware in Education 2025": <https://www.sophos.com/en-us/blog/the-state-of-ransomware-in-education-2025>
-15. workerd README, "WARNING: workerd is not a hardened sandbox": <https://github.com/cloudflare/workerd>
+11. PHP project, security advisory 2026-10-21 (CVE-2026-109618, CVE-2026-109619) and the two php-src advisories GHSA-w8hw-w9fx-j79w and GHSA-6wmf-4rv5-p3rp: <https://www.php.net/archive/2026.php#2026-10-21-5>
+12. Wiz, "PHP2Shell: AI uncovers critical RCE vulnerabilities" (read once through a page extractor): <https://www.wiz.io/blog/php2shell-php-rce>
+13. Drupal security advisories SA-CORE-2014-005, 2018-002, 2018-004, 2019-003, 2020-004 and 2026-014: <https://www.drupal.org/security>
+14. NVD records for the CVE identifiers in the map: <https://nvd.nist.gov/>
+15. PHP project, 2021 archive (malicious commits, 2021-03-30): <https://www.php.net/archive/2021.php>
+16. Sophos, "The State of Ransomware in Education 2025": <https://www.sophos.com/en-us/blog/the-state-of-ransomware-in-education-2025>
+17. workerd README, "WARNING: workerd is not a hardened sandbox": <https://github.com/cloudflare/workerd>

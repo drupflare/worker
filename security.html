@@ -400,6 +400,10 @@ advisories change.</p>
 <td>WebAssembly makes memory corruption harder to exploit than native</td>
 <td>False. See <a href="#memory-corruption-inside-the-sandbox">Memory Corruption</a></td>
 </tr>
+<tr>
+<td>A published PHP2Shell chain works against a Drupflare site</td>
+<td>No. Each needs a per-request startup and shutdown cycle that does not exist here; see <a href="#php2shell">PHP2Shell</a></td>
+</tr>
 </tbody></table></div>
 <h2 id="the-layers">The Layers</h2>
 <p>A request passes through these layers, from the attacker&#39;s side inward.</p>
@@ -614,7 +618,8 @@ request in this repository and ends there. The workflow has no deploy step, and 
 releases and deploys (<code>docs/php-update-delivery.md</code>). The pin records <code>.interp/php8.5.wasm</code> with its
 sha256.</p>
 <p>The interpreter reports PHP 8.5.2 (<code>CLAUDE.md</code>, measured on <code>.interp/php8.5.wasm</code>; <code>phasm/README.md</code>).
-Every PHP security release since then reaches a deployed site only through that pipeline. The
+Every PHP security release since then reaches a deployed site only through that pipeline.
+PHP 8.5.12 is the first 8.5 release that carries the PHP2Shell fixes. The
 root <code>composer.lock</code> pins Drupal core 11.4.10, the fixed release for the 11.4 line of
 SA-CORE-2026-014.</p>
 <h2 id="what-the-architecture-removes">What the Architecture Removes</h2>
@@ -726,7 +731,6 @@ above. No exploit was run against a Drupflare site.</p>
 <li><code>removed</code> means the attack path needs a component the object does not have.</li>
 <li><code>contained</code> means the flaw runs, and the sandbox limits what the attacker reaches outside the object.</li>
 <li><code>unchanged</code> means the flaw works the same way.</li>
-<li><code>unknown</code> means the answer depends on a fact not yet established.</li>
 </ul>
 <div class="table"><table>
 <thead>
@@ -871,13 +875,144 @@ above. No exploit was run against a Drupflare site.</p>
 <td>unchanged</td>
 <td>Platform-side; a tenant cannot prevent it</td>
 </tr>
+<tr>
+<td><a href="https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w">CVE-2026-109618</a></td>
+<td>2026</td>
+<td>RCE via OOM corruption, PHP</td>
+<td>removed</td>
+<td>The chain needs a request startup and shutdown cycle and a <code>memory_limit</code> bailout, and neither exists here</td>
+</tr>
+<tr>
+<td><a href="https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp">CVE-2026-109619</a></td>
+<td>2026</td>
+<td>RCE via stale global state, PHP</td>
+<td>removed</td>
+<td>The consumers run at request startup, which does not happen per request here, and no request memory is freed between runs</td>
+</tr>
 </tbody></table></div>
+<h2 id="php2shell">PHP2Shell</h2>
+<p>PHP2Shell is the name given to two critical remote code execution vulnerabilities in PHP,
+CVE-2026-109618 and CVE-2026-109619, published on 2026-10-21 and fixed in PHP 8.5.12, 8.4.27,
+8.3.36 and 8.2.35. This section says what the advisories require, what the shipping interpreter does
+about each requirement. The result: the published PHP2Shell chains do not work against a Drupflare
+site, and the map marks both <code>removed</code>. The reason is the lifecycle described below. The sandbox is
+not the reason, because WebAssembly does not stop corruption inside the module.</p>
+<h3 id="what-the-advisories-say">What the Advisories Say</h3>
+<p>CVE-2026-109618, &quot;RCE via OOM corruption&quot;
+(<a href="https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w">GHSA-w8hw-w9fx-j79w</a>):
+&quot;PHP uses <code>longjmp()</code> for out-of-memory (OOM) errors to exit the current context and abort handling
+of the request&quot;, and &quot;does not properly account for the early exit and leaves the request memory in
+an invalid state&quot;. Request shutdown then reads that state. The validated exploit is against Apache
+mod_php, where body parsing at request startup can exhaust <code>memory_limit</code> and shutdown still runs.
+For PHP-FPM the advisory says &quot;no complete FPM exploit has been demonstrated&quot;.</p>
+<p>CVE-2026-109619, &quot;RCE via stale global state&quot;
+(<a href="https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp">GHSA-6wmf-4rv5-p3rp</a>):
+state owned by one request survives after its memory is freed, and a later operation on the same
+worker reads it before normal initialization resets it. The exploit needs a producer, which is a fatal
+error, timeout or OOM that skips a reset, and a consumer that runs before initialization. The
+confirmed consumers are INI diagnostics raised while settings are applied and session upload
+progress. The confirmed producer on PHP 8.5 is <code>fatal_error_backtraces</code>.</p>
+<p>Both are CVSS v4 9.2, unauthenticated and network reachable. PHP&#39;s announcement says &quot;there are no
+complete mitigations, updating is the only safe choice&quot; and names PHP-FPM, Apache with mod_php,
+php-cgi, FrankenPHP and LiteSpeed as at risk
+(<a href="https://www.php.net/archive/2026.php#2026-10-21-5">php.net</a>). It does not address embedded SAPIs.
+Wiz reports working exploits on standard SAPIs against WordPress, Drupal and Joomla, including one
+against Drupal that uses the fatal-error backtrace state
+(<a href="https://www.wiz.io/blog/php2shell-php-rce">Wiz</a>).</p>
+<h3 id="what-the-shipping-interpreter-does">What the Shipping Interpreter Does</h3>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Fact</th>
+<th>Value</th>
+<th>Basis</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>PHP version</td>
+<td>8.5.2</td>
+<td>Measured: <code>tests/integration/interpreter-lifecycle.spec.ts</code></td>
+</tr>
+<tr>
+<td>SAPI</td>
+<td><code>embed</code></td>
+<td>Measured</td>
+</tr>
+<tr>
+<td>A fatal error in one run leaves <code>$GLOBALS</code> and <code>error_get_last()</code> visible to the next run</td>
+<td>yes</td>
+<td>Measured</td>
+</tr>
+<tr>
+<td>Multipart bodies parsed by PHP&#39;s request startup</td>
+<td>no, parsed in userland</td>
+<td>Read: <code>src/site/php/pw-serve-inline.php:134-223</code></td>
+</tr>
+<tr>
+<td><code>USE_ZEND_ALLOC</code></td>
+<td><code>0</code>, the system allocator</td>
+<td>Measured</td>
+</tr>
+<tr>
+<td><code>memory_limit</code> enforced</td>
+<td>no: an 8M cap held 40 MB</td>
+<td>Measured</td>
+</tr>
+<tr>
+<td>Where PHP 8.5.12 checks <code>memory_limit</code></td>
+<td>inside <code>zend_mm</code> paths a custom heap bypasses</td>
+<td>Read: php-src <code>PHP-8.5.12</code> <code>Zend/zend_alloc.c</code></td>
+</tr>
+<tr>
+<td><code>malloc</code> failure under the system allocator</td>
+<td><code>exit(1)</code>, no bailout</td>
+<td>Read: the same file (8.5.2 was not diffed)</td>
+</tr>
+<tr>
+<td><code>session.upload_progress.enabled</code>, <code>fatal_error_backtraces</code></td>
+<td>both <code>1</code></td>
+<td>Measured</td>
+</tr>
+<tr>
+<td>OPcache</td>
+<td>loaded, <code>opcache.enable=0</code></td>
+<td>Measured</td>
+</tr>
+<tr>
+<td><code>soap</code>, <code>phar</code></td>
+<td>not compiled in</td>
+<td>Measured</td>
+</tr>
+</tbody></table></div>
+<p>The two settings PHP lists as interim mitigations are at their defaults, which is on. They are not
+part of the analysis below.</p>
+<h3 id="what-follows-and-what-does-not">What Follows and What Does Not</h3>
+<p>These are Inferred from the table.</p>
+<ul>
+<li>The CVE-2026-109618 chain that was demonstrated starts at request startup and ends in request
+shutdown. This runtime runs code through <code>pib_run</code> inside one retained request and performs
+neither per request. Its allocator does not enforce <code>memory_limit</code>, so the <code>longjmp()</code> the
+advisory describes has no limit to fire on, and allocation failure ends the instance through
+<code>exit(1)</code> instead of leaving partial state behind.</li>
+<li>The CVE-2026-109619 consumers run before a request&#39;s normal initialization: per-request INI
+application and the upload-progress handler inside multipart startup. Neither happens per
+request here. A producer does leave state behind, but request memory is never freed between
+runs, so a stale pointer aims at live memory and not at reclaimed memory.</li>
+</ul>
+<p>Neither published chain has a path in this runtime, which is the decision recorded in the map. Two
+things sit beside it. The interpreter contains the vulnerable code, because 8.5.2 is below every
+fixed release, and PHP says updating is the only complete mitigation, so the interpreter is rebuilt
+at PHP 8.5.12 or later. And a retained request can keep per-extension state across a fatal error that
+a request shutdown would reset. That is a logic hazard, of the kind documented in
+<a href="#state-that-survives-between-requests">State That Survives Between Requests</a>, and not a
+use-after-free, because request memory is never freed between runs. What would reverse the decision
+is a working chain against this runtime. The public write-ups use standard SAPIs and report none.</p>
 <h2 id="how-much-safer">How Much Safer</h2>
 <p>No study compares breach outcomes for serverless and server hosting. The attack-surface literature
 (Manadhata and Wing, IEEE TSE 2011, and Howard&#39;s relative attack surface quotient) defines how to
 count entry points and capabilities, and neither measures this pair. The vendor surveys searched
 quote percentages that were read only through summaries, so none is repeated here.</p>
-<p>What can be counted is the map above. Its 19 rows carry these verdicts:</p>
+<p>What can be counted is the map above. Its 21 rows carry these verdicts:</p>
 <div class="table"><table>
 <thead>
 <tr>
@@ -888,7 +1023,7 @@ quote percentages that were read only through summaries, so none is repeated her
 </thead>
 <tbody><tr>
 <td>removed</td>
-<td>10</td>
+<td>12</td>
 <td>The attack path needs a component the object lacks</td>
 </tr>
 <tr>
@@ -902,7 +1037,7 @@ quote percentages that were read only through summaries, so none is repeated her
 <td>The flaw works as it does anywhere</td>
 </tr>
 </tbody></table></div>
-<p>Read the 10 as a statement about classes of server takeover, and do not read it as a breach
+<p>Read the 12 as a statement about classes of server takeover and published exploit chains, and do not read it as a breach
 probability. The rows were chosen from incidents that reached the attacker&#39;s goal on conventional
 PHP hosting, so the selection favours the classes this architecture removes. None of the six Drupal
 advisories in the map is <code>removed</code>: each is <code>contained</code> or <code>unchanged</code>, because Drupal&#39;s own bugs
@@ -989,6 +1124,8 @@ publishes how many each arm blocked.</p>
 <li>Stiévenart, De Roover and Ghafari, &quot;The Security Risk of Lacking Compiler Protection in WebAssembly&quot;, arXiv:2111.01421 (abstract): <a href="https://arxiv.org/abs/2111.01421">https://arxiv.org/abs/2111.01421</a></li>
 <li>WebAssembly security documentation: <a href="https://webassembly.org/docs/security/">https://webassembly.org/docs/security/</a></li>
 <li>Google Threat Intelligence Group, &quot;2025 Zero-Days in Review&quot;, 2026-03-05: <a href="https://cloud.google.com/blog/topics/threat-intelligence/2025-zero-day-review/">https://cloud.google.com/blog/topics/threat-intelligence/2025-zero-day-review/</a></li>
+<li>PHP project, security advisory 2026-10-21 (CVE-2026-109618, CVE-2026-109619) and the two php-src advisories GHSA-w8hw-w9fx-j79w and GHSA-6wmf-4rv5-p3rp: <a href="https://www.php.net/archive/2026.php#2026-10-21-5">https://www.php.net/archive/2026.php#2026-10-21-5</a></li>
+<li>Wiz, &quot;PHP2Shell: AI uncovers critical RCE vulnerabilities&quot; (read once through a page extractor): <a href="https://www.wiz.io/blog/php2shell-php-rce">https://www.wiz.io/blog/php2shell-php-rce</a></li>
 <li>Drupal security advisories SA-CORE-2014-005, 2018-002, 2018-004, 2019-003, 2020-004 and 2026-014: <a href="https://www.drupal.org/security">https://www.drupal.org/security</a></li>
 <li>NVD records for the CVE identifiers in the map: <a href="https://nvd.nist.gov/">https://nvd.nist.gov/</a></li>
 <li>PHP project, 2021 archive (malicious commits, 2021-03-30): <a href="https://www.php.net/archive/2021.php">https://www.php.net/archive/2021.php</a></li>

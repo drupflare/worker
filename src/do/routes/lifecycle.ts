@@ -21,10 +21,9 @@ import { FIRST_RUN_KEY } from '../../ops/setup-page';
 import { chooseOrigin, ORIGIN_KEY, pinnable } from '../../ops/site-origin';
 import {
 	bearerToken,
-	ensureOwnerToken,
-	OWNER_TOKEN_KEY,
-	randomKeyBase64,
-	tokenMatches
+	mintOwnerToken,
+	ownerTokenMatches,
+	randomKeyBase64
 } from '../../ops/site-secrets';
 import { updbStatus } from '../../ops/updb';
 import type { SitePhpDurableObject } from '../../site-do';
@@ -357,7 +356,7 @@ export async function firstrun(
 	// the claim window is the unprovisioned state
 	if (doneAt !== null && force && site.env.PW_DIAGNOSTICS !== '1') {
 		const presented = bearerToken(request.headers.get('authorization'));
-		if (!tokenMatches(presented, site.metaGet(OWNER_TOKEN_KEY))) {
+		if (!(await ownerTokenMatches(site.secretStore(), presented))) {
 			return jsonError('already configured; reconfiguring needs the owner token', 401, {
 				how: 'POST /firstrun?force=1 with Authorization: Bearer <ownerToken>'
 			});
@@ -493,7 +492,9 @@ export async function firstrun(
 		site.bumpGeneration('firstrun');
 	}
 	// added after the PHP result so a failed run cannot hand back a password it never set
-	// the owner token is handed out only here; it reaches `/export` without `PW_DIAGNOSTICS=1`
+	// the owner token is handed out only here, once; only its hash is stored, so a repeat claim
+	// has none to return. It reaches `/export` without `PW_DIAGNOSTICS=1`
+	const ownerToken = applied?.ok ? await mintOwnerToken(site.secretStore()) : undefined;
 	return Response.json(
 		applied?.ok
 			? {
@@ -504,9 +505,13 @@ export async function firstrun(
 								adminPass: minted,
 								adminPassNote: 'minted for this site and shown once; store it now'
 							}),
-					ownerToken: ensureOwnerToken(site.secretStore()),
-					ownerTokenNote:
-						'send as Authorization: Bearer <token> to reach /export without PW_DIAGNOSTICS; shown once'
+					...(ownerToken === undefined
+						? {}
+						: {
+								ownerToken,
+								ownerTokenNote:
+									'send as Authorization: Bearer <token> to reach /export without PW_DIAGNOSTICS; shown once, and only its hash is kept'
+							})
 				}
 			: applied
 	);

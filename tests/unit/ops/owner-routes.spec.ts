@@ -65,7 +65,8 @@ const WORKER_ANSWERED = new Set([
 	'/fleet',
 	'/settings',
 	'/deployment',
-	'/recover-token'
+	'/recover-token',
+	'/csp-report'
 ]);
 
 describe('the route table forwards everything it claims to own', () => {

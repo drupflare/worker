@@ -1,28 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import {
 	HASH_SALT_KEY,
+	OWNER_HASH_KEY,
 	OWNER_TOKEN_KEY,
 	SALT_BYTES,
+	adoptLegacyOwnerToken,
 	assertSalt,
 	bearerToken,
 	ensureHashSalt,
-	ensureOwnerToken,
 	hashSaltAssignment,
+	mintOwnerToken,
+	ownerTokenIsSet,
+	ownerTokenMatches,
 	randomKeyBase64,
+	readSealed,
+	rotateOwnerToken,
 	stateSerialized,
 	tokenMatches,
-	type SecretStore
+	writeSealed
 } from '../../../src/ops/site-secrets';
-
-/** an in-memory {@link SecretStore}; the contract is get-then-set, not a database */
-function fakeStore(seed: Record<string, string> = {}): SecretStore & { rows: Map<string, string> } {
-	const rows = new Map(Object.entries(seed));
-	return {
-		rows,
-		get: (key) => rows.get(key) ?? null,
-		set: (key, value) => void rows.set(key, value)
-	};
-}
+import { memorySecretStore as fakeStore } from '../../helpers/secret-store';
 
 describe('randomKeyBase64', () => {
 	it('produces the 74 characters Drupal Crypt::randomBytesBase64(55) produces', () => {
@@ -109,26 +106,111 @@ describe('stateSerialized', () => {
 });
 
 describe('the owner token, which is how a site is exported without opening a shell', () => {
-	it('mints and persists on first use, like the salt', () => {
+	it('mints once, stores only its hash and returns the plaintext to the minter', async () => {
 		const store = fakeStore();
-		expect(ensureOwnerToken(store, () => 'tok-1')).toBe('tok-1');
-		expect(store.rows.get(OWNER_TOKEN_KEY)).toBe('tok-1');
+		expect(await mintOwnerToken(store, () => 'tok-1')).toBe('tok-1');
+		const stored = store.sealedRows.get(OWNER_HASH_KEY);
+		expect(stored).toMatch(/^[0-9a-f]{64}$/);
+		expect(stored).not.toBe('tok-1');
+		// nothing in the SQL-reachable table holds the token or its hash
+		expect([...store.rows.values()].join('|')).not.toContain('tok-1');
+		expect([...store.rows.values()].join('|')).not.toContain(stored ?? 'x');
 	});
 
-	it('is stable, so a token handed out once keeps working', () => {
-		const store = fakeStore({ [OWNER_TOKEN_KEY]: 'issued' });
-		expect(ensureOwnerToken(store, () => 'fresh')).toBe('issued');
+	it('hands out nothing on a repeat claim, so a token is shown once', async () => {
+		const store = fakeStore();
+		await mintOwnerToken(store, () => 'tok-1');
+		expect(await mintOwnerToken(store, () => 'tok-2')).toBeUndefined();
+		expect(await ownerTokenMatches(store, 'tok-1')).toBe(true);
+		expect(await ownerTokenMatches(store, 'tok-2')).toBe(false);
 	});
 
-	it('is a DIFFERENT secret from the hash salt', () => {
+	it('accepts the token and nothing that resembles it', async () => {
+		const store = fakeStore();
+		await mintOwnerToken(store, () => 'tok-1');
+		for (const bad of ['tok-2', 'tok-', 'tok-11', 'TOK-1', '', null, undefined]) {
+			expect(await ownerTokenMatches(store, bad), String(bad)).toBe(false);
+		}
+		expect(await ownerTokenMatches(fakeStore(), 'tok-1')).toBe(false);
+	});
+
+	it('is a DIFFERENT secret from the hash salt', async () => {
 		// one credential guarding both the dump and the session signing would mean handing an
 		// exporter the ability to forge password-reset links
 		const store = fakeStore();
-		expect(ensureOwnerToken(store)).not.toBe(ensureHashSalt(store));
+		expect(await mintOwnerToken(store)).not.toBe(ensureHashSalt(store));
 	});
 
-	it('gives two sites different tokens', () => {
-		expect(ensureOwnerToken(fakeStore())).not.toBe(ensureOwnerToken(fakeStore()));
+	it('gives two sites different tokens', async () => {
+		expect(await mintOwnerToken(fakeStore())).not.toBe(await mintOwnerToken(fakeStore()));
+	});
+
+	it('rotates: the old token stops working and the new one works', async () => {
+		const store = fakeStore();
+		await mintOwnerToken(store, () => 'tok-1');
+		expect(await rotateOwnerToken(store, () => 'tok-2')).toBe('tok-2');
+		expect(await ownerTokenMatches(store, 'tok-1')).toBe(false);
+		expect(await ownerTokenMatches(store, 'tok-2')).toBe(true);
+	});
+
+	it('migrates a legacy plaintext row on the first read of any kind and deletes the row', async () => {
+		const store = fakeStore({ [OWNER_TOKEN_KEY]: 'legacy-token' });
+		expect(await ownerTokenIsSet(store)).toBe(true);
+		expect(store.rows.has(OWNER_TOKEN_KEY)).toBe(false);
+		expect(store.sealedRows.get(OWNER_HASH_KEY)).toMatch(/^[0-9a-f]{64}$/);
+		expect(await ownerTokenMatches(store, 'legacy-token')).toBe(true);
+		// idempotent: adopting again changes nothing
+		const before = store.sealedRows.get(OWNER_HASH_KEY);
+		await adoptLegacyOwnerToken(store);
+		expect(store.sealedRows.get(OWNER_HASH_KEY)).toBe(before);
+	});
+
+	it('ignores a plaintext row planted after the hash exists, and deletes it unread', async () => {
+		// SQL can write cfw_meta, so a row there must never replace the sealed hash
+		const store = fakeStore();
+		await mintOwnerToken(store, () => 'real-token');
+		store.rows.set(OWNER_TOKEN_KEY, 'attacker-token');
+		expect(await ownerTokenMatches(store, 'attacker-token')).toBe(false);
+		expect(await ownerTokenMatches(store, 'real-token')).toBe(true);
+		expect(store.rows.has(OWNER_TOKEN_KEY)).toBe(false);
+	});
+
+	it('treats an emptied legacy row as no token', async () => {
+		const store = fakeStore({ [OWNER_TOKEN_KEY]: '' });
+		expect(await ownerTokenIsSet(store)).toBe(false);
+		expect(store.rows.has(OWNER_TOKEN_KEY)).toBe(false);
+	});
+});
+
+describe('sealed credentials', () => {
+	it('moves a legacy row into the sealed store on first read', () => {
+		const store = fakeStore({ git_token_a: 'ghp_made_up' });
+		expect(readSealed(store, 'git_token_a')).toBe('ghp_made_up');
+		expect(store.rows.has('git_token_a')).toBe(false);
+		expect(store.sealedRows.get('git_token_a')).toBe('ghp_made_up');
+	});
+
+	it('writes to the sealed store only, and removes a stale row', () => {
+		const store = fakeStore({ git_token_a: 'old' });
+		writeSealed(store, 'git_token_a', 'new');
+		expect(store.rows.has('git_token_a')).toBe(false);
+		expect(readSealed(store, 'git_token_a')).toBe('new');
+	});
+
+	it('does not re-adopt a planted row once the credential is sealed or cleared', () => {
+		const store = fakeStore();
+		writeSealed(store, 'cf_oauth_token', 'live');
+		store.rows.set('cf_oauth_token', 'planted');
+		expect(readSealed(store, 'cf_oauth_token')).toBe('live');
+		expect(store.rows.has('cf_oauth_token')).toBe(false);
+		writeSealed(store, 'cf_oauth_token', '');
+		store.rows.set('cf_oauth_token', 'planted again');
+		expect(readSealed(store, 'cf_oauth_token')).toBe('');
+		expect(store.rows.has('cf_oauth_token')).toBe(false);
+	});
+
+	it('reads null for a credential nobody set', () => {
+		expect(readSealed(fakeStore(), 'git_token_none')).toBeNull();
 	});
 });
 

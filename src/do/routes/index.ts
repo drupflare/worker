@@ -1,4 +1,5 @@
 import type { SitePhpDurableObject } from '../../site-do';
+import { audit } from './audit';
 import { oidc, oidcsetup, ownercheck, recoverToken } from './auth';
 import {
 	ai,
@@ -66,6 +67,7 @@ export const ROUTES: Record<string, Route> = {
 	'/__git': git,
 	'/__modify': modify,
 	'/__githook': githook,
+	'/__audit': audit,
 	'/__ownercheck': ownercheck,
 	'/__recover-token': recoverToken,
 	'/__pitr': pitr,

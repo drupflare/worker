@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { drupalOp } from '../../src/drupal/site-php';
 import type { RestoreChunk, TableVerdict } from '../../src/ops/replica-restore';
+import { replicaName } from '../../src/ops/replica-routing';
 import { positionTrust, readPosition } from '../../src/ops/replication-log';
 import { ORIGIN_KEY } from '../../src/ops/site-origin';
-import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
+import {
+	freshSite,
+	inObject,
+	markProvisioned,
+	namedSite,
+	pageFor,
+	seedPage,
+	serveDirect,
+	stubRender,
+	type ServeDo
+} from '../helpers/serve-do';
 
 /**
  * The bulk copy, end to end, on real objects.
@@ -494,6 +505,160 @@ describe('a lane inherits the origin rather than pinning one of its own', () => 
 			});
 			expect(out.landings.filter((l) => !l.ok).map((l) => l.reason)).toEqual([]);
 			expect(out.salt).toBe(SALT);
+		},
+		TIMEOUT
+	);
+});
+
+/**
+ * The module-set headers a stored page carries (`cfw_page.headers`), on a lane.
+ *
+ * `cfw_page` is the one locally-owned table a restore seeds, so a lane answers its first anonymous
+ * request from the primary's copy. The copy names its columns, which means a lane whose table
+ * predates the column would fail the insert, or drop the headers and answer a page the primary
+ * would have sent with a policy.
+ */
+describe('a lane keeps the module-header column on a stored page', () => {
+	const POLICY = { 'x-frame-options': 'DENY', 'content-security-policy': "object-src 'none'" };
+
+	function unset(site: ServeDo): void {
+		(site.env as Record<string, unknown>).REPLICA_READ_ONLY = '0';
+	}
+
+	/** a table as an object upgraded from before the column holds it */
+	function dropToOlderShape(site: ServeDo): void {
+		site.sql.exec('DROP TABLE IF EXISTS cfw_page');
+		site.sql.exec(
+			`CREATE TABLE cfw_page (
+				path TEXT PRIMARY KEY, status INTEGER NOT NULL, content_type TEXT, html TEXT NOT NULL,
+				rendered_at INTEGER NOT NULL, render_ms REAL, tags TEXT, stale_at INTEGER,
+				tag_checksum INTEGER
+			) WITHOUT ROWID`
+		);
+		site.serveTablesReady = false;
+	}
+
+	function columnsOf(site: ServeDo): string[] {
+		return site.sql
+			.exec("SELECT name FROM pragma_table_info('cfw_page')")
+			.toArray()
+			.map((r) => String(r['name']));
+	}
+
+	/** the primary's stored page, read through the shipping snapshot route as a restore chunk */
+	async function seededChunk(host: string): Promise<RestoreChunk> {
+		return inObject(namedSite(host), async (site) => {
+			unset(site);
+			markProvisioned(site);
+			seedPage(site, '/seeded', '<html><body>seeded</body></html>');
+			site.sql.exec(
+				'UPDATE cfw_page SET headers = ? WHERE path = ?',
+				JSON.stringify(POLICY),
+				'/seeded'
+			);
+			const res = await site.fetch(
+				new Request('https://do.local/__replica?action=snapshot&table=cfw_page&limit=400')
+			);
+			expect(res.status).toBe(200);
+			const page = (await res.json()) as RestoreChunk & { ddl: string[] };
+			return {
+				generation: page.generation,
+				schemaVersion: page.schemaVersion,
+				table: 'cfw_page',
+				columns: page.columns,
+				rows: page.rows,
+				ddl: page.ddl,
+				first: true
+			};
+		});
+	}
+
+	/** a lane brought to the stage that takes traffic, without a whole install behind it */
+	function serving(site: ServeDo): void {
+		for (const to of ['VERIFIED', 'CATCHING_UP', 'ELIGIBLE', 'SERVING'])
+			site.setReplicaStage(to);
+	}
+
+	it(
+		'lands the column on a table that predates it, and serves the seeded page with its policy',
+		async () => {
+			const host = 'g5-seeded.example';
+			const chunk = await seededChunk(host);
+			expect(chunk.columns).toContain('headers');
+
+			const out = await inObject(namedSite(replicaName(host, 1)), async (site) => {
+				unset(site);
+				markProvisioned(site);
+				dropToOlderShape(site);
+				const before = columnsOf(site);
+				const landed = await land(site, chunk);
+				serving(site);
+				const hit = await serveDirect(site, '/seeded');
+				return {
+					before,
+					after: columnsOf(site),
+					landed,
+					stored: site.sql
+						.exec('SELECT headers FROM cfw_page WHERE path = ?', '/seeded')
+						.toArray()[0]?.['headers'],
+					hit: [
+						hit.status,
+						hit.cache,
+						hit.header('x-frame-options'),
+						hit.header('content-security-policy')
+					]
+				};
+			});
+
+			// THE CONTROL: the lane really did start without the column
+			expect(out.before).not.toContain('headers');
+			expect(out.landed.reason).toBe('');
+			expect(out.after).toContain('headers');
+			expect(JSON.parse(String(out.stored))).toEqual(POLICY);
+			expect(out.hit).toEqual([
+				200,
+				'HIT',
+				POLICY['x-frame-options'],
+				POLICY['content-security-policy']
+			]);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'writes the headers of its own fill into the column and replays them',
+		async () => {
+			const out = await inObject(
+				namedSite(replicaName('g5-own.example', 1)),
+				async (site) => {
+					unset(site);
+					markProvisioned(site);
+					dropToOlderShape(site);
+					serving(site);
+					stubRender(site, (call) => ({ ...pageFor(call.path), passHeaders: POLICY }));
+					const fill = await site.fillOne('/own');
+					const hit = await serveDirect(site, '/own');
+					return {
+						filled: fill.filled,
+						stored: site.sql
+							.exec('SELECT headers FROM cfw_page WHERE path = ?', '/own')
+							.toArray()[0]?.['headers'],
+						hit: [
+							hit.cache,
+							hit.header('x-frame-options'),
+							hit.header('content-security-policy')
+						]
+					};
+				}
+			);
+
+			expect(out.filled).toBe('/own');
+			expect(JSON.parse(String(out.stored))).toEqual(POLICY);
+			expect(out.hit).toEqual([
+				'HIT',
+				POLICY['x-frame-options'],
+				POLICY['content-security-policy']
+			]);
 		},
 		TIMEOUT
 	);

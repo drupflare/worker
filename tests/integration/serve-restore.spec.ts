@@ -11,6 +11,12 @@ import { storeImport, storedImportLoader } from '../../src/db/import-sql';
 import type { SqlLike, StorageLike } from '../../src/db/migrate-sql';
 import { SqlMigrator, readMigrateCursor } from '../../src/db/migrate-sql';
 import {
+	mintOwnerToken,
+	ownerTokenIsSet,
+	ownerTokenMatches,
+	sealedExportRows
+} from '../../src/ops/site-secrets';
+import {
 	type ServeDo,
 	freshSite,
 	inObject,
@@ -778,5 +784,122 @@ describe('the round trip reproduces the database, measured without the exporter'
 		expect(after.row.ta).toBe('real');
 		expect(after.row.te).toBe('text');
 		expect(after.row.tm).toBe('null');
+	});
+});
+
+describe('credentials held outside SQL across an export and a restore', () => {
+	const GIT_TOKEN = 'provider-token-for-test';
+
+	/** a claimed site with a git credential, and the dump `?secrets=1` would produce */
+	async function claimedDump(): Promise<{ token: string; withSecrets: string; plain: string }> {
+		return inObject(freshSite(), async (site) => {
+			const token = (await mintOwnerToken(site.secretStore())) as string;
+			site.writeSecret('git_token_abc', GIT_TOKEN);
+			const sql = site.sql as unknown as SqlLike;
+			const sealedRows = sealedExportRows(site.secretStore());
+			return {
+				token,
+				withSecrets: dumpDatabase(sql, { secrets: true, sealedRows }).sql,
+				plain: dumpDatabase(sql, { sealedRows }).sql
+			};
+		});
+	}
+
+	/** restores a dump into a site, then lets the object adopt what the import left in SQL */
+	async function restoreInto(site: ServeDo, dump: string): Promise<void> {
+		const { sql, storage } = seams(site);
+		const id = storeImport(sql, dump, {
+			storage,
+			generation: 'credentials',
+			source: 'test',
+			nowMs: 1
+		}).id;
+		await new SqlMigrator({
+			sql,
+			storage,
+			now: () => Date.now(),
+			...storedImportLoader(sql, id)
+		}).step({ maxChunks: Infinity });
+		await site.adoptSecrets();
+	}
+
+	const metaKeys = (site: ServeDo) =>
+		(site.sql.exec('SELECT k FROM cfw_meta').toArray() as { k: string }[]).map((r) => r.k);
+
+	it('carries them only when asked, and never the plaintext owner token', async () => {
+		const { token, withSecrets, plain } = await claimedDump();
+		expect(withSecrets).toContain("'owner_token_hash'");
+		expect(withSecrets).toContain("'git_token_abc'");
+		expect(withSecrets).not.toContain(token);
+		expect(plain).not.toContain("'owner_token_hash'");
+		expect(plain).not.toContain(GIT_TOKEN);
+	});
+
+	it('is what the export route emits, and only with secrets=1', async () => {
+		await inObject(freshSite(), async (site) => {
+			await mintOwnerToken(site.secretStore());
+			site.writeSecret('git_token_abc', GIT_TOKEN);
+			const read = async (query: string) =>
+				JSON.stringify(
+					await (
+						await site.fetch(new Request(`https://do.local/__export${query}`))
+					).json()
+				);
+			const withSecrets = await read('?body=1&secrets=1');
+			expect(withSecrets).toContain('owner_token_hash');
+			expect(withSecrets).toContain(GIT_TOKEN);
+			const without = await read('?body=1');
+			expect(without).not.toContain('owner_token_hash');
+			expect(without).not.toContain(GIT_TOKEN);
+		});
+	});
+
+	it('restores onto a new site with the same owner and credentials, and leaves none in SQL', async () => {
+		const { token, withSecrets } = await claimedDump();
+		await inObject(freshSite(), async (site) => {
+			await restoreInto(site, withSecrets);
+			expect(await ownerTokenMatches(site.secretStore(), token)).toBe(true);
+			expect(site.readSecret('git_token_abc')).toBe(GIT_TOKEN);
+			expect(metaKeys(site)).not.toContain('owner_token_hash');
+			expect(metaKeys(site)).not.toContain('git_token_abc');
+		});
+	});
+
+	it('keeps the owner and credentials of a site that was already claimed', async () => {
+		const { token, withSecrets } = await claimedDump();
+		await inObject(freshSite(), async (site) => {
+			const own = (await mintOwnerToken(site.secretStore())) as string;
+			site.writeSecret('git_token_abc', 'the-target-sites-own-token');
+			await restoreInto(site, withSecrets);
+			expect(await ownerTokenMatches(site.secretStore(), own)).toBe(true);
+			expect(await ownerTokenMatches(site.secretStore(), token)).toBe(false);
+			expect(site.readSecret('git_token_abc')).toBe('the-target-sites-own-token');
+			expect(metaKeys(site)).not.toContain('owner_token_hash');
+		});
+	});
+
+	it('adopts a dump written before sealed storage, which carried the plaintext rows', async () => {
+		// the shape an older `?secrets=1` dump has: the token and a git credential as ordinary rows
+		await inObject(freshSite(), async (site) => {
+			const store = site.secretStore();
+			store.set('owner_token', 'legacy-owner-token-value');
+			store.set('git_hooksecret_old', 'legacy-hook-secret');
+			await site.adoptSecrets();
+			expect(await ownerTokenMatches(site.secretStore(), 'legacy-owner-token-value')).toBe(
+				true
+			);
+			expect(site.readSecret('git_hooksecret_old')).toBe('legacy-hook-secret');
+			expect(metaKeys(site)).not.toContain('owner_token');
+			expect(metaKeys(site)).not.toContain('git_hooksecret_old');
+		});
+	});
+
+	it('drops an owner hash that is not a SHA-256, rather than adopting a value SQL chose', async () => {
+		await inObject(freshSite(), async (site) => {
+			site.secretStore().set('owner_token_hash', 'nope');
+			await site.adoptSecrets();
+			expect(await ownerTokenIsSet(site.secretStore())).toBe(false);
+			expect(metaKeys(site)).not.toContain('owner_token_hash');
+		});
 	});
 });

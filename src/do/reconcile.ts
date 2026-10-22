@@ -2,6 +2,7 @@ import { dropAllSnapshots, ensureHeapTables } from '../db/heap-store';
 import { cronHookList } from '../drupal/cron-php';
 import { type CronHookCache, cronHooksFor, cronHooksFromList } from '../ops/cron';
 import { dailyLimit } from '../ops/degrade';
+import { pruneHeapRecords } from '../ops/heap-integrity';
 import { extensionFingerprint } from '../ops/packed-container';
 import {
 	DRIVER_DIGEST_KEY,
@@ -124,6 +125,7 @@ export async function applyReconcileStep(
 	if (step.freshKernel) site.dropInterpreter();
 	ensureHeapTables(site.sql);
 	const dropped = dropAllSnapshots(site.sql);
+	pruneHeapRecords(site.secretStore().sealed, site.sql);
 	site.sql.exec('DELETE FROM cfw_meta WHERE k = ?', HEAP_IMAGE_KEY);
 	return {
 		reconcile: {

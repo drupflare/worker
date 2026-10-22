@@ -13,12 +13,14 @@ import {
 import { cronIntervalMs, drupalCronEnabled } from '../../ops/cron-drive';
 import { readOnlyResponse } from '../../ops/degrade';
 import { forwardedHeaders } from '../../ops/forwarded-headers';
+import { heapIntegrityReport } from '../../ops/heap-integrity';
 import { hibernationEligible } from '../../ops/hibernation';
+import { integrityReport } from '../../ops/module-integrity';
 import { isPaid } from '../../ops/plan';
 import { planProfile } from '../../ops/plan-profile';
 import { ReplicaRequiresPrimary } from '../../ops/replica';
 import { FIRST_RUN_KEY, needsSetup, setupResponse } from '../../ops/setup-page';
-import { OWNER_TOKEN_KEY } from '../../ops/site-secrets';
+import { bearerToken, ownerTokenMatches } from '../../ops/site-secrets';
 import { warmingResponse } from '../../ops/warming-page';
 import type { SitePhpDurableObject } from '../../site-do';
 import { DIAG_EXEC_COUNTERS_PHP } from '../../site/generated/assets';
@@ -136,7 +138,7 @@ export async function serve(
 	const hit = cacheable
 		? firstRow(
 				site.sql.exec<PageRow>(
-					'SELECT status, content_type, html, rendered_at, render_ms FROM cfw_page WHERE path = ?',
+					'SELECT status, content_type, html, rendered_at, render_ms, headers FROM cfw_page WHERE path = ?',
 					path
 				)
 			)
@@ -272,7 +274,11 @@ export async function serve(
 		// `Request::create()` defaults the iframe-upload header to a match, which wraps every AJAX
 		// response in a textarea
 		const accept = request.headers.get('accept') ?? '';
-		const forwarded = forwardedHeaders(request.headers, site.metaGet(OWNER_TOKEN_KEY));
+		const bearer = bearerToken(request.headers.get('authorization'));
+		const forwarded = forwardedHeaders(
+			request.headers,
+			bearer !== undefined && (await ownerTokenMatches(site.secretStore(), bearer))
+		);
 		const headers = Object.keys(forwarded).length === 0 ? {} : { headers: forwarded };
 		const posted =
 			request.method === 'GET' || request.method === 'HEAD'
@@ -375,7 +381,7 @@ export async function serve(
 		if (outcome.filled === path) {
 			const fresh = firstRow(
 				site.sql.exec<PageRow>(
-					'SELECT status, content_type, html, rendered_at, render_ms FROM cfw_page WHERE path = ?',
+					'SELECT status, content_type, html, rendered_at, render_ms, headers FROM cfw_page WHERE path = ?',
 					path
 				)
 			);
@@ -533,6 +539,8 @@ export async function serveStats(
 	return Response.json({
 		...stats,
 		exec,
+		moduleIntegrity: integrityReport(site.moduleIntegrity),
+		heapIntegrity: heapIntegrityReport(site.heapIntegrity),
 		// other objects' interpreters share this isolate's 128 MiB
 		isolate: isolateResidency(),
 		retention: {

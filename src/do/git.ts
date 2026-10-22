@@ -16,7 +16,12 @@ import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage } from '../util/errors';
 import { jsonError } from '../util/reply';
 
+import { changeModuleFiles, renameModulePackage } from './module-files';
+
 export { gitApply, gitRestore, gitSync, gitVerifyBoot } from './git-delivery';
+
+/** the per-remote keys held in sealed storage, where the SQL bridge cannot read them */
+const SEALED_KEYS = new Set(['token', 'hooksecret']);
 
 /**
  * Polls whatever is due, and pulls when a head moved.
@@ -78,7 +83,7 @@ export function gitRow(site: SitePhpDurableObject, remote: Remote): Record<strin
 		lastError: site.metaGet(`git_lasterror_${id}`) || null,
 		lastPlan: counts,
 		proof: site.metaGet(`git_proof_${id}`) || null,
-		hookInstalled: site.metaGet(`git_hooksecret_${id}`) !== '',
+		hookInstalled: site.readSecret(`git_hooksecret_${id}`) !== '',
 		files: site.gitStoredFiles(id).size
 	};
 }
@@ -150,7 +155,7 @@ export async function handleGit(
 			...(username ? { username } : {}),
 			...(mount === undefined ? {} : { mount })
 		};
-		site.metaSet('git_token_pending', token);
+		site.writeSecret('git_token_pending', token);
 		site.metaSet('git_email_pending', email);
 		site.metaSet('git_username_pending', username);
 
@@ -179,7 +184,7 @@ export async function handleGit(
 		if (sha === undefined) {
 			return jsonError(`the remote has no branch ${branch}`, 400);
 		}
-		site.metaSet(`git_token_${remote.id}`, token);
+		site.writeSecret(`git_token_${remote.id}`, token);
 		site.metaSet(`git_email_${remote.id}`, email);
 		site.metaSet(`git_username_${remote.id}`, username);
 		site.metaSet(`git_head_${remote.id}`, sha);
@@ -213,7 +218,7 @@ export async function handleGit(
 				site.gitSaveRemotes(others);
 				site.ensureServeTables();
 				const removed = site.gitStoredFiles(id).size;
-				site.sql.exec('DELETE FROM cfw_module_file WHERE package = ?', id);
+				changeModuleFiles(site, id, { clear: true, installedAt: now });
 				for (const key of [
 					'token',
 					'email',
@@ -230,7 +235,8 @@ export async function handleGit(
 					'lastplan',
 					'pulled'
 				]) {
-					site.metaSet(`git_${key}_${id}`, '');
+					if (SEALED_KEYS.has(key)) site.writeSecret(`git_${key}_${id}`, '');
+					else site.metaSet(`git_${key}_${id}`, '');
 				}
 				site.php = undefined;
 				return Response.json({
@@ -294,17 +300,21 @@ export async function handleGit(
 						'installedsha',
 						'lasterror'
 					]) {
+						if (SEALED_KEYS.has(key)) {
+							site.writeSecret(
+								`git_${key}_${next.id}`,
+								site.readSecret(`git_${key}_${id}`) ?? ''
+							);
+							site.writeSecret(`git_${key}_${id}`, '');
+							continue;
+						}
 						site.metaSet(
 							`git_${key}_${next.id}`,
 							site.metaGet(`git_${key}_${id}`) ?? ''
 						);
 						site.metaSet(`git_${key}_${id}`, '');
 					}
-					site.sql.exec(
-						'UPDATE cfw_module_file SET package = ? WHERE package = ?',
-						next.id,
-						id
-					);
+					renameModulePackage(site, id, next.id);
 				}
 				site.metaSet(`git_head_${next.id}`, sha);
 				site.metaSet(`git_checked_${next.id}`, String(now));
@@ -432,7 +442,7 @@ export async function handleGit(
 						deliverTo
 					});
 				}
-				site.metaSet(`git_hooksecret_${id}`, secret);
+				site.writeSecret(`git_hooksecret_${id}`, secret);
 				return Response.json({ ok: true, deliverTo, message: 'webhook registered' });
 			}
 
@@ -443,7 +453,7 @@ export async function handleGit(
 					[...crypto.getRandomValues(new Uint8Array(24))]
 						.map((b) => b.toString(16).padStart(2, '0'))
 						.join('');
-				site.metaSet(`git_hooksecret_${id}`, secret);
+				site.writeSecret(`git_hooksecret_${id}`, secret);
 				return Response.json({
 					ok: true,
 					secret,

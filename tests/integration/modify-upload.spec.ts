@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { changeModuleFiles, renameModulePackage } from '../../src/do/module-files';
 import { drupalOp } from '../../src/drupal/site-php';
 import { updbUnit } from '../../src/drupal/updb-php';
+import {
+	digestSource,
+	integrityReport,
+	MODSUM_ADOPTED_KEY,
+	readAllRecords,
+	readPackageRecords
+} from '../../src/ops/module-integrity';
+import { OWNER_HASH_KEY } from '../../src/ops/site-secrets';
+import type { SitePhpDurableObject } from '../../src/site-do';
+import { HOST_HELPERS_PHP } from '../../src/site/generated/assets';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -788,5 +799,364 @@ describe('a delivered module asset is readable by the front worker', () => {
 		expect(seen.missing.status).toBe(404);
 		expect(seen.climbing.status).toBe(400);
 		expect(seen.rooted.status).toBe(400);
+	}, 900_000);
+});
+
+/**
+ * A row in `cfw_module_file` is mounted on every boot and PHP's database connection can write it,
+ * so each row is held to a record in sealed storage that SQL cannot reach. A claimed site refuses
+ * a row with no record or the wrong bytes: the file reads as empty and is counted.
+ */
+describe('installed module files are held to sealed records', () => {
+	const DIR = 'modules/contrib/held_probe';
+	// the bridge function PHP's database driver calls; a bare fragment does not define it
+	const BRIDGE = `<?php\nif (!function_exists('cfw_host')) {${HOST_HELPERS_PHP}}\n`;
+	const real = (site: ServeDo) => site as unknown as SitePhpDurableObject;
+	const sealed = (site: ServeDo) => real(site).secretStore().sealed;
+	/** a claimed site, as far as the check can tell: the owner hash is in sealed storage */
+	const claim = (site: ServeDo) => sealed(site).put(OWNER_HASH_KEY, 'a'.repeat(64));
+	const remount = (site: ServeDo) => void (site.php = undefined);
+	const stats = (site: ServeDo) => integrityReport(real(site).moduleIntegrity);
+
+	async function readFiles(site: ServeDo, paths: string[]): Promise<Record<string, unknown>> {
+		return site.runJson(
+			`<?php $o = []; foreach (${JSON.stringify(paths)} as $p) { $o[$p] = @file_get_contents('/drupal/' . $p); } echo json_encode($o);`
+		);
+	}
+
+	function install(site: ServeDo, pkg: string, files: Record<string, string>): number {
+		site.ensureServeTables();
+		return changeModuleFiles(real(site), pkg, {
+			put: Object.entries(files).map(([path, source]) => ({ path, source, version: '1' })),
+			installedAt: 1
+		});
+	}
+
+	function plant(site: ServeDo, path: string, source: string, pkg = 'drupal/held_probe'): void {
+		site.execSql(
+			'INSERT INTO cfw_module_file (path, package, version, source, installed_at) VALUES (?, ?, ?, ?, 0)',
+			[path, pkg, 'planted', source]
+		);
+	}
+
+	it('mounts a file its writer recorded, and refuses a row planted through SQL or through PHP', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			claim(site);
+			install(site, 'drupal/held_probe', { [`${DIR}/a.php`]: '<?php // legit' });
+			const legit = await readFiles(site, [`${DIR}/a.php`]);
+			plant(site, `${DIR}/via-sql.php`, '<?php // planted by sql');
+			remount(site);
+			const viaPhp = await site.runJson(
+				`${BRIDGE}echo json_encode(cfw_sql("INSERT INTO cfw_module_file (path, package, version, source, installed_at) VALUES (?, ?, 'planted', ?, 0)", ['${DIR}/via-php.php', 'drupal/held_probe', '<?php // planted by php']));`
+			);
+			remount(site);
+			const after = await readFiles(site, [
+				`${DIR}/a.php`,
+				`${DIR}/via-sql.php`,
+				`${DIR}/via-php.php`
+			]);
+			return { legit, after, viaPhp, stats: stats(site) };
+		});
+		// the plant landed: a refusal below is the check's, not a failed insert
+		expect(seen.viaPhp['ok'], JSON.stringify(seen.viaPhp)).toBe(true);
+		expect(seen.legit).toEqual({ [`${DIR}/a.php`]: '<?php // legit' });
+		expect(seen.after).toEqual({
+			[`${DIR}/a.php`]: '<?php // legit',
+			[`${DIR}/via-sql.php`]: '',
+			[`${DIR}/via-php.php`]: ''
+		});
+		expect(seen.stats.mode).toBe('enforcing');
+		expect(seen.stats.refused).toBe(2);
+		expect([...seen.stats.paths].sort()).toEqual([`${DIR}/via-php.php`, `${DIR}/via-sql.php`]);
+	}, 900_000);
+
+	it('refuses a row whose bytes were altered after a good install', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			claim(site);
+			install(site, 'drupal/held_probe', {
+				[`${DIR}/a.php`]: '<?php // legit a',
+				[`${DIR}/b.php`]: '<?php // legit b'
+			});
+			site.execSql('UPDATE cfw_module_file SET source = ? WHERE path = ?', [
+				'<?php // altered',
+				`${DIR}/a.php`
+			]);
+			const read = await readFiles(site, [`${DIR}/a.php`, `${DIR}/b.php`]);
+			return { read, stats: stats(site) };
+		});
+		expect(seen.read).toEqual({
+			[`${DIR}/a.php`]: '',
+			[`${DIR}/b.php`]: '<?php // legit b'
+		});
+		expect(seen.stats.refused).toBe(1);
+		expect(seen.stats.paths).toEqual([`${DIR}/a.php`]);
+	}, 900_000);
+
+	it('adopts the rows a claimed site already holds once, then refuses a later plant', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			site.ensureServeTables();
+			plant(site, `${DIR}/old.php`, '<?php // from before the upgrade');
+			claim(site);
+			const first = await readFiles(site, [`${DIR}/old.php`]);
+			const adoption = { ...stats(site), marker: sealed(site).get(MODSUM_ADOPTED_KEY) };
+			const recorded = readAllRecords(sealed(site));
+			plant(site, `${DIR}/late.php`, '<?php // planted after adoption');
+			remount(site);
+			const second = await readFiles(site, [`${DIR}/old.php`, `${DIR}/late.php`]);
+			return { first, adoption, recorded, second, again: stats(site) };
+		});
+		expect(seen.first).toEqual({ [`${DIR}/old.php`]: '<?php // from before the upgrade' });
+		expect(seen.adoption).toMatchObject({ mode: 'enforcing', adopted: 1, marker: '1' });
+		expect([...seen.recorded.keys()]).toEqual([`${DIR}/old.php`]);
+		expect(seen.second).toEqual({
+			[`${DIR}/old.php`]: '<?php // from before the upgrade',
+			[`${DIR}/late.php`]: ''
+		});
+		// adoption ran on the first boot only
+		expect(seen.again.adopted).toBe(0);
+		expect(seen.again.paths).toEqual([`${DIR}/late.php`]);
+	}, 900_000);
+
+	it('does not hold an unclaimed site, and adopts its rows when it is claimed', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			site.ensureServeTables();
+			plant(site, `${DIR}/migrated.php`, '<?php // arrived inside a migrated database');
+			const open = await readFiles(site, [`${DIR}/migrated.php`]);
+			const before = { ...stats(site), marker: sealed(site).get(MODSUM_ADOPTED_KEY) };
+			claim(site);
+			remount(site);
+			const claimed = await readFiles(site, [`${DIR}/migrated.php`]);
+			return { open, before, claimed, after: stats(site) };
+		});
+		expect(seen.open).toEqual({
+			[`${DIR}/migrated.php`]: '<?php // arrived inside a migrated database'
+		});
+		expect(seen.before).toMatchObject({ mode: 'unclaimed', marker: undefined });
+		expect(seen.claimed).toEqual(seen.open);
+		expect(seen.after).toMatchObject({ mode: 'enforcing', adopted: 1, refused: 0 });
+	}, 900_000);
+
+	it('keeps the records where SQL cannot read or write them', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			claim(site);
+			install(site, 'drupal/held_probe', { [`${DIR}/a.php`]: '<?php // legit' });
+			const before = JSON.stringify([...readAllRecords(sealed(site))]);
+			const attempt = (text: string) => {
+				try {
+					return { rows: site.execSql(text).rows.length };
+				} catch (e) {
+					return { error: String(e) };
+				}
+			};
+			const sql = [
+				'SELECT * FROM _cf_KV',
+				"UPDATE _cf_KV SET value = 'x'",
+				'DELETE FROM _cf_KV',
+				'DROP TABLE _cf_KV'
+			].map(attempt);
+			const php = await site.runJson(
+				`${BRIDGE}$o = []; foreach (['SELECT * FROM _cf_KV', "UPDATE _cf_KV SET value = 'x'", 'DELETE FROM _cf_KV'] as $q) { try { $o[] = json_encode(cfw_sql($q, [])); } catch (\\Throwable $e) { $o[] = 'threw'; } } echo json_encode($o);`
+			);
+			return {
+				sql,
+				php,
+				before,
+				after: JSON.stringify([...readAllRecords(sealed(site))])
+			};
+		});
+		expect(JSON.stringify(seen.sql)).not.toContain('modsum');
+		expect(JSON.stringify(seen.php)).not.toContain('modsum');
+		// the bridge answered each one, rather than the function being absent
+		expect(JSON.stringify(seen.php)).not.toContain('threw');
+		expect(JSON.stringify(seen.php)).toMatch(/_cf_KV/);
+		expect(seen.sql.every((one) => 'error' in one)).toBe(true);
+		expect(seen.after).toBe(seen.before);
+	}, 900_000);
+
+	it('removes a record with its row, moves it with a path that changes owner, and renames it with a package', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const kept = `${DIR}/kept.php`;
+			const gone = `${DIR}/gone.php`;
+			install(site, 'pkg/one', { [kept]: '<?php // kept', [gone]: '<?php // gone' });
+			const held = () => [...readAllRecords(sealed(site))].map(([path]) => path).sort();
+			const both = held();
+			changeModuleFiles(real(site), 'pkg/one', { remove: [gone], installedAt: 2 });
+			const afterRemove = held();
+			// another package takes the path: one record, owned by the new package
+			install(site, 'pkg/two', { [kept]: '<?php // taken' });
+			const afterTakeover = {
+				one: [...readPackageRecords(sealed(site), 'pkg/one').keys()],
+				two: [...readPackageRecords(sealed(site), 'pkg/two').keys()]
+			};
+			renameModulePackage(real(site), 'pkg/two', 'pkg/three');
+			const afterRename = {
+				two: [...readPackageRecords(sealed(site), 'pkg/two').keys()],
+				three: [...readPackageRecords(sealed(site), 'pkg/three').keys()],
+				owner: site.execSql('SELECT package FROM cfw_module_file').rows[0]?.['package']
+			};
+			changeModuleFiles(real(site), 'pkg/three', { clear: true, installedAt: 3 });
+			return {
+				both,
+				afterRemove,
+				afterTakeover,
+				afterRename,
+				afterClear: held(),
+				rows: site.execSql('SELECT path FROM cfw_module_file').rows.length
+			};
+		});
+		expect(seen.both).toEqual([`${DIR}/gone.php`, `${DIR}/kept.php`]);
+		expect(seen.afterRemove).toEqual([`${DIR}/kept.php`]);
+		expect(seen.afterTakeover).toEqual({ one: [], two: [`${DIR}/kept.php`] });
+		expect(seen.afterRename).toEqual({
+			two: [],
+			three: [`${DIR}/kept.php`],
+			owner: 'pkg/three'
+		});
+		expect(seen.afterClear).toEqual([]);
+		expect(seen.rows).toBe(0);
+	}, 900_000);
+
+	it('counts the sealed rows an install writes, which are the object row meter', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const files = Object.fromEntries(
+				Array.from({ length: 1000 }, (_, i) => [`${DIR}/f${i}.php`, `<?php // ${i}`])
+			);
+			const first = install(site, 'drupal/held_probe', files);
+			const chunks = sealed(site).list('modsum:').length;
+			// the same bytes again write no record chunk
+			const again = install(site, 'drupal/held_probe', files);
+			return { first, chunks, again };
+		});
+		expect(seen.chunks).toBeGreaterThan(1);
+		expect(seen.first).toBe(seen.chunks);
+		expect(seen.again).toBe(0);
+	}, 900_000);
+
+	it('verifies a /modify upload, refuses a plant beside it, and re-applies the revision to repair', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const token = await ownerToken(site);
+			const call = modify(site, token);
+			const file = `modules/custom/${PACKAGE}/${PACKAGE}.module`;
+			const planted = `modules/custom/${PACKAGE}/src/Planted.php`;
+			const committed = await upload(call, moduleTree('<?php\n// uploaded\n'), 'one');
+			remount(site);
+			const mounted = await readFiles(site, [file]);
+			plant(site, planted, '<?php // planted', PACKAGE);
+			site.execSql('UPDATE cfw_module_file SET source = ? WHERE path = ?', [
+				'<?php // altered',
+				file
+			]);
+			remount(site);
+			const tampered = await readFiles(site, [file, planted]);
+			const refused = stats(site).refused;
+			const repaired = await call('activate', {
+				package: PACKAGE,
+				rev: String(committed.commit.body['rev'])
+			});
+			remount(site);
+			const after = await readFiles(site, [file, planted]);
+			return { committed, mounted, tampered, refused, repaired, after, file, planted };
+		});
+		expect(seen.committed.commit.body).toMatchObject({ ok: true, applied: true });
+		expect(seen.mounted).toEqual({ [seen.file]: '<?php\n// uploaded\n' });
+		expect(seen.tampered).toEqual({ [seen.file]: '', [seen.planted]: '' });
+		expect(seen.refused).toBe(2);
+		expect(seen.repaired.body).toMatchObject({ ok: true, applied: true });
+		// the owner's remedy: the revision is written again with fresh records, and the plant is
+		// not in its manifest so it is deleted
+		expect(seen.after[seen.file]).toBe('<?php\n// uploaded\n');
+		expect(seen.after[seen.planted]).toBe(false);
+	}, 900_000);
+
+	it('refuses a stored blob that does not match its hash before it is recorded', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const committed = await upload(call, moduleTree('<?php\n// honest\n'), 'one');
+			const file = `modules/custom/${PACKAGE}/${PACKAGE}.module`;
+			const honest = await sha256('<?php\n// honest\n');
+			site.execSql('UPDATE cfw_module_blob SET source = ? WHERE hash = ?', [
+				'<?php // swapped blob',
+				honest
+			]);
+			const rev = String(committed.commit.body['rev']);
+			const applied = await call('activate', { package: PACKAGE, rev });
+			const rows = site
+				.execSql('SELECT source FROM cfw_module_file WHERE path = ?', [file])
+				.rows.map((row) => String(row['source']));
+			return { applied, rows };
+		});
+		expect(seen.applied.status).toBe(409);
+		expect(String(seen.applied.body['error'])).toContain('do not match their hash');
+		expect(seen.rows).toEqual(['<?php\n// honest\n']);
+	}, 900_000);
+
+	/**
+	 * Measured on the local workerd, whose clock moves only on I/O: both readings bracket an await,
+	 * so the figure is wall time of the synchronous hashing, and it is printed rather than asserted.
+	 */
+	it('hashes a 1,040-file, 6.1 MB site on first open of every file', async () => {
+		const files = 1040;
+		const source = (i: number) => `<?php // ${i}\n` + '/* filler */\n'.repeat(450);
+		const paths = Array.from({ length: files }, (_, i) => `${DIR}/f${i}.php`);
+		const sweep = `<?php $n = 0; for ($i = 0; $i < ${files}; $i++) { $n += strlen(file_get_contents('/drupal/${DIR}/f' . $i . '.php')); } echo json_encode(['n' => $n]);`;
+		const timed = async (site: ServeDo): Promise<{ ms: number; n: unknown }> => {
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			const t0 = Date.now();
+			const out = await site.runJson(sweep);
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			return { ms: Date.now() - t0, n: out['n'] };
+		};
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			install(
+				site,
+				'drupal/held_probe',
+				Object.fromEntries(paths.map((p, i) => [p, source(i)]))
+			);
+			// warm the boot so neither arm pays it
+			await site.runJson('<?php echo json_encode(1);');
+			const open = await timed(site);
+			claim(site);
+			remount(site);
+			await site.runJson('<?php echo json_encode(1);');
+			const held = await timed(site);
+			// the hashing alone, over the same sources, to say how much of the gap it is
+			const sources = paths.map((_, i) => source(i));
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			const t0 = Date.now();
+			for (const text of sources) digestSource(text);
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			const hashMs = Date.now() - t0;
+			// the same count of 40-byte files, which is the per-file overhead with no bytes behind it
+			const tiny = paths.map((_, i) => `<?php // ${i}`.padEnd(40, ' '));
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			const t1 = Date.now();
+			for (const text of tiny) digestSource(text);
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			return { open, held, hashMs, tinyMs: Date.now() - t1, stats: stats(site) };
+		});
+		console.info(
+			`module integrity cost, local workerd: ${files} files, ${seen.held.n} bytes; first open of all, unclaimed ${seen.open.ms} ms, claimed ${seen.held.ms} ms; hashing alone ${seen.hashMs} ms, ${files} files of 40 bytes ${seen.tinyMs} ms (each reading includes two 5 ms waits); checked ${seen.stats.checked}, refused ${seen.stats.refused}`
+		);
+		// adoption reads and hashes every row once, on the first boot of a claimed legacy site
+		const boot = async (claimed: boolean) =>
+			inObject(freshSite(), async (site: ServeDo) => {
+				site.ensureServeTables();
+				paths.forEach((p, i) => plant(site, p, source(i)));
+				if (claimed) claim(site);
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				const t0 = Date.now();
+				await site.runJson('<?php echo json_encode(1);');
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				return { ms: Date.now() - t0, stats: stats(site) };
+			});
+		const bootOpen = await boot(false);
+		const bootAdopt = await boot(true);
+		console.info(
+			`module integrity adoption, local workerd: first boot with ${files} unrecorded rows, unclaimed ${bootOpen.ms} ms, claimed (adopts ${bootAdopt.stats.adopted}) ${bootAdopt.ms} ms`
+		);
+		expect(bootAdopt.stats.adopted).toBe(files);
+		expect(seen.held.n).toBe(seen.open.n);
+		expect(seen.stats.checked).toBeGreaterThanOrEqual(files);
+		expect(seen.stats.refused).toBe(0);
 	}, 900_000);
 });

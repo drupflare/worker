@@ -161,10 +161,19 @@ export type StorageLike = {
 	deleteAlarm(options?: unknown): Promise<void>;
 };
 
+/** the synchronous key-value half of `ctx.storage`, which SQLite-backed objects carry as `kv` */
+export type SyncKvLike = {
+	get(key: string): unknown;
+	put(key: string, value: unknown): void;
+	delete(key: string): boolean;
+	list(options?: unknown): Iterable<[string, unknown]>;
+};
+
 /**
  * Wraps `ctx.storage` so KV-API writes reach the rows meter (`degradation()` gates read-only mode
  * on it). `delete` is charged from its resolved result; `deleteAll` is charged 0 because its count
- * is unknown and a guess is worse than a visible zero.
+ * is unknown and a guess is worse than a visible zero. The synchronous `kv` handle is charged the
+ * same way, one row per put and per delete that removed something.
  */
 export function countingStorage<T extends object>(
 	storage: T,
@@ -213,6 +222,24 @@ export function countingStorage<T extends object>(
 	// same receiver rule as countingSql(): workerd host accessors reject a proxy as `this`
 	return new Proxy(storage, {
 		get(target, prop) {
+			if (prop === 'kv') {
+				const kv = Reflect.get(target, 'kv') as SyncKvLike | undefined;
+				if (kv === undefined) return undefined;
+				const counted: SyncKvLike = {
+					get: (key) => kv.get(key),
+					put: (key, value) => {
+						charge('kv.put', 1);
+						kv.put(key, value);
+					},
+					delete: (key) => {
+						const removed = kv.delete(key);
+						charge('kv.delete', removed ? 1 : 0);
+						return removed;
+					},
+					list: (options) => kv.list(options)
+				};
+				return counted;
+			}
 			const override = typeof prop === 'string' ? wrapped[prop] : undefined;
 			if (override) return override;
 			const value = Reflect.get(target, prop);

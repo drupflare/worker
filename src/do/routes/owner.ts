@@ -6,7 +6,7 @@ import {
 	dumpDatabase
 } from '../../db/export-sql';
 import { storeImport } from '../../db/import-sql';
-import { isBookmark } from '../../ops/site-secrets';
+import { isBookmark, sealedExportRows } from '../../ops/site-secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
 import { jsonError } from '../../util/reply';
@@ -127,7 +127,9 @@ export async function exportRoute(
 	const options = {
 		limitPerTable: Number(url.searchParams.get('limit') ?? 0),
 		// asked for by name, not implied by `all=1` (that flag widens which tables carry rows)
-		...(url.searchParams.get('secrets') === '1' ? { secrets: true } : {}),
+		...(url.searchParams.get('secrets') === '1'
+			? { secrets: true, sealedRows: sealedExportRows(site.secretStore()) }
+			: {}),
 		...(url.searchParams.get('all') === '1' ? { includeRows: () => true } : {}),
 		...(url.searchParams.get('chunkChars')
 			? { maxCharsPerChunk: Number(url.searchParams.get('chunkChars')) }

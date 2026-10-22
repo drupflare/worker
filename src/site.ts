@@ -1,11 +1,12 @@
 import { edgeRules } from './ops/edge-rules';
 import { chunkStack, isLengthError } from './ops/error-probe';
 import { ensureFleetTable, listSites, warmTargets, type FleetRow } from './ops/fleet';
-import { resolvePlan, resolveSettings, withPlan, withSettings } from './ops/plan';
+import { cspMode, resolvePlan, resolveSettings, withPlan, withSettings } from './ops/plan';
 import { resolveSite } from './ops/site-id';
 import { aliasRewrite } from './ops/site-origin';
 import { SitePhpDurableObject } from './site-do';
 import { decideAllowance } from './site/allowance';
+import { cspReportRoute } from './site/csp-report';
 import { decorateReply } from './site/decorate';
 import { canonicalOriginOf } from './site/deployment';
 import { readEdgeTiers, readKvTier } from './site/edge-read';
@@ -76,7 +77,7 @@ export default {
 		env = withSettings(withPlan(env, plan), settings);
 		// captured first: the page rewrite inside `frontFetch` moves the path into `?path=`
 		const visited = url.pathname;
-		const edge = edgeRules(env, isReservedPath);
+		const edge = edgeRules(env, isReservedPath, cspMode(env));
 		const moved = edge.redirect(url);
 		if (moved !== undefined) return moved;
 		try {
@@ -197,13 +198,15 @@ async function frontFetch(
 	if (gated !== undefined) return gated;
 	const recovered = await recoverRoute(entry);
 	if (recovered !== undefined) return recovered;
+	const reported = await cspReportRoute(entry);
+	if (reported !== undefined) return reported;
 
 	const f = await openContext(entry);
 	const windowed = await fillWindowRoute(f);
 	if (windowed !== undefined) return windowed;
 	const surface = await surfaceRoute(f);
 	if (surface !== undefined) return surface;
-	const oversized = refuseOversized(f);
+	const oversized = await refuseOversized(f);
 	if (oversized !== undefined) return oversized;
 
 	// one scan (a split plus up to six regex tests), shared with the authenticated check below

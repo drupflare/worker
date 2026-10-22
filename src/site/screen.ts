@@ -1,23 +1,53 @@
 import { EDGE_PAGE_TTL_S } from './edge-cache';
-import { bodyTooLarge, phpEntryRedirect } from './guards';
+import {
+	BodyLimitExceeded,
+	bodyLimitFor,
+	bodyTooLarge,
+	phpEntryRedirect,
+	readBounded
+} from './guards';
 import type { FrontContext } from './types';
 
-/** Refuses an oversized body before it reaches the interpreter. */
-export function refuseOversized(f: FrontContext): Response | undefined {
+function tooLarge(reason: string, limit: number): Response {
+	return new Response(`${reason}\n`, {
+		status: 413,
+		headers: {
+			'content-type': 'text/plain; charset=utf-8',
+			'cache-control': 'no-store',
+			'x-cfw-deny': 'body-too-large',
+			'x-cfw-body-limit': String(limit)
+		}
+	});
+}
+
+/**
+ * Refuses an oversized body before it reaches the object.
+ *
+ * Refused before the object (no DO request, no interpreter): `parse_str()` of a nested-array bomb
+ * (`foo[][][]=bar`) costs far more heap than wire bytes. A declared length is checked first; a body
+ * that declares none (chunked) is read here under the same ceiling, so the hop buffers what was
+ * already counted.
+ */
+export async function refuseOversized(f: FrontContext): Promise<Response | undefined> {
 	const { request, env } = f;
-	// refused before the object (no DO request, no interpreter): `parse_str()` of a nested-array
-	// bomb (`foo[][][]=bar`) costs far more heap than wire bytes; multipart is exempt
 	const oversized = bodyTooLarge(request, env);
-	if (oversized !== undefined) {
-		return new Response(`${oversized.reason}\n`, {
-			status: 413,
-			headers: {
-				'content-type': 'text/plain; charset=utf-8',
-				'cache-control': 'no-store',
-				'x-cfw-deny': 'body-too-large',
-				'x-cfw-body-limit': String(oversized.limit)
-			}
+	if (oversized !== undefined) return tooLarge(oversized.reason, oversized.limit);
+
+	const method = request.method.toUpperCase();
+	if (method === 'GET' || method === 'HEAD' || request.body === null) return undefined;
+	if (request.headers.get('content-length') !== null) return undefined;
+	const limit = bodyLimitFor(request, env);
+	if (limit === 0) return undefined;
+	try {
+		const body = await readBounded(request, limit);
+		f.request = new Request(request.url, {
+			method: request.method,
+			headers: request.headers,
+			body
 		});
+	} catch (e) {
+		if (e instanceof BodyLimitExceeded) return tooLarge(e.message, limit);
+		throw e;
 	}
 	return undefined;
 }

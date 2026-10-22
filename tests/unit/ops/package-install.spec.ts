@@ -1,9 +1,12 @@
 import { gzipSync, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
+import { install as installRoute } from '../../../src/do/routes/packages';
+import { digestSource, readAllRecords } from '../../../src/ops/module-integrity';
 import {
 	asksForBranch,
 	autoloadPhp,
 	branchArchive,
+	checkArchiveDigest,
 	classmapOf,
 	commonPrefix,
 	composerVersion,
@@ -25,6 +28,7 @@ import {
 	unpackTar,
 	unpackZip
 } from '../../../src/ops/package-install';
+import type { SitePhpDurableObject } from '../../../src/site-do';
 import { freshSite, inObject } from '../../helpers/serve-do';
 
 /**
@@ -365,6 +369,71 @@ describe('reading the archive location', () => {
 
 	it('answers null when there is no archive at all', () => {
 		expect(distOf({ version: '1.0.0' }, 'x/y')).toBeUndefined();
+	});
+});
+
+/**
+ * The digest a repository publishes for an archive, checked before the archive is unpacked.
+ *
+ * Measured against the live registries on 2026-10-22: every `packages.drupal.org` release carries a
+ * 40-character `dist.shasum` (the SHA-1 of the file; `drupal/token` 1.17.0 reproduced it from the
+ * real download), packagist publishes an empty string for a GitHub zipball, and a branch archive
+ * has none. So a missing digest installs unverified and says so, and a present one is enforced.
+ */
+describe('verifying an archive against its published digest', () => {
+	const hex = async (algorithm: string, data: Uint8Array) =>
+		[...new Uint8Array(await crypto.subtle.digest(algorithm, data))]
+			.map((b) => b.toString(16).padStart(2, '0'))
+			.join('');
+	const archive = zipSync({ 'app-1/src/App.php': bytes('<?php class App {}') });
+
+	it('accepts an archive whose SHA-1 matches and reports the digest it checked', async () => {
+		const sha1 = await hex('SHA-1', archive);
+		await expect(checkArchiveDigest({ name: 'a/b', shasum: sha1 }, archive)).resolves.toEqual({
+			ok: true,
+			verified: true,
+			digest: `sha1:${sha1}`
+		});
+	});
+
+	it('reads the digest case-insensitively, and a 64 character one as SHA-256', async () => {
+		const sha1 = await hex('SHA-1', archive);
+		const sha256 = await hex('SHA-256', archive);
+		expect(
+			await checkArchiveDigest({ name: 'a/b', shasum: sha1.toUpperCase() }, archive)
+		).toMatchObject({ ok: true, verified: true });
+		expect(await checkArchiveDigest({ name: 'a/b', shasum: sha256 }, archive)).toEqual({
+			ok: true,
+			verified: true,
+			digest: `sha256:${sha256}`
+		});
+	});
+
+	it('refuses an archive that does not match, and names both digests', async () => {
+		const wrong = await hex('SHA-1', bytes('some other archive'));
+		const out = await checkArchiveDigest({ name: 'a/b', shasum: wrong }, archive);
+		expect(out.ok).toBe(false);
+		if (!out.ok) {
+			expect(out.error).toContain('a/b archive does not match its published SHA-1 digest');
+			expect(out.error).toContain(`expected ${wrong}`);
+			expect(out.error).toContain(`got ${await hex('SHA-1', archive)}`);
+		}
+	});
+
+	it('refuses a published digest it cannot read rather than skipping it', async () => {
+		for (const shasum of ['abc123', 'z'.repeat(40), '1'.repeat(41)]) {
+			const out = await checkArchiveDigest({ name: 'a/b', shasum }, archive);
+			expect(out, shasum).toMatchObject({ ok: false });
+		}
+	});
+
+	it('installs an archive with no published digest, unverified', async () => {
+		for (const shasum of [undefined, '']) {
+			await expect(checkArchiveDigest({ name: 'a/b', shasum }, archive)).resolves.toEqual({
+				ok: true,
+				verified: false
+			});
+		}
 	});
 });
 
@@ -810,6 +879,103 @@ describe('installing a package with what it requires', () => {
 		} finally {
 			globalThis.fetch = realFetch;
 		}
+	});
+});
+
+/**
+ * `?force=1` skips the shipped-lock verdict and nothing else. The digest check sits in
+ * `installPackage()`, below the route, so no query parameter reaches it.
+ */
+describe('the install route and the archive digest', () => {
+	const realFetch = globalThis.fetch;
+	const archive = zipSync({
+		'app-1/src/App.php': bytes('<?php namespace Acme\\App; class App {}')
+	});
+	const sha1 = async (data: Uint8Array) =>
+		[...new Uint8Array(await crypto.subtle.digest('SHA-1', data))]
+			.map((b) => b.toString(16).padStart(2, '0'))
+			.join('');
+
+	async function install_(query: string, shasum: string | undefined) {
+		const meta = {
+			packages: {
+				'acme/app': [
+					{
+						version: '1.2.0',
+						dist: { url: 'https://dist.test/app.zip', type: 'zip', shasum }
+					}
+				]
+			}
+		};
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			const url = String(input instanceof Request ? input.url : input);
+			if (url.includes('p2/acme/app.json')) return Response.json(meta);
+			if (url === 'https://dist.test/app.zip') return new Response(archive);
+			return new Response('not found', { status: 404 });
+		}) as typeof fetch;
+		try {
+			return await inObject(freshSite(), async (site) => {
+				(site as unknown as { ensureServeTables(): void }).ensureServeTables();
+				const url = new URL(`https://cfw.local/install?module=acme/app${query}`);
+				const res = await installRoute(
+					site as unknown as SitePhpDurableObject,
+					new Request(url),
+					url
+				);
+				const rows = site.sql.exec('SELECT count(*) AS n FROM cfw_module_file').toArray();
+				const real = site as unknown as SitePhpDurableObject;
+				const records = readAllRecords(real.secretStore().sealed);
+				const stored = site.sql
+					.exec('SELECT path, source FROM cfw_module_file')
+					.toArray() as { path: string; source: string }[];
+				return {
+					status: res.status,
+					body: (await res.json()) as Record<string, unknown>,
+					rows: rows[0]?.['n'],
+					// every stored row has a record holding the digest of its bytes, and no others do
+					recorded:
+						records.size === stored.length &&
+						stored.every(
+							(row) =>
+								records.get(String(row.path)) === digestSource(String(row.source))
+						)
+				};
+			});
+		} finally {
+			globalThis.fetch = realFetch;
+		}
+	}
+
+	it('installs an archive that matches its digest and reports it verified', async () => {
+		const sha = await sha1(archive);
+		const out = await install_('&force=1', sha);
+		expect(out.status).toBe(200);
+		expect(out.body).toMatchObject({ ok: true, verified: true, digest: `sha1:${sha}` });
+		expect(out.rows).toBeGreaterThan(0);
+		expect(out.recorded, 'an installed file has no sealed record of its bytes').toBe(true);
+	});
+
+	it('refuses a mismatched archive and writes no file', async () => {
+		const out = await install_('', await sha1(bytes('a different archive')));
+		expect(out.status).toBe(502);
+		expect(out.body).toMatchObject({ ok: false, name: 'acme/app' });
+		expect(String(out.body['error'])).toContain('does not match its published SHA-1 digest');
+		expect(out.rows).toBe(0);
+	});
+
+	it('still refuses with force=1, which waives the lock check and not the digest', async () => {
+		const out = await install_('&force=1', await sha1(bytes('a different archive')));
+		expect(out.status).toBe(502);
+		expect(String(out.body['error'])).toContain('does not match its published SHA-1 digest');
+		expect(out.rows).toBe(0);
+	});
+
+	it('installs a package that publishes no digest, and says it was not verified', async () => {
+		const out = await install_('&force=1', '');
+		expect(out.status).toBe(200);
+		expect(out.body).toMatchObject({ ok: true, verified: false });
+		expect(out.body).not.toHaveProperty('digest');
+		expect(out.rows).toBeGreaterThan(0);
 	});
 });
 

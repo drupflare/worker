@@ -47,6 +47,10 @@ export type RenderResult = {
 	uid?: number | null;
 	/** Drupal's own `Cache-Control`; `no-store` or `private` is an explicit refusal to store */
 	cacheControl?: string | null;
+	/** the request headers Drupal says the response depends on; `Cookie` alone on the stock pack */
+	vary?: string | null;
+	/** the response headers the fragment reports, which the host filters through its boundary */
+	passHeaders?: Record<string, string>;
 };
 
 /** one entry into the stubbed interpreter, read back out of the emitted PHP fragment */
@@ -272,6 +276,12 @@ export type ServeDo = {
 	};
 	metaGet: (key: string, fallback?: string | null) => string | null;
 	metaSet: (key: string, value: unknown) => void;
+	/** the credentials held in key-value storage, which the SQL bridge cannot reach */
+	secretStore: () => import('../../src/ops/site-secrets').SecretStore;
+	readSecret: (key: string) => string | null;
+	writeSecret: (key: string, value: string) => void;
+	adoptSecrets: () => Promise<void>;
+	gitCredential: (id: string) => { token: string; email: string; username: string };
 	/** the deployment's mail vars merged with the site's settings and the Cloudflare grant */
 	mailEnv: () => import('../../src/ops/mail').MailEnv;
 	/** one live send, so `ready` can mean delivered rather than inferred */

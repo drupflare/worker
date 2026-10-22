@@ -12,6 +12,7 @@ import {
 import { portFibers } from '../ops/package-install';
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage } from '../util/errors';
+import { changeModuleFiles, trustedEntries } from './module-files';
 
 /**
  * Fetches one commit, plans it against what is installed, and optionally applies it.
@@ -67,7 +68,7 @@ export async function gitSync(
 		};
 	}
 
-	const before = [...stored.entries()];
+	const before = trustedEntries(site, [...stored.entries()]);
 	const rewired = gitApply(site, remote.id, plan, sha);
 	const verdict = await gitVerifyBoot(site);
 	if (!verdict.ok) {
@@ -109,28 +110,19 @@ export function gitApply(
 		/\.(info|services|routing)\.yml$/.test(path)
 	);
 	const now = site.nowMs();
+	let records = 0;
 	site.storage.transactionSync(() => {
-		for (const path of plan.deletes) {
-			site.sql.exec('DELETE FROM cfw_module_file WHERE path = ? AND package = ?', path, id);
-		}
-		for (const file of plan.writes) {
-			site.sql.exec(
-				`INSERT INTO cfw_module_file (path, package, version, source, installed_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(path) DO UPDATE SET
-             package = excluded.package,
-             version = excluded.version,
-             source = excluded.source,
-             installed_at = excluded.installed_at`,
-				file.path,
-				id,
-				sha,
-				portFibers(file.path, file.source),
-				now
-			);
-		}
+		records = changeModuleFiles(site, id, {
+			remove: plan.deletes,
+			put: plan.writes.map((file) => ({
+				path: file.path,
+				version: sha,
+				source: portFibers(file.path, file.source)
+			})),
+			installedAt: now
+		});
 	});
-	site.rowsSinceFlush = (site.rowsSinceFlush ?? 0) + plan.rowsWritten;
+	site.rowsSinceFlush = (site.rowsSinceFlush ?? 0) + plan.rowsWritten + records;
 	site.php = undefined;
 	return rewired;
 }
@@ -143,21 +135,15 @@ export function gitRestore(
 	sha: string
 ): void {
 	const now = site.nowMs();
+	let records = 0;
 	site.storage.transactionSync(() => {
-		site.sql.exec('DELETE FROM cfw_module_file WHERE package = ?', id);
-		for (const [path, source] of before) {
-			site.sql.exec(
-				`INSERT INTO cfw_module_file (path, package, version, source, installed_at)
-           VALUES (?, ?, ?, ?, ?)`,
-				path,
-				id,
-				sha,
-				source,
-				now
-			);
-		}
+		records = changeModuleFiles(site, id, {
+			clear: true,
+			put: before.map(([path, source]) => ({ path, version: sha, source })),
+			installedAt: now
+		});
 	});
-	site.rowsSinceFlush = (site.rowsSinceFlush ?? 0) + before.length + 1;
+	site.rowsSinceFlush = (site.rowsSinceFlush ?? 0) + before.length + 1 + records;
 	site.php = undefined;
 }
 

@@ -329,6 +329,66 @@ describe('an uploaded file is stored', () => {
 	);
 });
 
+// docs/security.md rests on PHP's own upload handling never running: the render fragment parses
+// the body, so the multipart-parser classes of bug have nothing to reach
+describe('PHP upload handling is not what parses a multipart body', () => {
+	it(
+		'builds the UploadedFile in the render fragment and leaves PHP upload state empty',
+		async () => {
+			const ORIGIN = 'https://do.local';
+			const png = druplicon();
+			const seen = await inObject(freshSite(), async (site: ServeDo) => {
+				await claimSite(site, 'cfw-Reach-5521-pass', 'Reach');
+				await render(site, '/user/login', { origin: ORIGIN });
+				await site.runJson(
+					`<?php
+					\\Drupal::service('event_dispatcher')->addListener('kernel.request', function ($event) {
+						$GLOBALS['__reach_files'] = $event->getRequest()->files->all();
+					});
+					echo json_encode(['armed' => true]);`
+				);
+				const body = withFile({ op: 'Log in' }, 'files[probe_0]', 'druplicon.png', png);
+				await render(site, '/user/login', {
+					method: 'POST',
+					contentType: `multipart/form-data; boundary=${BOUNDARY}`,
+					origin: ORIGIN,
+					...requestBody(body)
+				});
+				return site.runJson(
+					`<?php
+					$file = $GLOBALS['__reach_files']['files']['probe_0'] ?? null;
+					$tmp = is_object($file) ? $file->getPathname() : '';
+					echo json_encode([
+						'filesEmpty' => $_FILES === [],
+						'uploadedFile' => is_object($file) ? get_class($file) : null,
+						'name' => is_object($file) ? $file->getClientOriginalName() : null,
+						'valid' => is_object($file) ? $file->isValid() : null,
+						'isUploadedFile' => $tmp === '' ? null : is_uploaded_file($tmp),
+						'inHostList' => isset($GLOBALS['__cfw_uploads'][$tmp]),
+						'bytes' => $tmp !== '' && is_file($tmp) ? strlen(file_get_contents($tmp)) : null,
+					]);`
+				);
+			});
+
+			console.log(`[multipart-submit] reach ${JSON.stringify(seen)}`);
+			expect(seen['filesEmpty'], 'PHP filled $_FILES, so its own parser ran').toBe(true);
+			expect(seen['uploadedFile']).toBe(
+				'Symfony\\Component\\HttpFoundation\\File\\UploadedFile'
+			);
+			expect(seen['name']).toBe('druplicon.png');
+			expect(seen['valid'], 'test mode, because no POST SAPI answered is_uploaded_file').toBe(
+				true
+			);
+			expect(seen['isUploadedFile'], 'PHP knows the temp file as one of its uploads').toBe(
+				false
+			);
+			expect(seen['inHostList'], 'the fragment recorded the temp path it wrote').toBe(true);
+			expect(seen['bytes']).toBe(png.length);
+		},
+		TIMEOUT
+	);
+});
+
 describe('a multipart submission reaches Drupal as a submission', () => {
 	it(
 		'creates a user row through multipart, exactly as urlencoded already did',

@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import {
+	digestSource,
+	markAdopted,
+	readAllRecords,
+	readPackageRecords
+} from '../../src/ops/module-integrity';
 import { KV_OVERRIDABLE } from '../../src/ops/plan';
+import { OWNER_HASH_KEY } from '../../src/ops/site-secrets';
+import type { SitePhpDurableObject } from '../../src/site-do';
 import { fakeCommit, gitFetch, type FakeRepo } from '../helpers/fake-git';
 import { freshSite, inObject } from '../helpers/serve-do';
 
@@ -86,11 +94,47 @@ describe('remote storage', () => {
 			);
 			return {
 				remotes: obj.gitRemotes().length,
-				token: obj.metaGet(`git_token_${id}`),
-				hook: obj.metaGet(`git_hooksecret_${id}`)
+				token: obj.readSecret(`git_token_${id}`),
+				hook: obj.readSecret(`git_hooksecret_${id}`)
 			};
 		});
 		expect(left).toEqual({ remotes: 0, token: '', hook: '' });
+	});
+
+	// the SQL bridge can read and write cfw_meta, so a credential there is a credential to any SQL
+	it('holds the token and the hook secret where SQL cannot read them', async () => {
+		const site = freshSite();
+		const seen = await inObject(site, async (obj) => {
+			obj.ensureServeTables();
+			const id = 'github:o/r@main';
+			obj.writeSecret(`git_token_${id}`, 'ghp_secret');
+			obj.writeSecret(`git_hooksecret_${id}`, 'hook_secret');
+			const rows = JSON.stringify(obj.sql.exec('SELECT k, v FROM cfw_meta').toArray());
+			return {
+				rows,
+				credential: obj.gitCredential(id).token,
+				hook: obj.readSecret(`git_hooksecret_${id}`)
+			};
+		});
+		expect(seen.rows).not.toContain('ghp_secret');
+		expect(seen.rows).not.toContain('hook_secret');
+		expect(seen.credential).toBe('ghp_secret');
+		expect(seen.hook).toBe('hook_secret');
+	});
+
+	it('moves a credential stored before the upgrade out of cfw_meta on first use', async () => {
+		const site = freshSite();
+		const seen = await inObject(site, async (obj) => {
+			obj.ensureServeTables();
+			obj.metaSet('git_token_github:o/r@main', 'ghp_legacy');
+			const token = obj.gitCredential('github:o/r@main').token;
+			return {
+				token,
+				rows: JSON.stringify(obj.sql.exec('SELECT k, v FROM cfw_meta').toArray())
+			};
+		});
+		expect(seen.token).toBe('ghp_legacy');
+		expect(seen.rows).not.toContain('ghp_legacy');
 	});
 
 	it('refuses a repository string that names nothing', async () => {
@@ -405,8 +449,8 @@ describe('a pull against a git server', () => {
 			'modules/custom/mymodule/src/OnlyOnMain.php'
 		);
 		const carried = await inObject(site, async (obj) => ({
-			next: obj.metaGet('git_token_generic:o/r@topic'),
-			old: obj.metaGet('git_token_generic:o/r@main'),
+			next: obj.readSecret('git_token_generic:o/r@topic'),
+			old: obj.readSecret('git_token_generic:o/r@main'),
 			owner: (
 				obj.sql.exec('SELECT package FROM cfw_module_file LIMIT 1').toArray()[0] as {
 					package: string;
@@ -483,6 +527,110 @@ describe('a pull against a git server', () => {
 			obj.metaGet('git_installedsha_generic:o/r@main')
 		);
 		expect(installed).toBe(good.sha);
+	});
+
+	/** the sealed records beside the stored rows, so a spec can compare them path for path */
+	function recordsOf(site: DurableObjectStub) {
+		return inObject(site, async (obj) => {
+			const real = obj as unknown as SitePhpDurableObject;
+			const records = readAllRecords(real.secretStore().sealed);
+			const rows = real.sql
+				.exec<{ path: string; source: string }>('SELECT path, source FROM cfw_module_file')
+				.toArray();
+			return {
+				records: [...records].sort(([a], [b]) => a.localeCompare(b)),
+				digests: rows
+					.map((row) => [String(row.path), digestSource(String(row.source))] as const)
+					.sort(([a], [b]) => a.localeCompare(b))
+			};
+		});
+	}
+
+	it('records what a pull installs, moves the records with a branch switch and deletes them on remove', async () => {
+		const site = freshSite();
+		await connected(site);
+		const main = await fakeCommit({ ...MODULE, 'src/OnlyOnMain.php': '<?php\n' });
+		const topic = await fakeCommit({ ...MODULE, 'src/OnlyOnTopic.php': '<?php\n' });
+		serve({
+			refs: { 'refs/heads/main': main.sha, 'refs/heads/topic': topic.sha },
+			packs: { [main.sha]: main.pack, [topic.sha]: topic.pack }
+		});
+
+		await api(site, { action: 'pull', id: 'generic:o/r@main' });
+		const pulled = await recordsOf(site);
+		expect(pulled.records).toHaveLength(4);
+		expect(pulled.records, 'a record does not hold the digest of its row').toEqual(
+			pulled.digests.map(([path, digest]) => [path, digest])
+		);
+
+		await api(site, { action: 'switch', id: 'generic:o/r@main', branch: 'topic' });
+		const switched = await recordsOf(site);
+		expect(switched.records).toEqual(switched.digests.map(([path, digest]) => [path, digest]));
+		expect(switched.records.map(([path]) => path)).toContain(
+			'modules/custom/mymodule/src/OnlyOnTopic.php'
+		);
+		expect(switched.records.map(([path]) => path)).not.toContain(
+			'modules/custom/mymodule/src/OnlyOnMain.php'
+		);
+		const owned = await inObject(site, async (obj) => {
+			const store = (obj as unknown as SitePhpDurableObject).secretStore().sealed;
+			return {
+				old: readPackageRecords(store, 'generic:o/r@main').size,
+				next: readPackageRecords(store, 'generic:o/r@topic').size
+			};
+		});
+		expect(owned).toEqual({ old: 0, next: switched.records.length });
+
+		await api(site, { action: 'remove', id: 'generic:o/r@topic' });
+		const removed = await recordsOf(site);
+		expect(removed.records).toEqual([]);
+		expect(removed.digests).toEqual([]);
+	});
+
+	it('puts a rolled-back pull back with its records, and does not bless a row planted beside it', async () => {
+		const site = freshSite();
+		await connected(site);
+		const good = await fakeCommit(MODULE);
+		serve({ refs: { 'refs/heads/main': good.sha }, packs: { [good.sha]: good.pack } });
+		await api(site, { action: 'pull', id: 'generic:o/r@main' });
+		await inObject(site, async (obj) => {
+			const real = obj as unknown as SitePhpDurableObject;
+			// the owner hash is what makes the site claimed, so the check is enforcing
+			real.secretStore().sealed.put(OWNER_HASH_KEY, 'a'.repeat(64));
+			markAdopted(real.secretStore().sealed);
+			real.sql.exec(
+				`INSERT INTO cfw_module_file (path, package, version, source, installed_at)
+				 VALUES (?, ?, ?, ?, ?)`,
+				'modules/custom/mymodule/src/Planted.php',
+				'generic:o/r@main',
+				'planted',
+				'<?php // planted through sql',
+				1
+			);
+		});
+
+		const bad = await fakeCommit({
+			...MODULE,
+			'mymodule.module': '<?php\n// changed too\n'
+		});
+		serve({
+			refs: { 'refs/heads/main': bad.sha },
+			packs: { [bad.sha]: bad.pack, [good.sha]: good.pack }
+		});
+		const out = await inObject(site, async (obj) => {
+			obj.runJson = async () => ({ error: 'PHP Parse error: syntax error' });
+			const url = new URL('https://do.local/__git?action=pull&id=generic:o/r@main');
+			const res = await obj.handleGit(url, 'https://site.example');
+			return res.json();
+		});
+		expect((out as any).rolledBack).toBe(true);
+
+		const files = await storedFiles(site);
+		expect(files.map((f) => f.path)).not.toContain('modules/custom/mymodule/src/Planted.php');
+		expect(files.find((f) => f.path.endsWith('mymodule.module'))?.source).toContain('v1');
+		const after = await recordsOf(site);
+		expect(after.records).toHaveLength(3);
+		expect(after.records).toEqual(after.digests.map(([path, digest]) => [path, digest]));
 	});
 
 	it('previews a request head and returns to the branch on demand', async () => {

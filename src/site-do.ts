@@ -162,6 +162,7 @@ import {
 	replicationRecords,
 	sealGeneration
 } from './do/replication';
+import { auditOwnerCall } from './do/routes/audit';
 import { ROUTES } from './do/routes/index';
 import {
 	pageResponse,
@@ -258,8 +259,10 @@ import {
 } from './ops/git-provider';
 import { discoverRefs, requestRefs, type Advertisement, type SmartRemote } from './ops/git-smart';
 import { DEFAULT_POLL_MINUTES, backoffMs, clampInterval, type PollState } from './ops/git-sync';
+import { type HeapIntegrityStats } from './ops/heap-integrity';
 import { parseJsonReply } from './ops/json-reply';
 import { type MailEnv } from './ops/mail';
+import { type IntegrityStats } from './ops/module-integrity';
 import {
 	DEFAULT_SCOPES,
 	callbackUri,
@@ -326,7 +329,15 @@ import { type LogRecord, type LogStore } from './ops/replication-log';
 import { FIRST_RUN_KEY } from './ops/setup-page';
 import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS } from './ops/shipped-lock';
 import { ORIGIN_KEY, chooseOrigin, pinnable } from './ops/site-origin';
-import { ensureHashSalt, hashSaltAssignment, type SecretStore } from './ops/site-secrets';
+import {
+	adoptLegacyOwnerToken,
+	adoptLegacySecrets,
+	ensureHashSalt,
+	hashSaltAssignment,
+	readSealed,
+	writeSealed,
+	type SecretStore
+} from './ops/site-secrets';
 import { readStateRows } from './ops/state-fingerprint';
 import { classifyState } from './ops/state-inventory';
 import { RingBuffer, type Finding, type Observation } from './ops/supervisor';
@@ -444,7 +455,15 @@ class PhpStatic extends PhpBase {
 					// (an 8M cap held 38 MB)
 					'memory_limit=96M',
 					// removed so `STANDIN_FIX` can declare degraded versions under the same names
-					`disable_functions=${DISABLED.join(',')}`
+					`disable_functions=${DISABLED.join(',')}`,
+					// PHP_INI_PERDIR, so only boot can set it; the upload parser is userland here
+					'session.upload_progress.enabled=0',
+					// no stack arguments in fatal error output
+					'fatal_error_backtraces=0',
+					// uploads are parsed in userland, so PHP's own handling stays off
+					'file_uploads=0',
+					'expose_php=0',
+					'allow_url_include=0'
 				].join('\n'),
 				printErr: (t: string) => note(`err: ${t}`),
 				onAbort: (what: unknown) => note(`abort: ${what}`),
@@ -619,6 +638,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 	/** files written from `cfw_module_file` at boot; 0 on a site that has installed nothing */
 	installedModuleFiles?: number;
+	/** what the installed-file integrity check has seen; shown by `/serve-stats` */
+	moduleIntegrity?: IntegrityStats;
+	/** what the heap image integrity check has seen; shown by `/__serve-stats` */
+	heapIntegrity?: HeapIntegrityStats;
 	/** whether this invocation already bumped the generation */
 	bumpCoalesced?: boolean;
 	/** every cache tag invalidated this invocation (the bump is coalesced; the tag set is not) */
@@ -955,6 +978,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	txnSpeculativeNoRead?: number;
 	/** the counted handle; `storage-metered.spec.ts` fails on a direct `ctx.storage` write */
 	storage: DurableObjectStorage;
+	/** settles once a legacy plaintext owner token has been moved into sealed storage */
+	ownerAdoption: Promise<void>;
 	// #endregion
 
 	constructor(ctx: DurableObjectState, env: SiteEnv) {
@@ -971,6 +996,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// the KV half of the same meter: `setAlarm` alone is 360 rows/day on an idle site
 		this.storage = countingStorage(this.ctx.storage, () => this.writeTally, charge);
 		this.limitTally = {};
+		this.ownerAdoption = this.adoptOwnerToken();
 	}
 
 	/**
@@ -1614,7 +1640,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/** the stored token, email and username for a remote (empty strings when unset) */
 	gitCredential(id: string): Credential {
 		return {
-			token: this.metaGet(`git_token_${id}`) ?? '',
+			token: this.readSecret(`git_token_${id}`) ?? '',
 			email: this.metaGet(`git_email_${id}`) ?? '',
 			username: this.metaGet(`git_username_${id}`) ?? ''
 		};
@@ -2215,12 +2241,78 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return supervise(this, outcomes);
 	}
 
-	/** the meta table as a {@link SecretStore}, so the mint needs no Durable Object to test */
+	/**
+	 * The meta table as a {@link SecretStore}, so the mint needs no Durable Object to test, with
+	 * `sealed` on key-value storage: the SQL bridge cannot read or write it.
+	 */
 	secretStore(): SecretStore {
+		const kv = this.storage.kv;
 		return {
 			get: (key: string) => this.metaGet(key),
-			set: (key: string, value: string) => this.metaSet(key, value)
+			set: (key: string, value: string) => this.metaSet(key, value),
+			delete: (key: string) => {
+				this.ensureServeTables();
+				this.sql.exec('DELETE FROM cfw_meta WHERE k = ?', key);
+			},
+			sealed: {
+				get: (key: string) => kv.get<string>(key),
+				put: (key: string, value: string) => kv.put(key, value),
+				delete: (key: string) => void kv.delete(key),
+				list: (prefix: string) =>
+					[...kv.list<string>({ prefix })].map(
+						([key, value]) => [key, value] as [string, string]
+					)
+			}
 		};
+	}
+
+	/** reads a credential from sealed storage, moving a legacy `cfw_meta` row over on first read */
+	readSecret(key: string): string | null {
+		return readSealed(this.secretStore(), key);
+	}
+
+	/** stores a credential in sealed storage, where the SQL bridge cannot read or write it */
+	writeSecret(key: string, value: string): void {
+		writeSealed(this.secretStore(), key, value);
+	}
+
+	/** moves credentials found in `cfw_meta` into the sealed store before any request is served */
+	private adoptOwnerToken(): Promise<void> {
+		return this.ctx.blockConcurrencyWhile(() => this.adoptSecrets());
+	}
+
+	/**
+	 * Moves every credential that sits in `cfw_meta` (a site from before sealed storage, or an
+	 * import that carried them) into sealed storage. Runs on wake and at the head of each alarm,
+	 * which is where an import is applied, so a credential is in SQL for one firing at most.
+	 */
+	async adoptSecrets(): Promise<void> {
+		try {
+			if (!this.hasMetaTable()) return;
+			const store = this.secretStore();
+			await adoptLegacyOwnerToken(store);
+			const keys = this.sql
+				.exec<Row<{ k: string }>>(
+					`SELECT k FROM cfw_meta WHERE k IN ('owner_token_hash', 'cf_oauth_token')
+					OR substr(k, 1, 10) = 'git_token_' OR substr(k, 1, 15) = 'git_hooksecret_'`
+				)
+				.toArray()
+				.map((row) => row.k);
+			if (keys.length > 0) adoptLegacySecrets(store, keys);
+		} catch {
+			// a failed adoption retries on the next wake, alarm or credential read
+		}
+	}
+
+	/** whether `cfw_meta` exists, read without creating it (an unprovisioned object has none) */
+	private hasMetaTable(): boolean {
+		return (
+			this.sql
+				.exec<Row<{ name: string }>>(
+					`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cfw_meta'`
+				)
+				.toArray().length > 0
+		);
 	}
 
 	async sendMailTest(to: string): Promise<Payload> {
@@ -2314,7 +2406,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			if (clientId && stored.set.refreshToken && needsRefresh(stored.set, this.nowMs())) {
 				const next = await refresh({ clientId, refreshToken: stored.set.refreshToken });
 				if (!isTokenError(next)) {
-					this.metaSet(CF_OAUTH_TOKEN_KEY, JSON.stringify(next));
+					this.writeSecret(CF_OAUTH_TOKEN_KEY, JSON.stringify(next));
 					return {
 						token: next.accessToken,
 						accountId: this.cfCredentialsSync().accountId
@@ -2327,7 +2419,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 	/** the stored grant, parsed; `set` is undefined when there is none or it is unreadable */
 	private storedGrant(): { set?: TokenSet } {
-		const raw = this.metaGet(CF_OAUTH_TOKEN_KEY);
+		const raw = this.readSecret(CF_OAUTH_TOKEN_KEY);
 		if (!raw) return {};
 		try {
 			const set = JSON.parse(raw) as TokenSet;
@@ -3612,6 +3704,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * one feeds `/__serve-stats`.
 	 */
 	override async alarm(info?: AlarmInvocationInfo): Promise<any> {
+		await this.adoptSecrets();
 		this.adoptRetained();
 		recordInDeployment(this);
 		this.sleepBudget = { remainingMs: sleepBudgetMs(this.env, 'alarm') };
@@ -3742,6 +3835,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			) {
 				return this.replicaHandoff(refusal);
 			}
+			await auditOwnerCall(this, request, res.status);
 			return withKvGrant(this, request, this.withDegradeHeaders(res));
 		} catch (e) {
 			// a replica meeting work it may not do is the guard working; send the caller to the
@@ -3755,6 +3849,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// gate)
 			noteLimit(this.limitTally, e);
 			this.noteRangeError(e, 'fetch', request);
+			await auditOwnerCall(this, request, 500);
 			throw e;
 		} finally {
 			this.inflight = Math.max(0, (this.inflight ?? 1) - 1);
@@ -4002,6 +4097,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.replicaGuard = prev.replicaGuard;
 		this.pinnedHandles = prev.pinnedHandles;
 		this.installedModuleFiles = prev.installedModuleFiles;
+		this.moduleIntegrity = prev.moduleIntegrity;
+		this.heapIntegrity = prev.heapIntegrity;
 		// data about traps already armed in this interpreter; arming again could read as failed
 		this.parkInstall = prev.parkInstall;
 		this.phpOwner = kept.owner;

@@ -2,6 +2,7 @@ import { env as rawEnv } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
 	KV_OVERRIDABLE,
+	writeSettings as planWriteSettings,
 	resetSettingsMemo,
 	SETTINGS_KV_KEY,
 	type KvOverridable
@@ -55,7 +56,8 @@ const PROBE: Record<KvOverridable, string> = {
 	MEMORY_CACHE_BINS: 'dynamic_page_cache',
 	MEMORY_CACHE_MAX_ITEMS: '32',
 	RESPONSE_HEADERS: '[{"path":"/a*","set":{"X-A":"1"}}]',
-	REDIRECTS: '[{"from":"/a","to":"/b"}]'
+	REDIRECTS: '[{"from":"/a","to":"/b"}]',
+	CSP_MODE: 'enforce'
 };
 
 async function writeSettings(doc: Record<string, string>): Promise<void> {
@@ -209,5 +211,47 @@ describe('the KV lever seam inside the object', () => {
 		resetSettingsMemo();
 		const site = freshSite();
 		await expect(inObject(site, (obj) => obj.adoptSettings())).resolves.toBeUndefined();
+	});
+
+	/**
+	 * `CSP_MODE` is writable by the owner and by KV and not by Drupal's settings form. A
+	 * compromised administrator session would otherwise switch the policy that limits it off.
+	 */
+	it('refuses CSP_MODE from the PHP capability, takes it from the owner writer, and lists it', async () => {
+		const outcome = await inObject(freshSite(), async (obj) => {
+			await obj.adoptSettings();
+			const binary = (
+				obj as unknown as {
+					installCapabilities(
+						b: Record<string, (json: string) => string>
+					): Record<string, (json: string) => string>;
+				}
+			).installCapabilities({});
+			const reply = (payload: unknown) =>
+				JSON.parse(binary.cfwSettings!(JSON.stringify(payload))) as {
+					ok?: boolean;
+					error?: string;
+					accepted?: string[];
+					refused?: string[];
+					levers?: { name: string; domain?: { values?: string[] } }[];
+				};
+			const viaPhp = reply({
+				action: 'set',
+				patch: { CSP_MODE: 'off', RENDER_BUDGET_MS: '250' }
+			});
+			const listed = reply({ action: 'get' });
+			return { viaPhp, listed };
+		});
+		if (outcome.viaPhp.error !== undefined) return;
+		expect(outcome.viaPhp.refused).toEqual(['CSP_MODE']);
+		expect(outcome.viaPhp.accepted).toEqual(['RENDER_BUDGET_MS']);
+		expect(outcome.listed.levers?.find((l) => l.name === 'CSP_MODE')?.domain?.values).toEqual([
+			'off',
+			'report-only',
+			'enforce'
+		]);
+		const viaOwner = await planWriteSettings(env.CONFIG_KV, { CSP_MODE: 'enforce' });
+		expect(viaOwner.written.CSP_MODE).toBe('enforce');
+		expect(viaOwner.refused).toEqual([]);
 	});
 });

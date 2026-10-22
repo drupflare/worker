@@ -1,5 +1,3 @@
-import { bearerToken, tokenMatches } from './site-secrets';
-
 /**
  * The request headers Drupal sees besides the ones the serve path already carries by name.
  *
@@ -43,11 +41,12 @@ const MAX_BYTES = 16 * 1024;
  * ceiling is dropped, not truncated, so a value is never cut in the middle.
  *
  * @param headers the inbound request's headers
- * @param ownerToken the stored owner token, or null when the site is unclaimed
+ * @param authorizationIsOwner whether the request's bearer token is the owner token; the caller
+ *   decides, since only its hash is stored
  */
 export function forwardedHeaders(
 	headers: Headers,
-	ownerToken: string | null
+	authorizationIsOwner: boolean
 ): Record<string, string> {
 	const out: Record<string, string> = {};
 	let bytes = 0;
@@ -58,7 +57,7 @@ export function forwardedHeaders(
 		if (NOT_FORWARDED.has(name) || PLUMBING.test(name) || !NAME.test(name) || value === '') {
 			continue;
 		}
-		if (name === 'authorization' && tokenMatches(bearerToken(value), ownerToken)) continue;
+		if (name === 'authorization' && authorizationIsOwner) continue;
 		const size = name.length + value.length;
 		if (count >= MAX_HEADERS || bytes + size > MAX_BYTES) continue;
 		out[name] = value;

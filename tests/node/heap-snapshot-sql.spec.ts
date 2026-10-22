@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	DEFAULT_CHUNK_BYTES,
 	DO_SQLITE_MAX_RECORD_BYTES,
@@ -21,6 +21,15 @@ import {
 	type HeapSql,
 	type StreamRecord
 } from '../../src/db/heap-store';
+import {
+	checkHeapSnapshot,
+	emptyHeapIntegrityStats,
+	heapRecordKey,
+	noteHeapCheck,
+	pruneHeapRecords,
+	sealHeapSnapshot
+} from '../../src/ops/heap-integrity';
+import { memorySecretStore, type MemorySecretStore } from '../helpers/secret-store';
 
 /**
  * Bytes that inflate cleanly to the wrong content, which is what a digest-mismatch spec needs.
@@ -886,5 +895,341 @@ describe('the chunk codec, both directions', () => {
 	it('hands back the same reference for an unpacked row, so a restore copies once', () => {
 		const raw = new Uint8Array([1, 2, 3]);
 		expect(unpackChunk(raw, 0)).toBe(raw);
+	});
+});
+
+describe('a stored image is restored only when its rows hash to the root sealed outside SQL', () => {
+	const PAGE = 64;
+	const heap = sparseHeap([1, null, 2, 3, null, 4, 5, null], PAGE);
+	const HANDLES = [{ id: 1, name: GLOBAL_HANDLE_NAME }];
+	let db: DatabaseSync;
+	let sql: HeapSql;
+	let store: MemorySecretStore;
+
+	beforeEach(() => {
+		db = new DatabaseSync(':memory:');
+		sql = makeSql(db);
+		store = memorySecretStore();
+		ensureHeapTables(sql);
+	});
+
+	/** an image the host wrote: rows, then the record of its root in the sealed store */
+	function hostImage(generation = 'gen-a') {
+		const written = writeHeapSnapshot(sql, {
+			heap,
+			streams: STREAMS,
+			handles: HANDLES,
+			generation,
+			nowMs: 1,
+			chunkBytes: 100,
+			pageBytes: PAGE
+		});
+		sealHeapSnapshot(store.sealed, written.id, written.root);
+		return written;
+	}
+
+	/** what an author with SQL write does: copy every row under another id, with no record */
+	function plantCopy(from: number, to: number): void {
+		db.prepare(
+			`INSERT INTO cfw_heap_snapshot SELECT ?, created_at, byte_length, page_bytes, total_pages,
+				kept_pages, page_index, chunk_bytes, digest, generation, fd_table, handle_table
+			 FROM cfw_heap_snapshot WHERE id = ?`
+		).run(to, from);
+		db.prepare(
+			`INSERT INTO cfw_heap_chunk SELECT ?, seq, bytes, digest, raw_bytes
+			 FROM cfw_heap_chunk WHERE snapshot_id = ?`
+		).run(to, from);
+	}
+
+	const restoreAll = (id: number, chunkDigests?: string[]) => {
+		const meta = latestSnapshotMeta(sql)!;
+		expect(meta.id).toBe(id);
+		const target = new Uint8Array(heap.length);
+		const out = streamRestoreInto(sql, target, {
+			meta,
+			pageIndex: snapshotPageIndex(sql, id)!.pageIndex,
+			chunkDigests
+		});
+		return { target, out };
+	};
+
+	it('verifies what the host wrote and returns one digest per chunk', () => {
+		const written = hostImage();
+		const check = checkHeapSnapshot(store.sealed, sql, written.id);
+		expect(check.ok).toBe(true);
+		if (check.ok) expect(check.chunkDigests).toHaveLength(written.rows);
+	});
+
+	it('refuses an image with no record, and a copy of a sealed image under another id', () => {
+		const written = hostImage();
+		plantCopy(written.id, written.id + 1);
+		expect(checkHeapSnapshot(store.sealed, sql, written.id + 1)).toEqual({
+			ok: false,
+			reason: 'no sealed record'
+		});
+		// the row digests of the copy are every bit as good as the original's: they never were a
+		// defence against a writer who can also write them
+		const { target } = restoreAll(written.id + 1);
+		expect([...target]).toEqual([...heap]);
+	});
+
+	it('refuses a record that belongs to another snapshot id', () => {
+		const written = hostImage();
+		plantCopy(written.id, written.id + 1);
+		store.sealed.put(
+			heapRecordKey(written.id + 1),
+			store.sealed.get(heapRecordKey(written.id))!
+		);
+		expect(checkHeapSnapshot(store.sealed, sql, written.id + 1)).toEqual({
+			ok: false,
+			reason: 'digest mismatch'
+		});
+	});
+
+	it('refuses a chunk with one byte changed and its row digest rewritten to agree', () => {
+		const written = hostImage();
+		const row = db
+			.prepare(
+				'SELECT bytes, raw_bytes FROM cfw_heap_chunk WHERE snapshot_id = ? AND seq = 0'
+			)
+			.get(written.id) as { bytes: Uint8Array; raw_bytes: number };
+		const raw = unpackChunk(new Uint8Array(row.bytes), Number(row.raw_bytes));
+		raw[0] = (raw[0] as number) ^ 0xff;
+		const packed = packChunk(raw);
+		db.prepare(
+			'UPDATE cfw_heap_chunk SET bytes = ?, raw_bytes = ?, digest = ? WHERE snapshot_id = ? AND seq = 0'
+		).run(packed.stored, packed.rawBytes, digestBytes(raw), written.id);
+
+		// control: the row digest, which a writer with SQL can recompute, accepts the changed heap
+		const { target } = restoreAll(written.id);
+		expect([...target]).not.toEqual([...heap]);
+		expect(checkHeapSnapshot(store.sealed, sql, written.id)).toEqual({
+			ok: false,
+			reason: 'digest mismatch'
+		});
+	});
+
+	it.each([
+		['page_index', "'[0,2]'"],
+		['handle_table', `'[{"id":2,"name":"FS"}]'`],
+		['fd_table', "'[]'"],
+		['chunk_bytes', '99'],
+		['byte_length', '1'],
+		['page_bytes', '1'],
+		['total_pages', '1'],
+		['kept_pages', '1'],
+		['generation', "'gen-b'"]
+	])('refuses a changed %s with every chunk byte untouched', (column, value) => {
+		const written = hostImage();
+		db.exec(`UPDATE cfw_heap_snapshot SET ${column} = ${value} WHERE id = ${written.id}`);
+		expect(checkHeapSnapshot(store.sealed, sql, written.id)).toEqual({
+			ok: false,
+			reason: 'digest mismatch'
+		});
+	});
+
+	it('refuses an added, a removed and a renumbered chunk row', () => {
+		const written = hostImage();
+		expect(written.rows).toBeGreaterThan(2);
+		const refused = { ok: false, reason: 'digest mismatch' };
+
+		db.prepare(
+			'INSERT INTO cfw_heap_chunk SELECT snapshot_id, 99, bytes, digest, raw_bytes FROM cfw_heap_chunk WHERE snapshot_id = ? AND seq = 0'
+		).run(written.id);
+		expect(checkHeapSnapshot(store.sealed, sql, written.id)).toEqual(refused);
+		db.prepare('DELETE FROM cfw_heap_chunk WHERE seq = 99').run();
+		expect(checkHeapSnapshot(store.sealed, sql, written.id).ok).toBe(true);
+
+		db.prepare('UPDATE cfw_heap_chunk SET seq = 50 WHERE snapshot_id = ? AND seq = 1').run(
+			written.id
+		);
+		expect(checkHeapSnapshot(store.sealed, sql, written.id)).toEqual(refused);
+		db.prepare('UPDATE cfw_heap_chunk SET seq = 1 WHERE seq = 50').run();
+
+		db.prepare('DELETE FROM cfw_heap_chunk WHERE snapshot_id = ? AND seq = ?').run(
+			written.id,
+			written.rows - 1
+		);
+		expect(checkHeapSnapshot(store.sealed, sql, written.id)).toEqual(refused);
+	});
+
+	it('fails closed on a chunk that is not a blob', () => {
+		const written = hostImage();
+		db.prepare('UPDATE cfw_heap_chunk SET bytes = ? WHERE snapshot_id = ? AND seq = 0').run(
+			'not a blob',
+			written.id
+		);
+		expect(checkHeapSnapshot(store.sealed, sql, written.id)).toEqual({
+			ok: false,
+			reason: 'stored rows unreadable'
+		});
+	});
+
+	it.each([
+		['text that is not hex', 'zz'],
+		['one digit short', 'a'.repeat(63)],
+		['one digit long', 'a'.repeat(65)],
+		['upper case hex', 'A'.repeat(64)],
+		['an empty string', '']
+	])('fails closed on a record that is %s', (_name, record) => {
+		const written = hostImage();
+		store.sealed.put(heapRecordKey(written.id), record);
+		expect(checkHeapSnapshot(store.sealed, sql, written.id)).toEqual({
+			ok: false,
+			reason: 'malformed sealed record'
+		});
+	});
+
+	it('refuses a snapshot id with a record and no row', () => {
+		const written = hostImage();
+		db.exec('DELETE FROM cfw_heap_snapshot');
+		expect(checkHeapSnapshot(store.sealed, sql, written.id)).toEqual({
+			ok: false,
+			reason: 'no snapshot row'
+		});
+	});
+
+	it('checks each chunk against the verified digests as it lands, so a rewrite after the verify cannot', () => {
+		const written = hostImage();
+		const check = checkHeapSnapshot(store.sealed, sql, written.id);
+		if (!check.ok) throw new Error('the host image did not verify');
+		// intact rows restore the identical heap
+		const whole = restoreAll(written.id, check.chunkDigests);
+		expect([...whole.target]).toEqual([...heap]);
+		expect(whole.out.complete).toBe(true);
+
+		// rewritten after the verify, with a row digest that agrees: refused before the chunk lands
+		const row = db
+			.prepare(
+				'SELECT bytes, raw_bytes FROM cfw_heap_chunk WHERE snapshot_id = ? AND seq = 1'
+			)
+			.get(written.id) as { bytes: Uint8Array; raw_bytes: number };
+		const raw = unpackChunk(new Uint8Array(row.bytes), Number(row.raw_bytes));
+		raw[0] = (raw[0] as number) ^ 0xff;
+		const packed = packChunk(raw);
+		db.prepare(
+			'UPDATE cfw_heap_chunk SET bytes = ?, raw_bytes = ?, digest = ? WHERE snapshot_id = ? AND seq = 1'
+		).run(packed.stored, packed.rawBytes, digestBytes(raw), written.id);
+		const meta = latestSnapshotMeta(sql)!;
+		const target = new Uint8Array(heap.length);
+		let error: unknown;
+		try {
+			streamRestoreInto(sql, target, {
+				meta,
+				pageIndex: snapshotPageIndex(sql, written.id)!.pageIndex,
+				chunkDigests: check.chunkDigests
+			});
+		} catch (e) {
+			error = e;
+		}
+		expect(error).toBeInstanceOf(HeapChunkDigestError);
+		expect((error as HeapChunkDigestError).seq).toBe(1);
+		// chunk 0 landed and chunk 1 did not, which is what `bytesWritten` tells the caller to drop
+		expect((error as HeapChunkDigestError).chunksApplied).toBe(1);
+	});
+
+	it('refuses rows removed after the verify instead of reporting a complete restore', () => {
+		const written = hostImage();
+		const check = checkHeapSnapshot(store.sealed, sql, written.id);
+		if (!check.ok) throw new Error('the host image did not verify');
+		db.prepare('DELETE FROM cfw_heap_chunk WHERE snapshot_id = ? AND seq = ?').run(
+			written.id,
+			written.rows - 1
+		);
+		expect(() => restoreAll(written.id, check.chunkDigests)).toThrow(HeapChunkDigestError);
+	});
+
+	it('resumes a sliced restore against the same digests, and refuses a chunk changed between slices', () => {
+		const written = hostImage();
+		const check = checkHeapSnapshot(store.sealed, sql, written.id);
+		if (!check.ok) throw new Error('the host image did not verify');
+		const meta = latestSnapshotMeta(sql)!;
+		const pageIndex = snapshotPageIndex(sql, written.id)!.pageIndex;
+		const target = new Uint8Array(heap.length);
+		const first = streamRestoreInto(sql, target, {
+			meta,
+			pageIndex,
+			chunkDigests: check.chunkDigests,
+			limit: 1
+		});
+		expect(first.complete).toBe(false);
+		expect(first.totalChunks).toBe(written.rows);
+		const rest = streamRestoreInto(sql, target, {
+			meta,
+			pageIndex,
+			chunkDigests: check.chunkDigests,
+			from: first.nextChunk
+		});
+		expect(rest.complete).toBe(true);
+		expect([...target]).toEqual([...heap]);
+
+		const again = new Uint8Array(heap.length);
+		const slice = streamRestoreInto(sql, again, {
+			meta,
+			pageIndex,
+			chunkDigests: check.chunkDigests,
+			limit: 1
+		});
+		// a rewrite whose row digest agrees, so only the sealed digests can stop it
+		const row = db
+			.prepare(
+				'SELECT bytes, raw_bytes FROM cfw_heap_chunk WHERE snapshot_id = ? AND seq = ?'
+			)
+			.get(written.id, slice.nextChunk) as { bytes: Uint8Array; raw_bytes: number };
+		const raw = unpackChunk(new Uint8Array(row.bytes), Number(row.raw_bytes));
+		raw[0] = (raw[0] as number) ^ 0xff;
+		const packed = packChunk(raw);
+		db.prepare(
+			'UPDATE cfw_heap_chunk SET bytes = ?, raw_bytes = ?, digest = ? WHERE snapshot_id = ? AND seq = ?'
+		).run(packed.stored, packed.rawBytes, digestBytes(raw), written.id, slice.nextChunk);
+		expect(() =>
+			streamRestoreInto(sql, again, {
+				meta,
+				pageIndex,
+				chunkDigests: check.chunkDigests,
+				from: slice.nextChunk
+			})
+		).toThrow(HeapChunkDigestError);
+	});
+
+	it('deletes the records whose snapshot is gone and leaves every other sealed key alone', () => {
+		const first = hostImage('gen-a');
+		const second = hostImage('gen-b');
+		store.sealed.put('modsum:pkg:0000', '{}');
+		store.sealed.put('owner_token_sha256', 'x');
+		expect(pruneHeapRecords(store.sealed, sql)).toBe(0);
+
+		expect(gcHeapSnapshots(sql, 1)).toBe(1);
+		expect(pruneHeapRecords(store.sealed, sql)).toBe(1);
+		expect(store.sealed.get(heapRecordKey(first.id))).toBeUndefined();
+		expect(store.sealed.get(heapRecordKey(second.id))).toBeDefined();
+		expect(store.sealed.get('modsum:pkg:0000')).toBe('{}');
+		expect(store.sealed.get('owner_token_sha256')).toBe('x');
+
+		db.exec('DELETE FROM cfw_heap_snapshot');
+		expect(pruneHeapRecords(store.sealed, sql)).toBe(1);
+		expect(store.sealed.list('heapsum:')).toEqual([]);
+	});
+
+	it('counts verified and refused images and warns once per distinct reason', () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			const stats = emptyHeapIntegrityStats();
+			noteHeapCheck(stats, { ok: true, chunkDigests: [] });
+			noteHeapCheck(stats, { ok: false, reason: 'no sealed record' });
+			noteHeapCheck(stats, { ok: false, reason: 'no sealed record' });
+			noteHeapCheck(stats, { ok: false, reason: 'digest mismatch' });
+			expect(stats).toMatchObject({
+				verified: 1,
+				refused: 3,
+				lastReason: 'digest mismatch'
+			});
+			expect(warn).toHaveBeenCalledTimes(2);
+			expect(String(warn.mock.calls[0]?.[0])).toBe(
+				JSON.stringify({ heapIntegrity: { reason: 'no sealed record' } })
+			);
+		} finally {
+			warn.mockRestore();
+		}
 	});
 });

@@ -9,6 +9,7 @@
  */
 import { parseTar, tarEntryTree } from '@drupflare/untarl';
 import { gunzipSync, unzipSync } from 'fflate';
+import { bytesToHex } from '../util/hex';
 import { satisfies } from './composer-constraint';
 import { SHIPPED_CORE_VERSION } from './shipped-lock';
 
@@ -489,6 +490,49 @@ export function distOf(entry: Record<string, unknown>, name: string): ResolvedPa
 		type: dist?.type === 'tar' ? 'tar' : 'zip',
 		shasum: dist?.shasum === '' ? undefined : dist?.shasum,
 		mount: mountFor(name, typeof entry['type'] === 'string' ? entry['type'] : undefined)
+	};
+}
+
+/** what an archive's bytes said about the digest its repository published for it */
+export type ArchiveCheck =
+	{ ok: true; verified: boolean; digest?: string } | { ok: false; error: string };
+
+/**
+ * Checks an archive against the digest its repository published, before anything is unpacked.
+ *
+ * drupal.org publishes a SHA-1 for every release. Packagist publishes an empty string for a GitHub
+ * zipball and a branch archive has none, so a package without a digest installs unverified and the
+ * caller says so. A digest that is present and does not match always refuses, and nothing the
+ * caller passes can waive it. The digest comes from the same repository as the archive's URL, so it
+ * catches a swapped or corrupted archive, not a repository that lies in both.
+ */
+export async function checkArchiveDigest(
+	dist: Pick<ResolvedPackage, 'name' | 'shasum'>,
+	bytes: Uint8Array
+): Promise<ArchiveCheck> {
+	const published = dist.shasum?.trim().toLowerCase();
+	if (!published) return { ok: true, verified: false };
+	const algorithm = published.length === 40 ? 'SHA-1' : published.length === 64 ? 'SHA-256' : '';
+	if (algorithm === '' || !/^[0-9a-f]+$/.test(published)) {
+		return {
+			ok: false,
+			error: `${dist.name} publishes a digest this cannot read, so its archive is not installed`
+		};
+	}
+	// fetched and zipped buffers are never shared, so the narrowing is safe
+	const actual = bytesToHex(
+		await crypto.subtle.digest(algorithm, bytes as Uint8Array<ArrayBuffer>)
+	);
+	if (actual !== published) {
+		return {
+			ok: false,
+			error: `${dist.name} archive does not match its published ${algorithm} digest (expected ${published}, got ${actual}), so it is not installed`
+		};
+	}
+	return {
+		ok: true,
+		verified: true,
+		digest: `${algorithm.toLowerCase().replace('-', '')}:${actual}`
 	};
 }
 

@@ -13,7 +13,7 @@ import { hasApi, readHookEvent, verifyHook } from '../../ops/git-provider';
 import type { Registry } from '../../ops/package-install';
 import { derivativeUri } from '../../ops/render-lane';
 import { SHIPPED_CORE_VERSION } from '../../ops/shipped-lock';
-import { bearerToken, OWNER_TOKEN_KEY, tokenMatches } from '../../ops/site-secrets';
+import { bearerToken, ownerTokenIsSet, ownerTokenMatches } from '../../ops/site-secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
 import { jsonError } from '../../util/reply';
@@ -33,7 +33,7 @@ export async function git(
 	url: URL
 ): Promise<Response> {
 	const presented = bearerToken(request.headers.get('authorization'));
-	const ownerOk = tokenMatches(presented, site.metaGet(OWNER_TOKEN_KEY));
+	const ownerOk = await ownerTokenMatches(site.secretStore(), presented);
 	const diagnostics =
 		(site.env as unknown as Record<string, string | undefined>).PW_DIAGNOSTICS === '1';
 	if (!ownerOk && !diagnostics) {
@@ -54,9 +54,9 @@ export async function modify(
 	url: URL
 ): Promise<Response> {
 	const presented = bearerToken(request.headers.get('authorization'));
-	const owner = site.metaGet(OWNER_TOKEN_KEY);
-	const unclaimedRig = site.env.PW_DIAGNOSTICS === '1' && owner === null;
-	if (!unclaimedRig && !tokenMatches(presented, owner)) {
+	const store = site.secretStore();
+	const unclaimedRig = site.env.PW_DIAGNOSTICS === '1' && !(await ownerTokenIsSet(store));
+	if (!unclaimedRig && !(await ownerTokenMatches(store, presented))) {
 		return jsonError('owner token required', 401);
 	}
 	return site.handleModify(url, request);
@@ -80,7 +80,7 @@ export async function githook(
 		return jsonError('unknown remote', 404);
 	}
 	const body = await request.text();
-	const secret = site.metaGet(`git_hooksecret_${remote.id}`) ?? '';
+	const secret = site.readSecret(`git_hooksecret_${remote.id}`) ?? '';
 	const verdict = await verifyHook(remote.provider, request.headers, body, secret);
 	if (!verdict.ok) {
 		return jsonError(verdict.reason ?? 'refused', 401, { proof: verdict.proof });
@@ -158,8 +158,9 @@ export async function installable(
 /**
  * Installs one package, refusing first if the shipped lock conflicts.
  *
- * `?force=1` skips the check for a package the oracle cannot judge (`unverifiable`). Installing
- * does not enable; both routes are owner-gated because they write code the site did not ship with.
+ * `?force=1` skips the check for a package the oracle cannot judge (`unverifiable`). It never skips
+ * the archive digest check, which sits in `installPackage()`. Installing does not enable; both
+ * routes are owner-gated because they write code the site did not ship with.
  */
 export async function install(
 	site: SitePhpDurableObject,

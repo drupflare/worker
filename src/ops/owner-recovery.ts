@@ -73,12 +73,15 @@ export function judgeProof(
 	return { verdict: 'ok', exp };
 }
 
+/** the part of a secret store the spent-proof table needs */
+type SpentStore = Pick<SecretStore, 'get' | 'set'>;
+
 interface Spent {
 	h: string;
 	exp: number;
 }
 
-function readSpent(store: SecretStore, nowMs: number): Spent[] {
+function readSpent(store: SpentStore, nowMs: number): Spent[] {
 	try {
 		const parsed: unknown = JSON.parse(store.get(RECOVER_SPENT_KEY) ?? '[]');
 		if (!Array.isArray(parsed)) return [];
@@ -99,7 +102,7 @@ function readSpent(store: SecretStore, nowMs: number): Spent[] {
  * the write, which is what makes two racing requests spend a proof once. Entries drop once their
  * `exp` has passed, since an expired record is refused before it gets here.
  */
-export function spendProof(store: SecretStore, hash: string, exp: number, nowMs: number): boolean {
+export function spendProof(store: SpentStore, hash: string, exp: number, nowMs: number): boolean {
 	const spent = readSpent(store, nowMs);
 	if (spent.some((s) => s.h === hash)) return false;
 	spent.push({ h: hash, exp });

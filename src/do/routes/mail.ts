@@ -213,7 +213,7 @@ export async function cfoauth(
 		});
 		if (isTokenError(out)) return refuse(out.error);
 		const accountId = await resolveAccountId(out.accessToken);
-		site.metaSet(CF_OAUTH_TOKEN_KEY, JSON.stringify(out));
+		site.writeSecret(CF_OAUTH_TOKEN_KEY, JSON.stringify(out));
 		if (accountId) site.metaSet(CF_OAUTH_ACCOUNT_KEY, accountId);
 		// the grant replaces the pasted pair, which is why it is offered
 		site.env = {
@@ -227,7 +227,7 @@ export async function cfoauth(
 	}
 
 	if (action === 'disconnect') {
-		const raw = site.metaGet(CF_OAUTH_TOKEN_KEY);
+		const raw = site.readSecret(CF_OAUTH_TOKEN_KEY);
 		let revoked = false;
 		if (raw && clientId) {
 			try {
@@ -238,12 +238,12 @@ export async function cfoauth(
 			}
 		}
 		// cleared either way; `revoked` is reported separately so a failed revocation stays visible
-		site.metaSet(CF_OAUTH_TOKEN_KEY, '');
+		site.writeSecret(CF_OAUTH_TOKEN_KEY, '');
 		site.metaSet(CF_OAUTH_ACCOUNT_KEY, '');
 		return Response.json({ ok: true, revoked });
 	}
 
-	const stored = site.metaGet(CF_OAUTH_TOKEN_KEY);
+	const stored = site.readSecret(CF_OAUTH_TOKEN_KEY);
 	return Response.json({
 		ok: true,
 		clientId: clientId ? `${clientId.slice(0, 6)}...` : null,

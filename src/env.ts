@@ -124,6 +124,8 @@ export interface SiteEnv extends BaseSiteEnv {
 	SITE_LOCATION_HINT?: string;
 	/** largest non-file request body the edge forwards, in bytes; default 2 MiB, `0` disables */
 	MAX_BODY_BYTES?: string | number;
+	/** largest `multipart/form-data` body the edge forwards, in bytes; default 100 MiB, `0` disables */
+	MAX_UPLOAD_BYTES?: string | number;
 	/**
 	 * PHP log level mirrored to `console.log`: `off | error | warn | log | info | debug`.
 	 * Defaults to `info`; on 8.5 `debug` is mostly deprecation notices with stack traces.

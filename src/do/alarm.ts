@@ -1,3 +1,4 @@
+import type { SnapshotMeta } from '../db/heap-store';
 import type { SiteEnv } from '../env';
 import { hasDeploymentEnv } from '../ops/deployment-env';
 import type { Payload } from './types';
@@ -9,6 +10,8 @@ export type HeapRestoreCursor = {
 	totalChunks: number;
 	bytesWritten: number;
 	firings: number;
+	/** what the first firing verified against the sealed root; a firing without it refuses */
+	verified?: { meta: SnapshotMeta; pageIndex: number[]; chunkDigests: string[] };
 };
 
 /**

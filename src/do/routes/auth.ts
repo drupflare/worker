@@ -10,6 +10,7 @@ import {
 	readOidcSetup,
 	type PendingLogin
 } from '../../ops/oidc';
+import { noteFailedAttempt } from '../../ops/owner-audit';
 import {
 	isNonce,
 	judgeProof,
@@ -17,10 +18,16 @@ import {
 	spendProof,
 	type RecoverKv
 } from '../../ops/owner-recovery';
-import { bearerToken, OWNER_TOKEN_KEY, tokenMatches } from '../../ops/site-secrets';
+import {
+	bearerToken,
+	ownerTokenIsSet,
+	ownerTokenMatches,
+	rotateOwnerToken
+} from '../../ops/site-secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { jsonError } from '../../util/reply';
 import { OIDC_CLIENT_ID_KEY, OIDC_ISSUER_KEY, OIDC_PENDING_KEY, OIDC_TICKET_KEY } from '../keys';
+import { auditStore } from './audit';
 
 /**
  * Tier B: the OIDC login the host completes before PHP is entered (the interpreter cannot verify
@@ -158,8 +165,8 @@ export async function oidcsetup(
 }
 
 /**
- * Spends a recovery proof and returns the owner token (inner route; the front worker applies the
- * failure budget around it).
+ * Spends a recovery proof and returns a NEW owner token; the previous one stops working (inner
+ * route; the front worker applies the failure budget around it).
  *
  * Every refusal names a `reason` the client branches on. Only `unknown` is retryable, because a
  * record written seconds ago may not have reached this colo yet.
@@ -220,11 +227,17 @@ export async function recoverToken(
 		return refuse(410, 'spent', 'the proof was already used');
 	}
 	await forget();
-	// read, never minted: `ensureOwnerToken()` here would let a recovery claim an unclaimed site
-	const token = site.metaGet(OWNER_TOKEN_KEY);
-	if (!token) return refuse(409, 'unclaimed', 'this site has no owner token yet');
+	// rotated, never minted for an unclaimed site: a recovery must not be a way to claim one
+	const store = site.secretStore();
+	if (!(await ownerTokenIsSet(store))) {
+		return refuse(409, 'unclaimed', 'this site has no owner token yet');
+	}
+	// only the hash is stored, so the old token cannot be read back; a new one replaces it and the
+	// old one stops working. `rotated` is how a client tells this worker from one that returns the
+	// old token
+	const token = await rotateOwnerToken(store);
 	return Response.json(
-		{ ok: true, ownerToken: token },
+		{ ok: true, ownerToken: token, rotated: true },
 		{ headers: { 'cache-control': 'no-store' } }
 	);
 }
@@ -236,8 +249,8 @@ export async function ownercheck(
 	url: URL
 ): Promise<Response> {
 	const presented = bearerToken(request.headers.get('authorization'));
-	const stored = site.metaGet(OWNER_TOKEN_KEY);
-	return new Response(null, {
-		status: tokenMatches(presented, stored) ? 200 : 401
-	});
+	const matched = await ownerTokenMatches(site.secretStore(), presented);
+	// a counter, never an entry: a row per attempt is the amplification the failure budget removes
+	if (!matched && presented) noteFailedAttempt(auditStore(site), site.nowMs());
+	return new Response(null, { status: matched ? 200 : 401 });
 }

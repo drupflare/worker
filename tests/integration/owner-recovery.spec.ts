@@ -12,12 +12,20 @@ import {
 	RECOVER_MAX_LIFE_MS,
 	RECOVER_SPENT_KEY,
 	recoverKey,
+	sha256Hex,
 	spendProof
 } from '../../src/ops/owner-recovery';
-import { OWNER_TOKEN_KEY, type SecretStore } from '../../src/ops/site-secrets';
+import {
+	mintOwnerToken,
+	OWNER_HASH_KEY,
+	OWNER_TOKEN_KEY,
+	ownerTokenMatches
+} from '../../src/ops/site-secrets';
 import worker, { routeTable } from '../../src/site';
 import type { SitePhpDurableObject } from '../../src/site-do';
-import { inObject, provisionedNamedSite } from '../helpers/serve-do';
+import { HOST_HELPERS_PHP } from '../../src/site/generated/assets';
+import { memorySecretStore } from '../helpers/secret-store';
+import { freshSite, inObject, provisionedNamedSite, type ServeDo } from '../helpers/serve-do';
 
 /**
  * Owner-token recovery: a nonce whose hash sits in `CONFIG_KV` is the credential.
@@ -50,14 +58,14 @@ function memoryKv(over: { staleAfterDelete?: boolean } = {}) {
 function fakeSite(
 	over: { token?: string | null; kv?: ReturnType<typeof memoryKv> | undefined; now?: number } = {}
 ) {
-	const meta = new Map<string, string>();
-	if (over.token !== null) meta.set(OWNER_TOKEN_KEY, over.token ?? TOKEN);
-	const store: SecretStore = {
-		get: (key) => meta.get(key) ?? null,
-		set: (key, value) => void meta.set(key, value)
-	};
+	// a legacy plaintext row, which the first read migrates into the sealed store
+	const store = memorySecretStore(
+		over.token === null ? {} : { [OWNER_TOKEN_KEY]: over.token ?? TOKEN }
+	);
+	const meta = store.rows;
 	const site = {
 		meta,
+		store,
 		env: { CONFIG_KV: 'kv' in over ? over.kv : memoryKv() },
 		nowMs: () => over.now ?? NOW,
 		metaGet: (key: string) => meta.get(key) ?? null,
@@ -88,12 +96,19 @@ const present = (site: ReturnType<typeof fakeSite>, n: unknown, host = HOST) =>
 	);
 
 describe('the object route', () => {
-	it('returns the token for a valid proof, deletes the record and forbids caching', async () => {
+	it('rotates the token for a valid proof, deletes the record and forbids caching', async () => {
 		const site = fakeSite();
 		const key = await proofFor(site.env.CONFIG_KV as ReturnType<typeof memoryKv>, nonce('a'));
 		const res = await present(site, nonce('a'));
 		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual({ ok: true, ownerToken: TOKEN });
+		const body = (await res.json()) as { ok: boolean; ownerToken: string; rotated: boolean };
+		expect(body).toMatchObject({ ok: true, rotated: true });
+		expect(body.ownerToken).not.toBe(TOKEN);
+		// the old token is dead and the new one opens the site
+		expect(await ownerTokenMatches(site.store, TOKEN)).toBe(false);
+		expect(await ownerTokenMatches(site.store, body.ownerToken)).toBe(true);
+		// only a hash is kept, and not in the SQL-reachable table
+		expect([...site.meta.values()].join('|')).not.toContain(body.ownerToken);
 		expect(res.headers.get('cache-control')).toBe('no-store');
 		expect((site.env.CONFIG_KV as ReturnType<typeof memoryKv>).rows.has(key)).toBe(false);
 	});
@@ -169,7 +184,7 @@ describe('the object route', () => {
 		expect((await present(site, nonce('h'))).status).toBe(400);
 	});
 
-	// ensureOwnerToken() here would let a recovery claim a site nobody has claimed
+	// a rotation here would let a recovery claim a site nobody has claimed
 	it('never mints a token for an unclaimed site', async () => {
 		const kv = memoryKv();
 		const site = fakeSite({ kv, token: null });
@@ -177,6 +192,7 @@ describe('the object route', () => {
 		const res = await present(site, nonce('i'));
 		expect(res.status).toBe(409);
 		expect(site.meta.has(OWNER_TOKEN_KEY)).toBe(false);
+		expect(site.store.sealedRows.size).toBe(0);
 	});
 
 	it('says so when the deployment has no CONFIG_KV', async () => {
@@ -237,9 +253,9 @@ describe('the proof arithmetic', () => {
 
 	it('spends once, and forgets a proof only after it could no longer be accepted', () => {
 		const meta = new Map<string, string>();
-		const store: SecretStore = {
-			get: (k) => meta.get(k) ?? null,
-			set: (k, v) => void meta.set(k, v)
+		const store = {
+			get: (k: string) => meta.get(k) ?? null,
+			set: (k: string, v: string) => void meta.set(k, v)
 		};
 		expect(spendProof(store, 'k1', NOW + 100, NOW)).toBe(true);
 		expect(spendProof(store, 'k1', NOW + 100, NOW + 50)).toBe(false);
@@ -309,7 +325,7 @@ describe('the public route', () => {
 		expect(table.doRoute['/recover-token']).toBeUndefined();
 	});
 
-	it('returns the real object token for a real KV proof, once', async () => {
+	it('rotates the real object token for a real KV proof, once, and the old token dies', async () => {
 		const host = 'e2e-recover.example';
 		const stub = await provisionedNamedSite(host);
 		await inObject(stub, (site) => site.metaSet(OWNER_TOKEN_KEY, TOKEN));
@@ -317,7 +333,19 @@ describe('the public route', () => {
 
 		const res = await viaWorker(host, post(nonce('m')));
 		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual({ ok: true, ownerToken: TOKEN });
+		const body = (await res.json()) as { ownerToken: string; rotated: boolean };
+		expect(body.rotated).toBe(true);
+		expect(body.ownerToken).not.toBe(TOKEN);
+		const check = (token: string) =>
+			inObject(stub, (site) =>
+				site.fetch(
+					new Request('https://do.local/__ownercheck', {
+						headers: { authorization: `Bearer ${token}` }
+					})
+				)
+			).then((r) => r.status);
+		expect(await check(TOKEN)).toBe(401);
+		expect(await check(body.ownerToken)).toBe(200);
 		expect(await env.CONFIG_KV?.get(key)).toBeNull();
 
 		await env.CONFIG_KV?.put(key, JSON.stringify({ host, exp: Date.now() + 60_000 }));
@@ -414,5 +442,204 @@ describe('the public route', () => {
 			expect(res.status).toBe(409);
 		}
 		expect(ownerRefusedForNow('192.0.2.40', Date.now())).toBe(false);
+	});
+});
+
+/**
+ * Where the owner credential and the other secrets sit, read through the same SQL handle the
+ * bridge hands PHP. `cfwSqlExec` applies no table filter, so what matters is what that handle can
+ * reach: the platform reserves the `_cf_` tables behind key-value storage.
+ */
+describe('secrets held where the SQL bridge cannot reach them', () => {
+	const MARK = 'sealed-probe-value';
+
+	/** the outcome of one statement: its error text, or the rows it returned */
+	function attempt(site: ServeDo, text: string, ...params: unknown[]) {
+		try {
+			return { rows: site.sql.exec(text, ...params).toArray() };
+		} catch (e) {
+			return { error: String((e as Error).message) };
+		}
+	}
+	const kvOf = (site: ServeDo) =>
+		(
+			site.ctx.storage as unknown as {
+				kv: { get(k: string): unknown; put(k: string, v: unknown): void };
+			}
+		).kv;
+
+	it('answers no read of the key-value table and no write to it', async () => {
+		const out = await inObject(freshSite(), (site) => {
+			kvOf(site).put('probe', MARK);
+			const reads = [
+				attempt(site, 'SELECT * FROM _cf_KV'),
+				attempt(site, "SELECT * FROM _cf_KV WHERE key = 'probe'"),
+				attempt(
+					site,
+					"SELECT name, sql FROM sqlite_master WHERE name LIKE '\\_cf\\_%' ESCAPE '\\'"
+				),
+				attempt(site, 'SELECT * FROM pragma_table_list')
+			];
+			const writes = [
+				attempt(site, "INSERT OR REPLACE INTO _cf_KV (key, value) VALUES ('probe', 'x')"),
+				attempt(site, "UPDATE _cf_KV SET value = 'x'"),
+				attempt(site, 'DELETE FROM _cf_KV'),
+				attempt(site, 'DROP TABLE _cf_KV')
+			];
+			return { reads, writes, after: kvOf(site).get('probe') };
+		});
+		// none of the reads returned the stored value, and the stored value survived every write
+		expect(JSON.stringify(out.reads)).not.toContain(MARK);
+		expect(out.after).toBe(MARK);
+		console.info(`sealed-storage reach, measured: ${JSON.stringify(out)}`);
+	});
+
+	it('answers no read through a view, a subquery, a copy, the raw pages or an attached file', async () => {
+		const shapes = [
+			'SELECT * FROM (SELECT * FROM _cf_KV)',
+			'WITH k AS (SELECT * FROM _cf_KV) SELECT * FROM k',
+			'SELECT a.value FROM sqlite_master m JOIN _cf_KV a ON 1 = 1',
+			'CREATE TABLE stolen AS SELECT * FROM _cf_KV',
+			'CREATE TEMP TABLE stolen AS SELECT * FROM _cf_KV',
+			'CREATE VIEW stolen_view AS SELECT * FROM _cf_KV',
+			'SELECT * FROM stolen_view',
+			'SELECT * FROM sqlite_dbpage',
+			'SELECT * FROM dbstat',
+			"ATTACH DATABASE ':memory:' AS other",
+			// the rename Check Point reported in 2026: the authorizer once checked what a statement
+			// referenced and not the name a table was renamed to
+			'CREATE TABLE planted (key TEXT PRIMARY KEY, value BLOB)',
+			'ALTER TABLE planted RENAME TO _cf_KV',
+			'ALTER TABLE planted RENAME TO _cf_kv',
+			'ALTER TABLE _cf_KV RENAME TO moved_away',
+			'ALTER TABLE _cf_KV ADD COLUMN extra TEXT',
+			'CREATE TRIGGER sneak AFTER INSERT ON planted BEGIN SELECT 1; END',
+			"VACUUM INTO '/tmp/stolen.db'",
+			"SELECT load_extension('/tmp/x')",
+			"SELECT readfile('/etc/passwd')",
+			'PRAGMA writable_schema = 1'
+		];
+		const out = await inObject(freshSite(), (site) => {
+			kvOf(site).put('probe', MARK);
+			const results = shapes.map((text) => ({ text, ...attempt(site, text) }));
+			return { results, after: kvOf(site).get('probe') };
+		});
+		// the value never comes back through any shape, whether the statement ran or was refused
+		expect(JSON.stringify(out.results)).not.toContain(MARK);
+		expect(out.after).toBe(MARK);
+		console.info(
+			`sealed-storage reach by shape: ${JSON.stringify(
+				out.results.map((r) => [r.text, 'error' in r ? r.error : `${r.rows?.length} rows`])
+			)}`
+		);
+	});
+
+	it('refuses a rename onto the key-value table, including before anything has created it', async () => {
+		const out = await inObject(freshSite(), (site) => {
+			const listed = () =>
+				(
+					site.sql
+						.exec("SELECT name FROM sqlite_master WHERE name = '_cf_KV'")
+						.toArray() as { name: string }[]
+				).length;
+			const existedAtStart = listed() > 0;
+			const steps = [
+				'CREATE TABLE planted (key TEXT PRIMARY KEY, value BLOB)',
+				"INSERT INTO planted (key, value) VALUES ('owner_token_sha256', 'planted-hash')",
+				'ALTER TABLE planted RENAME TO _cf_KV'
+			].map((text) => ({ text, ...attempt(site, text) }));
+			const renamed = listed() > 0 && !existedAtStart;
+			// what the object's own storage reads back after the attempt
+			const read = kvOf(site).get('owner_token_sha256');
+			return { existedAtStart, steps, renamed, read };
+		});
+		console.info(`rename onto _cf_KV, measured: ${JSON.stringify(out)}`);
+		// a planted table must never become the key-value table, whether or not one existed
+		expect(out.renamed).toBe(false);
+		expect(out.read).not.toBe('planted-hash');
+	});
+
+	it('answers the same through PHP, which is how an attacker with code reaches SQL', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			kvOf(site).put('probe', MARK);
+			const php = await site.runJson(
+				`<?php
+				$out = [];
+				if (!function_exists('cfw_host')) {${HOST_HELPERS_PHP}}
+					$out[] = json_encode(cfw_sql('SELECT 1 AS one', []));
+					foreach (['SELECT * FROM _cf_KV', "UPDATE _cf_KV SET value = 'x'", 'DROP TABLE _cf_KV'] as $q) {
+					try { $out[] = json_encode(cfw_sql($q, [])); } catch (\\Throwable $e) { $out[] = 'threw: ' . $e->getMessage(); }
+				}
+				echo json_encode($out);`
+			);
+			return { php, after: kvOf(site).get('probe') };
+		});
+		// the bridge is loaded and reaches SQL, so what follows is the platform's refusal
+		expect(JSON.stringify(out.php)).toContain('one');
+		expect(JSON.stringify(out.php)).not.toContain('undefined function');
+		expect(JSON.stringify(out.php)).not.toContain(MARK);
+		expect(out.after).toBe(MARK);
+	});
+
+	it('leaves neither the token nor its hash in cfw_meta after a claim', async () => {
+		const stub = freshSite();
+		const { token, rows } = await inObject(stub, async (site) => {
+			site.ensureServeTables();
+			const minted = await mintOwnerToken(site.secretStore());
+			return {
+				token: minted ?? '',
+				rows: JSON.stringify(site.sql.exec('SELECT * FROM cfw_meta').toArray())
+			};
+		});
+		expect(token).not.toBe('');
+		const hash = await sha256Hex(token);
+		expect(rows).not.toContain(token);
+		expect(rows).not.toContain(hash);
+		expect(rows).not.toContain(OWNER_HASH_KEY);
+	});
+
+	it('is not replaced by SQL: a planted token row or a hash write changes nothing', async () => {
+		const stub = freshSite();
+		const verdict = await inObject(stub, async (site) => {
+			site.ensureServeTables();
+			const store = site.secretStore();
+			const real = (await mintOwnerToken(store)) ?? '';
+			const attacker = 'attacker-known-token';
+			// the two writes a SQL attacker has: a plaintext row, and a row holding a known hash
+			site.sql.exec("INSERT INTO cfw_meta (k, v) VALUES ('owner_token', ?)", attacker);
+			site.sql.exec(
+				'INSERT OR REPLACE INTO cfw_meta (k, v) VALUES (?, ?)',
+				OWNER_HASH_KEY,
+				await sha256Hex(attacker)
+			);
+			return {
+				attacker: await ownerTokenMatches(store, attacker),
+				real: await ownerTokenMatches(store, real),
+				plantedRowLeft: site.metaGet('owner_token')
+			};
+		});
+		expect(verdict).toEqual({ attacker: false, real: true, plantedRowLeft: null });
+	});
+
+	it('migrates a legacy plaintext token when the object wakes, before any request', async () => {
+		const stub = freshSite();
+		await inObject(stub, (site) => {
+			site.ensureServeTables();
+			site.metaSet(OWNER_TOKEN_KEY, TOKEN);
+		});
+		// a second instance over the same storage is a wake; its constructor adopts the row
+		const woke = await inObject(stub, async (site) => {
+			const { SitePhpDurableObject } = await import('../../src/site-do');
+			const next = new SitePhpDurableObject(
+				site.ctx as never,
+				site.env as never
+			) as unknown as ServeDo & { ownerAdoption: Promise<void> };
+			await next.ownerAdoption;
+			return {
+				row: next.metaGet(OWNER_TOKEN_KEY),
+				matches: await ownerTokenMatches(next.secretStore(), TOKEN)
+			};
+		});
+		expect(woke).toEqual({ row: null, matches: true });
 	});
 });

@@ -3,6 +3,7 @@ import { withMask } from '@drupflare/cartridge/mask';
 import { type OracleResult, resolveInstallable } from '../ops/oracle';
 import {
 	asksForBranch,
+	checkArchiveDigest,
 	classmapOf,
 	devMetadataUrl,
 	distOf,
@@ -21,6 +22,7 @@ import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage, isMissingTable } from '../util/errors';
 import { firstRow } from '../util/sql';
 import { INSTALLED_FS_BUDGET_BYTES, type LazyInstalledNode } from './lazy-mount';
+import { changeModuleFiles, prepareIntegrity } from './module-files';
 import type { SiteBinary } from './types';
 
 export { applyRevision, handleModify } from './modify';
@@ -238,25 +240,23 @@ export async function installPackage(
 		if (!archive.ok) {
 			return { ok: false, name, error: `archive ${archive.status} from ${dist.url}` };
 		}
-		const unpacked = unpackZip(new Uint8Array(await archive.arrayBuffer()), dist.mount);
+		const archiveBytes = new Uint8Array(await archive.arrayBuffer());
+		// before anything is unpacked; `force` never reaches this function, and nothing waives it
+		const checked = await checkArchiveDigest(dist, archiveBytes);
+		if (!checked.ok) return { ok: false, name, error: checked.error };
+		const unpacked = unpackZip(archiveBytes, dist.mount);
 
 		const decoder = new TextDecoder();
-		for (const file of unpacked.files) {
-			site.sql.exec(
-				`INSERT INTO cfw_module_file (path, package, version, source, installed_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(path) DO UPDATE SET
-             package = excluded.package,
-             version = excluded.version,
-             source = excluded.source,
-             installed_at = excluded.installed_at`,
-				file.path,
-				name,
-				dist.version,
-				portFibers(file.path, decoder.decode(file.bytes)),
-				site.nowMs()
-			);
-		}
+		site.rowsSinceFlush =
+			(site.rowsSinceFlush ?? 0) +
+			changeModuleFiles(site, name, {
+				put: unpacked.files.map((file) => ({
+					path: file.path,
+					version: dist.version,
+					source: portFibers(file.path, decoder.decode(file.bytes))
+				})),
+				installedAt: site.nowMs()
+			});
 		if (/^(modules|themes|profiles)\//.test(dist.mount)) site.dropCompiledContainer();
 		const autoload = (entry['autoload'] ?? {}) as PackageAutoload['autoload'];
 		// an extension's own classes are registered by Drupal's discovery, not a vendor autoload
@@ -287,6 +287,9 @@ export async function installPackage(
 			replaces: Object.keys((entry['replace'] ?? {}) as object),
 			files: unpacked.files.length,
 			bytes: unpacked.totalBytes,
+			// false when the repository published no digest, as packagist does for a GitHub zipball
+			verified: checked.verified,
+			...(checked.digest === undefined ? {} : { digest: checked.digest }),
 			skipped: unpacked.skipped.length,
 			// dropped so the next boot mounts the files (a warm object would fatal on a module
 			// PHP cannot see)
@@ -306,16 +309,21 @@ export async function installPackage(
  * Only paths and sizes are read at boot: loading every source held each twice in JavaScript
  * (1,040 files, 6.1 MB for one site) and reset the isolate. A clean node is dropped again past
  * {@link INSTALLED_FS_BUDGET_BYTES}. Unconditional, since `core.extension` names these modules.
+ *
+ * On a claimed site each file is hashed when it is first opened and compared with its sealed
+ * record; a file with no record or the wrong bytes reads as empty (see `prepareIntegrity()`).
  */
 export function mountInstalledModules(site: SitePhpDurableObject, binary: SiteBinary): number {
 	site.ensureServeTables();
 	const FS = binary.FS as unknown as LazyFS;
 	// byte length via BLOB (length() on TEXT counts characters and stops at a NUL)
 	const rows = site.sql
-		.exec<{ path: string; bytes: number; installed_at: number }>(
-			'SELECT path, length(CAST(source AS BLOB)) AS bytes, installed_at FROM cfw_module_file'
+		.exec<{ path: string; package: string; bytes: number; installed_at: number }>(
+			'SELECT path, package, length(CAST(source AS BLOB)) AS bytes, installed_at FROM cfw_module_file'
 		)
 		.toArray();
+	// before the early return, so a claimed site with no rows still adopts and refuses a later plant
+	const verify = prepareIntegrity(site, rows);
 	if (rows.length === 0) return 0;
 	// read through the current owner (the instance that mounted may be evicted, storage gone)
 	const owner = site.phpOwner ?? { current: site };
@@ -330,7 +338,9 @@ export function mountInstalledModules(site: SitePhpDurableObject, binary: SiteBi
 					node.cfwRow
 				)
 			);
-			node.contents = new TextEncoder().encode(String(row?.source ?? ''));
+			const bytes = new TextEncoder().encode(String(row?.source ?? ''));
+			// a refused file reads as empty, so PHP includes nothing from it
+			node.contents = verify(node.cfwRow, bytes, owner.current) ? bytes : new Uint8Array(0);
 			node.usedBytes = node.contents.length;
 			node.cfwLoaded = true;
 			resident.delete(node);

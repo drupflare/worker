@@ -186,5 +186,34 @@ export async function settingsRoute(
 
 	const { PLAN: _plan, plan: _lower, ...levers } = patch;
 	const written = await writeSettings(kv, levers, site);
+	await recordSettingsWrite(request, url, env, site);
 	return Response.json({ ok: true, plan: planResult, ...written });
+}
+
+/**
+ * Notes a settings write in the object's owner audit log. The write lives in `CONFIG_KV`, which
+ * the object cannot see, so the object learns of it from here; it checks the token itself, so a
+ * note it did not authorize is refused. A failure here never fails the write.
+ */
+async function recordSettingsWrite(
+	request: Request,
+	url: URL,
+	env: SiteWorkerEnv,
+	site: string
+): Promise<void> {
+	const authorization = request.headers.get('authorization');
+	if (!authorization) return;
+	try {
+		const inner = new URL(url.origin);
+		inner.pathname = '/__audit';
+		await env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env)).fetch(
+			new Request(inner, {
+				method: 'POST',
+				headers: { authorization },
+				body: JSON.stringify({ route: '/settings', status: 200 })
+			})
+		);
+	} catch {
+		// the write stands; an unreachable object has nothing to record it in
+	}
 }

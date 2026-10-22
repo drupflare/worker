@@ -1,4 +1,4 @@
-import { DEFAULT_MAX_BODY_BYTES } from '../ops/body-limit';
+import { DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_UPLOAD_BYTES } from '../ops/body-limit';
 import { renderTemplate } from '../util/template';
 import { GUARDS_OBJECT_RESET_HTML, GUARDS_OBJECT_RESET_UNSAVED_HTML } from './generated/assets';
 
@@ -59,28 +59,39 @@ export function objectResetPage(method: string): Response {
 	});
 }
 
+/** the env vars the body ceilings read */
+export type BodyLimitEnv = { MAX_BODY_BYTES?: string | number; MAX_UPLOAD_BYTES?: string | number };
+
 /**
- * Whether a request body is too large to hand to PHP.
- *
- * Reads only `Content-Length` (measuring the body means consuming it); a chunked request falls
- * through. `multipart/form-data` is exempt: uploads are not `parse_str()`d, so a cap would break
- * them without guarding anything.
- *
- * @param env - `MAX_BODY_BYTES` overrides the default; `0` disables the guard entirely
+ * The ceiling that applies to a request, or 0 for none: a form body has `MAX_BODY_BYTES`, an
+ * upload (`multipart/form-data`) has its own `MAX_UPLOAD_BYTES`, and `0` disables either.
  */
-export function bodyTooLarge(
-	request: Request,
-	env?: { MAX_BODY_BYTES?: string | number }
-): BodyTooLarge | undefined {
+export function bodyLimitFor(request: Request, env?: BodyLimitEnv): number {
+	const upload = (request.headers.get('content-type') ?? '')
+		.toLowerCase()
+		.includes('multipart/form-data');
+	const [value, fallback] = upload
+		? [env?.MAX_UPLOAD_BYTES, DEFAULT_MAX_UPLOAD_BYTES]
+		: [env?.MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES];
+	const raw = Number(value ?? fallback);
+	return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : fallback;
+}
+
+/**
+ * Whether a request body is too large to hand to PHP, by what it declares.
+ *
+ * Reads `Content-Length`, which the platform holds the body to; a chunked request declares none and
+ * is measured while it is read ({@link readBounded}). A form body is capped by `MAX_BODY_BYTES` and
+ * an upload by `MAX_UPLOAD_BYTES`.
+ *
+ * @param env - `0` for either limit disables that guard entirely
+ */
+export function bodyTooLarge(request: Request, env?: BodyLimitEnv): BodyTooLarge | undefined {
 	const method = request.method.toUpperCase();
 	if (method === 'GET' || method === 'HEAD') return undefined;
 
-	const raw = Number(env?.MAX_BODY_BYTES ?? DEFAULT_MAX_BODY_BYTES);
-	const limit = Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : DEFAULT_MAX_BODY_BYTES;
+	const limit = bodyLimitFor(request, env);
 	if (limit === 0) return undefined;
-
-	const type = request.headers.get('content-type') ?? '';
-	if (type.toLowerCase().includes('multipart/form-data')) return undefined;
 
 	const declared = Number(request.headers.get('content-length') ?? '');
 	if (!Number.isFinite(declared) || declared <= limit) return undefined;
@@ -90,6 +101,45 @@ export function bodyTooLarge(
 		declared,
 		reason: `request body of ${declared} bytes exceeds the ${limit} byte limit`
 	};
+}
+
+/** thrown when a body runs past its ceiling while it is being read */
+export class BodyLimitExceeded extends Error {
+	constructor(
+		readonly limit: number,
+		readonly read: number
+	) {
+		super(`request body of at least ${read} bytes exceeds the ${limit} byte limit`);
+	}
+}
+
+/**
+ * Reads a body whole, counting as it arrives, and stops at the first chunk that crosses `limit`.
+ * The rest of the stream is cancelled unread, so a chunked or multipart body with no (or a false)
+ * length is bounded by what was actually received. `0` means no ceiling.
+ */
+export async function readBounded(request: Request, limit: number): Promise<ArrayBuffer> {
+	if (limit === 0 || request.body === null) return request.arrayBuffer();
+	const reader = request.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		total += value.byteLength;
+		if (total > limit) {
+			await reader.cancel();
+			throw new BodyLimitExceeded(limit, total);
+		}
+		chunks.push(value);
+	}
+	const whole = new Uint8Array(total);
+	let at = 0;
+	for (const chunk of chunks) {
+		whole.set(chunk, at);
+		at += chunk.byteLength;
+	}
+	return whole.buffer;
 }
 
 /**

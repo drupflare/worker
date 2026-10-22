@@ -1,4 +1,5 @@
 import { detectConflicts, planSync, safeName } from '../ops/git-sync';
+import { digestSource } from '../ops/module-integrity';
 import {
 	activeRevision,
 	type Blob,
@@ -25,6 +26,7 @@ import type { SitePhpDurableObject } from '../site-do';
 import { jsonError } from '../util/reply';
 import { firstRow } from '../util/sql';
 import { gitApply, gitRestore, gitVerifyBoot } from './git-delivery';
+import { trustedEntries } from './module-files';
 
 /**
  * Eight actions over uploaded module revisions, mirroring `/git`'s single-route shape. Only
@@ -262,6 +264,16 @@ export async function applyRevision(
 			missing: missing.slice(0, 50)
 		};
 	}
+	// the blob table is SQL, so a stored blob is checked against its name before it is recorded
+	const altered = files.filter((file) => digestSource(file.source) !== manifest[file.path]);
+	if (altered.length > 0) {
+		return {
+			ok: false,
+			applied: false,
+			error: `${altered.length} stored blob(s) do not match their hash`,
+			altered: altered.map((file) => file.path).slice(0, 50)
+		};
+	}
 	const conflicts = detectConflicts(files, site.gitOwners(), pkg);
 	if (conflicts.length > 0) {
 		return {
@@ -272,7 +284,7 @@ export async function applyRevision(
 		};
 	}
 	const stored = site.gitStoredFiles(pkg);
-	const before = [...stored.entries()];
+	const before = trustedEntries(site, [...stored.entries()]);
 	const plan = planSync(stored, files);
 	const rewired = gitApply(site, pkg, plan, rev);
 	const verdict = await gitVerifyBoot(site);

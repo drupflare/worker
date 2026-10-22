@@ -1,6 +1,13 @@
+import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { CROSSING_NAMES } from '../../src/ops/crossings';
-import { KV_OVERRIDABLE } from '../../src/ops/plan';
+import { outboundGuardEnabled } from '../../src/ops/outbound-guard';
+import {
+	KV_OVERRIDABLE,
+	resetSettingsMemo,
+	SETTINGS_KV_KEY,
+	writeSettings
+} from '../../src/ops/plan';
 import { classifyCapability } from '../../src/ops/replica';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
@@ -102,6 +109,44 @@ describe('the capabilities Drupal admin pages read', () => {
 			expect((view.refused ?? []).sort()).toEqual(
 				['PLAN', 'PW_DIAGNOSTICS', 'Plan', 'plan'].sort()
 			);
+		});
+	});
+
+	// the guard switch exists for the rig, so it is the operator's binding alone: a site
+	// administrator, an owner-route caller and a planted KV document must all fail to move it
+	it('cannot switch the outbound guard off through PHP, the owner route or a KV document', async () => {
+		const spellings = ['OUTBOUND_GUARD', 'outbound_guard', 'Outbound_Guard', ' OUTBOUND_GUARD'];
+		const patch = Object.fromEntries(spellings.map((name) => [name, '0']));
+		expect(KV_OVERRIDABLE as readonly string[]).not.toContain('OUTBOUND_GUARD');
+		await inObject(freshSite(), async (site: ServeDo) => {
+			const kv = (env as unknown as { CONFIG_KV: KVNamespace }).CONFIG_KV;
+			await kv.delete(SETTINGS_KV_KEY);
+			resetSettingsMemo();
+			await (site as unknown as { adoptSettings(): Promise<void> }).adoptSettings();
+
+			const viaPhp = call(site, 'cfwSettings', { action: 'set', patch });
+			if (unwritable(viaPhp)) return;
+			expect(viaPhp.accepted).toEqual([]);
+			expect([...(viaPhp.refused ?? [])].sort()).toEqual([...spellings].sort());
+
+			const viaRoute = await writeSettings(kv, patch, 'probe');
+			expect([...viaRoute.refused].sort()).toEqual([...spellings].sort());
+			expect(Object.keys(viaRoute.written)).not.toContain('OUTBOUND_GUARD');
+
+			// a document written around both writers, as an operator with raw KV access could
+			await kv.put(
+				SETTINGS_KV_KEY,
+				JSON.stringify({ OUTBOUND_GUARD: '0', RENDER_BUDGET_MS: '250' })
+			);
+			resetSettingsMemo();
+			await (site as unknown as { adoptSettings(): Promise<void> }).adoptSettings();
+			const seen = (
+				site as unknown as { env: { OUTBOUND_GUARD?: string; RENDER_BUDGET_MS?: string } }
+			).env;
+			expect(seen.RENDER_BUDGET_MS, 'the document was read').toBe('250');
+			expect(outboundGuardEnabled(seen), 'the guard is still on').toBe(true);
+			await kv.delete(SETTINGS_KV_KEY);
+			resetSettingsMemo();
 		});
 	});
 

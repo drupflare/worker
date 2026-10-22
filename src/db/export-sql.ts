@@ -59,6 +59,8 @@ export const SECRET_META_KEYS = new Set([
 	'cf_oauth_token',
 	'cf_oauth_client_id',
 	'hash_salt',
+	// the owner hash a dump with `secrets=1` carries; sealed storage holds it, not `cfw_meta`
+	'owner_token_hash',
 	// the SMTP password, in plaintext inside a JSON blob
 	'site_smtp_settings'
 ]);
@@ -129,6 +131,11 @@ export interface DumpOptions {
 	maxCharsPerChunk?: number;
 	/** carry {@link SECRET_META_KEYS}; a faithful restore needs them, a backup does not */
 	secrets?: boolean;
+	/**
+	 * Credentials held outside SQL, as [key, value]; emitted as `cfw_meta` rows with the dump's
+	 * last statements when `secrets` is set, and moved back into sealed storage on import.
+	 */
+	sealedRows?: readonly (readonly [string, string])[];
 }
 
 /**
@@ -660,6 +667,14 @@ export function dumpChunk(
 	}
 	if (cursor.phase === 'later') {
 		lines.push(...plan.laterDdl);
+		if (opts.secrets === true) {
+			for (const [key, value] of opts.sealedRows ?? []) {
+				const quote = (s: string) => `'${s.replace(/'/g, "''")}'`;
+				lines.push(
+					`INSERT OR REPLACE INTO ${ident('cfw_meta')} (k, v) VALUES (${quote(key)}, ${quote(value)});`
+				);
+			}
+		}
 		return finish({ phase: 'done' });
 	}
 	if (cursor.phase === 'done') return finish({ phase: 'done' });

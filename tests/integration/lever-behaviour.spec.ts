@@ -1,11 +1,23 @@
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import type { SiteEnv } from '../../src/env';
 import { idleRearmMs, siteWarmEnabled } from '../../src/ops/cron';
+import {
+	CSP_BASELINE,
+	CSP_REPORT_IP_LIMIT,
+	CSP_REPORT_MAX_BYTES,
+	resetCspReportBudget
+} from '../../src/ops/csp';
 import { edgePlanEnabled, resetEdgePlans } from '../../src/ops/edge-plan';
 import { imageEngine } from '../../src/ops/image-transform';
 import { mailDrainLimit, resolveMailTransport, type MailEnv } from '../../src/ops/mail';
-import { KV_OVERRIDABLE } from '../../src/ops/plan';
+import {
+	KV_OVERRIDABLE,
+	resetPlanMemo,
+	resetSettingsMemo,
+	SETTINGS_KV_KEY,
+	writeSettings
+} from '../../src/ops/plan';
 import {
 	affinityKey,
 	chooseTarget,
@@ -198,7 +210,8 @@ describe('the fixture covers the allow-list', () => {
 			'EDGE_PLAN',
 			'ASSET_AGGREGATES',
 			'RESPONSE_HEADERS',
-			'REDIRECTS'
+			'REDIRECTS',
+			'CSP_MODE'
 		];
 		// read by a consumer this lane cannot reach; see the block comment above
 		const elsewhere = [
@@ -947,6 +960,190 @@ describe('FILL_SETTLE_MS holds background PHP off a young interpreter', () => {
 	});
 });
 
+describe('CSP_MODE sets a baseline policy at the front worker', () => {
+	const html = { 'content-type': 'text/html; charset=UTF-8' };
+
+	// the plan is memoised per site for a window, so one arm's `PLAN` would answer for the next
+	beforeEach(() => {
+		resetPlanMemo();
+		resetSettingsMemo();
+	});
+
+	it('sends none on free, report-only on paid, and the enforcing header when asked', async () => {
+		const free = await through('/csp-free');
+		expect(free.res.headers.has('content-security-policy')).toBe(false);
+		expect(free.res.headers.has('content-security-policy-report-only')).toBe(false);
+
+		resetPlanMemo();
+		const paid = await through('/csp-paid', { PLAN: 'paid' });
+		expect(paid.res.headers.get('content-security-policy-report-only')).toBe(CSP_BASELINE);
+		expect(paid.res.headers.has('content-security-policy')).toBe(false);
+
+		const enforced = await through('/csp-enforce', { CSP_MODE: 'enforce' });
+		expect(enforced.res.headers.get('content-security-policy')).toBe(CSP_BASELINE);
+		expect(enforced.res.headers.has('content-security-policy-report-only')).toBe(false);
+	});
+
+	it('lets off switch it off on a paid site', async () => {
+		const { res } = await through('/csp-paid-off', { PLAN: 'paid', CSP_MODE: 'off' });
+		expect(res.headers.has('content-security-policy-report-only')).toBe(false);
+	});
+
+	it('reads the mode from the settings document in KV', async () => {
+		const kv = (env as unknown as { CONFIG_KV: KVNamespace }).CONFIG_KV;
+		await writeSettings(kv, { CSP_MODE: 'enforce' });
+		try {
+			const { res } = await through('/csp-kv');
+			expect(res.headers.get('content-security-policy')).toBe(CSP_BASELINE);
+		} finally {
+			await kv.delete(SETTINGS_KV_KEY);
+			resetSettingsMemo();
+		}
+	});
+
+	it('loses to a policy the module set', async () => {
+		const policy = "default-src 'none'";
+		const { res } = await through(
+			'/csp-module',
+			{ CSP_MODE: 'enforce' },
+			{},
+			{ ...html, 'content-security-policy': policy }
+		);
+		expect(res.headers.get('content-security-policy')).toBe(policy);
+	});
+
+	it('loses to an operator rule, and a rule can remove it', async () => {
+		const set = JSON.stringify([
+			{ path: '/csp-rule', set: { 'Content-Security-Policy': "default-src 'self'" } },
+			{ path: '/csp-removed', set: { 'Content-Security-Policy': '' } }
+		]);
+		const ruled = await through('/csp-rule', { CSP_MODE: 'enforce', RESPONSE_HEADERS: set });
+		expect(ruled.res.headers.get('content-security-policy')).toBe("default-src 'self'");
+		const removed = await through('/csp-removed', {
+			CSP_MODE: 'enforce',
+			RESPONSE_HEADERS: set
+		});
+		expect(removed.res.headers.has('content-security-policy')).toBe(false);
+	});
+});
+
+describe('POST /csp-report answers in the front worker', () => {
+	const report = JSON.stringify({
+		'csp-report': {
+			'document-uri': 'https://cfw.local/node/1?secret=1',
+			'blocked-uri': 'https://other.example/a.js?k=v',
+			'violated-directive': "object-src 'none'",
+			'script-sample': 'x'
+		}
+	});
+	const post = (body: string, headers: Record<string, string> = {}) =>
+		through(
+			'/csp-report',
+			{},
+			{
+				method: 'POST',
+				body,
+				headers: {
+					'content-type': 'application/csp-report',
+					'cf-connecting-ip': '7.7.7.7',
+					...headers
+				}
+			}
+		);
+	let logged: MockInstance<typeof console.log>;
+	const lines = () =>
+		logged.mock.calls.filter((call) => call[0] === 'cfw-csp-report').map((call) => call[1]);
+
+	beforeEach(() => {
+		resetCspReportBudget();
+		logged = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+	});
+	afterEach(() => logged.mockRestore());
+
+	it.each(['application/csp-report', 'application/reports+json; charset=utf-8'])(
+		'answers 204 for %s, logs one structured line, and never addresses the object',
+		async (type) => {
+			const body =
+				type === 'application/csp-report'
+					? report
+					: JSON.stringify([
+							{
+								type: 'csp-violation',
+								body: {
+									documentURL: 'https://cfw.local/node/1?secret=1',
+									blockedURL: 'https://other.example/a.js?k=v',
+									effectiveDirective: "object-src 'none'",
+									sample: 'x'
+								}
+							}
+						]);
+			const { res, names } = await post(body, { 'content-type': type });
+			expect(res.status).toBe(204);
+			expect(names, 'no object was addressed').toEqual([]);
+			expect(lines()).toEqual([
+				{
+					site: expect.any(String),
+					blockedUri: 'https://other.example/a.js',
+					violatedDirective: "object-src 'none'",
+					documentPath: '/node/1',
+					sample: 'x'
+				}
+			]);
+		}
+	);
+
+	it('refuses a body over 8 KiB by its declared length and by what it carries', async () => {
+		const big = 'x'.repeat(CSP_REPORT_MAX_BYTES + 1);
+		const declared = await post(big, { 'content-length': String(big.length) });
+		expect(declared.res.status).toBe(413);
+		// a stream declares no length, so the cap has to count what is read
+		const stream = new ReadableStream({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode(big));
+				controller.close();
+			}
+		});
+		const { res } = await through(
+			'/csp-report',
+			{},
+			{
+				method: 'POST',
+				body: stream,
+				headers: { 'content-type': 'application/csp-report', 'cf-connecting-ip': '7.7.7.7' }
+			}
+		);
+		expect(res.status).toBe(413);
+		expect(lines()).toEqual([]);
+	});
+
+	it('refuses another content type, another method and a body that is not a report', async () => {
+		expect((await post(report, { 'content-type': 'application/json' })).res.status).toBe(415);
+		expect((await post(report, { 'content-type': 'text/plain' })).res.status).toBe(415);
+		expect((await post('not json')).res.status).toBe(400);
+		const get = await through('/csp-report');
+		expect(get.res.status).toBe(405);
+		expect(get.res.headers.get('allow')).toBe('POST');
+		expect(lines()).toEqual([]);
+	});
+
+	it('answers 204 with no log line once an address is over its budget', async () => {
+		let last = 0;
+		for (let i = 0; i < CSP_REPORT_IP_LIMIT + 1; i++) last = (await post(report)).res.status;
+		expect(last).toBe(204);
+		expect(lines()).toHaveLength(CSP_REPORT_IP_LIMIT);
+		// a different address is not held back by the first one's spend
+		const other = await post(report, { 'cf-connecting-ip': '8.8.8.8' });
+		expect(other.res.status).toBe(204);
+		expect(lines()).toHaveLength(CSP_REPORT_IP_LIMIT + 1);
+	});
+
+	it('counts a refused report against the budget too, since the request is the cost', async () => {
+		for (let i = 0; i < CSP_REPORT_IP_LIMIT; i++) await post('not json');
+		const over = await post('not json');
+		expect(over.res.status).toBe(204);
+	});
+});
+
 describe('RESPONSE_HEADERS and REDIRECTS shape what the front worker answers', () => {
 	const rules = JSON.stringify([
 		{
@@ -1013,6 +1210,57 @@ describe('RESPONSE_HEADERS and REDIRECTS shape what the front worker answers', (
 		expect(res.headers.get('referrer-policy')).toBe('no-referrer');
 		expect(res.headers.has('x-frame-options')).toBe(false);
 		expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+	});
+
+	describe('the order is default, then module, then operator rule', () => {
+		const POLICY = "default-src 'self'; frame-ancestors 'none'";
+		const fromModule = { 'x-frame-options': 'DENY', 'content-security-policy': POLICY };
+
+		it('lets a header the module set beat the default, and fills the rest', async () => {
+			const { res } = await through('/order-module', {}, {}, fromModule);
+			expect(res.headers.get('x-frame-options')).toBe('DENY');
+			expect(res.headers.get('content-security-policy')).toBe(POLICY);
+			expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+			expect(res.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
+		});
+
+		it('lets an operator rule beat the module and the default together', async () => {
+			const set = JSON.stringify([
+				{ path: '/order-rule', set: { 'X-Frame-Options': 'SAMEORIGIN', 'X-Other': '1' } }
+			]);
+			const { res } = await through('/order-rule', { RESPONSE_HEADERS: set }, {}, fromModule);
+			expect(res.headers.get('x-frame-options')).toBe('SAMEORIGIN');
+			expect(res.headers.get('x-other')).toBe('1');
+			expect(res.headers.get('content-security-policy')).toBe(POLICY);
+		});
+
+		it('lets an empty rule value remove a module header', async () => {
+			const set = JSON.stringify([
+				{ path: '/order-remove', set: { 'Content-Security-Policy': '' } }
+			]);
+			const { res } = await through(
+				'/order-remove',
+				{ RESPONSE_HEADERS: set },
+				{},
+				fromModule
+			);
+			expect(res.headers.has('content-security-policy')).toBe(false);
+			expect(res.headers.get('x-frame-options')).toBe('DENY');
+		});
+
+		it('keeps the module header where a rule names other headers', async () => {
+			const set = JSON.stringify([
+				{ path: '/order-other', set: { 'Referrer-Policy': 'no-referrer' } }
+			]);
+			const { res } = await through(
+				'/order-other',
+				{ RESPONSE_HEADERS: set },
+				{},
+				fromModule
+			);
+			expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+			expect(res.headers.get('x-frame-options')).toBe('DENY');
+		});
 	});
 
 	it("cannot set a cookie or overwrite this project's own headers", async () => {

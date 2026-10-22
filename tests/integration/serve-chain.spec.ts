@@ -1,5 +1,6 @@
 import { evictDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { variesByRequest } from '../../src/do/helpers';
 import { OWNER_TOKEN_KEY } from '../../src/ops/site-secrets';
 import { HeapRestoreIncomplete } from '../../src/site-do';
 import {
@@ -1014,6 +1015,62 @@ describe('the render origin is pinned, not believed', () => {
 		}
 	);
 
+	/**
+	 * A RESPONSE THAT SAYS IT VARIES BY A HEADER THE KEY LEAVES OUT IS NOT STORED.
+	 *
+	 * `cfw_page` is keyed by path alone, so the first visitor's variant would be everyone's.
+	 * Measured on the shipped pack (`forwarded-headers.spec.ts`): the front page and the login page
+	 * are byte identical across `Accept`, `User-Agent` and `Origin`, and Drupal's `Vary` is
+	 * `Cookie`. A module that does vary says so in `Vary`, which is the signal read here.
+	 */
+	it.each(['Accept', 'Origin', 'User-Agent', 'Cookie, Accept', '*', 'accept-language'])(
+		'refuses to store a render whose Vary is %s, and renders the next visitor afresh',
+		async (vary) => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				const calls = stubRender(site, ({ path }) => ({ ...pageFor(path), vary }));
+				await serveDirect(site, '/varies');
+				await serveDirect(site, '/varies');
+				const rows = site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/varies')
+					.toArray()[0];
+				return { renders: calls.length, rows: Number(rows?.c ?? -1) };
+			});
+			expect(out).toEqual({ renders: 2, rows: 0 });
+		}
+	);
+
+	it.each([
+		['Accept', true],
+		['Origin, Cookie', true],
+		['*', true],
+		['User-Agent', true],
+		['Cookie', false],
+		['Accept-Encoding', false],
+		['Cookie, Accept-Encoding', false],
+		['', false],
+		[undefined, false],
+		[null, false],
+		[42, false]
+	])('reads a Vary of %j as varies=%s', (vary, expected) => {
+		expect(variesByRequest(vary)).toBe(expected);
+	});
+
+	it.each(['Cookie', 'cookie, Accept-Encoding', '', undefined])(
+		'CONTROL: a render whose Vary is %j is still stored',
+		async (vary) => {
+			const stub = await provisionedSite();
+			const rows = await inObject(stub, async (site) => {
+				stubRender(site, ({ path }) => ({ ...pageFor(path), vary }));
+				await serveDirect(site, '/kept-vary');
+				return site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/kept-vary')
+					.toArray()[0];
+			});
+			expect(Number(rows?.c ?? -1)).toBe(1);
+		}
+	);
+
 	it('CONTROL: an ordinary public max-age is still stored', async () => {
 		const stub = await provisionedSite();
 		const rows = await inObject(stub, async (site) => {
@@ -1374,5 +1431,185 @@ describe('concurrent identical requests collapse to one render', () => {
 		});
 		// two different sessions must never be folded into one answer
 		expect(out.a).not.toBe(out.b);
+	});
+});
+
+/**
+ * A header a Drupal module sets (Security Kit, a subscriber) is part of the page, so the object
+ * stores it in the same INSERT and replays it from every answer it gives: the render, the stored
+ * HIT, and the AGED answer after a bump. The boundary is `passThroughHeaders()` on the way in and
+ * `decodeModuleHeaders()` on the way out, so a row written by SQL is held to it too.
+ */
+describe('module-set headers are stored with the page and replayed by the object', () => {
+	const POLICY = {
+		'content-security-policy': "frame-ancestors 'none'",
+		'x-frame-options': 'DENY'
+	};
+	const NAMES = Object.keys(POLICY);
+	const withHeaders = (passHeaders: Record<string, string>) => (call: RenderCall) => ({
+		...pageFor(call.path),
+		passHeaders
+	});
+	const seen = (probe: { header(name: string): string | null }) =>
+		Object.fromEntries(NAMES.map((name) => [name, probe.header(name)]));
+	const rowHeaders = (site: ServeDo, path: string) =>
+		site.sql.exec('SELECT headers FROM cfw_page WHERE path = ?', path).toArray()[0]?.[
+			'headers'
+		] ?? null;
+
+	it('stores the allow-listed headers and replays them on the render and on the HIT', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(
+				site,
+				withHeaders({
+					...POLICY,
+					'set-cookie': 'a=b',
+					location: 'https://evil.example',
+					'x-powered-by': 'x'
+				})
+			);
+			const render = await serveDirect(site, '/mod');
+			const hit = await serveDirect(site, '/mod');
+			return {
+				render: [render.cache, seen(render)],
+				hit: [hit.cache, seen(hit), hit.header('set-cookie'), hit.location],
+				stored: rowHeaders(site, '/mod')
+			};
+		});
+		expect(out.render).toEqual(['RENDER', POLICY]);
+		expect(out.hit).toEqual(['HIT', POLICY, null, null]);
+		expect(JSON.parse(String(out.stored))).toEqual(POLICY);
+	});
+
+	it('replays them on the AGED answer after a bump', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, withHeaders(POLICY));
+			await site.fillOne('/aged');
+			site.bumpGeneration('aged');
+			const aged = await serveDirect(site, '/aged', '&inline=0');
+			return [aged.cache, seen(aged)];
+		});
+		expect(out).toEqual(['AGED', POLICY]);
+	});
+
+	it('sends them with a render that is not stored, such as a session', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, withHeaders({ ...POLICY, 'set-cookie': 'a=b' }));
+			const res = await serveDirect(site, '/private', '&inline=1', {
+				headers: { cookie: SESSION_COOKIE }
+			});
+			return [seen(res), res.header('set-cookie'), rowHeaders(site, '/private')];
+		});
+		expect(out[0]).toEqual(POLICY);
+		expect(out[1]).toBeNull();
+		expect(out[2]).toBeNull();
+	});
+
+	it('stores no headers column value for a render that set none, and replays none', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, withHeaders({ 'x-drupal-cache': 'HIT', 'set-cookie': 'a=b' }));
+			await serveDirect(site, '/plain');
+			const hit = await serveDirect(site, '/plain');
+			return [rowHeaders(site, '/plain'), seen(hit), hit.header('x-drupal-cache')];
+		});
+		expect(out).toEqual([
+			null,
+			{ 'content-security-policy': null, 'x-frame-options': null },
+			null
+		]);
+	});
+
+	it.each([
+		['a newline', "default-src 'self'\nset-cookie: a=b"],
+		['a character above 255', "default-src 'self' ☃"],
+		['an oversized value', 'a'.repeat(4097)]
+	])('drops a policy header with %s and keeps the others', async (_what, hostile) => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(
+				site,
+				withHeaders({ 'content-security-policy': hostile, 'x-frame-options': 'DENY' })
+			);
+			await serveDirect(site, '/hostile');
+			const hit = await serveDirect(site, '/hostile');
+			return [rowHeaders(site, '/hostile'), seen(hit)];
+		});
+		expect(JSON.parse(String(out[0]))).toEqual({ 'x-frame-options': 'DENY' });
+		expect(out[1]).toEqual({ 'content-security-policy': null, 'x-frame-options': 'DENY' });
+	});
+
+	it('replays none for a legacy row with no value in the column, and does not throw', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			seedPage(site, '/legacy', '<p>legacy</p>');
+			const hit = await serveDirect(site, '/legacy');
+			return [hit.status, hit.cache, seen(hit)];
+		});
+		expect(out).toEqual([
+			200,
+			'HIT',
+			{ 'content-security-policy': null, 'x-frame-options': null }
+		]);
+	});
+
+	it('holds a row written by SQL to the boundary, and survives text that is not JSON', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			seedPage(site, '/planted', '<p>planted</p>');
+			seedPage(site, '/garbage', '<p>garbage</p>');
+			site.sql.exec(
+				'UPDATE cfw_page SET headers = ? WHERE path = ?',
+				JSON.stringify({ 'set-cookie': 'a=b', 'x-frame-options': 'DENY' }),
+				'/planted'
+			);
+			site.sql.exec('UPDATE cfw_page SET headers = ? WHERE path = ?', 'not json', '/garbage');
+			const planted = await serveDirect(site, '/planted');
+			const garbage = await serveDirect(site, '/garbage');
+			return [
+				planted.header('set-cookie'),
+				planted.header('x-frame-options'),
+				garbage.status,
+				garbage.header('x-frame-options')
+			];
+		});
+		expect(out).toEqual([null, 'DENY', 200, null]);
+	});
+
+	it('adds the column to an older table once, and a second boot raises nothing', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			site.sql.exec('DROP TABLE IF EXISTS cfw_page');
+			site.sql.exec(
+				`CREATE TABLE cfw_page (
+					path TEXT PRIMARY KEY,
+					status INTEGER NOT NULL,
+					content_type TEXT,
+					html TEXT NOT NULL,
+					rendered_at INTEGER NOT NULL,
+					render_ms REAL
+				) WITHOUT ROWID`
+			);
+			const columns = () =>
+				site.sql
+					.exec("SELECT name FROM pragma_table_info('cfw_page')")
+					.toArray()
+					.map((r) => String(r['name']));
+			const before = columns().includes('headers');
+			site.serveTablesReady = false;
+			site.ensureServeTables();
+			const once = columns().filter((name) => name === 'headers').length;
+			site.serveTablesReady = false;
+			site.ensureServeTables();
+			const twice = columns().filter((name) => name === 'headers').length;
+			stubRender(site, withHeaders(POLICY));
+			await serveDirect(site, '/upgraded');
+			return [before, once, twice, rowHeaders(site, '/upgraded')];
+		});
+		expect(out.slice(0, 3)).toEqual([false, 1, 1]);
+		expect(JSON.parse(String(out[3]))).toEqual(POLICY);
 	});
 });

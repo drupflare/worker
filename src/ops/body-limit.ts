@@ -14,3 +14,11 @@
  * `post_max_size` because there is no separate process to lose.
  */
 export const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
+
+/**
+ * The largest `multipart/form-data` body that may reach the object, in bytes.
+ * The site set no ceiling here before; the platform's own 100 MB request limit was the only one, so
+ * this default sits at that limit and lowers nothing that arrived. An upload is read whole by the
+ * object, so `MAX_UPLOAD_BYTES` is what an operator lowers to protect the isolate.
+ */
+export const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024;

@@ -588,6 +588,35 @@ describe('countingStorage', () => {
 		expect(h.tally.byTable['?storage.deleteAll']).toBeUndefined();
 	});
 
+	it('charges the synchronous kv handle: a put is one row, a delete only when it removed one', () => {
+		const rows = new Map<string, unknown>();
+		const tally = emptyTally();
+		let charged = 0;
+		const storage = countingStorage(
+			{
+				kv: {
+					get: (k: string) => rows.get(k),
+					put: (k: string, v: unknown) => void rows.set(k, v),
+					delete: (k: string) => rows.delete(k),
+					list: () => rows.entries()
+				}
+			},
+			() => tally,
+			(n) => {
+				charged += n;
+			}
+		);
+		storage.kv.put('a', 1);
+		expect(storage.kv.get('a')).toBe(1);
+		expect(charged).toBe(1);
+		expect(storage.kv.delete('missing')).toBe(false);
+		expect(charged).toBe(1);
+		expect(storage.kv.delete('a')).toBe(true);
+		expect(charged).toBe(2);
+		expect(tally.byTable['?storage.kv.put']).toBe(1);
+		expect(rows.size).toBe(0);
+	});
+
 	it('forwards reads and unknown members untouched', async () => {
 		const h = harness();
 		expect(await h.storage.getAlarm()).toBe(7);

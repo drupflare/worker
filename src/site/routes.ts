@@ -1,3 +1,4 @@
+import { CSP_REPORT_PATH } from '../ops/csp';
 import { IMAGE_ROUTE_PREFIX } from '../ops/image-runtime';
 import { RECOVER_PATH } from '../ops/owner-recovery';
 import { ADMIN_PAGES, LOGIN_PATH, LOGOUT_PATH, SURFACE_PREFIX } from '../ui/admin';
@@ -15,11 +16,15 @@ import { ADMIN_PAGES, LOGIN_PATH, LOGOUT_PATH, SURFACE_PREFIX } from '../ui/admi
  *
  * `/recover-token` is for a caller who has lost the owner token: a nonce whose hash the account's
  * `CONFIG_KV` holds is the credential, and it shares the owner check's failure budget.
+ *
+ * `/csp-report` takes a browser's violation report, which carries no credential; the Worker
+ * answers it with a per-address budget and never addresses the object.
  */
 export const PUBLIC_ROUTES = new Set([
 	'/serve',
 	'/firstrun',
 	RECOVER_PATH,
+	CSP_REPORT_PATH,
 	'/setup/cf/callback',
 	'/githook',
 	'/oidc',
@@ -131,6 +136,8 @@ export const OWNER_ROUTES = new Set([
 	'/modify',
 	// runtime levers (the `plan` and `settings` KV keys)
 	'/settings',
+	// the tamper-evident log of owner calls, read by the owner
+	'/audit',
 	// which site this deployment serves on an unmapped host; answered in the Worker (CONFIG_KV)
 	'/deployment',
 	// the product surfaces; `PW_DIAGNOSTICS` does not reach them (they install code)
@@ -219,7 +226,8 @@ export const DO_ROUTE: Record<string, string> = {
 	'/updb': '/__updb',
 	'/reconcile': '/__reconcile',
 	'/sweep': '/__sweep',
-	'/modify': '/__modify'
+	'/modify': '/__modify',
+	'/audit': '/__audit'
 };
 
 /** paths a redirect must never capture (worker and object routes, the surface, derivatives) */

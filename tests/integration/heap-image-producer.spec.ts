@@ -132,6 +132,17 @@ describe('the alarm produces this site one heap image', () => {
 			);
 			expect(status.latest.keptPages).toBeGreaterThan(0);
 
+			// the root of what it wrote is sealed outside SQL, and the attempt it cost is readable
+			// back (the counter is written as `<generation> <n>` and read by splitting on that space)
+			const sealed = await inObject(stub, (site) => ({
+				keys: [...(site as any).ctx.storage.kv.list({ prefix: 'heapsum:' })].map(
+					([key]: [string]) => key
+				),
+				attempts: (site as any).imageAttempts(String(status.heapGeneration))
+			}));
+			expect(sealed.keys).toEqual([`heapsum:${status.latest.id}`]);
+			expect(sealed.attempts).toBe(1);
+
 			// the point of all of it -- a cold boot now restores instead of refusing
 			const restored = await inObject(stub, async (site) => {
 				(site as any).php = undefined;

@@ -1,7 +1,7 @@
 import { createExecutionContext, env, SELF, waitOnExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ATTEMPT_HEADER, ATTEMPT_TTL_MS } from '../../src/ops/attempt';
-import { DEFAULT_MAX_BODY_BYTES } from '../../src/ops/body-limit';
+import { DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_UPLOAD_BYTES } from '../../src/ops/body-limit';
 import { isCacheTier } from '../../src/ops/cache-tiers';
 import { resetEdgePlans, SAMPLES_PER_COMPILE } from '../../src/ops/edge-plan';
 import {
@@ -11,7 +11,7 @@ import {
 	type FleetDb
 } from '../../src/ops/fleet';
 import { affinityKey, chooseTarget } from '../../src/ops/replica-routing';
-import { ensureOwnerToken, type SecretStore } from '../../src/ops/site-secrets';
+import { mintOwnerToken, type SecretStore } from '../../src/ops/site-secrets';
 import worker, { bodyTooLarge, isNeverDrupal } from '../../src/site';
 import { asGeneration } from '../../src/site/edge-cache';
 import { refuseOversized } from '../../src/site/screen';
@@ -90,9 +90,9 @@ const serveRequestsOf = (site: string) =>
  * heap -- and this runtime has no separate process to lose, so an OOM takes the site's object with
  * it. Refusing here costs no DO request and no interpreter.
  *
- * `multipart/form-data` is exempt: that is the upload shape, where size is expected, and
- * it is not parsed into a nested array. A 2 MiB cap on uploads would be a regression wearing a
- * guard's clothes.
+ * `multipart/form-data` has its own, larger ceiling: that is the upload shape, where size is
+ * expected, and it is not parsed into a nested array. A 2 MiB cap on uploads would be a
+ * regression wearing a guard's clothes. A chunked body declares no length and is counted as read.
  */
 describe('an oversized request body never reaches the interpreter', () => {
 	const post = (body: string, headers: Record<string, string>) =>
@@ -125,16 +125,23 @@ describe('an oversized request body never reaches the interpreter', () => {
 		expect(bodyTooLarge(at)).toBeUndefined();
 	});
 
-	it('exempts an upload, which is the one shape where size is expected', () => {
-		const upload = new Request('https://cfw.local/x', {
-			method: 'POST',
-			body: 'a=1',
-			headers: {
-				'content-type': 'multipart/form-data; boundary=----x',
-				'content-length': String(64 * 1024 * 1024)
-			}
-		});
-		expect(bodyTooLarge(upload)).toBeUndefined();
+	it('gives an upload its own, larger ceiling rather than the form-body one', () => {
+		const upload = (length: number) =>
+			new Request('https://cfw.local/x', {
+				method: 'POST',
+				body: 'a=1',
+				headers: {
+					'content-type': 'multipart/form-data; boundary=----x',
+					'content-length': String(length)
+				}
+			});
+		// well past the 2 MiB form ceiling, and still allowed: size is what an upload is for
+		expect(bodyTooLarge(upload(64 * 1024 * 1024))).toBeUndefined();
+		expect(bodyTooLarge(upload(DEFAULT_MAX_UPLOAD_BYTES))).toBeUndefined();
+		const over = bodyTooLarge(upload(DEFAULT_MAX_UPLOAD_BYTES + 1));
+		expect(over?.limit).toBe(DEFAULT_MAX_UPLOAD_BYTES);
+		expect(bodyTooLarge(upload(10_000), { MAX_UPLOAD_BYTES: 4096 })?.limit).toBe(4096);
+		expect(bodyTooLarge(upload(10_000), { MAX_UPLOAD_BYTES: 0 })).toBeUndefined();
 	});
 
 	it('never refuses a GET, which carries no body to parse', () => {
@@ -144,9 +151,9 @@ describe('an oversized request body never reaches the interpreter', () => {
 		expect(bodyTooLarge(get)).toBeUndefined();
 	});
 
-	// a chunked request declares no length; measuring it means consuming it, which is the cost
-	// the guard exists to avoid. The object's own limits still apply
-	it('falls through when no Content-Length is declared', () => {
+	// a chunked request declares no length, so the header check passes; `refuseOversized()` counts
+	// the body as it reads it
+	it('falls through the header check when no Content-Length is declared', () => {
 		const chunked = new Request('https://cfw.local/x', {
 			method: 'POST',
 			body: 'a=1',
@@ -181,7 +188,7 @@ describe('an oversized request body never reaches the interpreter', () => {
 		expect(bodyTooLarge(huge, { MAX_BODY_BYTES: -5 })?.limit).toBe(DEFAULT_MAX_BODY_BYTES);
 	});
 
-	it('the front worker stage answers 413 for an oversized body and nothing for a small one', () => {
+	it('the front worker stage answers 413 for an oversized body and nothing for a small one', async () => {
 		const post = (length: number) =>
 			new Request('https://cfw.local/x', {
 				method: 'POST',
@@ -192,10 +199,84 @@ describe('an oversized request body never reaches the interpreter', () => {
 				}
 			});
 		const stage = (request: Request) => refuseOversized({ request, env: {} } as FrontContext);
-		const refused = stage(post(DEFAULT_MAX_BODY_BYTES + 1));
+		const refused = await stage(post(DEFAULT_MAX_BODY_BYTES + 1));
 		expect(refused?.status).toBe(413);
 		expect(refused?.headers.get('x-cfw-body-limit')).toBe(String(DEFAULT_MAX_BODY_BYTES));
-		expect(stage(post(DEFAULT_MAX_BODY_BYTES))).toBeUndefined();
+		expect(await stage(post(DEFAULT_MAX_BODY_BYTES))).toBeUndefined();
+	});
+
+	/** a request whose body arrives as a stream, so it declares no `Content-Length` */
+	function streamed(type: string, chunks: number, size: number, pulled?: { n: number }) {
+		let sent = 0;
+		const body = new ReadableStream<Uint8Array>({
+			pull(controller) {
+				if (sent === chunks) return controller.close();
+				sent += 1;
+				if (pulled) pulled.n = sent;
+				controller.enqueue(new Uint8Array(size).fill(97));
+			}
+		});
+		return new Request('https://cfw.local/x', {
+			method: 'POST',
+			body,
+			// a streamed request body needs half-duplex, which workerd accepts as an option
+			duplex: 'half',
+			headers: { 'content-type': type }
+		} as RequestInit);
+	}
+	const stageOf = (request: Request, extra: Record<string, unknown> = {}) => {
+		const f = { request, env: extra } as unknown as FrontContext;
+		return refuseOversized(f).then((res) => ({ res, f }));
+	};
+
+	it('refuses a chunked form body over the cap, and stops reading at the chunk that crosses it', async () => {
+		const pulled = { n: 0 };
+		const { res } = await stageOf(
+			streamed('application/x-www-form-urlencoded', 100, 64 * 1024, pulled)
+		);
+		expect(res?.status).toBe(413);
+		expect(res?.headers.get('x-cfw-deny')).toBe('body-too-large');
+		// 2 MiB is 32 chunks of 64 KiB, so it ends at the 33rd and not at the 100th
+		expect(pulled.n).toBeLessThan(40);
+	});
+
+	it('refuses a chunked multipart body over the upload cap', async () => {
+		const { res } = await stageOf(streamed('multipart/form-data; boundary=x', 10, 1024), {
+			MAX_UPLOAD_BYTES: 4096
+		});
+		expect(res?.status).toBe(413);
+		expect(res?.headers.get('x-cfw-body-limit')).toBe('4096');
+	});
+
+	it('lets a chunked body under the cap through and hands the hop the same bytes', async () => {
+		const { res, f } = await stageOf(streamed('application/x-www-form-urlencoded', 4, 1024));
+		expect(res).toBeUndefined();
+		const forwarded = new Uint8Array(await f.request.arrayBuffer());
+		expect(forwarded.byteLength).toBe(4096);
+		expect(forwarded.every((b) => b === 97)).toBe(true);
+	});
+
+	it('lets a multipart upload larger than the form cap reach the object', async () => {
+		// 3 MiB declared: over MAX_BODY_BYTES, far under MAX_UPLOAD_BYTES
+		const upload = new Request('https://cfw.local/x', {
+			method: 'POST',
+			body: 'x',
+			headers: {
+				'content-type': 'multipart/form-data; boundary=x',
+				'content-length': String(3 * 1024 * 1024)
+			}
+		});
+		expect((await stageOf(upload)).res).toBeUndefined();
+		const chunked = streamed('multipart/form-data; boundary=x', 48, 64 * 1024);
+		const { res, f } = await stageOf(chunked);
+		expect(res).toBeUndefined();
+		expect((await f.request.arrayBuffer()).byteLength).toBe(3 * 1024 * 1024);
+	});
+
+	it('leaves a GET and an empty POST alone', async () => {
+		expect((await stageOf(new Request('https://cfw.local/x'))).res).toBeUndefined();
+		const empty = new Request('https://cfw.local/x', { method: 'POST' });
+		expect((await stageOf(empty)).res).toBeUndefined();
 	});
 });
 
@@ -380,6 +461,45 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		await serveThroughWorker(site, '/');
 		const edge = await untilEdge(site, '/');
 		expect(edge?.cacheControl).toBe('public, max-age=0, must-revalidate');
+	});
+
+	/**
+	 * The page key carries no request header, so every tier hands one stored page to every visitor.
+	 * Measured through the front worker: `Accept`, `User-Agent` and `Origin` change neither the
+	 * body nor the tier that answered. Whether the RENDER varies by them is measured on the real
+	 * pack in `forwarded-headers.spec.ts` (it does not), and a render that says it does, through
+	 * `Vary`, is not stored (`serve-chain.spec.ts`).
+	 */
+	it('answers the same stored page whatever Accept, User-Agent or Origin the visitor sent', async () => {
+		const site = 'keyvariance';
+		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>one page</title>'));
+		await serveThroughWorker(site, '/');
+		const plain = await untilEdge(site, '/');
+		expect(plain?.cache, 'the edge copy never became readable').toBe('EDGE');
+
+		const variants: Record<string, string>[] = [
+			{ accept: 'application/json' },
+			{ 'user-agent': 'Googlebot/2.1 (+http://www.google.com/bot.html)' },
+			{ origin: 'https://other.example' },
+			{
+				accept: 'application/json',
+				'user-agent': 'curl/8.0',
+				origin: 'https://other.example'
+			}
+		];
+		for (const headers of variants) {
+			const res = await SELF.fetch(
+				`https://cfw.local/serve?site=${site}&path=${encodeURIComponent('/')}`,
+				{ headers }
+			);
+			const body = await res.text();
+			expect(body, JSON.stringify(headers)).toBe(plain?.body);
+			expect(res.status).toBe(200);
+			// an edge tier answered; none of the three sent it to the object
+			expect(['EDGE', 'MEM'], JSON.stringify(headers)).toContain(
+				res.headers.get('x-cfw-cache')
+			);
+		}
 	});
 
 	it('edge=0 declines to READ the edge but still stores what it fetched', async () => {
@@ -691,7 +811,7 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 	it('LETS THE OWNER THROUGH with the site token, and returns a real dump', async () => {
 		const site = 'owner-token-ok';
 		const token = await inObject(namedSite(site), (obj) =>
-			ensureOwnerToken((obj as unknown as { secretStore: () => SecretStore }).secretStore())
+			mintOwnerToken((obj as unknown as { secretStore: () => SecretStore }).secretStore())
 		);
 
 		const res = await worker.fetch(
@@ -1238,7 +1358,11 @@ describe('the compiled plan tier', () => {
 	beforeEach(() => resetEdgePlans());
 
 	/** a namespace that renders, reports a generation, and counts what reached it */
-	function objectSpy(generation = () => 42, roles = () => 'authenticated,editor') {
+	function objectSpy(
+		generation = () => 42,
+		roles = () => 'authenticated,editor',
+		moduleHeaders: () => Record<string, string> = () => ({})
+	) {
 		const seen: URL[] = [];
 		let n = 0;
 		return {
@@ -1253,6 +1377,7 @@ describe('the compiled plan tier', () => {
 						return new Response(n === 1 ? WARMUP : STEADY, {
 							status: 200,
 							headers: {
+								...moduleHeaders(),
 								'content-type': 'text/html; charset=UTF-8',
 								'x-cfw-cache': 'RENDER',
 								'x-cfw-generation': String(generation()),
@@ -1284,6 +1409,7 @@ describe('the compiled plan tier', () => {
 		await waitOnExecutionContext(ctx);
 		return {
 			body,
+			headers: res.headers,
 			tier: res.headers.get('x-cfw-cache'),
 			plan: res.headers.get('x-cfw-plan'),
 			cacheControl: res.headers.get('cache-control')
@@ -1334,6 +1460,65 @@ describe('the compiled plan tier', () => {
 		expect(served.tier).toBe('PLAN');
 		expect(served.body).toBe(STEADY);
 		expect(served.body).not.toContain('stylesheet');
+	});
+
+	describe('module-set headers on a plan hit', () => {
+		const MODULE = {
+			'referrer-policy': 'no-referrer',
+			'content-security-policy': "frame-ancestors 'none'"
+		};
+
+		it('replays what the module set, with the defaults filling the rest', async () => {
+			const spy = objectSpy(undefined, undefined, () => MODULE);
+			const path = '/plan-tier-headers';
+			await compileFor(spy.namespace, path);
+			const served = await visit(spy.namespace, path, COOKIE_A);
+			expect(served.plan).toBe('mem');
+			expect(served.headers.get('referrer-policy')).toBe('no-referrer');
+			expect(served.headers.get('content-security-policy')).toBe("frame-ancestors 'none'");
+			expect(served.headers.get('x-content-type-options')).toBe('nosniff');
+			expect(served.cacheControl).toBe('private, no-store');
+		});
+
+		it('sends the defaults alone when the module set nothing', async () => {
+			const spy = objectSpy();
+			const path = '/plan-tier-headers-none';
+			await compileFor(spy.namespace, path);
+			const served = await visit(spy.namespace, path, COOKIE_A);
+			expect(served.plan).toBe('mem');
+			expect(served.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
+			expect(served.headers.has('content-security-policy')).toBe(false);
+		});
+
+		it('lets an operator rule beat the module header on a plan hit', async () => {
+			const spy = objectSpy(undefined, undefined, () => MODULE);
+			const path = '/plan-tier-headers-rule';
+			const rules = {
+				RESPONSE_HEADERS: JSON.stringify([
+					{
+						path,
+						set: { 'Referrer-Policy': 'same-origin', 'Content-Security-Policy': '' }
+					}
+				])
+			};
+			await compileFor(spy.namespace, path);
+			const served = await visit(spy.namespace, path, COOKIE_A, rules);
+			expect(served.plan).toBe('mem');
+			expect(served.headers.get('referrer-policy')).toBe('same-origin');
+			expect(served.headers.has('content-security-policy')).toBe(false);
+		});
+
+		it('does not compile a plan from two renders that disagree on a header', async () => {
+			let renders = 0;
+			const spy = objectSpy(undefined, undefined, () => ({
+				'x-frame-options': ++renders % 2 === 0 ? 'DENY' : 'SAMEORIGIN'
+			}));
+			const path = '/plan-tier-headers-split';
+			await compileFor(spy.namespace, path);
+			const next = await visit(spy.namespace, path, COOKIE_A);
+			expect(next.tier).not.toBe('PLAN');
+			expect(next.plan).not.toBe('mem');
+		});
 	});
 
 	/**

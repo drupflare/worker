@@ -12,7 +12,7 @@ describe('forwardedHeaders', () => {
 				Origin: 'https://app.example.com',
 				'User-Agent': 'probe/1'
 			}),
-			'owner-token'
+			false
 		);
 		expect(got).toEqual({
 			authorization: 'Bearer visitor-token',
@@ -34,7 +34,7 @@ describe('forwardedHeaders', () => {
 				'Transfer-Encoding': 'chunked',
 				'X-Keep': 'yes'
 			}),
-			null
+			false
 		);
 		expect(got).toEqual({ 'x-keep': 'yes' });
 	});
@@ -48,28 +48,25 @@ describe('forwardedHeaders', () => {
 				'x-cfw-attempt': 'a',
 				'x-ok': '1'
 			}),
-			null
+			false
 		);
 		expect(got).toEqual({ 'x-ok': '1' });
 	});
 
-	it('drops an Authorization that is the owner token and keeps one that only resembles it', () => {
+	it('drops an Authorization the caller says is the owner token and keeps any other', () => {
+		expect(forwardedHeaders(headers({ authorization: 'Bearer owner-token' }), true)).toEqual(
+			{}
+		);
+		expect(forwardedHeaders(headers({ authorization: 'Bearer owner-token' }), false)).toEqual({
+			authorization: 'Bearer owner-token'
+		});
 		expect(
-			forwardedHeaders(headers({ authorization: 'Bearer owner-token' }), 'owner-token')
-		).toEqual({});
-		expect(
-			forwardedHeaders(headers({ authorization: 'bearer   owner-token ' }), 'owner-token')
-		).toEqual({});
-		expect(
-			forwardedHeaders(headers({ authorization: 'Bearer owner-token2' }), 'owner-token')
-		).toEqual({ authorization: 'Bearer owner-token2' });
-		expect(
-			forwardedHeaders(headers({ authorization: 'Basic b3duZXItdG9rZW4=' }), 'owner-token')
+			forwardedHeaders(headers({ authorization: 'Basic b3duZXItdG9rZW4=' }), false)
 		).toEqual({ authorization: 'Basic b3duZXItdG9rZW4=' });
 	});
 
 	it('keeps a Basic credential, which is how some sites log in', () => {
-		expect(forwardedHeaders(headers({ authorization: 'Basic dTpw' }), null)).toEqual({
+		expect(forwardedHeaders(headers({ authorization: 'Basic dTpw' }), false)).toEqual({
 			authorization: 'Basic dTpw'
 		});
 	});
@@ -77,17 +74,17 @@ describe('forwardedHeaders', () => {
 	it('drops a header past the byte ceiling whole rather than cutting its value', () => {
 		const got = forwardedHeaders(
 			headers({ 'x-small': 'a', 'x-big': 'b'.repeat(20_000), 'x-after': 'c' }),
-			null
+			false
 		);
 		expect(got).toEqual({ 'x-small': 'a', 'x-after': 'c' });
 	});
 
 	it('caps the count', () => {
 		const many = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`x-h${i}`, 'v']));
-		expect(Object.keys(forwardedHeaders(headers(many), null))).toHaveLength(64);
+		expect(Object.keys(forwardedHeaders(headers(many), false))).toHaveLength(64);
 	});
 
 	it('skips an empty value', () => {
-		expect(forwardedHeaders(headers({ 'x-empty': ' ' }), null)).toEqual({});
+		expect(forwardedHeaders(headers({ 'x-empty': ' ' }), false)).toEqual({});
 	});
 });

@@ -2,8 +2,8 @@
  * Reconciles `interp.lock.json` into exactly ONE pull request per proposal line.
  *
  * ```sh
- * bun scripts/interp-proposal.ts --variant=control85 --php=8.5
- * bun scripts/interp-proposal.ts --variant=control85 --php=8.5 --dry-run
+ * bun scripts/interp-proposal.ts --variant=long64 --php=8.5
+ * bun scripts/interp-proposal.ts --variant=long64 --php=8.5 --dry-run
  * ```
  *
  * The branch used to carry the artifact id -- `interp/control85-php8.5-9255839106` -- and the

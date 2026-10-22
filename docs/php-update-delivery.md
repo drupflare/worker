@@ -47,13 +47,15 @@ Step 3 is not automated. The workflow has no deploy step and holds no Cloudflare
 
 phasm's `notify` job runs after `publish`, so it fires when a build publishes interpreter artifacts
 and not on the pull-request or archive-only paths. It sends one `repository_dispatch` per variant
-listed in `CONSUMER_VARIANTS`, currently `control85`.
+listed in `CONSUMER_VARIANTS`, currently `long64`, the variant `interp.lock.json` pins. It named
+`control85` until 2026-10-22, and `interpreter.yml` skips any dispatch for a variant other than the
+pin, so no update for the shipping interpreter was ever proposed by this pipeline.
 
 ```json
 {
   "event_type": "phasm-interpreter-published",
   "client_payload": {
-    "variant": "control85",
+    "variant": "long64",
     "php_version": "8.5",
     "artifact_id": "4102938475",
     "run_id": "18273645",
@@ -122,7 +124,7 @@ on it. `interpreter.yml` gates the bytes and the bundle.
 To reproduce a pinned interpreter by hand, pass the recorded artifact id:
 
 ```sh
-bun scripts/fetch-interpreter.ts control85 8.5 4102938475 --pin
+bun scripts/fetch-interpreter.ts long64 8.5 4102938475 --pin
 ```
 
 ## Manual Runs

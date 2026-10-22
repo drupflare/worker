@@ -10,8 +10,8 @@
  * binaries and is the one permanent loss available in this repo.
  *
  * ```sh
- * bun scripts/fetch-interpreter.ts control85 8.5
- * bun scripts/fetch-interpreter.ts control85 8.5 4102938475 --pin
+ * bun scripts/fetch-interpreter.ts long64 8.5
+ * bun scripts/fetch-interpreter.ts long64 8.5 4102938475 --pin
  * ```
  *
  * @see scripts/pack-wasm-brotli.ts which this calls to produce the shipped frame
@@ -172,7 +172,7 @@ export function interpreterIsCurrent(phpVersion: string, outDir = OUT_DIR): bool
 /**
  * Downloads one variant's `.wasm` and its glue, then packs the wasm.
  *
- * @param variant - a phasm rc name, e.g. `control85`
+ * @param variant - a phasm rc name, e.g. `long64`
  * @param phpVersion - the version in the asset filenames, e.g. `8.5`
  * @param artifactId - a phasm Actions artifact id; defaults to the newest unexpired one
  * @param force - download even when {@link interpreterIsCurrent}; an explicit artifact id implies it
@@ -245,7 +245,7 @@ if (import.meta.main) {
 			'usage: bun scripts/fetch-interpreter.ts <variant> <php-version> [artifact-id]' +
 				' [--pin] [--any-version] [--force] [--cached]'
 		);
-		console.error('   eg: bun scripts/fetch-interpreter.ts control85 8.5');
+		console.error('   eg: bun scripts/fetch-interpreter.ts long64 8.5');
 		process.exit(2);
 	}
 	// a pin records WHICH artifact produced the bytes, so it cannot be written from a cached run.

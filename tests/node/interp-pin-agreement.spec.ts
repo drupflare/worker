@@ -52,6 +52,32 @@ describe('interp.lock.json against cdn-manifest.json', () => {
 	});
 });
 
+describe('the update pipeline delivers the variant that ships', () => {
+	const phasmBuild = resolve(process.cwd(), '../phasm/.github/workflows/build.yml');
+
+	it('defaults the manual run to the pinned variant', () => {
+		const workflow = readFileSync(
+			resolve(process.cwd(), '.github/workflows/interpreter.yml'),
+			'utf8'
+		);
+		const fallback = /variant:\n(?:\s+.*\n)*?\s+default: (\S+)/.exec(workflow)?.[1];
+		expect(fallback).toBe(pin.variant);
+	});
+
+	// phasm is a sibling checkout: absent in CI, where this is skipped rather than passed
+	it.skipIf(!existsSync(phasmBuild))(
+		'is announced by phasm, whose CONSUMER_VARIANTS names the pin',
+		() => {
+			const consumed =
+				/CONSUMER_VARIANTS: (.+)/.exec(readFileSync(phasmBuild, 'utf8'))?.[1] ?? '';
+			expect(
+				consumed.trim().split(/\s+/),
+				'interpreter.yml skips a variant that is not pinned'
+			).toContain(pin.variant);
+		}
+	);
+});
+
 describe('the pinned bytes are the bytes on disk', () => {
 	const have = pin.files.every((f) => existsSync(resolve(process.cwd(), f.path)));
 

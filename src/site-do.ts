@@ -43,6 +43,13 @@ import {
 	type HeapRestoreCursor
 } from './do/alarm';
 import { alarmBody } from './do/alarm-body';
+import {
+	bootImageBakeEnabled,
+	planBootImage,
+	planPages,
+	restoreBootImage,
+	type BootImagePlan
+} from './do/boot-image';
 import { installCapabilities } from './do/capabilities';
 import { deriveStep, fillOne, strikeFillHead } from './do/fill';
 import { recordInDeployment, reportToFleet } from './do/fleet';
@@ -492,7 +499,7 @@ class PhpStatic extends PhpBase {
 /**
  * A memory for a boot with nothing to reuse, or undefined when the loaded binary defines its own.
  */
-function newInterpreterMemory(): WebAssembly.Memory | undefined {
+function newInterpreterMemory(pages = 0): WebAssembly.Memory | undefined {
 	let imports: WebAssembly.ModuleImportDescriptor[] = [];
 	try {
 		imports = WebAssembly.Module.imports(wasmModule as WebAssembly.Module);
@@ -500,7 +507,10 @@ function newInterpreterMemory(): WebAssembly.Memory | undefined {
 		// a stub binary in a spec has no import table; it defines nothing and imports nothing
 	}
 	return imports.some((i) => i.kind === 'memory')
-		? new WebAssembly.Memory(INTERPRETER_MEMORY)
+		? new WebAssembly.Memory({
+				...INTERPRETER_MEMORY,
+				initial: Math.max(INTERPRETER_MEMORY.initial, pages)
+			})
 		: undefined;
 }
 
@@ -585,6 +595,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	lastBootInclusiveMs?: number;
 	/** what the last heap restore attempt did, or undefined when it was never attempted */
 	heapRestore?: Payload;
+	/** what the last boot decided about the published boot image, and what the restore did */
+	bootImage?: Payload;
+	/** the heap at the restore point, kept only by a bake rig so a capture can take the delta */
+	bootImageBaseline?: Uint8Array;
 	/**
 	 * Today's authenticated spend, or undefined when nothing has been charged in this lifetime.
 	 *
@@ -1034,7 +1048,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			this.heapsReused = (this.heapsReused ?? 0) + 1;
 			this.lastReuse = { at: this.nowMs(), bytes: spare.buffer.byteLength };
 		}
-		const memory = spare ?? newInterpreterMemory();
+		let plan: BootImagePlan = opts.skipRestore
+			? { reason: 'skipped' }
+			: await planBootImage(this);
+		const memory = spare ?? newInterpreterMemory(planPages(plan));
+		if (plan.index && !memory) plan = { reason: 'the binary defines its own memory' };
+		// the image's heap is larger than the boot memory once the bake's render has grown it
+		const missing = memory ? planPages(plan) - memory.buffer.byteLength / 65_536 : 0;
+		if (memory && missing > 0) memory.grow(missing);
 		// an uncollected interpreter still counts toward the isolate's 128 MiB while this one grows
 		const resident = isolateResidency();
 		this.traceMemory('boot');
@@ -1205,16 +1226,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const salt = hashSaltAssignment(ensureHashSalt(this.secretStore()));
 			// the pinned origin is interpolated here: settings.php runs once per boot and the pin
 			// belongs to the site
-			const partition = this.idPartition();
 			const override = settingsOverride({
 				origin: JSON.stringify(this.canonicalOrigin()),
-				argon2: argon2Enabled(this.env),
-				memoryBins: phpStringList(memoryCacheBins(this.env)),
-				memoryItems: memoryCacheMaxItems(this.env),
-				lane: partition.lane,
-				lanes: partition.lanes,
-				packageAutoload: autoloadPhp(this.packageAutoloads()),
-				deploymentEnv: deploymentEnvPhp(deploymentEnv(this.env))
+				...this.bootSettings()
 			});
 			binary.FS.writeFile(settingsPath, existing + override + salt);
 		}
@@ -1227,9 +1241,33 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.bootLinear = this.heapNow();
 		this.rebuildBoot = this.containerMissing();
 
+		// the published boot image goes first: it is the same restore from another source, shared by
+		// every site whose context equals the bake's
+		this.bootImage = { used: false, reason: plan.reason };
+		if (bootImageBakeEnabled(this.env) && !opts.skipRestore)
+			this.bootImageBaseline = this.heapBytes(binary)?.slice();
+		if (plan.index && plan.variant) {
+			const restored = await restoreBootImage(
+				this,
+				binary,
+				plan.index,
+				plan.variant,
+				plan.reset === true
+			);
+			this.bootImage = { used: restored.restored === true, reason: plan.reason, ...restored };
+			if (restored.dirty === true) {
+				// bytes landed: the heap has the right length and wrong contents, so boot again plain
+				const refused = this.bootImage;
+				this.php = undefined;
+				const fresh = await this.bootPhp({ skipRestore: true });
+				this.bootImage = { ...refused, used: false, rebooted: true };
+				return fresh;
+			}
+		}
+
 		// restore a stored heap matching this pack after the mount, bridge and capabilities
 		// (the heap holds vrzno handles by index into what they populate)
-		if (heapSnapshotEnabled(this.env) && !opts.skipRestore) {
+		if (this.bootImage.used !== true && heapSnapshotEnabled(this.env) && !opts.skipRestore) {
 			try {
 				this.heapRestore = await this.tryRestoreHeap(binary, {
 					maxChunks: heapRestoreChunkBudget(this.env)
@@ -1475,6 +1513,20 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const pack = this.packGeneration();
 		if (pack === undefined) return undefined;
 		return `${pack}|${this.enabledModulesFingerprint()}`;
+	}
+
+	/** the settings override's inputs other than the origin, which the boot image keys on */
+	bootSettings() {
+		const partition = this.idPartition();
+		return {
+			argon2: argon2Enabled(this.env),
+			memoryBins: phpStringList(memoryCacheBins(this.env)),
+			memoryItems: memoryCacheMaxItems(this.env),
+			lane: partition.lane,
+			lanes: partition.lanes,
+			packageAutoload: autoloadPhp(this.packageAutoloads()),
+			deploymentEnv: deploymentEnvPhp(deploymentEnv(this.env))
+		};
 	}
 
 	/** how many times this object has tried to image `generation`; a new one starts at zero */

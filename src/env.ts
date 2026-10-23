@@ -89,6 +89,13 @@ export interface SiteEnv extends BaseSiteEnv {
 	 * A restore cost ~648 ms more cpuTime than a boot (1,912 vs 1,264 ms median, deployed free).
 	 */
 	HEAP_IMAGE?: string;
+	/**
+	 * Boots from the published image under `assets/bootimage/` when this site equals the bake's
+	 * (pack, modules, driver, config rows, settings); any difference boots plain. Off unless `1`.
+	 */
+	BOOT_IMAGE?: string;
+	/** lets this object capture its own boot image; only the local bake rig sets it */
+	BOOT_IMAGE_BAKE?: string;
 	/** response header rules for the front worker, as a JSON string or array; see `edge-rules` */
 	RESPONSE_HEADERS?: string | unknown[];
 	/** redirect rules for the front worker, in the same two forms */

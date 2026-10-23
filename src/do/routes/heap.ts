@@ -12,9 +12,13 @@ import { errorMessage } from '../../util/errors';
 import { phpScript } from '../../util/php';
 import { jsonError } from '../../util/reply';
 import { heapRestoreChunkBudget, heapSnapshotEnabled } from '../alarm';
+import { bootImageBakeEnabled, captureBootImage } from '../boot-image';
 import { delegatingHandleTable } from '../heap-image';
 import { HEAP_IMAGE_ATTEMPTS_KEY, HEAP_IMAGE_KEY } from '../keys';
 import type { Payload } from '../types';
+
+/** the files of the last boot image capture, which only a bake rig reads back */
+const bakedFiles = new Map<string, Uint8Array>();
 
 /** lists (`op=list`) or reads (`op=read&path=`) the opcache `.bin` files under /tmp */
 export async function opcache(
@@ -83,6 +87,31 @@ export async function heap(
 			chunkBytes: askedChunk > 0 ? askedChunk : undefined
 		});
 		return Response.json({ booted, snapshot: snap });
+	}
+	if (op === 'bootimage') {
+		// local bake rig only: renders the given paths, then answers the delta against the heap at
+		// the restore point; `file=` serves one chunk of the capture that call made
+		if (!bootImageBakeEnabled(site.env)) return jsonError('BOOT_IMAGE_BAKE is not set', 403);
+		const file = url.searchParams.get('file');
+		if (file) {
+			const bytes = bakedFiles.get(file);
+			return bytes ? new Response(bytes) : jsonError(`no captured file ${file}`, 404);
+		}
+		// a fresh boot, so the baseline is the heap at the restore point and nothing has rendered yet
+		site.php = undefined;
+		const { binary } = await site.ensurePhp({ skipRestore: false });
+		const baseline = site.bootImageBaseline;
+		if (!baseline) return jsonError('no baseline was taken at the boot', 409);
+		await site.runJson(BOOT_KERNEL);
+		const rendered: Payload[] = [];
+		for (const path of (url.searchParams.get('paths') ?? '/,/user/login').split(','))
+			rendered.push({ path, ...(await site.fillOne(path)) });
+		const { index, files } = captureBootImage(site, binary, baseline, {
+			reset: url.searchParams.get('scope') === 'reset'
+		});
+		bakedFiles.clear();
+		for (const [name, bytes] of Object.entries(files)) bakedFiles.set(name, bytes);
+		return Response.json({ rendered, index, bootImage: site.bootImage ?? null });
 	}
 	if (op === 'bridge') {
 		// a byte comparison proves nothing (a restored heap renders cached bytes with the bridge

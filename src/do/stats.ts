@@ -60,6 +60,8 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 		heapsReused: site.heapsReused ?? 0,
 		lastReuse: site.lastReuse ?? null,
 		spareMemoryBytes: spareMemoryBytes(),
+		// what the last cold boot decided about the published boot image, and why
+		bootImage: site.bootImage ?? null,
 		lastOpsJob: site.lastOpsJob ?? null,
 		rangeErrors: site.rangeErrors,
 		recentErrors: site.recentErrors,

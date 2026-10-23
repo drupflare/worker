@@ -63,6 +63,8 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/do/alarm/restore.ts': 'host',
 	// carries Drupal's database update chain
 	'src/do/alarm/stepped.ts': 'mixed',
+	// restores a Drupal heap and resets its cache collectors, settings and State
+	'src/do/boot-image.ts': 'mixed',
 	'src/do/capabilities.ts': 'mixed',
 	'src/do/fill.ts': 'mixed',
 	// reports the shipped Drupal core version
@@ -159,6 +161,8 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	// Drupal's own cookie names are not sessions
 	'src/ops/auth-budget.ts': 'mixed',
 	'src/ops/body-limit.ts': 'host',
+	// keys an image on Drupal's `config` rows
+	'src/ops/boot-image.ts': 'mixed',
 	'src/ops/cache-tiers.ts': 'host',
 	// probes name drupflare classes and Drupal's stream wrappers
 	'src/ops/capability-contract.ts': 'mixed',

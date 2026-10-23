@@ -167,7 +167,9 @@ export const ARTIFACT_SPECS = [
 	'tests/integration/memory-cache-bin.spec.ts',
 	'tests/integration/module-census.spec.ts',
 	'tests/integration/owner-tiers.spec.ts',
-	'tests/integration/status-page.spec.ts'
+	'tests/integration/status-page.spec.ts',
+	// a bake and a restore both boot a real kernel from the pack
+	'tests/integration/boot-image.spec.ts'
 ];
 
 /**

@@ -9,6 +9,8 @@ export type EnergyRow = {
 	requests: number;
 	errors: number;
 	elapsedMs: number;
+	/** encoded bytes that crossed the network over the window; present in cold mode */
+	bytes?: number;
 	pkgJ: number;
 	coreJ: number;
 	load0: number;
@@ -94,7 +96,63 @@ async function main() {
 		);
 	};
 
+	// `cold` opens a fresh browser context for every navigation, so each is a first view with an empty
+	// cache and no worker; `repeat` keeps one context, which is what a returning visitor has
+	const MODE = env.MODE ?? 'repeat';
+	const SETTLE_MS = Number(env.SETTLE_MS ?? 1500);
+	const coldWindow = async (arm: { name: string; url: string }, round: number) => {
+		const browser = await chromium.launch();
+		const close = open();
+		const load0 = loadavg('/proc/loadavg');
+		const t0 = process.hrtime.bigint();
+		let errors = 0;
+		let requests = 0;
+		let bytes = 0;
+		for (let i = 0; i < N; i++) {
+			const ctx = await browser.newContext();
+			const page = await ctx.newPage();
+			const cdp = await ctx.newCDPSession(page);
+			await cdp.send('Network.enable');
+			const events: CdpEvent[] = [];
+			for (const method of [
+				'Network.requestWillBeSent',
+				'Network.responseReceived',
+				'Network.requestServedFromCache',
+				'Network.loadingFinished',
+				'Network.loadingFailed'
+			])
+				cdp.on(method as any, (params: any) => events.push({ method, params }));
+			try {
+				await page.goto(arm.url + pages[i % pages.length], { waitUntil: 'load' });
+				// a first view also registers and syncs a worker, which runs after load
+				await page.waitForTimeout(SETTLE_MS);
+			} catch {
+				errors += 1;
+			}
+			const counts = reduceNavigation(events);
+			requests += counts.network;
+			bytes += counts.encodedBytes;
+			await ctx.close();
+		}
+		const elapsedMs = Number(process.hrtime.bigint() - t0) / 1e6;
+		const j = close();
+		emit({
+			arm: arm.name,
+			round,
+			navs: N,
+			requests,
+			errors,
+			elapsedMs,
+			bytes,
+			...j,
+			load0,
+			load1: loadavg('/proc/loadavg')
+		});
+		await browser.close();
+	};
+
 	const armWindow = async (arm: { name: string; url: string }, round: number) => {
+		if (MODE === 'cold') return coldWindow(arm, round);
 		const browser = await chromium.launch();
 		const ctx = await browser.newContext();
 		const page = await ctx.newPage();

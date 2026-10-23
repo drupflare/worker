@@ -156,6 +156,8 @@ export function assetPaths(html: string): string[] {
 		)
 			continue;
 		if (/^(https?:)?\/\//.test(ref) || ref.startsWith('data:')) continue;
+		// spool's own client tag differs between an arm that runs it and one that does not
+		if (ref.startsWith('/.spool/')) continue;
 		out.add(ref.split('?')[0] as string);
 	}
 	return [...out].sort();
@@ -212,7 +214,9 @@ export function parseArgs(argv: string[]) {
 		rounds: 8,
 		repeats: 20,
 		pages: ['/', '/user/login'],
-		out: ''
+		out: '',
+		settleMs: 100,
+		maxLengthDiff: 0.01
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const flag = argv[i];
@@ -228,6 +232,8 @@ export function parseArgs(argv: string[]) {
 				opts.pages.push(argv[++i] as string);
 			continue;
 		} else if (flag === '--out') opts.out = val;
+		else if (flag === '--settle') opts.settleMs = Number(val);
+		else if (flag === '--max-length-diff') opts.maxLengthDiff = Number(val);
 		else throw new Error(`unknown flag ${flag}`);
 		i += 1;
 	}
@@ -253,7 +259,7 @@ async function main() {
 	const opts = parseArgs(process.argv.slice(2));
 	const probes: Record<string, Record<string, PageProbe>> = {};
 	for (const a of opts.arms) probes[a.name] = await probeArm(a.url, opts.pages);
-	const failures = guardArms(probes);
+	const failures = guardArms(probes, opts.maxLengthDiff);
 	for (const arm of opts.arms)
 		for (const page of opts.pages) {
 			const p = probes[arm.name]?.[page] as PageProbe;
@@ -289,7 +295,8 @@ async function main() {
 				const t0 = performance.now();
 				const res = await page.goto(arm.url + path, { waitUntil: 'load' });
 				const loadMs = performance.now() - t0;
-				await page.waitForTimeout(100);
+				// a worker registers and syncs after load, so a first visit needs longer to count
+				await page.waitForTimeout(kind === 'cold' ? opts.settleMs : 100);
 				const h = res?.headers() ?? {};
 				const row: NavRow = {
 					...reduceNavigation(events),

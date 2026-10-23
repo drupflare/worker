@@ -171,6 +171,14 @@ describe('assetPaths and guardArms', () => {
 		).toEqual([]);
 	});
 
+	it("leaves spool's own client tag out of the asset set", () => {
+		const tag = '<script src="/.spool/0.2.0/client.js"></script>';
+		expect(assetPaths(html('a', tag))).toEqual(assetPaths(html('a')));
+		expect(
+			guardArms({ on: { '/': probe(html('a', tag)) }, off: { '/': probe(html('a')) } }, 0.5)
+		).toEqual([]);
+	});
+
 	it('stops on a different asset set, a miss and a length gap', () => {
 		const f = guardArms({
 			on: { '/': probe(html('a')) },
@@ -197,7 +205,14 @@ describe('parseArgs', () => {
 			'--out',
 			'o'
 		]);
-		expect(o).toMatchObject({ rounds: 2, repeats: 20, pages: ['/', '/x'], out: 'o' });
+		expect(o).toMatchObject({
+			rounds: 2,
+			repeats: 20,
+			pages: ['/', '/x'],
+			out: 'o',
+			settleMs: 100,
+			maxLengthDiff: 0.01
+		});
 		expect(o.arms).toEqual([
 			{ name: 'on', url: 'https://a' },
 			{ name: 'off', url: 'https://b' }

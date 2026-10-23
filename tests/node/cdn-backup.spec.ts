@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +17,7 @@ import {
 	ORIGIN,
 	ORIGIN_FALLBACK,
 	ORIGINS,
+	refreshMirrors,
 	verdictFor,
 	withArchives,
 	type CdnEntry,
@@ -149,6 +151,26 @@ describe('an archive is a snapshot', () => {
 		]);
 		expect(problems).toHaveLength(1);
 		expect(problems[0]).toMatch(/no longer matches/);
+	});
+
+	it('moves a live mirrored entry to the bytes its file holds, and never a snapshot', () => {
+		const root = fixture();
+		mkdirSync(join(root, '.interp'), { recursive: true });
+		writeFileSync(join(root, '.interp/php8.5.wasm'), 'new interpreter');
+		const live = { ...entry('vendor/static-long64/x.wasm'), mirrors: '.interp/php8.5.wasm' };
+		const snapshot = { ...entry('snapshots/x.abc'), mirrors: '.interp/php8.5.wasm' };
+		const absent = { ...entry('vendor/static-long64/y.mjs'), mirrors: '.interp/missing.mjs' };
+		const [movedLive, keptSnapshot, keptAbsent] = refreshMirrors(root, [
+			{ ...live, note: 'x' },
+			{ ...snapshot, note: 'x' },
+			{ ...absent, note: 'x' }
+		]);
+		expect(movedLive?.bytes).toBe('new interpreter'.length);
+		expect(movedLive?.sha256).toBe(
+			createHash('sha256').update('new interpreter').digest('hex')
+		);
+		expect(keptSnapshot).toMatchObject({ bytes: 10, sha256: 'a'.repeat(64) });
+		expect(keptAbsent).toMatchObject({ bytes: 10, sha256: 'a'.repeat(64) });
 	});
 
 	it('says nothing about a mirror that is absent, because an unbuilt tree is not a failure', () => {

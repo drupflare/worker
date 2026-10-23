@@ -189,6 +189,26 @@ export function digests(path: string): { sha256: string; md5: string } {
 	};
 }
 
+/**
+ * Moves a live mirrored entry's digests to the bytes its local file holds now.
+ *
+ * An upload replaces what a live key serves, and the manifest has to describe the replacement or
+ * `restore-artifacts` refuses the new bytes (`got 14011458 bytes, manifest says 13401742`). A
+ * `snapshots/` key is content-addressed and never moves, and an absent file is an unbuilt tree.
+ */
+export function refreshMirrors(
+	root: string,
+	archived: readonly ArchivedEntry[]
+): readonly ArchivedEntry[] {
+	return archived.map((entry) => {
+		if (entry.mirrors === undefined || entry.key.startsWith('snapshots/')) return entry;
+		const local = join(root, entry.mirrors);
+		return existsSync(local)
+			? { ...entry, bytes: statSync(local).size, ...digests(local) }
+			: entry;
+	});
+}
+
 /** Builds the manifest the local tree describes. Reads `vendor/` and never writes to it. */
 export function manifestFromDisk(root: string): CdnManifest {
 	const keys: CdnEntry[] = [];
@@ -204,7 +224,13 @@ export function manifestFromDisk(root: string): CdnManifest {
 			});
 		}
 	}
-	return { bucket: BUCKET, origin: ORIGIN, version: 1, keys, archived: ARCHIVED };
+	return {
+		bucket: BUCKET,
+		origin: ORIGIN,
+		version: 1,
+		keys,
+		archived: refreshMirrors(root, ARCHIVED)
+	};
 }
 
 /** what changed between a committed manifest and the tree */
@@ -528,7 +554,7 @@ if (import.meta.main) {
 		if (has('upload')) {
 			// the manifest is the archive list, so recording what was archived and re-deriving the
 			// keys the upload just made current is one write, and committing it is the only step left
-			const fresh = { ...current(), archived: withArchives(ARCHIVED, archived) };
+			const fresh = { ...current(), archived: withArchives(current().archived, archived) };
 			writeFileSync(join(root, MANIFEST_PATH), JSON.stringify(fresh, null, '\t') + '\n');
 			for (const a of archived) console.log(`  recorded ${a.key} in ${MANIFEST_PATH}`);
 		}

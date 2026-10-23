@@ -172,6 +172,65 @@ export const REPEAT_NAV_DEPLOYED = {
 	rounds: 8
 } as const;
 
+// --- spool --------------------------------------------------------------------------------------
+
+/**
+ * Worker requests of a site that runs spool against the same site with it off, counted at the
+ * Worker.
+ *
+ * `measured` on two deployed paid-account workers, 2026-10-23, from the Workers Observability events
+ * of the whole rig window (04:40 to 06:40 UTC). The on worker answered 1,751 front worker
+ * invocations and the off worker 4,196 for the same drive. A new device asked the on worker for
+ * `/spool-sw.js` 482 times and for `/.spool/*` 507 times, over about 500 new devices (480 cold
+ * navigations in the energy runs, 12 in the count run and the repeat contexts), so a new device
+ * costs about two Worker requests beyond its page: `fixedPerDevice` is that figure, `derived` from
+ * the two counts and the device count. Every one of 48 repeat navigations on the on worker made
+ * zero network requests, against one to six on the off worker.
+ *
+ * The first reading of this figure was four, `measured` on the laptop (`wrangler dev --local`, five
+ * runs, no spread): `/.spool/0.2.0/client.js`, `/spool-sw.js` and two `/.spool/artifact`. A
+ * deployed worker did not show the two artifact requests, and the deployed figure replaces it. The
+ * local run answered 3 of 12 navigations on the Worker, one repeat arriving before the worker took
+ * control, so `pageRequestsOn` stays a local reading.
+ */
+export const SPOOL_REQUESTS = {
+	navigations: 12,
+	off: 12,
+	on: 7,
+	pageRequestsOn: 3,
+	fixedPerDevice: 2,
+	runs: 5
+} as const;
+
+/**
+ * Spool's own cost and gain on a visitor's device and on the Worker, `measured` on the same two
+ * deployed workers and a desktop CPU (paisley-park, RAPL package joules, idle subtracted per
+ * navigation, six rounds per cold experiment and eight per repeat, Chromium 1.62 in a container).
+ *
+ * `onJ` and `offJ` are medians of joules per navigation; `ratio` is off over on per round, so above
+ * one the visitor's device spends less with spool. A cold navigation is a fresh browser context, a
+ * new device. The plain-page cold ratio and the image and video ratios sit inside their own spread
+ * and are not savings; the embed and the all-media pages are.
+ *
+ * `workerCpu` is the platform's `cpuTime` for the front worker, whole milliseconds, per request
+ * class on the on worker (page decoration, image conversion) against the off worker.
+ */
+export const SPOOL_DEVICE = {
+	repeat: { onJ: 0.527, offJ: 1.292, ratio: 2.468, control: 1.004, rounds: 8 },
+	coldPlain: { onJ: 10.034, offJ: 8.943, ratio: 0.835, rounds: 6 },
+	coldAll: { onJ: 12.883, offJ: 32.84, ratio: 2.651, rounds: 6 },
+	coldImage: { onJ: 9.829, offJ: 9.652, ratio: 0.937, rounds: 6 },
+	coldVideo: { onJ: 10.88, offJ: 10.857, ratio: 1.019, rounds: 6 },
+	coldEmbed: { onJ: 12.01, offJ: 34.106, ratio: 2.888, rounds: 5 },
+	coldAllBytes: { on: 195_715, off: 1_367_951 },
+	workerCpu: {
+		pageOn: { median: 6, p90: 16, max: 38, n: 544 },
+		pageOff: { median: 1, p90: 4, max: 23, n: 3785 },
+		imageOn: { median: 2, p90: 96, max: 187, n: 182 },
+		imageOff: { median: 1, p90: 3, max: 9, n: 185 }
+	}
+} as const;
+
 // --- the constraint -------------------------------------------------------------------------
 
 /** above this share of views a cold-path measurement is the wrong input */

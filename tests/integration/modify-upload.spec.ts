@@ -973,6 +973,22 @@ describe('installed module files are held to sealed records', () => {
 		expect(seen.after).toBe(seen.before);
 	}, 900_000);
 
+	it('answers a read of the key-value table through PHP with the platform refusal and leaves the value intact', async () => {
+		const MARK = 'sealed-probe-value';
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			sealed(site).put('probe', MARK);
+			const php = await site.runJson(
+				`${BRIDGE}$o = [json_encode(cfw_sql('SELECT 1 AS one', []))]; foreach (['SELECT * FROM _cf_KV', "UPDATE _cf_KV SET value = 'x'", 'DROP TABLE _cf_KV'] as $q) { try { $o[] = json_encode(cfw_sql($q, [])); } catch (\\Throwable $e) { $o[] = 'threw'; } } echo json_encode($o);`
+			);
+			return { php: JSON.stringify(php), after: sealed(site).get('probe') };
+		});
+		// the control answered, so the refusals below came from the platform and not an absent bridge
+		expect(seen.php).toContain('one');
+		expect(seen.php).not.toContain('threw');
+		expect(seen.php).not.toContain(MARK);
+		expect(seen.after).toBe(MARK);
+	}, 900_000);
+
 	it('removes a record with its row, moves it with a path that changes owner, and renames it with a package', async () => {
 		const seen = await inObject(freshSite(), async (site: ServeDo) => {
 			const kept = `${DIR}/kept.php`;

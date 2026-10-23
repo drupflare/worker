@@ -69,7 +69,7 @@ function checkout(): string {
 		join(root, 'src/runtime/php-binary-raw.ts'),
 		[
 			"import PHPFactory from '../../.interp/php8.5-worker.tuned.mjs';",
-			"import wasmModule from '../../.interp/php8.5.wasm';",
+			"import wasmModule from '../../.interp/php8.5.tuned.wasm';",
 			'export { PHPFactory, wasmModule };'
 		].join('\n')
 	);

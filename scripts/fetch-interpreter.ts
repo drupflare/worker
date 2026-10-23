@@ -118,6 +118,17 @@ export function pristineGlue(path: string): string {
 }
 
 /**
+ * The pristine wasm a tuned one is emitted from, for the same comparison as {@link pristineGlue}.
+ *
+ * The seam imports `.tuned.wasm` (`emitTunedWasm()` rewrites the memory import) and a fetch writes
+ * only the pristine file, so every fetch against the canonical config threw and the interpreter
+ * workflow never wrote a pin.
+ */
+export function pristineWasm(path: string): string {
+	return path.replace(/\.tuned\.wasm$/, '.wasm');
+}
+
+/**
  * Asserts the canonical config's binary seam imports the files this fetch just wrote.
  *
  * Without it a fetch for the wrong PHP version succeeds, writes `.interp/php8.3.*`, and leaves the
@@ -134,7 +145,7 @@ export function pristineGlue(path: string): string {
  * @throws naming both sides, because the failure is a version mismatch and not a missing file.
  */
 export function assertSeamImports(root: string, result: FetchResult): void {
-	const imports = interpreterFiles(root).map(pristineGlue);
+	const imports = interpreterFiles(root).map((path) => pristineWasm(pristineGlue(path)));
 	const missing = [result.wasm, result.glue].filter((path) => !imports.includes(path));
 	if (missing.length) {
 		throw new Error(

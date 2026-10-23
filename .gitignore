@@ -67,6 +67,7 @@ typedoc/
 # the interpreter frames the shipping seam imports: the zstd frame, its glue and the zstd decoder.
 # One command rebuilds them: bun run build:wasm (docker for the decoder, gh auth for the binary)
 .interp/
+.interp.prev*/
 
 # the release payload and the dry-run output; built by scripts/release-payload.ts and attached
 # to a GitHub Release, never committed

@@ -238,6 +238,44 @@ describe('the park, against the interpreter on disk', () => {
 	});
 
 	/**
+	 * The chain's root frame returned through a pointer into a dead C frame, so its value landed on
+	 * whatever the resuming call stack held there: on PHP 8.5.12 that was live data of `execute_ex`.
+	 * Which bytes were live depended on the resume fragment, so the crash alone is no test of the
+	 * property; an object returned by the chain has to be destroyed when the chain completes.
+	 */
+	it('destroys the value a parked chain returns when it completes', async (ctx) => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			if (!(await canPark(site))) return { build: 'absent' as const };
+			if (!(await canMultiTrip(site))) return { build: 'no-rearm' as const };
+
+			const code = [
+				'class Sentinel { function __destruct() { echo "[destroyed]"; } }',
+				'$f = fopen("php://temp", "r+");',
+				'fwrite($f, "x");',
+				'return new Sentinel;'
+			].join('\n');
+
+			const sockets = new ParkSockets();
+			const driven = await drivePark(
+				{ runText: (c: string) => (site as Interp).run(c) },
+				sockets,
+				REDIS,
+				`<?php ${code}`
+			);
+			await sockets.closeAll();
+			return { build: 'current' as const, driven };
+		});
+
+		if (seen.build !== 'current') {
+			ctx.skip(`park build state: ${seen.build}`);
+			return;
+		}
+		expect(seen.driven.state, seen.driven.why ?? '').toBe('done');
+		expect(seen.driven.trips.map((t) => t.op)).toEqual(['passthrough']);
+		expect(seen.driven.output).toBe('[destroyed]');
+	});
+
+	/**
 	 * A REAL RENDER WITH THE TRAPS ARMED, which is what flipping the capability actually turns on.
 	 *
 	 * `runJsonMaybeParked` sends the render through `cfw_park_run`, and that is `zend_eval_string`

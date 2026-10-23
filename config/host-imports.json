@@ -1,0 +1,217 @@
+{
+	"wasm": {
+		"env.__assert_fail:function": { "class": "hard", "note": "aborts the runtime" },
+		"env.__asyncjs__php_stream_fetch_real_open:function": {
+			"class": "hard",
+			"note": "stock body calls fetch() behind Asyncify.handleAsync; the tuned glue answers as a failed request (status -1) and never reaches fetch, with or without Asyncify defined"
+		},
+		"env.__asyncjs__vrzno_await_internal:function": {
+			"class": "hard",
+			"note": "stock body awaits a target behind Asyncify.handleAsync; the tuned glue hands PHP a null and awaits nothing"
+		},
+		"env.__call_sighandler:function": { "class": "compute" },
+		"env.__syscall__newselect:function": { "class": "compute" },
+		"env.__syscall_accept4:function": {
+			"class": "hard",
+			"note": "the tuned glue returns ENOTSOCK"
+		},
+		"env.__syscall_bind:function": {
+			"class": "hard",
+			"note": "the tuned glue returns ENOTSOCK"
+		},
+		"env.__syscall_chdir:function": { "class": "compute" },
+		"env.__syscall_chmod:function": { "class": "io" },
+		"env.__syscall_connect:function": {
+			"class": "hard",
+			"note": "the tuned glue returns ENOTSOCK; stock SOCKFS opens a WebSocket"
+		},
+		"env.__syscall_dup:function": { "class": "compute" },
+		"env.__syscall_faccessat:function": { "class": "io" },
+		"env.__syscall_fchmod:function": { "class": "io" },
+		"env.__syscall_fchownat:function": { "class": "io" },
+		"env.__syscall_fcntl64:function": { "class": "compute" },
+		"env.__syscall_fdatasync:function": { "class": "compute" },
+		"env.__syscall_fstat64:function": { "class": "io" },
+		"env.__syscall_ftruncate64:function": { "class": "io" },
+		"env.__syscall_getcwd:function": { "class": "compute" },
+		"env.__syscall_getdents64:function": { "class": "io" },
+		"env.__syscall_getpeername:function": {
+			"class": "hard",
+			"note": "the tuned glue returns ENOTSOCK"
+		},
+		"env.__syscall_getsockname:function": {
+			"class": "hard",
+			"note": "the tuned glue returns ENOTSOCK"
+		},
+		"env.__syscall_getsockopt:function": {
+			"class": "hard",
+			"note": "the tuned glue returns ENOTSOCK"
+		},
+		"env.__syscall_ioctl:function": { "class": "compute" },
+		"env.__syscall_listen:function": {
+			"class": "hard",
+			"note": "the tuned glue returns ENOTSOCK"
+		},
+		"env.__syscall_lstat64:function": { "class": "io" },
+		"env.__syscall_mkdirat:function": { "class": "io" },
+		"env.__syscall_newfstatat:function": { "class": "io" },
+		"env.__syscall_openat:function": {
+			"class": "io",
+			"note": "the in-isolate file system; an installed module file reads its SQL row on first open"
+		},
+		"env.__syscall_pipe:function": { "class": "compute", "note": "an in-memory pipe" },
+		"env.__syscall_poll:function": { "class": "compute" },
+		"env.__syscall_readlinkat:function": { "class": "io" },
+		"env.__syscall_recvfrom:function": {
+			"class": "hard",
+			"note": "the tuned glue returns ENOTSOCK"
+		},
+		"env.__syscall_renameat:function": { "class": "io" },
+		"env.__syscall_rmdir:function": { "class": "io" },
+		"env.__syscall_sendto:function": {
+			"class": "hard",
+			"note": "the tuned glue returns ENOTSOCK"
+		},
+		"env.__syscall_socket:function": {
+			"class": "hard",
+			"note": "the tuned glue returns EACCES and never reaches SOCKFS"
+		},
+		"env.__syscall_stat64:function": { "class": "io" },
+		"env.__syscall_statfs64:function": { "class": "compute" },
+		"env.__syscall_symlink:function": { "class": "io" },
+		"env.__syscall_unlinkat:function": { "class": "io" },
+		"env.__syscall_utimensat:function": { "class": "io" },
+		"env._abort_js:function": { "class": "hard", "note": "aborts the runtime" },
+		"env._emscripten_get_now_is_monotonic:function": { "class": "compute" },
+		"env._emscripten_lookup_name:function": {
+			"class": "compute",
+			"note": "emscripten's fake DNS; no network"
+		},
+		"env._emscripten_memcpy_js:function": { "class": "compute" },
+		"env._emscripten_runtime_keepalive_clear:function": { "class": "compute" },
+		"env._emscripten_throw_longjmp:function": { "class": "compute" },
+		"env._gmtime_js:function": { "class": "compute" },
+		"env._localtime_js:function": { "class": "compute" },
+		"env._mktime_js:function": { "class": "compute" },
+		"env._mmap_js:function": { "class": "io" },
+		"env._munmap_js:function": { "class": "io" },
+		"env._setitimer_js:function": { "class": "compute", "note": "a setTimeout" },
+		"env._tzset_js:function": { "class": "compute" },
+		"env.emscripten_asm_const_int:function": {
+			"class": "policy",
+			"note": "runs the EM_ASM bodies vrzno compiled in. In the stock glue that reached all of globalThis, an eval, a dynamic import and every Module property; the tuned glue (closeVrznoBridge) leaves only the cfw host functions, sealed so no Function constructor hangs off them. The engine's code-generation ban is the remaining guard for any other object a host function might return"
+		},
+		"env.emscripten_asm_const_ptr:function": {
+			"class": "policy",
+			"note": "same bridge as emscripten_asm_const_int, and the same closure; the vrzno_run and vrzno_eval bodies that return a string are reached through this one"
+		},
+		"env.emscripten_date_now:function": { "class": "compute" },
+		"env.emscripten_fiber_swap:function": {
+			"class": "hard",
+			"note": "aborts the runtime; PHP 8.5.12 uses it where 8.5.2 used getcontext and swapcontext"
+		},
+		"env.emscripten_get_heap_max:function": { "class": "compute" },
+		"env.emscripten_get_now:function": { "class": "compute" },
+		"env.emscripten_resize_heap:function": { "class": "compute" },
+		"env.exit:function": { "class": "compute" },
+		"env.getaddrinfo:function": {
+			"class": "hard",
+			"note": "the tuned glue returns EAI_FAIL; stock glue resolves through the fake DNS"
+		},
+		"env.getdtablesize:function": { "class": "hard", "note": "aborts the runtime" },
+		"env.getnameinfo:function": {
+			"class": "compute",
+			"note": "emscripten's fake DNS; no network"
+		},
+		"env.getprotobyname:function": { "class": "compute" },
+		"env.getprotobynumber:function": { "class": "compute" },
+		"env.invoke_i:function": { "class": "compute" },
+		"env.invoke_ii:function": { "class": "compute" },
+		"env.invoke_iii:function": { "class": "compute" },
+		"env.invoke_iiii:function": { "class": "compute" },
+		"env.invoke_iiiii:function": { "class": "compute" },
+		"env.invoke_iiiiii:function": { "class": "compute" },
+		"env.invoke_iiiiiii:function": { "class": "compute" },
+		"env.invoke_iiiiiiii:function": { "class": "compute" },
+		"env.invoke_iiiiiiiiii:function": { "class": "compute" },
+		"env.invoke_iij:function": { "class": "compute" },
+		"env.invoke_ji:function": { "class": "compute" },
+		"env.invoke_jii:function": { "class": "compute" },
+		"env.invoke_jiii:function": { "class": "compute" },
+		"env.invoke_v:function": { "class": "compute" },
+		"env.invoke_vi:function": { "class": "compute" },
+		"env.invoke_vii:function": { "class": "compute" },
+		"env.invoke_viii:function": { "class": "compute" },
+		"env.invoke_viiii:function": { "class": "compute" },
+		"env.invoke_viiiii:function": { "class": "compute" },
+		"env.invoke_viiiiii:function": { "class": "compute" },
+		"env.invoke_vj:function": { "class": "compute" },
+		"env.invoke_vji:function": { "class": "compute" },
+		"env.posix_spawnp:function": {
+			"class": "hard",
+			"note": "aborts the runtime; there is no process to spawn"
+		},
+		"env.reallocarray:function": {
+			"class": "compute",
+			"note": "the tuned glue implements it; the pristine glue aborts"
+		},
+		"env.strptime:function": { "class": "compute" },
+		"wasi_snapshot_preview1.environ_get:function": { "class": "compute" },
+		"wasi_snapshot_preview1.environ_sizes_get:function": { "class": "compute" },
+		"wasi_snapshot_preview1.fd_close:function": { "class": "compute" },
+		"wasi_snapshot_preview1.fd_fdstat_get:function": { "class": "compute" },
+		"wasi_snapshot_preview1.fd_read:function": { "class": "io" },
+		"wasi_snapshot_preview1.fd_seek:function": { "class": "compute" },
+		"wasi_snapshot_preview1.fd_sync:function": { "class": "compute" },
+		"wasi_snapshot_preview1.fd_write:function": { "class": "io" },
+		"wasi_snapshot_preview1.proc_exit:function": { "class": "compute" }
+	},
+	"host": {
+		"cfwAead": { "class": "compute" },
+		"cfwArgon2": { "class": "compute" },
+		"cfwBlake2b": { "class": "compute" },
+		"cfwCanSuspend": { "class": "compute", "note": "a flag the service provider probes" },
+		"cfwFetch": { "class": "policy", "note": "reads the fetch cache; a miss queues a request" },
+		"cfwFileDelete": { "class": "io" },
+		"cfwFileList": { "class": "io" },
+		"cfwFilePublicBase": { "class": "compute" },
+		"cfwFileRead": { "class": "io" },
+		"cfwFileRename": { "class": "io" },
+		"cfwFileStat": { "class": "io" },
+		"cfwFileWrite": { "class": "io" },
+		"cfwHealth": { "class": "io", "note": "writes the object's own health ledger" },
+		"cfwHttpCacheGet": { "class": "io", "note": "reads the object's own fetch cache" },
+		"cfwImageUrl": { "class": "compute" },
+		"cfwLog": { "class": "compute" },
+		"cfwMail": {
+			"class": "io",
+			"note": "queues a message; the from-domain and size caps apply"
+		},
+		"cfwModules": { "class": "io", "note": "read only" },
+		"cfwOidcClaims": { "class": "io", "note": "redeems one ticket row" },
+		"cfwParkFetch": {
+			"class": "io",
+			"note": "outbound HTTP after the outbound guard, at every redirect hop"
+		},
+		"cfwParkImage": { "class": "compute" },
+		"cfwQueueFetch": {
+			"class": "io",
+			"note": "queues an outbound request the guard has checked"
+		},
+		"cfwServeStats": { "class": "compute" },
+		"cfwSettings": {
+			"class": "policy",
+			"note": "the one host function that reaches CONFIG_KV: allow-listed levers, PLAN refused, writes scoped to the site"
+		},
+		"cfwSign": { "class": "compute" },
+		"cfwSqlExec": { "class": "io", "note": "any SQL on the object's own SQLite" },
+		"cfwSqlPark": { "class": "io" },
+		"cfwSqlTxn": { "class": "io", "note": "any SQL on the object's own SQLite" },
+		"cfwStats": { "class": "compute" },
+		"cfwTcp": {
+			"class": "io",
+			"note": "Redis and syslog at the endpoint the operator configured"
+		},
+		"cfwZlib": { "class": "compute" }
+	}
+}

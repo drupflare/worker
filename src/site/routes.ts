@@ -1,6 +1,7 @@
 import { CSP_REPORT_PATH } from '../ops/csp';
 import { IMAGE_ROUTE_PREFIX } from '../ops/image-runtime';
 import { RECOVER_PATH } from '../ops/owner-recovery';
+import { isSpoolPath } from '../ops/spool';
 import { ADMIN_PAGES, LOGIN_PATH, LOGOUT_PATH, SURFACE_PREFIX } from '../ui/admin';
 
 /**
@@ -234,5 +235,6 @@ export const DO_ROUTE: Record<string, string> = {
 export const isReservedPath = (pathname: string): boolean =>
 	pathname.startsWith('/__') ||
 	ROUTES.has(pathname) ||
+	isSpoolPath(pathname) ||
 	pathname.startsWith(SURFACE_PREFIX) ||
 	pathname.startsWith(`${IMAGE_ROUTE_PREFIX}/`);

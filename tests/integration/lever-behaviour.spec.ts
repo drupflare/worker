@@ -211,7 +211,9 @@ describe('the fixture covers the allow-list', () => {
 			'ASSET_AGGREGATES',
 			'RESPONSE_HEADERS',
 			'REDIRECTS',
-			'CSP_MODE'
+			'CSP_MODE',
+			// paired in `spool-shadow.spec.ts`, which drives the front worker with it on and off
+			'SPOOL_MODE'
 		];
 		// read by a consumer this lane cannot reach; see the block comment above
 		const elsewhere = [

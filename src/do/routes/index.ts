@@ -42,6 +42,7 @@ import {
 } from './packages';
 import { replica } from './replica';
 import { queue, serve, serveStats } from './serve';
+import { spool } from './spool';
 import { mirror, savenode, txnprobe, writes, writeworkload } from './writes';
 
 /** a Durable Object route handler */
@@ -68,6 +69,7 @@ export const ROUTES: Record<string, Route> = {
 	'/__modify': modify,
 	'/__githook': githook,
 	'/__audit': audit,
+	'/__spool': spool,
 	'/__ownercheck': ownercheck,
 	'/__recover-token': recoverToken,
 	'/__pitr': pitr,

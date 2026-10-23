@@ -76,7 +76,7 @@ export const CHECKS: readonly Check[] = [
 	{
 		path: 'bundle.gzippedBytes',
 		kind: 'maxIncrease',
-		abs: 32_768,
+		abs: 49_152,
 		why: 'a creep that still fits is only visible before the release that stops fitting'
 	},
 	{

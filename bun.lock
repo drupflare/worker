@@ -8,6 +8,7 @@
         "@drupflare/burrow": "^1.1.1",
         "@drupflare/cartridge": "^0.3.1",
         "@drupflare/durabledb": "^0.1.4",
+        "@drupflare/spool": "^0.2.0",
         "@drupflare/untarl": "^0.1.0",
         "@gmitch215/tinyimg": "^1.1.0",
         "@noble/ciphers": "^2.4.0",
@@ -105,6 +106,8 @@
     "@drupflare/cartridge": ["@drupflare/cartridge@0.3.1", "", { "dependencies": { "fflate": "^0.8.3", "fzstd": "^0.1.1" } }, "sha512-lU7Xh5xmUmTet8m3iK9os51k6WDfoWZ7O+J+8igwZ3sFw399hjRkK4txdCLRk6zOEVlKeRltKKlfIVQ2tlSmQw=="],
 
     "@drupflare/durabledb": ["@drupflare/durabledb@0.1.4", "", { "dependencies": { "@drupflare/cartridge": "^0.2.0 || ^0.3.0" } }, "sha512-jvElGvxOz3n6s1TEArsKoFpXxSwe0fP3vab45RYYYLgXoPI3f0ivNqUedIlUca81wy5FHpPjPL2ngG/e5tvq6w=="],
+
+    "@drupflare/spool": ["@drupflare/spool@0.2.0", "", {}, "sha512-WqG00FGMw1LdT5cvywHZFfQGajtc3Qy1oB3oBxTtwTt2a5lRBHj//zQzNe4oonxq73RzZwjtnMna7BRCwFhKug=="],
 
     "@drupflare/untarl": ["@drupflare/untarl@0.1.0", "", {}, "sha512-FMabw/DeeM1WGmeF7kV0liY4N1nD0Itc/wIST8VMR3yQZpfyJCG94rB/Jchb42DTKAMs+7asN04085CH8ke7YQ=="],
 

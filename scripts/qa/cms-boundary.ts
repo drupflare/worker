@@ -105,6 +105,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/do/routes/packages.ts': 'mixed',
 	'src/do/routes/replica.ts': 'mixed',
 	'src/do/routes/serve.ts': 'mixed',
+	'src/do/routes/spool.ts': 'host',
 	'src/do/routes/writes.ts': 'mixed',
 	'src/do/serve.ts': 'mixed',
 	// the settings.php override and services.yml
@@ -145,6 +146,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/site/routes.ts': 'host',
 	// names Drupal's entry points in the deny headers
 	'src/site/screen.ts': 'mixed',
+	'src/site/spool.ts': 'host',
 	'src/site/surfaces.ts': 'host',
 	'src/site/target.ts': 'host',
 	'src/site/types.ts': 'host',
@@ -258,6 +260,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/shipped-lock.ts': 'cms',
 	'src/ops/site-id.ts': 'host',
 	'src/ops/site-origin.ts': 'host',
+	'src/ops/spool.ts': 'host',
 	// Drupal's hash salt and private key encodings
 	'src/ops/site-secrets.ts': 'mixed',
 	// Drupal's key_value tables

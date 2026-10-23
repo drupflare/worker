@@ -1,5 +1,6 @@
 import { fanoutDecision, ROWS_PER_TAGGED_PAGE, ROWS_PER_UNTAGGED_PAGE } from '../ops/fanout';
 import { pageKvEnabled } from '../ops/page-store';
+import { pathTagFor } from '../ops/spool';
 import { routeFamilies } from '../ops/thermal';
 import type { SitePhpDurableObject } from '../site-do';
 import { firstRow } from '../util/sql';
@@ -70,6 +71,8 @@ export function purgeForTags(
 					// most of what this re-queues does not depend on the tags and just reassembles
 					ROWS_PER_UNTAGGED_PAGE
 				);
+		// the bumping branch stamped inside `bumpGeneration()`; this one moves no generation
+		if (!bump) site.spoolVector().wholesale(site.generation());
 		return {
 			...out,
 			scoped: false,
@@ -82,6 +85,8 @@ export function purgeForTags(
 		? site.bumpGeneration(reason, { scopedTo: paths })
 		: // each depends on an invalidated tag, so each is a real re-render
 			purgeScopedPaths(site, paths, true, ROWS_PER_TAGGED_PAGE);
+	// a device holds pages by path, so the paths that depend on these tags are what changed
+	site.spoolVector().stamp([...tags, ...paths.map(pathTagFor)], site.generation());
 	return { ...out, scoped: true, tags: tags.length, purged: paths.length, shells };
 }
 
@@ -230,6 +235,8 @@ export function bumpGeneration(
 	site.metaSet('generation', next);
 	site.metaSet('last_bump', `${next}:${reason}:${site.nowMs()}`);
 	site.bumps = (site.bumps ?? 0) + 1;
+	// a bump that names no pages changes everything a device may hold
+	if (scopedTo === undefined) site.spoolVector().wholesale(next);
 
 	let requeued = 0;
 	if (prefillOnSave(site.env)) {

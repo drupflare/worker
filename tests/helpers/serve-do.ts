@@ -334,6 +334,8 @@ export type ServeDo = {
 	flushMeters: (nowMs?: number) => import('../../src/ops/day-meters').DayMeters;
 	dailyRows: (nowMs?: number) => number;
 	bumpGeneration: (reason?: string) => BumpResult;
+	/** the version vector the spool shadow trial syncs from */
+	spoolVector: () => import('../../src/ops/spool').SpoolStamps;
 	/**
 	 * the scoped purge, which is the path with the COMPLETE tag set.
 	 *

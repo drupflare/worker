@@ -338,6 +338,7 @@ import {
 	writeSealed,
 	type SecretStore
 } from './ops/site-secrets';
+import { SpoolStamps } from './ops/spool';
 import { readStateRows } from './ops/state-fingerprint';
 import { classifyState } from './ops/state-inventory';
 import { RingBuffer, type Finding, type Observation } from './ops/supervisor';
@@ -642,6 +643,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	moduleIntegrity?: IntegrityStats;
 	/** what the heap image integrity check has seen; shown by `/__serve-stats` */
 	heapIntegrity?: HeapIntegrityStats;
+	/** tag to the generation of its last change, for the spool shadow trial's sync; memory only */
+	spoolStamps?: SpoolStamps;
 	/** whether this invocation already bumped the generation */
 	bumpCoalesced?: boolean;
 	/** every cache tag invalidated this invocation (the bump is coalesced; the tag set is not) */
@@ -2926,6 +2929,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return seen;
 	}
 
+	/** the version vector the spool shadow trial syncs from; created on first use at this generation */
+	spoolVector(): SpoolStamps {
+		return (this.spoolStamps ??= new SpoolStamps(this.generation()));
+	}
+
 	/**
 	 * The site generation: one integer every edge cache key carries, so one write unreaches every
 	 * cached URL (tag purge is Enterprise-only).
@@ -3156,6 +3164,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						scopedTo: []
 					});
 				}
+				this.spoolVector().stamp(written, this.generation());
 			}
 		}
 		return result;

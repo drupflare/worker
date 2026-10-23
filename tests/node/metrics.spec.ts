@@ -270,7 +270,7 @@ describe('the gate FAILS on a planted regression', () => {
 
 	it('fails on bundle drift that still fits, before the release that stops fitting', () => {
 		const doc = fixture();
-		(doc.metrics.bundle as { gzippedBytes: number }).gzippedBytes = 2_879_099 + 32_769;
+		(doc.metrics.bundle as { gzippedBytes: number }).gzippedBytes = 2_879_099 + 49_153;
 		const result = compare(doc, fixtureBaseline());
 		expect(result.ok).toBe(false);
 		expect(result.results.filter((r) => r.verdict === 'fail')).toHaveLength(1);

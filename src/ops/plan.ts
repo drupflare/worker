@@ -1,6 +1,7 @@
 import { OPCACHE_MODES } from '../runtime/opcache';
 import { CSP_MODES, type CspMode } from './csp';
 import { ruleDocumentRefusal } from './edge-rules';
+import { SPOOL_MODES, type SpoolMode } from './spool';
 
 /** the subset of the environment a plan decision reads */
 export type PlanEnv = { PLAN?: string };
@@ -28,6 +29,19 @@ export function cspMode(env?: PlanEnv & { CSP_MODE?: unknown }): CspMode {
 		.trim()
 		.toLowerCase();
 	return CSP_MODES.find((mode) => mode === named) ?? (isPaid(env) ? 'report-only' : 'off');
+}
+
+/**
+ * The spool mode in force: the `SPOOL_MODE` lever on a paid site, `off` otherwise and by default.
+ * A free site stays off because every sync and beacon is a Worker request, and Worker requests
+ * are the limit that binds it. An unrecognised value is `off`.
+ */
+export function spoolMode(env?: PlanEnv & { SPOOL_MODE?: unknown }): SpoolMode {
+	if (!isPaid(env)) return 'off';
+	const named = String(env?.SPOOL_MODE ?? '')
+		.trim()
+		.toLowerCase();
+	return SPOOL_MODES.find((mode) => mode === named) ?? 'off';
 }
 
 /**
@@ -207,7 +221,10 @@ export const KV_OVERRIDABLE = [
 	'REDIRECTS',
 	// the baseline Content-Security-Policy: off, report-only or enforce; a wrong value is a
 	// blocked embed or a report line, and the writer refuses PHP (see `OWNER_ONLY_LEVERS`)
-	'CSP_MODE'
+	'CSP_MODE',
+	// the spool shadow trial: off or shadow; it adds a script tag to HTML and spends Worker
+	// requests on syncs and beacons, so the writer refuses PHP and a free site ignores it
+	'SPOOL_MODE'
 ] as const;
 
 /** one name on {@link KV_OVERRIDABLE} */
@@ -266,7 +283,8 @@ export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
 	MEMORY_CACHE_MAX_ITEMS: { kind: 'int', min: 1, max: 4_096 },
 	RESPONSE_HEADERS: { kind: 'rules' },
 	REDIRECTS: { kind: 'rules' },
-	CSP_MODE: { kind: 'enum', values: CSP_MODES }
+	CSP_MODE: { kind: 'enum', values: CSP_MODES },
+	SPOOL_MODE: { kind: 'enum', values: SPOOL_MODES }
 };
 
 /**
@@ -274,7 +292,10 @@ export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
  * A site administrator is one tenant's administrator, and a policy that limits what a compromised
  * administrator session can load should not be one form submission from off.
  */
-export const OWNER_ONLY_LEVERS: ReadonlySet<string> = new Set<KvOverridable>(['CSP_MODE']);
+export const OWNER_ONLY_LEVERS: ReadonlySet<string> = new Set<KvOverridable>([
+	'CSP_MODE',
+	'SPOOL_MODE'
+]);
 
 /**
  * Why a value is outside its lever's domain, or undefined when inside; an empty value clears the

@@ -22,6 +22,7 @@ import { compilePlan, readPlanTier } from './site/plan-tier';
 import { recoverRoute } from './site/recover';
 import { isReservedPath } from './site/routes';
 import { denyProbe, refuseOversized } from './site/screen';
+import { spoolDecorate, spoolRoute } from './site/spool';
 import { fillWindowRoute, surfaceRoute } from './site/surfaces';
 import { openContext } from './site/target';
 import type { Defer, FrontEntry, SiteWorkerEnv } from './site/types';
@@ -83,7 +84,12 @@ export default {
 		try {
 			const res = edge.decorate(
 				visited,
-				await frontFetch(request, env, ctx, url, t0, resolvedSite),
+				await spoolDecorate(
+					request,
+					env,
+					resolvedSite,
+					await frontFetch(request, env, ctx, url, t0, resolvedSite)
+				),
 				url.protocol === 'https:'
 			);
 			// only a KV-mapped host: an operator wrote it, so a forged Host cannot reach this
@@ -192,6 +198,11 @@ async function frontFetch(
 	const entry = openEntry(request, env, ctx, url, t0, resolvedSite);
 	const filed = await fileRoute(entry);
 	if (filed !== undefined) return filed;
+	// before the page rewrite: spool's paths are not Drupal pages and must keep their own path
+	const spooled = await spoolRoute(entry, (r) =>
+		frontFetch(r, env, ctx, new URL(r.url), t0, resolvedSite)
+	);
+	if (spooled !== undefined) return spooled;
 	const unrouted = pageRewrite(entry);
 	if (unrouted !== undefined) return unrouted;
 	const gated = await ownerRoute(entry);

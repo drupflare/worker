@@ -37,9 +37,16 @@ type Profile = {
 	bootedIdle: number;
 	afterFirstRender: number;
 	afterSecondRender: number;
-	/** eight more renders of the same page on the same object */
+	/** more renders of the same page on the same object: at least eight, and on until it plateaus */
 	later: number[];
 };
+
+/** the most renders taken after the second while waiting for the heap to plateau */
+const MAX_LATER = 32;
+
+/** whether the last four readings are one value */
+const plateaued = (series: number[]): boolean =>
+	series.length >= 4 && series.slice(-4).every((v) => v === series.at(-1));
 
 async function heapOf(site: ServeDo): Promise<number> {
 	const res = await site.fetch(new Request('https://do.local/__heap?op=status'));
@@ -65,7 +72,9 @@ async function profile(): Promise<Profile> {
 		await render(site);
 		const afterSecondRender = await heapOf(site);
 		const later: number[] = [];
-		for (let i = 0; i < 8; i++) {
+		// which render takes the last rung depends on the pack and the step, so keep rendering until
+		// the heap stops moving rather than assuming it has by the eighth
+		for (let i = 0; i < 8 || (!plateaued(later) && i < MAX_LATER); i++) {
 			await render(site);
 			later.push(await heapOf(site));
 		}
@@ -161,8 +170,10 @@ describe('the heap-growth profile, at whatever step the lane was given', () => {
 		// never settles would make every capacity figure a lower bound
 		const series = [heap.afterFirstRender, heap.afterSecondRender, ...heap.later];
 		series.slice(1).forEach((v, i) => expect(v).toBeGreaterThanOrEqual(series[i]!));
-		const tail = heap.later.slice(-4);
-		expect(tail, 'still growing after eight renders').toEqual(tail.map(() => tail[0]));
+		expect(
+			plateaued(heap.later),
+			`still growing after ${heap.later.length} renders: ${heap.later.join(', ')}`
+		).toBe(true);
 	}, 900_000);
 
 	it('survives an INSTALL, which peaks higher than a render, without exceeding the limit', async () => {

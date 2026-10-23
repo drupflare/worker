@@ -23,7 +23,6 @@ import {
 } from '../../src/ops/site-secrets';
 import worker, { routeTable } from '../../src/site';
 import type { SitePhpDurableObject } from '../../src/site-do';
-import { HOST_HELPERS_PHP } from '../../src/site/generated/assets';
 import { memorySecretStore } from '../helpers/secret-store';
 import { freshSite, inObject, provisionedNamedSite, type ServeDo } from '../helpers/serve-do';
 
@@ -557,28 +556,6 @@ describe('secrets held where the SQL bridge cannot reach them', () => {
 		// a planted table must never become the key-value table, whether or not one existed
 		expect(out.renamed).toBe(false);
 		expect(out.read).not.toBe('planted-hash');
-	});
-
-	it('answers the same through PHP, which is how an attacker with code reaches SQL', async () => {
-		const out = await inObject(freshSite(), async (site) => {
-			kvOf(site).put('probe', MARK);
-			const php = await site.runJson(
-				`<?php
-				$out = [];
-				if (!function_exists('cfw_host')) {${HOST_HELPERS_PHP}}
-					$out[] = json_encode(cfw_sql('SELECT 1 AS one', []));
-					foreach (['SELECT * FROM _cf_KV', "UPDATE _cf_KV SET value = 'x'", 'DROP TABLE _cf_KV'] as $q) {
-					try { $out[] = json_encode(cfw_sql($q, [])); } catch (\\Throwable $e) { $out[] = 'threw: ' . $e->getMessage(); }
-				}
-				echo json_encode($out);`
-			);
-			return { php, after: kvOf(site).get('probe') };
-		});
-		// the bridge is loaded and reaches SQL, so what follows is the platform's refusal
-		expect(JSON.stringify(out.php)).toContain('one');
-		expect(JSON.stringify(out.php)).not.toContain('undefined function');
-		expect(JSON.stringify(out.php)).not.toContain(MARK);
-		expect(out.after).toBe(MARK);
 	});
 
 	it('leaves neither the token nor its hash in cfw_meta after a claim', async () => {

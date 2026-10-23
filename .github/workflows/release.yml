@@ -133,7 +133,9 @@ jobs:
         # artifact does not contain. --force reaches the payload route, which overwrites.
         run: bun scripts/hydrate.ts --force --from="dist/$PAYLOAD"
       - name: Price the Bundle Against the Free Ceiling
-        run: bun run release:check | tee /tmp/bundle.txt
+        run: |
+          set -o pipefail
+          bun run release:check | tee /tmp/bundle.txt
       - name: Smoke the Hydrated Tree
         run: bun run release:smoke
       # AFTER the checks, not before them. A release prefix is what `hydrate` prefers over the

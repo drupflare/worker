@@ -53,6 +53,25 @@ function runs(doc: Workflow): string {
 		.join('\n');
 }
 
+describe('a step that pipes through tee', () => {
+	// the default shell has no pipefail, so the step reports tee's status and a failed command
+	// upstream of it passes; the interpreter fetch died on its seam check and the run went green
+	it('sets pipefail, or the step reports the status of tee', () => {
+		const bare: string[] = [];
+		for (const { file, doc } of workflows()) {
+			for (const job of Object.values(doc.jobs ?? {})) {
+				for (const step of job.steps ?? []) {
+					const run = step.run ?? '';
+					if (/\|\s*tee\b/.test(run) && !/pipefail/.test(run)) {
+						bare.push(`${file}: ${step.name ?? run.slice(0, 40)}`);
+					}
+				}
+			}
+		}
+		expect(bare).toEqual([]);
+	});
+});
+
 /** the branches that only ever carry bot-authored pull requests */
 const BOT_BRANCHES = ['renovate/*', 'interp/*'];
 

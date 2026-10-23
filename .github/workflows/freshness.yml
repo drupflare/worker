@@ -110,7 +110,9 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Check the Release History
         id: check
-        run: bun run qa:core-freshness | tee /tmp/freshness.txt
+        run: |
+          set -o pipefail
+          bun run qa:core-freshness | tee /tmp/freshness.txt
       - name: Freshness to Job Summary
         if: ${{ !cancelled() }}
         run: |

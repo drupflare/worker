@@ -173,6 +173,7 @@ jobs:
       - name: Measure the Incumbent Bundle
         if: ${{ !env.SKIPPED && env.HAVE_PAYLOAD }}
         run: |
+          set -o pipefail
           bun run release:check | tee /tmp/incumbent.txt
           echo "INCUMBENT=$(tail -1 /tmp/incumbent.txt)" >> "$GITHUB_ENV"
 
@@ -181,6 +182,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PHASM_TOKEN }}
         run: |
+          set -o pipefail
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::PHASM_TOKEN is unset, so phasm's artifacts API is unreachable" >&2
             exit 1
@@ -216,12 +218,15 @@ jobs:
       - name: Price the New Bundle Against the Free Ceiling
         if: ${{ !env.SKIPPED && env.HAVE_PAYLOAD }}
         run: |
+          set -o pipefail
           bun run release:check | tee /tmp/bundle.txt
           echo "BUNDLE=$(tail -1 /tmp/bundle.txt)" >> "$GITHUB_ENV"
 
       - name: Build the Deploy Payload
         if: ${{ !env.SKIPPED && env.HAVE_PAYLOAD }}
-        run: bun run release:payload | tee /tmp/payload.txt
+        run: |
+          set -o pipefail
+          bun run release:payload | tee /tmp/payload.txt
 
       - name: Upload the Payload
         if: ${{ !env.SKIPPED && env.HAVE_PAYLOAD }}

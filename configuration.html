@@ -1880,6 +1880,16 @@ daily rows. Lowering it is the fastest way to burn the meter that binds regenera
 <td>take that heap image in the first place; <code>1</code> enables. A restore costs more than a boot</td>
 </tr>
 <tr>
+<td><code>BOOT_IMAGE</code></td>
+<td><strong>off</strong></td>
+<td>boot a cold object from the published boot image when the site matches it; <code>1</code> enables</td>
+</tr>
+<tr>
+<td><code>BOOT_IMAGE_BAKE</code></td>
+<td>off</td>
+<td>lets an object capture its own boot image; only the local bake rig sets it</td>
+</tr>
+<tr>
 <td><code>HEAP_RESTORE_CHUNKS</code></td>
 <td>all at once</td>
 <td>chunks of a snapshot one invocation may apply</td>
@@ -2026,7 +2036,53 @@ runs before the fill loop and only when <code>this.php === null</code>. It also 
 operator took, since the GC keeps exactly one. When an image IS stored its chunks are deflated, which
 bounds the storage at 3,134,727 bytes rather than 11,206,656.</p>
 <p>The image is taken before the first render. Byte-identical anonymous output does not prove that no
-session state survives a render, so no post-render image is produced.</p>
+session state survives a render, so no post-render image is produced. The shared boot image below is
+the one exception, and it earns it differently: it is taken once from a throwaway site, and its test
+asserts the session id, the <code>$_SESSION</code> keys and the user after a restore.</p>
+<h3 id="the-shared-boot-image">The shared boot image</h3>
+<p><code>BOOT_IMAGE=1</code> boots a cold object from a heap image published with the worker, where a plain boot
+builds that heap from the database. <strong>It is off by default</strong>, because no real site&#39;s cold-boot share
+has been measured against it. <code>bun run assets:bootimage</code> bakes it into <code>assets/bootimage/</code>.</p>
+<p>A boot restores an image only when the site equals what the image was baked from: the pack
+generation and enabled modules, the driver digest, a digest of the <code>config</code> rows, and a digest of
+the settings and PHP fragments the heap was built under. Any difference boots plain, which is always
+correct, so a stale image costs a plain boot. Two images are published. The <code>pack</code> image is for a
+site the pack made. The <code>claimed</code> image is for a claimed site and carries <code>config=reset</code> in place of
+the digest, because every claimed site has its own name, mail and timezone; its restore also resets
+the config factory and the entity memory cache.</p>
+<p>After the pages land, the restore runs <code>src/site/php/boot-image/rekey.php</code>: it reads <code>settings.php</code>
+again (the site&#39;s salt and origin), flushes <code>cache.memory</code> and every memory bin, resets every cache
+collector (State&#39;s private key, and anything the bake computed but had not persisted) and reseeds
+<code>mt_rand</code>. A replica or pool lane never boots from the image.</p>
+<p>Four things are measured. The first three were each rerun with the step that serves them removed,
+and the spec failed:</p>
+<ul>
+<li>A restored site renders what a plain boot renders, over five pages, after normalizing the ids a
+render invents. A first render that read as many rows as a plain boot would show the heap was
+not used, so the spec asserts fewer.</li>
+<li>The salt and the private key read before any request are the site&#39;s own, and a second restored
+site draws different <code>mt_rand</code> values. Without the settings re-read the bake&#39;s salt survives.</li>
+<li>A claimed site&#39;s own name shows, and so do a theme colour, a disabled block, the maintenance
+switch, a new menu link and a saved node, from the image and from a plain boot alike. With the
+config reset off all six cases fail.</li>
+<li>A corrupt file refuses the restore. If an earlier file already landed, the interpreter is dropped
+and the site boots plain; the page is the same either way.</li>
+</ul>
+<p><strong>A heap restored from a bake is only as fresh as an interpreter that rendered once.</strong> One case
+showed it: the bake&#39;s active trail for <code>/user/login</code> sat in a cache collector, waiting to be
+persisted, and the first request&#39;s resetter wrote it into the new site&#39;s cache under that site&#39;s
+current tag checksums. It read as valid and lacked the link the site had added. Resetting the
+collectors on every restore fixed it.</p>
+<p>Deployed, on a claimed site with <code>SITE_WARM=0</code> and <code>RETAIN_INTERPRETER=0</code>, a cold round cost 2,527 ms
+of object <code>cpuTime</code> without the image and 1,105 ms with it (medians, n=7 per arm, one worker each),
+and 3,974 against 2,454 ms of wall time. The cost is the request&#39;s fetch plus the alarm it queued
+behind, since the platform charges the boot to the alarm. The technical report has the table and
+its limits.</p>
+<p>What is not measured: the share of real cold boots that match an image, the pack image deployed, a
+site with content or a large module set, and what the extra 18.6 MiB of memory (1,320 to 1,375 pages
+against 1,024) costs per fresh isolate, which a deployed memory is charged for in full. A site with a different module set,
+settings or interpreter build boots plain; the published index also names the interpreter, and
+<code>tests/node/boot-image-agrees.spec.ts</code> fails when it is not the one on disk.</p>
 <p><strong>What replaces this as the number to watch is the cold-encounter share</strong>, not the cold-boot duration.
 <code>src/ops/cold-encounter.ts</code> classifies every request the object handles and <code>/serve-stats</code> reports
 <code>coldOfPhp</code>, <code>coldOfObject</code> and <code>coldOfTraffic</code>. 1,264 ms is the floor for an object <code>thermal.ts</code>

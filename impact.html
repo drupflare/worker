@@ -2080,7 +2080,187 @@ covers the fresh ones alone. It sweeps that share, <code>derived (modelled)</cod
 <p>Those are kWh a year on visitors&#39; desktops. The server tables above don&#39;t include them, and the two
 sets of figures are not added or divided on this page: one is a measured desktop package reading, the
 other is modelled CPU time at 2.22 W a core.</p>
-<h2 id="carbon">Carbon</h2>
+<h2 id="what-spool-adds">What Spool Adds</h2>
+<p>Spool is the service worker the front worker installs in a visitor&#39;s browser. It answers repeat
+navigations on the device, converts images to WebP, sets <code>preload=&quot;none&quot;</code> on video and swaps a
+YouTube or Vimeo embed for a facade until it is clicked. It changes the Worker request count, the
+visitor&#39;s device energy and the Worker&#39;s own CPU, and each is measured or modelled separately below.
+The measured rows come from two deployed paid-account workers that differ only in whether spool runs,
+driven from a container on a desktop CPU (RAPL package-0, idle subtracted per navigation, arm order
+rotated, one fresh browser context per cold navigation) on 2026-10-23. The sites are synthetic: one
+page with an image, a video and an embed, and plain pages beside it.</p>
+<p><strong>Requests, <code>measured</code>.</strong> Every one of 48 repeat navigations on the spool worker made zero network
+requests, answered from the device. The same navigations on the other worker made one to six. A new
+device asks the spool worker for <code>/spool-sw.js</code> and for <code>/.spool/*</code>: 482 and 507 requests over about
+500 new devices, so a new device costs about two Worker requests beyond its page (<code>derived</code>, from those
+two counts and the device count). Over the whole run the spool worker answered 1,751 front worker
+invocations and the other 4,196 for the same drive. An earlier local run counted four per device;
+the deployed figure replaces it, because a deployed worker did not show the two artifact requests.</p>
+<p><strong>Visitor energy, <code>measured</code>.</strong> Joules a navigation on a desktop CPU, off over on per round:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>navigation</th>
+<th align="right">spool on</th>
+<th align="right">spool off</th>
+<th>off over on (range)</th>
+<th align="right">rounds</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>repeat</td>
+<td align="right">0.53 J</td>
+<td align="right">1.29 J</td>
+<td>2.47 (2.26-2.56)</td>
+<td align="right">8</td>
+</tr>
+<tr>
+<td>repeat, the same arm both sides</td>
+<td align="right">1.31 J</td>
+<td align="right">1.34 J</td>
+<td>1.00 (0.99-1.05)</td>
+<td align="right">4</td>
+</tr>
+<tr>
+<td>first view, all media</td>
+<td align="right">12.9 J</td>
+<td align="right">32.8 J</td>
+<td>2.65 (2.29-3.36)</td>
+<td align="right">6</td>
+</tr>
+<tr>
+<td>first view, embed only</td>
+<td align="right">12.0 J</td>
+<td align="right">34.1 J</td>
+<td>2.89 (2.63-3.72)</td>
+<td align="right">5</td>
+</tr>
+<tr>
+<td>first view, image only</td>
+<td align="right">9.83 J</td>
+<td align="right">9.65 J</td>
+<td>0.94 (0.80-1.02)</td>
+<td align="right">6</td>
+</tr>
+<tr>
+<td>first view, video only</td>
+<td align="right">10.9 J</td>
+<td align="right">10.9 J</td>
+<td>1.02 (0.87-1.47)</td>
+<td align="right">6</td>
+</tr>
+<tr>
+<td>first view, plain pages</td>
+<td align="right">10.0 J</td>
+<td align="right">8.94 J</td>
+<td>0.84 (0.68-1.02)</td>
+<td align="right">6</td>
+</tr>
+</tbody></table></div>
+<p>The second row is the harness against itself and reads 1.00, so the 2.47 is not a bias in the
+instrument. A repeat navigation saves 0.77 J here, which agrees with the 0.80 J desktop reading in
+spool&#39;s own impact page (<code>published</code>); that page also gives 0.088 J on an iPhone 14 Pro and a 12.4 J
+modelled headline, and neither is re-derived here. The saving on a first view comes from the embed:
+all-media pages moved 1.37 MB in 35 requests off and 0.20 MB in 21 on, and the embed-only page
+moved 1.29 MB in 35 and 0.16 MB in 20. The image-only, video-only and plain
+rows sit inside their own spread and are not savings. The plain-page row leans the other way (0.84),
+which fits a new device paying for the worker&#39;s install, but its spread covers 1.0, so it is not a
+cost either. The cold rows range from 4 to 14 J within one arm, so read the ratios and not a single
+figure. The embed rows depend on the live third-party player a visitor&#39;s browser fetched that day.</p>
+<p><strong>Worker CPU, <code>measured</code>.</strong> The platform&#39;s <code>cpuTime</code> for the front worker, in whole milliseconds:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>request class</th>
+<th align="right">n (on)</th>
+<th>on: median, p90, max</th>
+<th>off: median, p90, max</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>page</td>
+<td align="right">544</td>
+<td>6, 16, 38 ms</td>
+<td>1, 4, 23 ms</td>
+</tr>
+<tr>
+<td>image file</td>
+<td align="right">182</td>
+<td>2, 96, 187 ms</td>
+<td>1, 3, 9 ms</td>
+</tr>
+<tr>
+<td>spool endpoint</td>
+<td align="right">507</td>
+<td>0, 0, 22 ms</td>
+<td>none</td>
+</tr>
+<tr>
+<td>spool worker JS</td>
+<td align="right">482</td>
+<td>0, 4, 10 ms</td>
+<td>none</td>
+</tr>
+</tbody></table></div>
+<p>Decorating a page costs about 5 ms at the median, and the first conversion of an image shows in the
+tail (a p90 of 96 ms and a 187 ms maximum). A median of 1 ms is the meter&#39;s floor and not a reading of
+1.0. These ran on a paid account. A free handler caps CPU at 10 ms, and a 16 ms p90 and 38 ms maximum
+page have not been run there.</p>
+<p><strong>Request economics, <code>derived (modelled)</code>.</strong> The share of views a device answers locally and the views
+a device makes while its worker is installed are nobody&#39;s reading for a real site, so the tables sweep
+both, with two requests per new device from above, from <code>bun scripts/economics/spool.ts</code>. Worker
+requests a view costs, and the views a device must make before spool sends the Worker fewer requests
+than it would have had:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">local share</th>
+<th align="right">5 views</th>
+<th align="right">10 views</th>
+<th align="right">20 views</th>
+<th align="right">50 views</th>
+<th align="right">break-even</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">25%</td>
+<td align="right">1.15</td>
+<td align="right">0.95</td>
+<td align="right">0.85</td>
+<td align="right">0.79</td>
+<td align="right">8.0 views</td>
+</tr>
+<tr>
+<td align="right">50%</td>
+<td align="right">0.90</td>
+<td align="right">0.70</td>
+<td align="right">0.60</td>
+<td align="right">0.54</td>
+<td align="right">4.0 views</td>
+</tr>
+<tr>
+<td align="right">75%</td>
+<td align="right">0.65</td>
+<td align="right">0.45</td>
+<td align="right">0.35</td>
+<td align="right">0.29</td>
+<td align="right">2.7 views</td>
+</tr>
+</tbody></table></div>
+<p>The free plan&#39;s 100,000 requests a day carry 3,044,000 views a month without spool. At a 50% local
+share and 20 views a device they carry 5,073,333, and at 25% with 5 views a device they carry fewer,
+2,646,957. On the paid plan a site at 30 million views a month pays $12.23 without spool and $10.46,
+$7.70 or $5.30 at 25%, 50% or 75% local, at 20 views a device. At 10 million views it moves by at
+most 15 cents, and below that the site is free either way.</p>
+<p><strong>The free default stays off.</strong> The break-even says spool sends the Worker fewer requests once a device
+makes a handful of views, but the local share of a real site is unmeasured, the page decoration p90 is
+above the free handler&#39;s 10 ms and nobody has run it there, and a site that gains requests on a
+short visit loses headroom on the plan that has the least. What would change it: a free-account run
+of the decorate path with no refusals, and a local share read off a real site.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/measure/headers-deployed.ts</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --arm</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> on=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$ON </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">--arm</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> off=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$OFF </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">--pages</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> /</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> /user/login</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> /node/1</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/measure/spool-report.ts</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> results/repeat.jsonl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> results/cold-all.jsonl</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/measure/spool-cpu.ts</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --on=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$ON_NAME</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --off=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$OFF_NAME</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --from=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$START</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --to=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$END</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/economics/spool.ts</span></span></code></pre><h2 id="carbon">Carbon</h2>
 <p><code>derived</code> from the energy totals above by <code>bun scripts/economics/fleet.ts</code>, at 384 g/kWh, the US
 average in Ember&#39;s Global Electricity Review 2025 [13]. Neither system controls the grid factor. The
 first tables are for one site against the production baseline, the later ones for the fleet.</p>
@@ -3077,6 +3257,14 @@ missed plan as a render.</li>
 <li><strong>No visitor-device energy in any total above.</strong> <a href="#visitor-devices">Visitor Devices</a> prices a
 repeat navigation on its own. It is a desktop reading with the fresh-asset share swept, no phone has
 been measured, and it is never summed with the server figures.</li>
+<li><strong>No price on the v1.0.4 security controls.</strong> The CPU readings above predate the PHP 8.5.12
+interpreter and the controls, and no deployed <code>cpuTime</code> has been read since. What is counted: a new
+object&#39;s first fill writes one more row, 83 against 82, once per object for the module integrity
+record (<code>measured</code>). The interpreter is 14,011,458 bytes against 13,401,742, 4.5% larger
+(<code>measured</code>). An owner action appends to the audit log, and no view triggers one. A claimed site
+hashes each module file the first time it opens it. Heap image checks run only where <code>HEAP_IMAGE</code> is
+on, which is not the default. The report-only policy header adds about 120 bytes to each HTML
+response before compression (<code>derived</code>). None of these has an energy figure.</li>
 <li><strong>Institutional rows use an assumed workload.</strong> The page views come from the case studies. The
 logged-in share, the saves a day and the pages a save invalidates are the model&#39;s, not theirs.</li>
 </ul>

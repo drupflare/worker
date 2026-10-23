@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">HeapIntegrityStats</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#lastreason">lastReason</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#refused">refused</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#verified">verified</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#warned">warned</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Set</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/578689be9e3bdaff00bf2d3b8efbffab518f92c9/src/ops/heap-integrity.ts#L22">src/ops/heap-integrity.ts:22</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3d569d785bd1e0242933c5517f290b5b8de93293/src/ops/heap-integrity.ts#L22">src/ops/heap-integrity.ts:22</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -38,28 +38,28 @@
 <div class="tsd-comment tsd-typography"><p>why the last image was refused, with no payload</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/578689be9e3bdaff00bf2d3b8efbffab518f92c9/src/ops/heap-integrity.ts#L28">src/ops/heap-integrity.ts:28</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3d569d785bd1e0242933c5517f290b5b8de93293/src/ops/heap-integrity.ts#L28">src/ops/heap-integrity.ts:28</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="refused"><span>refused</span><a href="#refused" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">refused</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>images refused: no record, a malformed record, or rows that hash to another root</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/578689be9e3bdaff00bf2d3b8efbffab518f92c9/src/ops/heap-integrity.ts#L26">src/ops/heap-integrity.ts:26</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3d569d785bd1e0242933c5517f290b5b8de93293/src/ops/heap-integrity.ts#L26">src/ops/heap-integrity.ts:26</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="verified"><span>verified</span><a href="#verified" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">verified</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>images whose rows hashed to their sealed root</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/578689be9e3bdaff00bf2d3b8efbffab518f92c9/src/ops/heap-integrity.ts#L24">src/ops/heap-integrity.ts:24</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3d569d785bd1e0242933c5517f290b5b8de93293/src/ops/heap-integrity.ts#L24">src/ops/heap-integrity.ts:24</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="warned"><span>warned</span><a href="#warned" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">warned</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Set</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span></div>
 <div class="tsd-comment tsd-typography"><p>reasons that already logged a warning</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/578689be9e3bdaff00bf2d3b8efbffab518f92c9/src/ops/heap-integrity.ts#L30">src/ops/heap-integrity.ts:30</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3d569d785bd1e0242933c5517f290b5b8de93293/src/ops/heap-integrity.ts#L30">src/ops/heap-integrity.ts:30</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

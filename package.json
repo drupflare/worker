@@ -98,7 +98,8 @@
 		"docs:php": "./.composer-vendor/bin/phpdoc -d src/site/php -t typedoc/php --cache-folder=.phpdoc/cache --title=\"drupflare/worker\" --template=\"clean\" && bash phpdoc-favicon.sh",
 		"lint:php": "./.composer-vendor/bin/phpcs",
 		"analyze:php": "./.composer-vendor/bin/phpstan analyse --memory-limit=1G",
-		"assets:agg": "bun scripts/pack-aggregates.ts"
+		"assets:agg": "bun scripts/pack-aggregates.ts",
+		"assets:bootimage": "bun scripts/bake-boot-image.ts"
 	},
 	"dependencies": {
 		"@drupflare/burrow": "^1.1.1",

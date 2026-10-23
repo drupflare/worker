@@ -59,3 +59,7 @@
 
 # the migration chunks the JS engine replays: manifest.json plus NNNN.json
 !/drupal-sql/
+
+# the shared boot image `BOOT_IMAGE=1` restores: index.json plus 2 MiB page files, which the object
+# reads through its own ASSETS binding. `scripts/bake-boot-image.ts` writes them
+!/bootimage/

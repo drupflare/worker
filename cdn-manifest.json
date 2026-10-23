@@ -303,17 +303,17 @@
 		},
 		{
 			"key": "vendor/static-long64/php8.5-worker.mjs.wasm",
-			"bytes": 13401742,
-			"sha256": "fc6a660dec094cba2daf7461849e3c40ccc270e78f40d7ea289c827f6b7a85ac",
-			"md5": "8512cebe6ca6795f400be8edc78d67d8",
+			"bytes": 14011458,
+			"sha256": "e723ca7bf0a2ee614bbb3faaa5cebe7dfd233679bfd1e10d64ba0698a06244f6",
+			"md5": "02977fd30f95a2cbf95d8a865e6eef6f",
 			"mirrors": ".interp/php8.5.wasm",
 			"note": "the shipping PHP 8.5 binary: wasm32 pointers with 64-bit zend_long, so PHP_INT_SIZE is 8"
 		},
 		{
 			"key": "vendor/static-long64/php8.5-worker.mjs",
-			"bytes": 876467,
-			"sha256": "e86ef3e20ff94f136a1bc1ed7ec926fdb171bcd2b08b8a843449911d21f944ae",
-			"md5": "9de83d79aad46b4c4bbada9204e8e69a",
+			"bytes": 1034868,
+			"sha256": "ec6a890146d411e80345db91e8513d6c359b032a38b4990bd5347960e962b38c",
+			"md5": "1c76b8ff48711ea96c4f5eb238aeda9f",
 			"mirrors": ".interp/php8.5-worker.mjs",
 			"note": "its glue, which the seam imports as PHPFactory"
 		},
@@ -337,6 +337,20 @@
 			"sha256": "92bcbdea7054e67c83d70200cf47ab5c6b78b7d521cf2f002e4527ebe63904c1",
 			"md5": "2dc5e9f31b7604a1db51574f53142fde",
 			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-10-16"
+		},
+		{
+			"key": "snapshots/php8.5-worker.mjs.wasm.fc6a660dec09",
+			"bytes": 13401742,
+			"sha256": "fc6a660dec094cba2daf7461849e3c40ccc270e78f40d7ea289c827f6b7a85ac",
+			"md5": "8512cebe6ca6795f400be8edc78d67d8",
+			"note": "vendor/static-long64/php8.5-worker.mjs.wasm as the bucket held it until an upload replaced it on 2026-10-23"
+		},
+		{
+			"key": "snapshots/php8.5-worker.mjs.e86ef3e20ff9",
+			"bytes": 876467,
+			"sha256": "e86ef3e20ff94f136a1bc1ed7ec926fdb171bcd2b08b8a843449911d21f944ae",
+			"md5": "9de83d79aad46b4c4bbada9204e8e69a",
+			"note": "vendor/static-long64/php8.5-worker.mjs as the bucket held it until an upload replaced it on 2026-10-23"
 		}
 	]
 }

@@ -157,7 +157,7 @@ describe('the fast lane refuses to run DDL, which is the constraint that makes i
 		expect(first.lane).toBe('php-gate');
 	});
 
-	it('declines again after an eviction, because the memo is in-memory state', async () => {
+	it('declines while the memo is absent, and an eviction does not leave it absent', async () => {
 		const stub = await provisionedSite();
 		await inObject(stub, async (site) => {
 			await serveDirect(site, '/');
@@ -166,13 +166,22 @@ describe('the fast lane refuses to run DDL, which is the constraint that makes i
 		});
 		const warm = await inObject(stub, (site) => serveDirect(site, '/', '&edge=0'));
 		await evictDurableObject(stub);
+		// waking reads `cfw_meta` to adopt a legacy owner token, which proves the serve tables
+		// before any request, so the first answer after an eviction is already the fast lane
 		const afterEviction = await inObject(stub, (site) => serveDirect(site, '/', '&edge=0'));
+		// the memo is in-memory state: with it absent the lane declines and then restores it
+		const absent = await inObject(stub, (site) => {
+			site.serveTablesReady = false;
+			return serveDirect(site, '/', '&edge=0');
+		});
 		const again = await inObject(stub, (site) => serveDirect(site, '/', '&edge=0'));
 
 		expect(warm.lane).toBe('storage');
-		// the tables DO exist; what was lost is the proof that they do
-		expect(afterEviction.lane).toBe('php-gate');
+		expect(afterEviction.lane).toBe('storage');
 		expect(afterEviction.cache).toBe('HIT');
+		// the tables DO exist; what is missing is the proof that they do
+		expect(absent.lane).toBe('php-gate');
+		expect(absent.cache).toBe('HIT');
 		expect(again.lane).toBe('storage');
 	});
 

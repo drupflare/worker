@@ -67,7 +67,7 @@ export type PlatformVersions = Record<string, string>;
  *
  * Extension entries carry the same version: a bundled extension is part of the interpreter.
  */
-export const PLATFORM_PHP_VERSION = '8.5.2';
+export const PLATFORM_PHP_VERSION = '8.5.12';
 
 /**
  * Extensions the interpreter loads, measured rather than inferred.

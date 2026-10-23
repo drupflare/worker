@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { NATIVE_PLATFORM, POLYFILLED_PLATFORM } from '../../src/ops/packagist';
+import {
+	NATIVE_PLATFORM,
+	PLATFORM_PHP_VERSION,
+	POLYFILLED_PLATFORM
+} from '../../src/ops/packagist';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -46,6 +50,16 @@ async function loadedExtensions(): Promise<string[]> {
 	expect(out.version, 'the route reports a PHP version').toMatch(/^\d+\.\d+/);
 	return (out.extensions ?? []).map(extName);
 }
+
+describe('the version the platform map claims', () => {
+	it('is the PHP version the binary reports', async () => {
+		const out = await inObject(freshSite(), async (site: ServeDo) => {
+			const res = await site.fetch(new Request('https://do.local/__php'));
+			return (await res.json()) as { version?: string };
+		});
+		expect(out.version).toBe(PLATFORM_PHP_VERSION);
+	}, 900_000);
+});
 
 describe('the extensions the shipping binary loads', () => {
 	it('includes every name NATIVE_PLATFORM claims', async () => {

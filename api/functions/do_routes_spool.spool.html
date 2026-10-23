@@ -16,9 +16,9 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="spool"><span class="tsd-kind-call-signature">spool</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">site</span><span class="tsd-signature-symbol">:</span> <a href="../classes/site-do.SitePhpDurableObject.html" class="tsd-signature-type tsd-kind-class">SitePhpDurableObject</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">request</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Request</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">url</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">URL</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Response</span><span class="tsd-signature-symbol">&gt;</span><a href="#spool" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p><code>GET /__spool?op=cursor</code> and <code>?op=diff&amp;from=N</code>: the version vector the spool shadow trial syncs
-from. Internal: the front worker asks it for a <code>/.spool/sync</code> and a visitor cannot reach a <code>__</code>
-path. Reads memory and the generation, so it writes no row.</p>
+<div class="tsd-comment tsd-typography"><p><code>GET /__spool?op=cursor</code> and <code>?op=diff&amp;from=N</code>: the version vector spool syncs from. Internal:
+the front worker asks it for a <code>/.spool/sync</code> and a visitor cannot reach a <code>__</code> path. Reads
+memory and the generation, so it writes no row.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -28,7 +28,7 @@ path. Reads memory and the generation, so it writes no row.</p>
 <li><span><span class="tsd-kind-parameter">url</span>: <span class="tsd-signature-type">URL</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Response</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/5e38c8e9887136792ad1d3b405cc92751b30bdbe/src/do/routes/spool.ts#L9">src/do/routes/spool.ts:9</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/f902595ccb628bb59d21f039dde4bee9f6d916d2/src/do/routes/spool.ts#L9">src/do/routes/spool.ts:9</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

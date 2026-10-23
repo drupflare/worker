@@ -2872,6 +2872,39 @@ modified file in an upload reported as a removal, and the caller was told its ed
 file it had just edited. `planDeclared()` counts directly instead, and the missing source is not
 needed: bytes the site does not hold are new to it, so the path being stored is the whole question.
 
+## A restored heap carries a warm interpreter's pending writes, and a tag counter cannot see them
+
+`BOOT_IMAGE=1` restores a shared after-render heap (`src/do/boot-image.ts`, folio v1's technique;
+`docs/configuration.md` has the keys). Off by default. Measured deployed 2026-10-23 on a claimed
+site: a cold round cost 2,527 ms of object `cpuTime` plain and 1,105 ms from the image (n=7 per arm,
+one worker each); the report has the table and its limits.
+
+**A cold request's CPU lands on the ALARM event it queued behind**, and the same-timestamp fetch
+event reads small (580 against 1,765 ms plain, 17 against 1,082 from the image). Read the fetch
+alone and the image looks like a 97% saving. Sum both. Also: the Observability event's time is the
+top-level `timestamp`, not `$metadata.timestamp`, and a stock site answers `/user/password` from a
+stored page, so a cold sample needs a distinct query string.
+
+**A `CacheCollector` holds what it computed until `destruct()`, and the first request's resetter
+writes it out under the NEW site's current tag checksums.** The bake's active trail for
+`/user/login` reached a site that had since added a menu link and read as valid. Two sites with the
+same number of saves share a counter, so no checksum catches it. `rekey.php` resets every
+initialized collector on every restore. The test that found it renders a page BEFORE the edit,
+because a stale entry needs something cached to hide behind; without that render a disabled reset
+passed.
+
+**Run the control for every step of a reset, and delete the ones that pass without it.** A
+checksum-provider reset and a `State` reset were written from reasoning and both passed when
+removed: the per-request resetter and the collector reset already did their work.
+
+**An image is keyed on the PHP fragments it was built under** (`fragmentsDigest()`), because a
+fragment's `function_exists` guard keeps the function the heap already holds. Any edit under
+`src/site/php/` sends every site to the plain boot until `bun run assets:bootimage` runs again;
+the interpreter is the one input no context names, so `tests/node/boot-image-agrees.spec.ts`
+compares the index to the wasm on disk. The image is NOT in `build-local.ts` yet, which is the
+`ASSET_AGGREGATES` shape (a lever with no producer in the build); it degrades to a plain boot, and
+it is a step to add before the lever defaults on.
+
 ## Conventions
 
 - `bunx`, never `npx`.

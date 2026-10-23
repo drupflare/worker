@@ -2705,6 +2705,72 @@ because a front worker too old to report and a site with nothing absorbed are ot
 reading. An isolate that dies before hopping loses its count, which biases the denominator down and
 the share up: the direction a missing reading has to fail in.
 
+### A Shared Boot Image Restores, and What a Restored Heap Carries Over
+
+folio v1 (`@gmitch215/folio`) measured a baked after-render heap cutting a Drupal cold boot, on the
+copy of this host at commit `f902595cc`. Its figures are published ones, not this repository's:
+first request of a fresh matching site 3,822 to 1,035 ms of `cpuTime` (n=4 per arm, paid account,
+PHP 8.5.12), and a serve after a drop 989 to 555 ms (n=4). Wiring it in is `BOOT_IMAGE`, off by
+default. A bake takes every 64 KiB page that differs from the heap at the point a restore writes
+into, the descriptors and the vrzno handles the heap names, and the object reads it back through its
+own `ASSETS` binding in 2 MiB files, checking each page against a stored hash before any byte of
+that file lands.
+
+**Measured here, local workers pool, 2026-10-23.** The pack image is 762 pages (49.9 MB) and asks
+for 1,375 pages of memory; the claimed image is 487 pages (31.9 MB) and 1,320. A site restored from
+the pack image renders `/`, `/user/login`, `/user/register`, `/filter/tips` and `/node` equal to a
+plain boot after normalizing the ids a render invents (views and form ids, the permissions hash,
+the form selector). It reads fewer rows on its first render than the control, which is what shows
+the heap was used and not a plain boot that happened to match. On a local `wrangler dev` with the
+real assets binding, one fresh unclaimed site's first request took 1,474 ms plain and 351 ms from the
+image (n=1, equal 12,232 bytes, apply 42 ms and rekey 2 ms). That is a single pair on a laptop.
+
+**Measured here, deployed, paid account, 2026-10-23.** Two throwaway workers on one tree, claimed
+sites, `SITE_WARM=0` and `RETAIN_INTERPRETER=0`, driven at the same time, one request per round for a
+path nothing had stored (`/node?r=...`, a miss that renders) after 60 s idle, 8 rounds per arm with
+`x-cfw-inline-boot: 1` required for a round to count (one control round came up warm and is left
+out, so n=7 per arm). The image arm reported `claimed image, context equal, config reset`, 487
+pages in 16 files. The object's `cpuTime` for a round is its fetch plus the alarm the request queued
+behind, because the platform charged the boot to the alarm: reading the fetch alone gave 580 ms
+against 17 ms and would have called the image a 97% saving.
+
+| arm     | object cpuTime, median (min to max) | fetch + alarm medians | wall, median |
+| ------- | ----------------------------------- | --------------------- | ------------ |
+| control | 2,527 ms (2,269 to 2,967)           | 580 + 1,765           | 3,974 ms     |
+| image   | 1,105 ms (1,010 to 1,264)           | 17 + 1,082            | 2,454 ms     |
+
+That is 56.3% less object `cpuTime` and 38.2% less wall time per cold round. The ranges do not
+overlap, and every invocation in both arms ended `ok` with no memory reset (the `canceled` rows are
+the driver's own disconnects, equal across arms). Limits: one worker per arm and the levers were not
+swapped, so a placement effect is not excluded; the alarm total carries work besides the boot, equal
+across arms as far as can be seen, so the 1,422 ms difference is the figure to trust and 56.3% is
+that difference over a total that includes work the image does not touch; the page is a miss render
+on a stock claimed site with no content; and the image's memory headroom on a large site is not
+measured. Folio's published first-request figure (72.9% of `cpuTime`) is for a fresh unclaimed site,
+which this run did not drive.
+
+**Three controls, each run by removing the step that serves it.** With the config reset off, all six
+claimed-site cases fail. With the settings re-read off, the salt read before any request is the
+bake's. With cache collectors left alone, a menu link added after the bake shows without its active
+trail. Two steps written first turned out to need no test and were deleted: a checksum-provider
+reset, which the per-request resetter already does before any served request, and a `State` reset,
+which the collector reset subsumes.
+
+**The collector defect is the one to remember.** Core's `CacheCollector` holds what it computed and
+writes it at `destruct()`. A restored heap holds the bake's un-persisted collector state, and the
+first request's resetter wrote it into the new site's cache under the new site's current tag
+checksums, so the stale entry validated. A tag counter cannot tell two sites with the same save count
+apart, so no checksum would have caught it. It also means a heap restored from any warm interpreter
+inherits the warm interpreter's hazards, and the test that found it had to render a page before the
+edit, since a page cached before an invalidation is what a stale entry hides behind.
+
+**Not measured:** deployed cost of the pack image, and of either image on a first request of a fresh
+site; the share of real sites and real cold boots that match an image; the claimed image on a site
+with content, installed modules or a changed theme beyond the five edit classes above; and the memory
+charge of the larger boot memory on a fresh isolate (a deployed memory is charged in full, and folio
+measured the 1,322-page memory at 40 MiB less headroom than the 1,024-page one). The `docs/configuration.md` section carries the keys
+and the refusals.
+
 ### The Warm Authenticated Render, Measured on a Deployed Worker
 
 The 467 ms this report scored the architecture against was derived across instruments. This is the

@@ -1157,6 +1157,8 @@ Cron renders against the site's origin, so links in mail it sends point at the s
 | ------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `HEAP_SNAPSHOT`                 | on                                    | restore a stored wasm heap instead of booting the kernel; `0` disables                            |
 | `HEAP_IMAGE`                    | **off**                               | take that heap image in the first place; `1` enables. A restore costs more than a boot            |
+| `BOOT_IMAGE`                    | **off**                               | boot a cold object from the published boot image when the site matches it; `1` enables            |
+| `BOOT_IMAGE_BAKE`               | off                                   | lets an object capture its own boot image; only the local bake rig sets it                        |
 | `HEAP_RESTORE_CHUNKS`           | all at once                           | chunks of a snapshot one invocation may apply                                                     |
 | `LAZY_MOUNT`                    | `1` in the canonical config           | stream the pack per file instead of inflating it whole                                            |
 | `LAZY_FS_BUDGET_BYTES`          | 20 MiB, 4 MiB in the canonical config | resident bytes the lazy filesystem keeps before evicting                                          |
@@ -1257,7 +1259,60 @@ operator took, since the GC keeps exactly one. When an image IS stored its chunk
 bounds the storage at 3,134,727 bytes rather than 11,206,656.
 
 The image is taken before the first render. Byte-identical anonymous output does not prove that no
-session state survives a render, so no post-render image is produced.
+session state survives a render, so no post-render image is produced. The shared boot image below is
+the one exception, and it earns it differently: it is taken once from a throwaway site, and its test
+asserts the session id, the `$_SESSION` keys and the user after a restore.
+
+### The shared boot image
+
+`BOOT_IMAGE=1` boots a cold object from a heap image published with the worker, where a plain boot
+builds that heap from the database. **It is off by default**, because no real site's cold-boot share
+has been measured against it. `bun run assets:bootimage` bakes it into `assets/bootimage/`.
+
+A boot restores an image only when the site equals what the image was baked from: the pack
+generation and enabled modules, the driver digest, a digest of the `config` rows, and a digest of
+the settings and PHP fragments the heap was built under. Any difference boots plain, which is always
+correct, so a stale image costs a plain boot. Two images are published. The `pack` image is for a
+site the pack made. The `claimed` image is for a claimed site and carries `config=reset` in place of
+the digest, because every claimed site has its own name, mail and timezone; its restore also resets
+the config factory and the entity memory cache.
+
+After the pages land, the restore runs `src/site/php/boot-image/rekey.php`: it reads `settings.php`
+again (the site's salt and origin), flushes `cache.memory` and every memory bin, resets every cache
+collector (State's private key, and anything the bake computed but had not persisted) and reseeds
+`mt_rand`. A replica or pool lane never boots from the image.
+
+Four things are measured. The first three were each rerun with the step that serves them removed,
+and the spec failed:
+
+- A restored site renders what a plain boot renders, over five pages, after normalizing the ids a
+  render invents. A first render that read as many rows as a plain boot would show the heap was
+  not used, so the spec asserts fewer.
+- The salt and the private key read before any request are the site's own, and a second restored
+  site draws different `mt_rand` values. Without the settings re-read the bake's salt survives.
+- A claimed site's own name shows, and so do a theme colour, a disabled block, the maintenance
+  switch, a new menu link and a saved node, from the image and from a plain boot alike. With the
+  config reset off all six cases fail.
+- A corrupt file refuses the restore. If an earlier file already landed, the interpreter is dropped
+  and the site boots plain; the page is the same either way.
+
+**A heap restored from a bake is only as fresh as an interpreter that rendered once.** One case
+showed it: the bake's active trail for `/user/login` sat in a cache collector, waiting to be
+persisted, and the first request's resetter wrote it into the new site's cache under that site's
+current tag checksums. It read as valid and lacked the link the site had added. Resetting the
+collectors on every restore fixed it.
+
+Deployed, on a claimed site with `SITE_WARM=0` and `RETAIN_INTERPRETER=0`, a cold round cost 2,527 ms
+of object `cpuTime` without the image and 1,105 ms with it (medians, n=7 per arm, one worker each),
+and 3,974 against 2,454 ms of wall time. The cost is the request's fetch plus the alarm it queued
+behind, since the platform charges the boot to the alarm. The technical report has the table and
+its limits.
+
+What is not measured: the share of real cold boots that match an image, the pack image deployed, a
+site with content or a large module set, and what the extra 18.6 MiB of memory (1,320 to 1,375 pages
+against 1,024) costs per fresh isolate, which a deployed memory is charged for in full. A site with a different module set,
+settings or interpreter build boots plain; the published index also names the interpreter, and
+`tests/node/boot-image-agrees.spec.ts` fails when it is not the one on disk.
 
 **What replaces this as the number to watch is the cold-encounter share**, not the cold-boot duration.
 `src/ops/cold-encounter.ts` classifies every request the object handles and `/serve-stats` reports

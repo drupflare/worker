@@ -26,7 +26,7 @@
         "@cloudflare/vitest-pool-workers": "^0.23.0",
         "@cloudflare/workers-types": "^5.20260829.1",
         "@playwright/test": "^1.62.1",
-        "@prettier/plugin-php": "^0.25.0",
+        "@prettier/plugin-php": "^0.26.0",
         "@types/bun": "latest",
         "@types/pg": "^8.23.1",
         "@vitest/coverage-istanbul": "^4.1.11",
@@ -249,7 +249,7 @@
 
     "@poppinss/exception": ["@poppinss/exception@1.2.3", "", {}, "sha512-dCED+QRChTVatE9ibtoaxc+WkdzOSjYTKi/+uacHWIsfodVfpsueo3+DKpgU5Px8qXjgmXkSvhXvSCz3fnP9lw=="],
 
-    "@prettier/plugin-php": ["@prettier/plugin-php@0.25.0", "", { "dependencies": { "linguist-languages": "^8.0.0", "php-parser": "^3.4.0" }, "peerDependencies": { "prettier": "^3.0.0" } }, "sha512-hi0NhucbspYqw5pZYKywEk5CxsBwA0pBcG6K08AZw7OQDoUm4Hhbxql7z/SzQGeTRHqak5PwDnVNgttZiZdrlg=="],
+    "@prettier/plugin-php": ["@prettier/plugin-php@0.26.0", "", { "dependencies": { "linguist-languages": "^9.4.0", "php-parser": "^3.7.0" }, "peerDependencies": { "prettier": "^3.0.0" } }, "sha512-qaKv27XSAPSnEpieY+H6Ktgzn7bQIjPKYmVWDVY4pJwnm7E1RC0whzMYHidWlfyyZK3qpnY7HPnjmecTnNC/uA=="],
 
     "@reteps/dockerfmt": ["@reteps/dockerfmt@0.5.4", "", { "optionalDependencies": { "@reteps/dockerfmt-darwin-arm64": "0.5.4", "@reteps/dockerfmt-darwin-x64": "0.5.4", "@reteps/dockerfmt-linux-arm64": "0.5.4", "@reteps/dockerfmt-linux-x64": "0.5.4" }, "bin": { "dockerfmt": "dist/launcher.js" } }, "sha512-HEGgXVVOb+JtGUSSzXl/XPKFIZjMDTUoHarCjaQdkY+cb5M9K/O3b5xm+x0IPIk3SfHurbc0bSgcFsQlzjitxA=="],
 
@@ -487,7 +487,7 @@
 
     "lightningcss-win32-x64-msvc": ["lightningcss-win32-x64-msvc@1.33.0", "", { "os": "win32", "cpu": "x64" }, "sha512-OlEICDx/Xl0FqSp4bry8zFnCvGpig3Gl4gCquvYwHuqJKEC1+n9NgDniFvqHGmMv1ZkqDJrDqKKSykTDX+ehuA=="],
 
-    "linguist-languages": ["linguist-languages@8.2.0", "", {}, "sha512-KCUUH9x97QWYU0SXOCGxUrZR6cSfuQrMhABB7L/0I8N0LXOeaKe7+RZs7FAwvWCV2qKfZ4Wv1luLq4OfMezSJg=="],
+    "linguist-languages": ["linguist-languages@9.5.0", "", {}, "sha512-Wtg9O6iHNBYFJQVtPNwWCaWkNEqZqiCGI4gSkeH8TqvgZUyb1IUWmFSa9Z9UhT392/aX6Peoa91bH9sDah1ZVw=="],
 
     "linkify-it": ["linkify-it@5.0.2", "", { "dependencies": { "uc.micro": "^2.0.0" } }, "sha512-ONTm2jCMAVZjgQa/Fy1kScXsuOoF5NPTsoFBdE1KVIZ2vAh/r9+Bqo+0jINCBYnavTPQZz38QzFTme79ENoN3Q=="],
 

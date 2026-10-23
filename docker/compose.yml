@@ -56,7 +56,7 @@ services:
       retries: 30
 
   gitea:
-    image: gitea/gitea:28.1.0@sha256:f505a0d3a41323b786e05942fc7a4075e07ae7c169fd9485649aa55ee543a21a
+    image: gitea/gitea:28.2.0@sha256:30777c91280d973fa02be48b1ade735bd6859e8f6f7af3b4444d519437852504
     environment:
       USER_UID: '1000'
       USER_GID: '1000'
@@ -161,7 +161,7 @@ services:
       retries: 40
 
   syslog:
-    image: alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+    image: alpine:3.24.3@sha256:b3413572228e34bd1c9245f5565e6cd127005655e8a7899aef33d8e83255c9e6
     command:
       - sh
       - -c

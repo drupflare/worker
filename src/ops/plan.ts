@@ -1,7 +1,6 @@
 import { OPCACHE_MODES } from '../runtime/opcache';
 import { CSP_MODES, type CspMode } from './csp';
 import { ruleDocumentRefusal } from './edge-rules';
-import { SPOOL_MODES, type SpoolMode } from './spool';
 
 /** the subset of the environment a plan decision reads */
 export type PlanEnv = { PLAN?: string };
@@ -31,17 +30,27 @@ export function cspMode(env?: PlanEnv & { CSP_MODE?: unknown }): CspMode {
 	return CSP_MODES.find((mode) => mode === named) ?? (isPaid(env) ? 'report-only' : 'off');
 }
 
+/** the `SPOOL*` levers the front worker reads */
+export type SpoolEnv = PlanEnv & {
+	SPOOL?: unknown;
+	SPOOL_IMAGES?: unknown;
+	SPOOL_VIDEO?: unknown;
+	SPOOL_EMBEDS?: unknown;
+};
+
 /**
- * The spool mode in force: the `SPOOL_MODE` lever on a paid site, `off` otherwise and by default.
- * A free site stays off because every sync and beacon is a Worker request, and Worker requests
- * are the limit that binds it. An unrecognised value is `off`.
+ * Whether spool runs: on for a paid site and off for a free one, and `SPOOL` overrides either way
+ * (`0` off, anything else on). A free site starts off because a first visit adds the client
+ * script, the worker script and a beacon to a page view, and Worker requests are the limit that
+ * binds a free site; a return visit is where the saving is.
  */
-export function spoolMode(env?: PlanEnv & { SPOOL_MODE?: unknown }): SpoolMode {
-	if (!isPaid(env)) return 'off';
-	const named = String(env?.SPOOL_MODE ?? '')
-		.trim()
-		.toLowerCase();
-	return SPOOL_MODES.find((mode) => mode === named) ?? 'off';
+export function spoolEnabled(env?: SpoolEnv): boolean {
+	return planFlag(undefined, env?.SPOOL === undefined ? undefined : String(env.SPOOL), true, env);
+}
+
+/** whether one spool feature runs once spool does; each is on until its lever is `0` */
+export function spoolFeature(env: SpoolEnv | undefined, name: keyof SpoolEnv): boolean {
+	return spoolEnabled(env) && String(env?.[name] ?? '') !== '0';
 }
 
 /**
@@ -222,9 +231,12 @@ export const KV_OVERRIDABLE = [
 	// the baseline Content-Security-Policy: off, report-only or enforce; a wrong value is a
 	// blocked embed or a report line, and the writer refuses PHP (see `OWNER_ONLY_LEVERS`)
 	'CSP_MODE',
-	// the spool shadow trial: off or shadow; it adds a script tag to HTML and spends Worker
-	// requests on syncs and beacons, so the writer refuses PHP and a free site ignores it
-	'SPOOL_MODE'
+	// spool and its media features: each `0` turns it off; spool adds a script tag to HTML and
+	// answers from devices, so the writer refuses PHP (see `OWNER_ONLY_LEVERS`)
+	'SPOOL',
+	'SPOOL_IMAGES',
+	'SPOOL_VIDEO',
+	'SPOOL_EMBEDS'
 ] as const;
 
 /** one name on {@link KV_OVERRIDABLE} */
@@ -284,7 +296,10 @@ export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
 	RESPONSE_HEADERS: { kind: 'rules' },
 	REDIRECTS: { kind: 'rules' },
 	CSP_MODE: { kind: 'enum', values: CSP_MODES },
-	SPOOL_MODE: { kind: 'enum', values: SPOOL_MODES }
+	SPOOL: { kind: 'flag' },
+	SPOOL_IMAGES: { kind: 'flag' },
+	SPOOL_VIDEO: { kind: 'flag' },
+	SPOOL_EMBEDS: { kind: 'flag' }
 };
 
 /**
@@ -294,7 +309,10 @@ export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
  */
 export const OWNER_ONLY_LEVERS: ReadonlySet<string> = new Set<KvOverridable>([
 	'CSP_MODE',
-	'SPOOL_MODE'
+	'SPOOL',
+	'SPOOL_IMAGES',
+	'SPOOL_VIDEO',
+	'SPOOL_EMBEDS'
 ]);
 
 /**

@@ -72,7 +72,7 @@ export function purgeForTags(
 					ROWS_PER_UNTAGGED_PAGE
 				);
 		// the bumping branch stamped inside `bumpGeneration()`; this one moves no generation
-		if (!bump) site.spoolVector().wholesale(site.generation());
+		if (!bump) site.spoolVector().wholesale(site.generation(), true);
 		return {
 			...out,
 			scoped: false,

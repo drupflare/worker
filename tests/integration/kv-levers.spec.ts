@@ -58,7 +58,10 @@ const PROBE: Record<KvOverridable, string> = {
 	RESPONSE_HEADERS: '[{"path":"/a*","set":{"X-A":"1"}}]',
 	REDIRECTS: '[{"from":"/a","to":"/b"}]',
 	CSP_MODE: 'enforce',
-	SPOOL_MODE: 'shadow'
+	SPOOL: '1',
+	SPOOL_IMAGES: '0',
+	SPOOL_VIDEO: '0',
+	SPOOL_EMBEDS: '0'
 };
 
 async function writeSettings(doc: Record<string, string>): Promise<void> {
@@ -238,13 +241,13 @@ describe('the KV lever seam inside the object', () => {
 				};
 			const viaPhp = reply({
 				action: 'set',
-				patch: { CSP_MODE: 'off', SPOOL_MODE: 'shadow', RENDER_BUDGET_MS: '250' }
+				patch: { CSP_MODE: 'off', SPOOL: '0', SPOOL_IMAGES: '0', RENDER_BUDGET_MS: '250' }
 			});
 			const listed = reply({ action: 'get' });
 			return { viaPhp, listed };
 		});
 		if (outcome.viaPhp.error !== undefined) return;
-		expect(outcome.viaPhp.refused).toEqual(['CSP_MODE', 'SPOOL_MODE']);
+		expect(outcome.viaPhp.refused).toEqual(['CSP_MODE', 'SPOOL', 'SPOOL_IMAGES']);
 		expect(outcome.viaPhp.accepted).toEqual(['RENDER_BUDGET_MS']);
 		expect(outcome.listed.levers?.find((l) => l.name === 'CSP_MODE')?.domain?.values).toEqual([
 			'off',
@@ -253,10 +256,12 @@ describe('the KV lever seam inside the object', () => {
 		]);
 		const viaOwner = await planWriteSettings(env.CONFIG_KV, {
 			CSP_MODE: 'enforce',
-			SPOOL_MODE: 'shadow'
+			SPOOL: '0',
+			SPOOL_VIDEO: '0'
 		});
 		expect(viaOwner.written.CSP_MODE).toBe('enforce');
-		expect(viaOwner.written.SPOOL_MODE).toBe('shadow');
+		expect(viaOwner.written.SPOOL).toBe('0');
+		expect(viaOwner.written.SPOOL_VIDEO).toBe('0');
 		expect(viaOwner.refused).toEqual([]);
 	});
 });

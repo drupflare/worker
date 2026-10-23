@@ -10,7 +10,7 @@
         "@drupflare/durabledb": "^0.1.4",
         "@drupflare/spool": "^0.2.0",
         "@drupflare/untarl": "^0.1.0",
-        "@gmitch215/tinyimg": "^1.1.0",
+        "@gmitch215/tinyimg": "^1.1.1",
         "@noble/ciphers": "^2.4.0",
         "@noble/hashes": "^2.4.0",
         "blakejs": "^1.2.1",
@@ -167,7 +167,7 @@
 
     "@gerrit0/mini-shiki": ["@gerrit0/mini-shiki@3.23.0", "", { "dependencies": { "@shikijs/engine-oniguruma": "^3.23.0", "@shikijs/langs": "^3.23.0", "@shikijs/themes": "^3.23.0", "@shikijs/types": "^3.23.0", "@shikijs/vscode-textmate": "^10.0.2" } }, "sha512-bEMORlG0cqdjVyCEuU0cDQbORWX+kYCeo0kV1lbxF5bt4r7SID2l9bqsxJEM0zndaxpOUT7riCyIVEuqq/Ynxg=="],
 
-    "@gmitch215/tinyimg": ["@gmitch215/tinyimg@1.1.0", "", { "peerDependencies": { "typescript": "^5.8.3 || ^7.0.0" }, "optionalPeers": ["typescript"] }, "sha512-m1uoLUNiG+F9C5zhSit68ydR7n336qb5iRpE53vnsuBp0KkikyUcnIsYIX7JehpdGaBTGahP4m5WKXsDteOYiQ=="],
+    "@gmitch215/tinyimg": ["@gmitch215/tinyimg@1.1.1", "", { "peerDependencies": { "typescript": "^5.8.3 || ^7.0.0" }, "optionalPeers": ["typescript"] }, "sha512-4eiGskRBC0knPOYWCl4aBGWOhD3KVvE/Zx03wPufBYe+RlKh1+wNBWqBX76ehWA20ylNfe35HS457kKLahvbeA=="],
 
     "@img/colour": ["@img/colour@1.1.0", "", {}, "sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ=="],
 

@@ -643,7 +643,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	moduleIntegrity?: IntegrityStats;
 	/** what the heap image integrity check has seen; shown by `/__serve-stats` */
 	heapIntegrity?: HeapIntegrityStats;
-	/** tag to the generation of its last change, for the spool shadow trial's sync; memory only */
+	/** tag to the cursor of its last change, for spool's sync; memory only */
 	spoolStamps?: SpoolStamps;
 	/** whether this invocation already bumped the generation */
 	bumpCoalesced?: boolean;
@@ -2929,7 +2929,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return seen;
 	}
 
-	/** the version vector the spool shadow trial syncs from; created on first use at this generation */
+	/** the version vector spool syncs from, created on first use at this generation; memory only */
 	spoolVector(): SpoolStamps {
 		return (this.spoolStamps ??= new SpoolStamps(this.generation()));
 	}

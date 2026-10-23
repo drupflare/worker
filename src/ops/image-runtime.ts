@@ -28,6 +28,12 @@ export {
 let tinyimg: TinyImgModule | undefined;
 const engine = (): TinyImgModule => (tinyimg ??= TinyImgModule.load(wasm));
 
+/**
+ * The decoder and its `transform`, as spool's WebP encoder adapter takes them. The module is not
+ * touched until the encoder runs, so wiring it in costs an isolate nothing until an image converts.
+ */
+export const tinyimgBinding = () => ({ module: engine(), transform: tinyTransform });
+
 /** whether anything has instantiated the decoder in this isolate */
 export const engineLoaded = (): boolean => tinyimg !== undefined;
 

@@ -212,8 +212,11 @@ describe('the fixture covers the allow-list', () => {
 			'RESPONSE_HEADERS',
 			'REDIRECTS',
 			'CSP_MODE',
-			// paired in `spool-shadow.spec.ts`, which drives the front worker with it on and off
-			'SPOOL_MODE'
+			// paired in `spool.spec.ts`, which drives the front worker with each on and off
+			'SPOOL',
+			'SPOOL_IMAGES',
+			'SPOOL_VIDEO',
+			'SPOOL_EMBEDS'
 		];
 		// read by a consumer this lane cannot reach; see the block comment above
 		const elsewhere = [

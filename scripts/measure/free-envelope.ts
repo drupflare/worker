@@ -613,8 +613,14 @@ export const ROWS_PER_FILL = {
 	 * A fresh install mints a new Twig prefix, the bake re-ran under it, and the pack now carries 34
 	 * compiled templates against 23: the first fill compiles fewer, so `cache_default` writes 12
 	 * rows rather than 20. Every other table matched to the row.
+	 *
+	 * 82 -> 83 on 2026-10-22, when the module integrity baseline began recording at the first mount
+	 * (`markAdopted()` writes `modsum:adopted` to sealed storage, once per object). Attributed by
+	 * logging every `storage.kv.put` in the window: the only one is that key, with `owner_token_sha256`
+	 * landing in the claim before it. The previous interpreter build reads 83 as well, so it is not
+	 * the interpreter. A one-off per object, so it moves neither steady-state class.
 	 */
-	firstFillOnFreshObject: 82
+	firstFillOnFreshObject: 83
 } as const;
 
 /**
@@ -626,8 +632,8 @@ export const ROWS_PER_FILL = {
  *
  * A real re-render is **1** row, the `cfw_page` upsert: {@link ROWS_PER_FILL}'s 8, minus the 6
  * `cache_dynamic_page_cache` rows and the 1 `cache_menu` row. The cold classes barely move, because
- * the in-memory bins are most of a re-render and almost none of a cold one: a first fill is 78 against
- * 82 and a never-routed path 11 against 14. That asymmetry is why the headline is priced on a MIX --
+ * the in-memory bins are most of a re-render and almost none of a cold one: a first fill is 79 against
+ * 83 and a never-routed path 11 against 14. That asymmetry is why the headline is priced on a MIX --
  * see {@link rowsForWarmthMix}. (With `render` in memory too they read 72 and 6; it is not default.)
  *
  * `warmReassemble` is the front page's 2, measured at this default in the same arm (login
@@ -638,7 +644,7 @@ export const ROWS_PER_FILL_MEMORY_BINS = {
 	realRender: 1,
 	firstFillAfterMigrate: ROWS_PER_FILL.firstFillAfterMigrate,
 	firstEverForPath: 11,
-	firstFillOnFreshObject: 78
+	firstFillOnFreshObject: 79
 } as const;
 
 export type FillWarmth = keyof typeof ROWS_PER_FILL;

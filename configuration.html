@@ -623,6 +623,11 @@ value all fall through to the var.</p>
 <td>baseline Content-Security-Policy on HTML: <code>off</code>, <code>report-only</code> or <code>enforce</code>; paid defaults to report-only</td>
 </tr>
 <tr>
+<td><code>SPOOL_MODE</code></td>
+<td><code>off</code></td>
+<td>the spool shadow trial on a paid site: <code>off</code> or <code>shadow</code>; a free site stays off</td>
+</tr>
+<tr>
 <td><code>NEVER_STALE</code></td>
 <td>unset</td>
 <td>extra path prefixes that may never be served from a previous generation</td>
@@ -1011,6 +1016,49 @@ sample. Each address may send 60 reports a minute and an isolate takes 600, coun
 either limit the answer is still <code>204</code> and nothing is logged. Static files the asset layer answers
 (<code>/core</code>, <code>/modules</code>, <code>/themes</code>, <code>/agg</code>) carry the cache rules in <code>assets/_headers</code> and none of
 these.</p>
+<h2 id="spool-shadow-trial">Spool Shadow Trial</h2>
+<p><code>SPOOL_MODE</code> runs <a href="https://github.com/drupflare/spool">spool</a>, the client-side replica, in shadow
+mode: <code>off</code> or <code>shadow</code>, <code>off</code> by default. A paid site honours it. A free site stays off whatever it
+is set to, because every sync and beacon is a Worker request and Worker requests are the limit that
+binds a free site. The lever is on <code>KV_OVERRIDABLE</code>, so <code>PUT /settings</code> and the <code>settings</code> document
+set it, and Drupal&#39;s settings form cannot: the form&#39;s submit reports it under <code>refused</code>.</p>
+<p>Shadow mode saves nothing. A page is never answered from a device. The service worker decides
+whether it could have answered locally, still fetches the page, compares the two and reports the
+result, so a trial measures eligibility and mismatches on real traffic before anything is served
+from a device. Serving from a device is the v1.1 adapter and is not offered.</p>
+<p>What the lever changes while it is <code>shadow</code>:</p>
+<ul>
+<li>An anonymous <code>GET</code> answered <code>200</code> with HTML gets spool&#39;s client tag and envelope headers. This
+runs after every cache tier, so no stored or cached page is the decorated one. A request with a
+cookie, a response that sets one, and anything that is not a page are left alone.</li>
+<li><code>/spool-sw.js</code> and everything under <code>/.spool/</code> are answered in the front worker by the spool
+library: the service worker script, the client script at <code>/.spool/&lt;version&gt;/client.js</code>,
+<code>/.spool/sync</code>, <code>/.spool/artifact</code> and <code>/.spool/beacon</code>. Those paths are reserved, so no redirect
+rule captures them. A beacon becomes one <code>cfw-spool</code> line in Workers observability and writes no
+row.</li>
+<li>The object keeps a version vector in memory, a map from tag to the generation of its last
+change, and answers a sync from it on the internal <code>/__spool</code> route. A sync costs one Durable
+Object request. Decorating a page costs none, because the generation rides on the page response,
+unless the device piggybacks a sync on the navigation: then the front worker asks once per cursor
+and generation in each isolate and answers the rest from memory. A scoped purge stamps the tags it invalidated and the cached paths that depend on them.
+A wholesale bump, an object restart and a vector past 10,000 tags each tell a device behind that
+point to reset, which costs it its copies and never shows it a stale page.</li>
+</ul>
+<p>One limit is known and does not matter while the mode is <code>shadow</code>. A device that syncs between a
+save&#39;s first write and the flush of its complete tag set holds a generation the page stamps share,
+so it is not told about those pages. Serving from a device needs its own cursor before it can be
+offered.</p>
+<p>The saving is spool&#39;s to state, and spool labels every figure it states. At version 0.2.0 its impact
+page gives a headline of 12.4 J per local view (L2: published intensities applied to the 17,054-byte
+median document a local view replaces, not a meter reading), 0.80 J saved on a desktop against
+optimized HTTP caching (L1, measured), 0.088 J saved on an iPhone over Wi-Fi (L1, measured), and one
+request avoided per local view. This page does not repeat or extend them. The demand claim that
+carries over is the one request: a local view removes one Worker request and the document&#39;s bytes,
+which is the limit that binds a free site, and only for a view answered inside its freshness bound.
+Spool does not claim a radio-wake saving, a capacity saving without evidence that equipment was
+removed, or a Transformative share, and this lever claims none of them either. In shadow mode the
+effect on demand runs the other way: the trial adds Worker requests (the worker script&#39;s update
+check, syncs and beacons) and removes none.</p>
 <p><code>/enable</code> is not needed for a text asset a migrated module ships: a <code>.css</code>, <code>.js</code> or <code>.svg</code> file
 stored in <code>cfw_module_file</code> is served from <code>/modules</code>, <code>/themes</code>, <code>/profiles</code> and <code>/libraries</code> when
 the pack does not hold the path. Binary assets are not served this way, because the table stores

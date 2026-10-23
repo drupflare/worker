@@ -801,6 +801,93 @@ Those are kWh a year on visitors' desktops. The server tables above don't includ
 sets of figures are not added or divided on this page: one is a measured desktop package reading, the
 other is modelled CPU time at 2.22 W a core.
 
+## What Spool Adds
+
+Spool is the service worker the front worker installs in a visitor's browser. It answers repeat
+navigations on the device, converts images to WebP, sets `preload="none"` on video and swaps a
+YouTube or Vimeo embed for a facade until it is clicked. It changes the Worker request count, the
+visitor's device energy and the Worker's own CPU, and each is measured or modelled separately below.
+The measured rows come from two deployed paid-account workers that differ only in whether spool runs,
+driven from a container on a desktop CPU (RAPL package-0, idle subtracted per navigation, arm order
+rotated, one fresh browser context per cold navigation) on 2026-10-23. The sites are synthetic: one
+page with an image, a video and an embed, and plain pages beside it.
+
+**Requests, `measured`.** Every one of 48 repeat navigations on the spool worker made zero network
+requests, answered from the device. The same navigations on the other worker made one to six. A new
+device asks the spool worker for `/spool-sw.js` and for `/.spool/*`: 482 and 507 requests over about
+500 new devices, so a new device costs about two Worker requests beyond its page (`derived`, from those
+two counts and the device count). Over the whole run the spool worker answered 1,751 front worker
+invocations and the other 4,196 for the same drive. An earlier local run counted four per device;
+the deployed figure replaces it, because a deployed worker did not show the two artifact requests.
+
+**Visitor energy, `measured`.** Joules a navigation on a desktop CPU, off over on per round:
+
+| navigation                      | spool on | spool off | off over on (range) | rounds |
+| ------------------------------- | -------: | --------: | ------------------- | -----: |
+| repeat                          |   0.53 J |    1.29 J | 2.47 (2.26-2.56)    |      8 |
+| repeat, the same arm both sides |   1.31 J |    1.34 J | 1.00 (0.99-1.05)    |      4 |
+| first view, all media           |   12.9 J |    32.8 J | 2.65 (2.29-3.36)    |      6 |
+| first view, embed only          |   12.0 J |    34.1 J | 2.89 (2.63-3.72)    |      5 |
+| first view, image only          |   9.83 J |    9.65 J | 0.94 (0.80-1.02)    |      6 |
+| first view, video only          |   10.9 J |    10.9 J | 1.02 (0.87-1.47)    |      6 |
+| first view, plain pages         |   10.0 J |    8.94 J | 0.84 (0.68-1.02)    |      6 |
+
+The second row is the harness against itself and reads 1.00, so the 2.47 is not a bias in the
+instrument. A repeat navigation saves 0.77 J here, which agrees with the 0.80 J desktop reading in
+spool's own impact page (`published`); that page also gives 0.088 J on an iPhone 14 Pro and a 12.4 J
+modelled headline, and neither is re-derived here. The saving on a first view comes from the embed:
+all-media pages moved 1.37 MB in 35 requests off and 0.20 MB in 21 on, and the embed-only page
+moved 1.29 MB in 35 and 0.16 MB in 20. The image-only, video-only and plain
+rows sit inside their own spread and are not savings. The plain-page row leans the other way (0.84),
+which fits a new device paying for the worker's install, but its spread covers 1.0, so it is not a
+cost either. The cold rows range from 4 to 14 J within one arm, so read the ratios and not a single
+figure. The embed rows depend on the live third-party player a visitor's browser fetched that day.
+
+**Worker CPU, `measured`.** The platform's `cpuTime` for the front worker, in whole milliseconds:
+
+| request class   | n (on) | on: median, p90, max | off: median, p90, max |
+| --------------- | -----: | -------------------- | --------------------- |
+| page            |    544 | 6, 16, 38 ms         | 1, 4, 23 ms           |
+| image file      |    182 | 2, 96, 187 ms        | 1, 3, 9 ms            |
+| spool endpoint  |    507 | 0, 0, 22 ms          | none                  |
+| spool worker JS |    482 | 0, 4, 10 ms          | none                  |
+
+Decorating a page costs about 5 ms at the median, and the first conversion of an image shows in the
+tail (a p90 of 96 ms and a 187 ms maximum). A median of 1 ms is the meter's floor and not a reading of
+1.0. These ran on a paid account. A free handler caps CPU at 10 ms, and a 16 ms p90 and 38 ms maximum
+page have not been run there.
+
+**Request economics, `derived (modelled)`.** The share of views a device answers locally and the views
+a device makes while its worker is installed are nobody's reading for a real site, so the tables sweep
+both, with two requests per new device from above, from `bun scripts/economics/spool.ts`. Worker
+requests a view costs, and the views a device must make before spool sends the Worker fewer requests
+than it would have had:
+
+| local share | 5 views | 10 views | 20 views | 50 views | break-even |
+| ----------: | ------: | -------: | -------: | -------: | ---------: |
+|         25% |    1.15 |     0.95 |     0.85 |     0.79 |  8.0 views |
+|         50% |    0.90 |     0.70 |     0.60 |     0.54 |  4.0 views |
+|         75% |    0.65 |     0.45 |     0.35 |     0.29 |  2.7 views |
+
+The free plan's 100,000 requests a day carry 3,044,000 views a month without spool. At a 50% local
+share and 20 views a device they carry 5,073,333, and at 25% with 5 views a device they carry fewer,
+2,646,957. On the paid plan a site at 30 million views a month pays $12.23 without spool and $10.46,
+$7.70 or $5.30 at 25%, 50% or 75% local, at 20 views a device. At 10 million views it moves by at
+most 15 cents, and below that the site is free either way.
+
+**The free default stays off.** The break-even says spool sends the Worker fewer requests once a device
+makes a handful of views, but the local share of a real site is unmeasured, the page decoration p90 is
+above the free handler's 10 ms and nobody has run it there, and a site that gains requests on a
+short visit loses headroom on the plan that has the least. What would change it: a free-account run
+of the decorate path with no refusals, and a local share read off a real site.
+
+```sh
+bun scripts/measure/headers-deployed.ts --arm on=$ON --arm off=$OFF --pages / /user/login /node/1
+bun scripts/measure/spool-report.ts results/repeat.jsonl results/cold-all.jsonl
+bun scripts/measure/spool-cpu.ts --on=$ON_NAME --off=$OFF_NAME --from=$START --to=$END
+bun scripts/economics/spool.ts
+```
+
 ## Carbon
 
 `derived` from the energy totals above by `bun scripts/economics/fleet.ts`, at 384 g/kWh, the US
@@ -1244,6 +1331,14 @@ $41.67, so the crossing comes from the flat price.
 - **No visitor-device energy in any total above.** [Visitor Devices](#visitor-devices) prices a
   repeat navigation on its own. It is a desktop reading with the fresh-asset share swept, no phone has
   been measured, and it is never summed with the server figures.
+- **No price on the v1.0.4 security controls.** The CPU readings above predate the PHP 8.5.12
+  interpreter and the controls, and no deployed `cpuTime` has been read since. What is counted: a new
+  object's first fill writes one more row, 83 against 82, once per object for the module integrity
+  record (`measured`). The interpreter is 14,011,458 bytes against 13,401,742, 4.5% larger
+  (`measured`). An owner action appends to the audit log, and no view triggers one. A claimed site
+  hashes each module file the first time it opens it. Heap image checks run only where `HEAP_IMAGE` is
+  on, which is not the default. The report-only policy header adds about 120 bytes to each HTML
+  response before compression (`derived`). None of these has an energy figure.
 - **Institutional rows use an assumed workload.** The page views come from the case studies. The
   logged-in share, the saves a day and the pages a save invalidates are the model's, not theirs.
 

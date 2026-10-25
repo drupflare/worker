@@ -6,8 +6,8 @@ holds both the interpreter and the SQLite database. That is the default.
 An external database is an option for self-hosted deployments. It is not offered on the managed tier.
 The limits listed below, such as the configuration cap, the daily query limit and the missing MySQL
 `COM_STMT_PREPARE`, are properties of a Cloudflare account, and a workerd an operator runs has no
-account behind it. An external database also makes a site portable, and it removes the 5 GB
-account-wide storage cap that is otherwise the only hard limit on fleet size.
+account behind it. An external database also makes a site portable, and it moves site storage off the 5 GB
+account-wide storage cap, which otherwise bounds how many sites a free account holds.
 
 ## Selecting One
 
@@ -142,7 +142,7 @@ The park suspends a PHP call, and it cannot suspend the host callback a statemen
 executing inside. The external backend therefore yields each statement from PHP: `CfwSqlClient` hands
 it to the Worker, which performs it, and the call resumes with the result. Every statement is then a
 park and a network round trip, where the default backend answers it with a local read. A render issues 15 to 48
-statements (see below), and none of them can be deferred, because the render is waiting on the
+statements (see [The Query Budget](#the-query-budget)), and none of them can be deferred, because the render is waiting on the
 answer.
 
 ### The Consistency Story Lives in the Object
@@ -201,13 +201,13 @@ would make it a billed residency decision. `src/ops/hibernation.ts` transcribes 
 
 ### The Query Budget
 
-Hyperdrive on Free allows 100,000 database queries/day. A warm render costs **15 host statements**,
+Hyperdrive on Free allows 100,000 database queries/day. A warm render costs 15 host statements,
 measured on a deployed throwaway with the `page` and `dynamic_page_cache` bins emptied and the rest
 warm (14 without the theme reset; 20 with `bootstrap` also emptied). So 100,000 queries is roughly
 **6,666 renders/day**.
 
-Regeneration on the free plan is bound by rows written at **10,866 renders/day** with
-`MEMORY_CACHE_BINS=none` and **50,916** at the shipping default; `bun scripts/measure/free-envelope.ts`
+Regeneration on the free plan is bound by rows written at 10,866 renders/day with
+`MEMORY_CACHE_BINS=none` and 50,916 at the shipping default; `bun scripts/measure/free-envelope.ts`
 prints both. Hyperdrive's free query budget is below both, so it cannot raise the ceiling and would
 lower it. The serving ceiling is unaffected: an edge cache hit never reaches the object and issues no
 database query under either design, so 100,000 Worker requests/day still binds first.
@@ -232,8 +232,8 @@ local read, which is why SQLite is the default and the cache backend.
 An external database also avoids the compatibility gaps that come from Durable Object SQLite and not
 from SQLite itself: the 100 bound-parameter cap, the 50-byte LIKE/GLOB pattern limit, integer reads
 that lose precision above 2^53, and the absence of `NOCASE_UTF8` and `REGEXP`. They are documented
-under Platform Constraints in `TECHNICAL_REPORT.md`. Hyperdrive is a compatibility option and not a
-capacity lever.
+under Platform Constraints in the [technical report](../TECHNICAL_REPORT.md). Hyperdrive is a compatibility option. It does not
+add capacity.
 
 ## What It Costs
 
@@ -250,6 +250,6 @@ capacity lever.
 
 ## Related
 
-- `docs/recovery.md`: what backs the site up and what restores it
-- `docs/configuration.md`: every var and binding
-- `TECHNICAL_REPORT.md`, Platform Constraints: the measured Durable Object SQLite limits
+- [Recovery](recovery.md): what backs the site up and what restores it
+- [Configuration](configuration.md): every var and binding
+- [Technical report](../TECHNICAL_REPORT.md), Platform Constraints: the measured Durable Object SQLite limits

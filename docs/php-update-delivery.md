@@ -47,9 +47,9 @@ Step 3 is not automated. The workflow has no deploy step and holds no Cloudflare
 
 phasm's `notify` job runs after `publish`, so it fires when a build publishes interpreter artifacts
 and not on the pull-request or archive-only paths. It sends one `repository_dispatch` per variant
-listed in `CONSUMER_VARIANTS`, currently `long64`, the variant `interp.lock.json` pins. It named
-`control85` until 2026-10-22, and `interpreter.yml` skips any dispatch for a variant other than the
-pin, so no update for the shipping interpreter was ever proposed by this pipeline.
+listed in `CONSUMER_VARIANTS`, currently `long64`, the variant `interp.lock.json` pins. Earlier
+builds named `control85`. `interpreter.yml` skips any dispatch for a variant other than the pin, so a
+dispatch for an old variant never proposes an update for the shipping interpreter.
 
 ```json
 {
@@ -73,8 +73,8 @@ A variant with no rc, no `PHP_VERSION` or no artifact in the run is skipped with
 that notifies nothing fails, because a silent no-op leaves `worker` on its old pin with a green
 build behind it.
 
-`POST /repos/{owner}/{repo}/dispatches` requires **Contents: write** on `drupflare/worker`. When
-`PHASM_TOKEN` carries only **Actions: write**, the dispatch is refused and the job falls back to
+`POST /repos/{owner}/{repo}/dispatches` requires Contents: write on `drupflare/worker`. When
+`PHASM_TOKEN` carries only Actions: write, the dispatch is refused and the job falls back to
 `POST /repos/{owner}/{repo}/actions/workflows/interpreter.yml/dispatches`, which that permission
 does cover. The fallback carries the variant, the PHP version and the artifact id; the phasm run id,
 commit and tag reach the consumer only over `repository_dispatch`.
@@ -86,7 +86,7 @@ three values, and the workflow refuses a variant that is not a phasm rc name, a 
 not `<major>.<minor>`, and a non-numeric artifact id.
 
 The run hydrates the current release payload first. That supplies `assets/` and the incumbent
-interpreter, so the bundle is measured against the tree that actually ships, and the incumbent figure
+interpreter, so the bundle is measured against the tree that ships, and the incumbent figure
 is recorded before the swap.
 
 Two checks stand between the download and the pull request. Each throws, each fails its step, and
@@ -175,8 +175,9 @@ deployment carries environment variables or config. One measured site held 31,78
 snapshot across 159 rows. Restoring an image taken on one interpreter into another is corruption
 rather than a slow path.
 
-`cfw_heap_snapshot` rows are keyed on the **pack generation** (`latestSnapshotMeta(sql,
-packGeneration())`), not on the interpreter. An interpreter bump that leaves the pack alone therefore
+`cfw_heap_snapshot` rows are keyed on the heap generation (`latestSnapshotMeta(sql,
+heapGeneration())` in `src/do/routes/heap.ts`), which is the pack generation plus the module set.
+Neither is the interpreter. An interpreter bump that leaves the pack alone therefore
 selects a snapshot taken on the previous binary. Ship an interpreter bump with `HEAP_SNAPSHOT=0`, or
 move the pack generation with it, until the snapshot key carries the interpreter pin.
 
@@ -226,8 +227,9 @@ What it does not prove: provenance. phasm's `build.yml` attests `subject-path: d
 staged asset carries its own subject digest, but nothing in this repository runs
 `gh attestation verify` against a downloaded artifact. Add it against
 `--repo drupflare/phasm --signer-workflow drupflare/phasm/.github/workflows/build.yml` to close the
-gap. Behaviour is proved after deploy by `BootSelfTest::run()`, which runs before the first request
-is served.
+gap. Behaviour on the deployed site is checked by the health self-test, `BootSelfTest::run()`, which the
+host calls through `runHealthSelfTest()` in `src/drupal/cron-php.ts` from the cron path in
+`src/ops/cron.ts`.
 
 ## Self-Hosted Sites
 

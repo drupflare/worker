@@ -1,7 +1,7 @@
 # The Site Database
 
-`assets/drupal/site.sqlite` is the Drupal database every new site is created from. It is the only
-tracked artifact under `assets/`, and this page is how it is built. Read its current size and shape
+`assets/drupal/site.sqlite` is the Drupal database every new site is created from. It is the tracked
+database under `assets/`, and this page is how it is built. Read its current size and shape
 off the file rather than from here. `node scripts/diff-site-db.ts` compares a fresh build against it.
 
 One command produces it:
@@ -83,8 +83,8 @@ modules, 175 config rows and every table. The remaining differences are these:
 | `state:system.theme.files`           | shipped only | written on the first request                             |
 | six `cache_*` bins                   | shipped only | Drupal creates them on the first request, not at install |
 
-The six lazy bins and the two first-request state rows are named in `diff-site-db.ts` rather than
-tolerated by a wildcard, so a seventh missing table is a failure instead of a rounding error.
+The six lazy bins and the state rows in `FIRST_REQUEST_STATE_ROWS` are named in `diff-site-db.ts`
+rather than tolerated by a wildcard, so a seventh missing table is a failure instead of a rounding error.
 
 ## The Router Follows the Driver
 
@@ -138,3 +138,6 @@ node scripts/diff-site-db.ts assets/drupal/site.sqlite /tmp/site.sqlite
 
 `bun run qa:core-freshness` reports whether the shipped core is behind upstream, including whether
 its branch still receives security fixes.
+
+To swap the core under a full tree rebuild, follow [Upgrading Drupal Core](building-from-source.md#upgrading-drupal-core)
+in Building From Source.

@@ -18,10 +18,10 @@ leaves the platform, and it is the only thing that answers "the object is gone".
 
 ## Point-in-Time Recovery
 
-SQLite-backed Durable Objects can be restored to any point in the **past 30 days**. The window
+SQLite-backed Durable Objects can be restored to any point in the past 30 days. The window
 covers the whole of `ctx.storage`, both SQL tables and key-value pairs.
 
-Recovery is addressed by **bookmarks**, not timestamps. A bookmark is a mostly alphanumeric string
+Recovery is addressed by bookmarks, not timestamps. A bookmark is a mostly alphanumeric string
 such as `0000007b-0000b26e-00001538-0c3e87bb37b3db5cc52eedb93cd3b96b`, and bookmarks are lexically
 comparable, so ordering them as strings orders them in time. Three methods:
 
@@ -31,7 +31,7 @@ comparable, so ordering them as strings orders them in time. Three methods:
 | `ctx.storage.getBookmarkForTime(t)`           | a bookmark for a `Date` or epoch ms within the last 30 days |
 | `ctx.storage.onNextSessionRestoreBookmark(b)` | a bookmark that undoes the restore it schedules             |
 
-The restore is applied on the object's **next** start, not immediately. The bookmark returned by
+The restore is applied on the object's next start, not immediately. The bookmark returned by
 `onNextSessionRestoreBookmark()` is the undo, so capture it before restarting.
 
 **There is no wrangler command and no dashboard button.** PITR is a runtime API only, so an operator
@@ -41,11 +41,11 @@ can reach it only through code running inside the Durable Object.
 diagnostic-only: a restore body names a state the caller invents, where a `/pitr` bookmark names
 one the platform holds.
 
-| Request                    | Answers                                                 |
-| -------------------------- | ------------------------------------------------------- |
-| `GET /pitr`                | the current bookmark and the window                     |
-| `GET /pitr?at=<ms or ISO>` | the bookmark for that time, refused outside 30 days     |
-| `POST /pitr?bookmark=<b>`  | schedules the restore and returns the **undo** bookmark |
+| Request                    | Answers                                             |
+| -------------------------- | --------------------------------------------------- |
+| `GET /pitr`                | the current bookmark and the window                 |
+| `GET /pitr?at=<ms or ISO>` | the bookmark for that time, refused outside 30 days |
+| `POST /pitr?bookmark=<b>`  | schedules the restore and returns the undo bookmark |
 
 The restore applies on the object's next start. The undo bookmark is obtainable only from the call
 that schedules the restore, so it is returned rather than logged.
@@ -121,22 +121,35 @@ complete stored import exists.
 
 ## The Recovery Matrix
 
-| Failure                     | Primitive                                    | Does not cover                                                                                                                                     | Command                                                                      |
-| --------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Accidental content deletion | PITR to just before the delete               | anything written after the bookmark; the object must still exist                                                                                   | `GET /pitr?at=<t>` then `POST /pitr?bookmark=<b>`                            |
-| Bad module update           | PITR, then `wrangler rollback` if code moved | files already mirrored to R2; a config change an editor made after the update                                                                      | as above, plus `wrangler rollback [VERSION_ID]`                              |
-| Corrupted config            | `/restore` of the last good dump             | content created since that dump; needs `PW_DIAGNOSTICS=1`                                                                                          | `POST /restore?label=pre-fix` with the dump as the body                      |
-| Failed migration            | re-run the migration                         | nothing, if the cursor survived; `cfw_migrate` is resumable and a dump excludes it                                                                 | `drangler migrate ...`; `GET /migrate` reports `chunk`, `chunks` and `done`  |
-| Whole-object loss           | `/restore` into a new object                 | PITR entirely; the log died with the object; `hash_salt` unless the dump used `?secrets=1`                                                         | `POST /restore` against the new site name                                    |
-| Worker version rollback     | `wrangler rollback`                          | **the database.** Code moves, data does not. Refused if a Durable Object class lifecycle change or a deleted binding sits between the two versions | `wrangler rollback [VERSION_ID] --name <worker>`                             |
-| R2 asset loss               | the mirror refills from the object           | nothing; the object is the durable copy and R2 is a cache in front of it                                                                           | no operator route; `/__mirror` is DO-internal and the alarm drains the queue |
+| Failure                     | Primitive                                   | Does not cover                                                                                                                                     | Command                                                                      |
+| --------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Accidental content deletion | PITR to just before the delete              | anything written after the bookmark; the object must still exist                                                                                   | `GET /pitr?at=<t>` then `POST /pitr?bookmark=<b>`                            |
+| Bad module update           | PITR, and `wrangler rollback` if code moved | files already mirrored to R2; a config change an editor made after the update                                                                      | as above, plus `wrangler rollback [VERSION_ID]`                              |
+| Corrupted config            | `/restore` of the last good dump            | content created since that dump; needs `PW_DIAGNOSTICS=1`                                                                                          | `POST /restore?label=pre-fix` with the dump as the body                      |
+| Failed migration            | re-run the migration                        | nothing, if the cursor survived; `cfw_migrate` is resumable and a dump excludes it                                                                 | `drangler migrate ...`; `GET /migrate` reports `chunk`, `chunks` and `done`  |
+| Whole-object loss           | `/restore` into a new object                | PITR entirely; the log died with the object; `hash_salt` unless the dump used `?secrets=1`                                                         | `POST /restore` against the new site name                                    |
+| Worker version rollback     | `wrangler rollback`                         | **the database.** Code moves, data does not. Refused if a Durable Object class lifecycle change or a deleted binding sits between the two versions | `wrangler rollback [VERSION_ID] --name <worker>`                             |
+| R2 asset loss               | the mirror refills from the object          | nothing; the object is the durable copy and R2 is a cache in front of it                                                                           | no operator route; `/__mirror` is DO-internal and the alarm drains the queue |
+
+The flowchart reads the matrix from the top: whether the object survived, then what caused the change.
+
+```mermaid
+flowchart TD
+    A["Something went wrong"] --> B{"Does the site object still exist?"}
+    B -->|no| C["POST /restore into a new object, from the last /export dump"]
+    B -->|yes| D{"Did a Worker deploy cause it?"}
+    D -->|yes| E["Roll back the Worker and restore the data with PITR"]
+    D -->|no| F{"Content or configuration?"}
+    F -->|content| G["PITR to a bookmark taken before the change"]
+    F -->|configuration| H["POST /restore with the last good dump, needs PW_DIAGNOSTICS=1"]
+```
 
 Two rows carry the distinctions that matter most.
 
 **A Worker rollback is not a data rollback.** `wrangler rollback` creates a new deployment from a
 previous version and becomes active across every route immediately. It reaches the 100 most recent
 versions. It does not touch `ctx.storage`, so a bad deploy that also wrote bad rows needs both a
-rollback and a PITR restore, in that order. Cloudflare refuses the rollback outright if a Durable
+rollback and a PITR restore. Cloudflare refuses the rollback outright if a Durable
 Object class lifecycle change happened between the two versions, or if the target version binds an R2
 bucket, KV namespace or queue that no longer exists.
 
@@ -157,7 +170,7 @@ like a backup.
 
 ## Related
 
-- `docs/configuration.md`: `PW_DIAGNOSTICS`, the `FILES` binding and the runtime overrides
-- `docs/external-database.md`: why the data lives in the object
-- `TECHNICAL_REPORT.md`, Platform Constraints: the 100,000-character statement ceiling and the other
-  measured Durable Object SQLite limits
+- [Configuration](configuration.md): `PW_DIAGNOSTICS`, the `FILES` binding and the runtime overrides
+- [External Databases and Hyperdrive](external-database.md): why the data lives in the object
+- [Technical report](../TECHNICAL_REPORT.md), Platform Constraints: the 100,000-character statement
+  ceiling and the other measured Durable Object SQLite limits

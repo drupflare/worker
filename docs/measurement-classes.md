@@ -40,8 +40,8 @@ Three rules keep the class honest:
 - **Tolerances live in code, not in the baseline.** A newer master document moves the recorded
   values and cannot widen what is allowed. The baseline is data; `CHECKS` is the contract. What a
   master-relative baseline gives up is the cumulative reading: creep since a release rather than
-  since the previous commit; the absolute checks carry that instead, and which any archived
-  document restores by being passed as `--baseline-metrics`.
+  since the previous commit. The absolute checks carry that instead. Passing an older archived
+  document as `--baseline-metrics` restores that reading.
 
 ### What the Toolchain Contributes
 
@@ -75,25 +75,26 @@ at 1.6x. Both halves move together when the machine is loaded, so the ratio surv
 absolutes do not.
 
 These stay out of CI. A ratio is only meaningful next to the conditions it was taken under, and a
-runner cannot state those conditions. They are recorded in `TECHNICAL_REPORT.md` with the cache
+runner cannot state those conditions. They are recorded in the [technical report](../TECHNICAL_REPORT.md) with the cache
 bins that were emptied, the `n`, and the spread, which is what makes them readable a year later.
 
 ## Class C: Absolute Wall Clock
 
 Banned outright, in CI and out of it.
 
-In-PHP `microtime()` returns 0 on the edge. `Date.now()` inside the isolate returns 0 or a
-plausible wrong number; it has reported 114 ms for a 1,374 ms invocation. Zero is obviously broken
-and 114 survives review, which is what makes this class dangerous as well as useless. A local
+A duration taken from PHP's `microtime()` around a synchronous PHP run reads 0 on the edge, because
+the clock does not advance across it. `Date.now()` inside the isolate returns 0 or a plausible wrong
+number; it has reported 114 ms for a 1,374 ms invocation. A zero is obviously broken. The 114 passes
+review, which makes this class dangerous as well as useless. A local
 `wrangler dev` wall clock cannot even order two profiles correctly.
 
 Nothing in the metrics workflow may emit, archive or render a duration. `tests/node/metrics.spec.ts`
 asserts that the collected document matches no `durationMs`/`elapsed`/`timestamp` key and that the
 rendered summary carries no millisecond figure, so a build enforces the ban.
 
-### The one wall clock that is allowed, and why
+### The One Wall Clock That Is Allowed
 
-A `Date.now()` delta **spanning I/O** is a different measurement and is usable. The clock updates on
+A `Date.now()` delta spanning I/O is a different measurement and is usable. The clock updates on
 I/O completion, so a delta bracketing an HTTP call measures that call; what it cannot do is span a
 synchronous `php._run()`, where the clock does not advance at all.
 
@@ -112,8 +113,7 @@ empty tail proves nothing.
 It cannot be automated here. It needs a real deploy against an account that holds production
 workers, a `cfw-*` name, a teardown, and a check that the worker list returns to its prior
 baseline. It also needs an `n` and a spread with every figure: the platform's reported 400-600 ms
-bimodality is unverified as a standing property
-on the same object, so an n=1 or n=3 verdict about anything under ~500 ms is unsupportable.
+bimodality is unverified as a standing property on the same object, so an n=1 or n=3 verdict about anything under ~500 ms is unsupportable.
 
 That makes it a `workflow_dispatch` shape with a credential and a human deciding to spend it, never
 a nightly. `scripts/measure/read-tail-cpu.mjs` is the reader; the readings live in

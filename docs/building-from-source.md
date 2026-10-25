@@ -36,9 +36,8 @@ against the `SHA256SUMS` published beside it.
 | 3     | the GitHub Release             | the same bytes, canonical                     |
 | 4     | `payloads/dev-<branch>/` on R2 | that branch's tip, replaced on every push     |
 
-**The CDN copy is tried before the GitHub Release.** A Workers Builds job stalled for its whole
-timeout on a release asset download, in a container that had restored the same 13.4 MB from the CDN
-seconds earlier. The Release stays canonical and stays the fallback, so a CDN outage costs a retry
+**The CDN copy is tried before the GitHub Release.** A Workers Builds job once stalled for its whole
+timeout on a release asset download, while the same 13.4 MB restored from the CDN in seconds. The Release stays canonical and stays the fallback, so a CDN outage costs a retry
 rather than a deploy.
 
 **The dev line is tried last and never displaces a release.** It is keyed by branch: the checkout's
@@ -175,7 +174,7 @@ without this step there is no site to boot.
 **This step's database is a throwaway; the shipping one is built by the same script.** Both come from
 `scripts/drupal/install-site-db.php`, and it refuses to write `assets/drupal/site.sqlite` without
 `--allow-shipping-pack`, so the normal loop is build elsewhere and compare with
-`node scripts/diff-site-db.ts`. `docs/database.md` is the recipe and lists every value the shipped
+`node scripts/diff-site-db.ts`. [Site Database](database.md) is the recipe and lists every value the shipped
 database disagrees with a stock install about.
 
 `patch` rewrites the tree for the wasm runtime, and is idempotent. Drupal 11 uses `new \Fiber()` in
@@ -210,7 +209,7 @@ Measured on Drupal 11.4.5, a clean clone against the shipping artifacts. The shi
 The Worker bundle is unaffected; the packs are Workers assets and carry no bundle bytes.
 
 `twig` bakes the precompiled Twig cache and writes two records: `twig-bake.json`, which the gate
-reads, and `core.list.json`, **the file list both packers then read**.
+reads, and `core.list.json`, the file list both packers then read.
 
 `core` repacks the tree from that list. It runs under `PACK_INDEX=1`, which takes `core.list.json`
 verbatim with no re-globbing, so a repack measures the tree and never the completion rules. It
@@ -285,8 +284,8 @@ packed row and the pack disagree, the first `$kernel->boot()` on every site miss
 482 KB container, which took 1,024 ms against 86 ms for a boot that hits.
 
 The row cannot be retargeted by editing its key. A compiled container embeds the absolute root it was
-built against, so it has to come from a boot where the root is `/drupal`. The step runs `wrangler dev --local`, migrates a throwaway site, renders one page
-and reads back the row that boot rebuilt.
+built against, so it has to come from a boot where the root is `/drupal`. The step runs `wrangler dev --local`, migrates a throwaway site, renders the paths in
+`RENDER_PATHS` until the row appears, and reads back the row that boot rebuilt.
 
 `tests/node/container-cid.spec.ts` compares the pack against the database and fails when they
 disagree. Run the step on its own with `bun run assets:container`, which re-chunks afterwards.
@@ -294,7 +293,7 @@ disagree. Run the step on its own with `bun run assets:container`, which re-chun
 ### 17, The Prefill
 
 `prefill` produces `assets/prefill.json`, which holds the bytes the site returns for five paths. A
-prefilled path is a **hit on its first ever request**, so whatever is in that file is the page a
+prefilled path is a hit on its first ever request, so whatever is in that file is the page a
 visitor sees.
 
 The bytes depend on the runtime, so native PHP cannot produce them. Native PHP returns suffixed block
@@ -312,7 +311,7 @@ The migration runs with `prefill=0`, which is what makes it a bake. `/migrate` s
 table from the shipped `assets/prefill.json`, so with it on every `/serve` is a hit of the file being
 rebuilt. `migrateSite()` asks for an unseeded site and throws if the route prefills anyway.
 
-It is the **only optional step**. It binds a port and boots an interpreter, and a busy port must not
+It is the only optional step. It binds a port and boots an interpreter, and a busy port must not
 discard sixteen finished steps: a failure here is reported, the build continues, and the run ends
 naming the file and the command that retries it. An absent `prefill.json` is normal at runtime; the
 first request to each path renders, and misses the prefill hit.
@@ -384,31 +383,30 @@ on a real upgrade, since it re-renders the prefilled pages and a core patch can 
 
 Wall clock on one development machine, six core-version swaps (median in the first row):
 
-| measure                                           |  n  | wall clock               |
-| ------------------------------------------------- | :-: | ------------------------ |
-| a core-version swap, end to end                   |  6  | **23-27 s**, median 25 s |
-| of which: tarball fetch, extract, contrib install |  6  | 8-11 s                   |
-| of which: reinstall, rebake, repack, recopy       |  6  | 15-16 s                  |
-| a from-scratch build, same steps plus `driver`    |  1  | 23 s                     |
+| measure                                           |  n  | wall clock           |
+| ------------------------------------------------- | :-: | -------------------- |
+| a core-version swap, end to end                   |  6  | 23-27 s, median 25 s |
+| of which: tarball fetch, extract, contrib install |  6  | 8-11 s               |
+| of which: reinstall, rebake, repack, recopy       |  6  | 15-16 s              |
+| a from-scratch build, same steps plus `driver`    |  1  | 23 s                 |
 
 A swap replaces about 167 MB of tree, reinstalls the build site, rebakes 23 Twig templates, repacks
 11,457 files and recopies 4,060 static assets.
 
 **Verified by artifact.** A rebuilt `assets/core/misc/ajax.js` hashed identically to the 11.4.5
-reference tree and differently from 11.4.4. `assets/drupal/core.bin.gz` carried `const VERSION =
-'11.4.5'` and no other version string.
+reference tree and differently from 11.4.4. `assets/drupal/core.bin.gz` carried `const VERSION = '11.4.5'` and no other version string.
 
 ### What A Patch Release Moves
 
 `scripts/tree-diff.mjs` hashes a tree and plans the objects a rollout has to move. Example, 11.4.4
 to 11.4.5:
 
-| set                                  | count   |
-| ------------------------------------ | ------- |
-| pack objects to upload               | **209** |
-| pack objects to delete               | 0       |
-| fraction of the 11,024-file pack set | 1.90%   |
-| static assets that also change       | **2**   |
+| set                                  | count |
+| ------------------------------------ | ----- |
+| pack objects to upload               | 209   |
+| pack objects to delete               | 0     |
+| fraction of the 11,024-file pack set | 1.90% |
+| static assets that also change       | 2     |
 
 The 209 are 93 `.info.yml` version stamps, 86 files under `vendor/`, 28 PHP classes under `core/`
 and two `core/*.json`. **Zero `*.routing.yml`, zero `.install`, zero `config/schema/*.yml`, zero
@@ -442,11 +440,11 @@ wired into `build:local`. It reads `<root>/sites/default/files/.sqlite`, which t
 not create (that step writes `sites/build/files/build-site.sqlite`), and it writes into the build
 database, from which the rows were copied by hand into `site.sqlite`.
 
-## Related
-
-- `docs/configuration.md`: every variable and binding, and what breaks when one is wrong
-- `docs/repository-layout.md`: every path outside `src/` and how it arrives
-- `scripts/README.md`: why each script is in the language it is in
-
 `bun run release:payload` builds the payload the fast route downloads and `bun run release:check`
 prices the canonical config against the 64 MiB ceiling.
+
+## Related
+
+- [Configuration](configuration.md): every variable and binding, and what breaks when one is wrong
+- [Repository Layout](repository-layout.md): every path outside `src/` and how it arrives
+- [Scripts](../scripts/README.md): why each script is in the language it is in

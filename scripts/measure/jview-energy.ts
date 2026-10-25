@@ -8,7 +8,7 @@
  * bun scripts/measure/jview-energy.ts report   --out=<dir>
  * ```
  *
- * The question is the one `docs/impact.md` could not answer: its 13% parity is per RENDER, while a
+ * The question is the one `docs/energy-views.md` could not answer: its 13% parity is per RENDER, while a
  * view that `caches.default`, `cfw_page` or a compiled plan answers runs no PHP at all. So the unit
  * here is a view drawn from `config/traffic.yml`, offered at a fixed rate and counted when answered.
  *
@@ -886,9 +886,9 @@ const DERIVED = {
 	scope2Facilities_tCO2e: 1611, // Cloudflare Emissions Inventory 2024, location-based, published
 	scope2Network_tCO2e: 61_171, // same table, published
 	gridGlobal_gPerKWh: 473, // Ember Global Electricity Review 2025, 2024 global average, published
-	gridUs_gPerKWh: 384, // Ember, US, as carried in docs/impact.md
+	gridUs_gPerKWh: 384, // Ember, US, as carried in docs/environment.md
 	httpRequestsPerSecond: 81e6, // Cloudflare Radar 2025 Year in Review: "over 81 million HTTP requests per second on average"
-	requestsPerView: [1, 3], // 3 is the figure docs/impact.md already charges; 1 is the floor
+	requestsPerView: [1, 3], // 3 is the figure docs/energy-views.md already charges; 1 is the floor
 	// as carried in scripts/economics/energy.ts, not re-fetched for this run
 	hostIdleW: 135,
 	hostLoadedW: 460,

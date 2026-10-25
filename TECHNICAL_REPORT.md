@@ -10,7 +10,7 @@ a deployed `cpuTime` reading are not interchangeable.
 
 ---
 
-## 🧭 Executive Summary
+## Executive Summary
 
 The bundle ships PHP 8.5 with every extension Drupal requires and nothing dropped. The interpreter
 travels as a raw `CompiledWasm` import, which the platform compiles ahead of upload, so startup does

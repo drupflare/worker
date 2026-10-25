@@ -90,8 +90,8 @@ Drupflare lists what it does not protect against rather than leave it to be foun
   Cloudflare states a V8 patch gap under 24 hours. The PHP interpreter and Drupal are patched through
   Drupflare releases, a separate and slower path.
 
-The [open rows of the class table](docs/security.md#classes-addressed-in-v104) and the
-[Planned Work](docs/security.md#planned-work) table list each one with its size.
+The [open rows of the class table](docs/security-incidents.md#classes-addressed-in-v104) and the
+[Planned Work](docs/security-incidents.md#planned-work) table list each one with its size.
 
 ## Maintenance
 

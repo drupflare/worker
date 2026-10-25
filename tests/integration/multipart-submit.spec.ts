@@ -329,7 +329,7 @@ describe('an uploaded file is stored', () => {
 	);
 });
 
-// docs/security.md rests on PHP's own upload handling never running: the render fragment parses
+// docs/security-controls.md rests on PHP's own upload handling never running: the render fragment parses
 // the body, so the multipart-parser classes of bug have nothing to reach
 describe('PHP upload handling is not what parses a multipart body', () => {
 	it(

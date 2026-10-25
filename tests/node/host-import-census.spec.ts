@@ -20,7 +20,7 @@ import { CROSSING_NAMES } from '../../src/ops/crossings';
 /**
  * The host surface PHP can reach, as a committed list instead of a search.
  *
- * `docs/security.md` says what a compromised PHP can touch and the module's import table is where
+ * `docs/security-controls.md` says what a compromised PHP can touch and the module's import table is where
  * that is decided, so a new import, or one nobody classified, fails here by name. Regenerate the
  * file for a new interpreter with `bun scripts/import-census.ts --write`, then classify what it
  * marks `unclassified`.
@@ -149,7 +149,7 @@ describe('what a host function can name', () => {
 		expect(naming(/\bFLEET_DB\b/)).toEqual([]);
 	});
 
-	// `cfwSettings` reaches the lever store on purpose; `docs/security.md` says it does
+	// `cfwSettings` reaches the lever store on purpose; `docs/security-controls.md` says it does
 	it('reaches CONFIG_KV through cfwSettings alone', () => {
 		expect(naming(/\bCONFIG_KV\b/)).toEqual(['cfwSettings']);
 	});

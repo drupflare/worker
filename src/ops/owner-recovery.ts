@@ -5,7 +5,7 @@
  * can also redeploy the worker and read it, so a one-minute record written there is a proof no
  * weaker than the token. The record names the sha256 of a nonce only the writer knows; presenting
  * the nonce spends the record and returns the token. See "Owner Token Recovery" in
- * `docs/configuration.md`.
+ * `docs/configuration-operations.md`.
  * @module
  */
 import type { SecretStore } from './site-secrets';

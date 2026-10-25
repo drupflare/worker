@@ -1,9 +1,10 @@
 /**
  * The module support table, emitted from the classifier rather than hand-written.
  *
- * `tests/node/module-table.spec.ts` compares these rows against README.md's three lists in both
- * directions. Three states, and only `verified` is a support claim: nothing reaches it except a
- * gated enable-and-assert run, and no path here promotes a module on analysis alone.
+ * `tests/node/module-table.spec.ts` compares these rows against the three lists in
+ * `docs/modules.md` in both directions. Three states, and only `verified` is a support claim:
+ * nothing reaches it except a gated enable-and-assert run, and no path here promotes a module on
+ * analysis alone.
  * @module
  */
 import { KNOWN_MODULE_CAPABILITIES, SHIPPED_CAPABILITIES, tierFor } from './catalog';

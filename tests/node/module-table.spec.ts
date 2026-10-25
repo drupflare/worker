@@ -326,17 +326,17 @@ describe('labelFor', () => {
  * The published table against the classifier, in both directions.
  *
  * **`module-table.ts` CLAIMED THIS EXISTED AND IT DID NOT.** Its docblock said the spec "renders
- * these rows and fails when README.md disagrees"; what the spec actually compared was
+ * these rows and fails when docs/modules.md disagrees"; what the spec actually compared was
  * `VERIFIED_BEHAVIOURS` against the spec FILES, so a claim needed a run behind it and the published
  * table needed nothing at all. Three rows were then edited by hand trusting the guard described
  * above -- which is the shape of every stale-claim defect in this repository, a rule cited as
  * authority by the person who wrote it.
  *
- * Names rather than prose: the README's wording is a maintainer's to choose, and what has to agree
+ * Names rather than prose: the page's wording is a maintainer's to choose, and what has to agree
  * is WHICH module is in WHICH state.
  */
-describe('README.md agrees with the classifier about every module', () => {
-	const README = readFileSync(join(here, '..', '..', 'README.md'), 'utf8');
+describe('docs/modules.md agrees with the classifier about every module', () => {
+	const MODULES = readFileSync(join(here, '..', '..', 'docs/modules.md'), 'utf8');
 
 	/** every machine name the classifier knows, so a backticked prose word is not read as one */
 	const known = new Set(moduleTable().map((r) => r.name.split('/')[1] as string));
@@ -350,9 +350,9 @@ describe('README.md agrees with the classifier about every module', () => {
 	 * about a module.
 	 */
 	function named(heading: string): Set<string> {
-		const at = README.indexOf(`### ${heading}`);
-		expect(at, `README.md has no "### ${heading}" section`).toBeGreaterThan(-1);
-		const rest = README.slice(at + heading.length);
+		const at = MODULES.indexOf(`### ${heading}`);
+		expect(at, `docs/modules.md has no "### ${heading}" section`).toBeGreaterThan(-1);
+		const rest = MODULES.slice(at + heading.length);
 		const end = rest.search(/\n#{2,3} /);
 		const body = end === -1 ? rest : rest.slice(0, end);
 		const out = new Set<string>();
@@ -374,12 +374,13 @@ describe('README.md agrees with the classifier about every module', () => {
 		const published = named('Verified');
 		const actual = machine('verified');
 		const missing = [...actual].filter((n) => !published.has(n)).sort();
-		expect(missing, 'verified by the classifier and absent from README.md').toEqual([]);
-		// the other direction: a name the README still advertises after its row moved
+		expect(missing, 'verified by the classifier and absent from docs/modules.md').toEqual([]);
+		// the other direction: a name the page still advertises after its row moved
 		const extra = [...published].filter((n) => !actual.has(n)).sort();
-		expect(extra, 'listed as verified in README.md and not verified by the classifier').toEqual(
-			[]
-		);
+		expect(
+			extra,
+			'listed as verified in docs/modules.md and not verified by the classifier'
+		).toEqual([]);
 	});
 
 	/**
@@ -393,18 +394,20 @@ describe('README.md agrees with the classifier about every module', () => {
 	it('names every blocked module', () => {
 		const published = named('Blocked');
 		for (const name of machine('blocked')) {
-			expect(published.has(name), `${name} is blocked and README.md does not say so`).toBe(
-				true
-			);
+			expect(
+				published.has(name),
+				`${name} is blocked and docs/modules.md does not say so`
+			).toBe(true);
 		}
 	});
 
 	it('lists every untested module', () => {
 		const published = named('Untested');
 		for (const name of machine('untested')) {
-			expect(published.has(name), `${name} is untested and README.md does not say so`).toBe(
-				true
-			);
+			expect(
+				published.has(name),
+				`${name} is untested and docs/modules.md does not say so`
+			).toBe(true);
 		}
 	});
 });

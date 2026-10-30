@@ -105,7 +105,7 @@
 		"@drupflare/burrow": "^1.1.1",
 		"@drupflare/cartridge": "^0.3.1",
 		"@drupflare/durabledb": "^0.1.4",
-		"@drupflare/spool": "^0.2.0",
+		"@drupflare/spool": "^0.3.0",
 		"@drupflare/untarl": "^0.1.0",
 		"@gmitch215/tinyimg": "^1.1.1",
 		"@noble/ciphers": "^2.4.0",

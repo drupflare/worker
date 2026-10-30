@@ -2,7 +2,7 @@ name: drupflare-worker
 
 services:
   greenmail:
-    image: greenmail/standalone:2.1.14@sha256:1ef95a966418cd09b7ea91d504d8c0826bbe7a2f6e679a75c601a831587c1626
+    image: greenmail/standalone:2.1.15@sha256:309ba544ea482e5d4265d09921cdab07c8dad2cc4481d715c9b8ff5d3f0a149f
     environment:
       GREENMAIL_OPTS: '-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=drupflare:drupflarepass@localhost -Dgreenmail.verbose'
     ports:
@@ -45,7 +45,7 @@ services:
       retries: 40
 
   redis:
-    image: redis:8.10.2-alpine@sha256:0bf6577d7774e592b29d093e3ac9390eb91e13d72c21e506afce736de5e0eeb0
+    image: redis:8.10.3-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
     command: ['redis-server', '--requirepass', 'testpass']
     ports:
       - '127.0.0.1:6379:6379'

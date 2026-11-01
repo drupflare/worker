@@ -109,6 +109,7 @@ const __CFW_REPEAT__ = PHP_INT_SIZE;
 const __CFW_CAP__ = PHP_INT_SIZE - 4;
 const __CFW_AGE__ = PHP_INT_SIZE;
 const __CFW_RESET_CID__ = PHP_ZTS === 1;
+const __CFW_RESET_CONFIG__ = PHP_ZTS === 1;
 const __CFW_CHECK_REQUIREMENTS__ = PHP_ZTS === 1;
 const __CFW_SERVE_ARGS__ = PHP_ZTS === 1;
 const __CFW_TARGET__ = PHP_VERSION;

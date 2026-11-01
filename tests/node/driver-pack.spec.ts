@@ -67,7 +67,7 @@ describe.skipIf(skipPack)('the packed driver asset is current', () => {
 	it('matches the module copies inside drupal-src, which the shipping pack is built from', async () => {
 		// a stale copy there ships an old file, and a longer one splices its tail onto the new one
 		const root = join(ROOT, 'drupal-src');
-		if (!existsSync(join(root, 'core', 'lib', 'Drupal.php'))) return;
+		if (!existsSync(join(root, 'modules', 'custom', 'drupflare', 'drupflare.info.yml'))) return;
 		const packed = JSON.parse(await readFile(DRIVER_ASSET_PATH, 'utf8')) as Record<
 			string,
 			string

@@ -214,6 +214,8 @@ export const KV_OVERRIDABLE = [
 	'SITE_WARM',
 	// 8 s holds the object resident; longer intervals trade firings for a chance of adoption
 	'WARM_INTERVAL_MS',
+	// how far the solver may climb past hibernation; each object retreats on its first cold boot
+	'WARM_CEILING_MS',
 	// how long PHP may wait through the park per visitor request (an alarm gets fifteen times it)
 	'SLEEP_BUDGET_MS',
 	// off costs the object hop it always paid
@@ -242,12 +244,24 @@ export const KV_OVERRIDABLE = [
 /** one name on {@link KV_OVERRIDABLE} */
 export type KvOverridable = (typeof KV_OVERRIDABLE)[number];
 
+/** a named point on an int lever's scale, and what choosing it costs or buys */
+export type LeverMark = { value: number; label: string; note: string };
+
 /**
  * What a lever accepts, read off the function that parses it: `int` bounds are the reader's own
  * clamps, `unit` is for display, `flag` is `0` or `1`.
  */
 export type LeverDomain =
-	| { kind: 'int'; min: number; max: number; unit?: 'ms' | 'bytes' }
+	| {
+			kind: 'int';
+			min: number;
+			max: number;
+			unit?: 'ms' | 'bytes';
+			/** the value in force when nothing overrides the lever */
+			default?: number;
+			/** ascending by value, every value inside [min, max] */
+			marks?: readonly LeverMark[];
+	  }
 	| { kind: 'flag' }
 	| { kind: 'enum'; values: readonly string[] }
 	| { kind: 'bins' }
@@ -287,7 +301,68 @@ export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
 	REPLICA_COUNT: { kind: 'int', min: 0, max: 256 },
 	REPLICA_LAG_MS: { kind: 'int', min: 1_000, max: 300_000, unit: 'ms' },
 	SITE_WARM: { kind: 'flag' },
-	WARM_INTERVAL_MS: { kind: 'int', min: 8_000, max: 600_000, unit: 'ms' },
+	WARM_INTERVAL_MS: {
+		kind: 'int',
+		min: 8_000,
+		max: 600_000,
+		unit: 'ms',
+		default: 8_000,
+		marks: [
+			{
+				value: 8_000,
+				label: 'Default and fastest',
+				note:
+					'10,800 wakes a day. The interpreter stays resident: no cold visit at gaps ' +
+					'of 10 to 160 s (about 12 probes per gap, demo, 2026-10-31).'
+			},
+			{
+				value: 30_000,
+				label: 'Middle',
+				note:
+					'2,880 wakes a day. The next instance adopts the retained interpreter ' +
+					'only when it lands in the same isolate: 36% of idle visits on 12 paid ' +
+					'workers (2026-09-25).'
+			},
+			{
+				value: 600_000,
+				label: 'Least energy',
+				note:
+					'144 wakes a day. With warming off, every visit at a 160 s gap met ' +
+					'a cold boot of about 2.5 s (demo, 2026-10-31).'
+			}
+		]
+	},
+	WARM_CEILING_MS: {
+		kind: 'int',
+		min: 9_500,
+		max: 120_000,
+		unit: 'ms',
+		default: 9_500,
+		marks: [
+			{
+				value: 9_500,
+				label: 'Default and fastest',
+				note:
+					'The solved interval stops below hibernation, so the object ' +
+					'stays resident. Nothing changes.'
+			},
+			{
+				value: 30_000,
+				label: 'Middle',
+				note:
+					'Each site may climb to 30 s and returns to 8 s on its first cold boot; ' +
+					'2,880 wakes a day at the top. A trial: a repeat drive on the demo did ' +
+					'not reproduce the first, so a site may retreat at once.'
+			},
+			{
+				value: 120_000,
+				label: 'Least energy',
+				note:
+					'Each site may climb to 120 s, which is 720 wakes a day at the top. ' +
+					'A cold boot returns it to 8 s and costs that visitor about 1.4 to 2.5 s.'
+			}
+		]
+	},
 	SLEEP_BUDGET_MS: { kind: 'int', min: 0, max: 60_000, unit: 'ms' },
 	EDGE_PLAN: { kind: 'flag' },
 	ASSET_AGGREGATES: { kind: 'flag' },

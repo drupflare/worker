@@ -145,6 +145,8 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 		lastScopedPurge: site.lastScopedPurge ?? null,
 		lastAggregation: site.lastAggregation ?? null,
 		warmDecision: site.lastWarmDecision ?? null,
+		warmCeilingMs: site.warmCeiling(),
+		warmWindowColds: site.storedRenderWindow()?.colds ?? null,
 		// a re-driven render costs one extra drain plus one extra render
 		lastRedrive: site.lastRedrive ?? null,
 		lastPendingDrain: site.lastPendingDrain ?? null,

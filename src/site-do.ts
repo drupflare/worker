@@ -235,6 +235,7 @@ import {
 	HIBERNATION_IDLE_MS,
 	idleRearmMs,
 	keepWarmMs,
+	warmCeilingMs,
 	warmForced,
 	warmIntervalConfigured
 } from './ops/cron';
@@ -696,6 +697,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/** renders not yet folded into the persisted window; see `flushRenderWindow()` */
 	rendersSinceFlush?: number;
 
+	/** cold boots not yet folded into the persisted window */
+	coldsSinceFlush?: number;
+
 	/** when that window last paid for a write */
 	lastRenderWindowFlushMs?: number;
 
@@ -955,6 +959,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 */
 	alarmDueMs?: number;
 
+	/** set by `retire()`; this incarnation then answers 410 and arms nothing */
+	retired?: boolean;
+
 	/** `carriedServeTotal()`'s memo; the lifetime serve total moves only through `flushMeters()` */
 	carriedServe?: number;
 	/** requests served through the PHP lane this incarnation */
@@ -1042,6 +1049,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/** the cold half of {@link ensurePhp}; only it and its own reboot call this */
 	private async bootPhp(opts: { skipRestore?: boolean }): Promise<PhpInstance> {
 		this.encounters = recordEncounter(this.encounters, 'cold');
+		this.coldsSinceFlush = (this.coldsSinceFlush ?? 0) + 1;
 		// the heap a drop left behind, if any, so this boot never holds a second one beside it
 		const spare = takeSpareMemory();
 		if (spare) {
@@ -1968,7 +1976,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 	/** the render window as it survived the last hibernation, or undefined if none is stored */
 	storedRenderWindow(): RenderWindow | undefined {
-		return readRenderWindow(this.metaGet(RENDER_WINDOW_KEY));
+		return readRenderWindow(this.metaGet(RENDER_WINDOW_KEY), this.warmCeiling());
+	}
+
+	/** the ceiling the warm solver may climb to; 9,500 unless `WARM_CEILING_MS` raises it */
+	warmCeiling(): number {
+		return warmCeilingMs(this.env, retainInterpreterEnabled(this.env));
 	}
 
 	/**
@@ -1989,9 +2002,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			if (nowMs - held < RATE_WINDOW_MS) return stored;
 		}
 		const survived = this.incarnationSpanned(stored, nowMs);
+		const colds = this.coldsSinceFlush ?? 0;
 		this.rendersSinceFlush = 0;
+		this.coldsSinceFlush = 0;
 		this.lastRenderWindowFlushMs = nowMs;
-		const folded = foldRenderWindow(stored, pending, nowMs, RATE_WINDOW_MS, survived);
+		const folded = foldRenderWindow(
+			stored,
+			pending,
+			nowMs,
+			RATE_WINDOW_MS,
+			survived,
+			colds,
+			this.warmCeiling()
+		);
 		this.metaSet(RENDER_WINDOW_KEY, writeRenderWindow(folded));
 		return folded;
 	}
@@ -3138,6 +3161,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * survived a 240 s re-arm.
 	 */
 	async setAlarmAt(atMs: number): Promise<void> {
+		if (this.retired) return;
 		this.alarmDueMs = atMs;
 		await this.storage.setAlarm(atMs);
 	}
@@ -3150,6 +3174,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * hibernation costs one extra arm and never skips one.
 	 */
 	armFillAlarm(delayMs = 1): void {
+		if (this.retired) return;
 		const at = this.nowMs() + Math.max(1, delayMs);
 		if (this.alarmDueMs !== undefined && this.alarmDueMs <= at) return;
 		try {
@@ -3559,7 +3584,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * The idle re-arm this site's own traffic justifies.
 	 *
 	 * Falls back to the configured interval when the predictor has nothing to say. The warm branch
-	 * is solved (climbing toward 9,500 on windows the object survived); an explicit
+	 * is solved (climbing toward the ceiling on windows the object survived); an explicit
 	 * `WARM_INTERVAL_MS` wins.
 	 */
 	thermalRearmMs(): number {
@@ -3578,7 +3603,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		if (!decision.warm) return keepWarmMs(this.env);
 		return (
 			warmIntervalConfigured(this.env) ??
-			clampWarmInterval(stored?.intervalMs ?? WARM_INTERVAL_VERIFIED_MS, HIBERNATION_IDLE_MS)
+			clampWarmInterval(stored?.intervalMs ?? WARM_INTERVAL_VERIFIED_MS, this.warmCeiling())
 		);
 	}
 
@@ -3765,6 +3790,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * one feeds `/__serve-stats`.
 	 */
 	override async alarm(info?: AlarmInvocationInfo): Promise<any> {
+		if (this.retired) return { retired: true };
 		await this.adoptSecrets();
 		this.adoptRetained();
 		recordInDeployment(this);
@@ -3864,6 +3890,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 	/** serves one request: routes it, hands refusals to the primary, classifies platform limits */
 	override async fetch(request: Request): Promise<Response> {
+		if (this.retired) return jsonError('this site was retired', 410);
 		this.adoptRetained();
 		recordInDeployment(this);
 		// one allowance per invocation; an alarm overlapping this request shares it until either
@@ -3882,6 +3909,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const reusedBefore = this.heapsReused ?? 0;
 			this.resetBridgeBytes();
 			const res = await routeImpl(this, request);
+			// the wipe is done; anything below would write into the emptied storage
+			if (this.retired) return res;
 			this.noteDemand(request, linearBefore, reusedBefore);
 			// a refusal PHP caught is still a refusal (Drupal's session handler turns it into a
 			// 500 the catch below never sees)
@@ -4091,6 +4120,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	dropInterpreter(): void {
 		if (!this.php?.binary) return;
 		this.php = undefined;
+	}
+
+	/**
+	 * Wipes this object: its alarm, its storage, its interpreter and any retained one. The flag
+	 * goes first so nothing in flight can arm an alarm between the two deletes.
+	 */
+	async retire(): Promise<void> {
+		this.retired = true;
+		this.dropInterpreter();
+		retainedInterpreters.delete(this.ctx.id.toString());
+		await this.ctx.storage.deleteAlarm();
+		await this.ctx.storage.deleteAll();
 	}
 
 	/** keeps this object's interpreter in module scope, stamped with the commit it has seen */

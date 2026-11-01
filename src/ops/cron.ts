@@ -248,6 +248,7 @@ export interface CronEnv {
 	WATCHDOG_ROW_LIMIT?: string | number;
 	KEEP_WARM_MS?: string | number;
 	WARM_INTERVAL_MS?: string | number;
+	WARM_CEILING_MS?: string | number;
 	SITE_WARM?: string | number;
 	RETAIN_INTERPRETER?: string | number;
 }
@@ -362,6 +363,22 @@ export function warmIntervalMs(env?: CronEnv): number {
 	if (String(env?.RETAIN_INTERPRETER ?? '1') !== '0') return Math.min(ms, WARM_INTERVAL_MAX_MS);
 	return Math.min(ms, HIBERNATION_IDLE_MS - 2000);
 }
+
+/** the solver's ceiling: 9,500 unless the lever raises it, and only while retention is on */
+export function warmCeilingMs(
+	env?: CronEnv,
+	retain = String(env?.RETAIN_INTERPRETER ?? '1') !== '0'
+): number {
+	const n = Number(env?.WARM_CEILING_MS);
+	if (!retain || !Number.isFinite(n) || n < WARM_CEILING_FLOOR_MS) return WARM_CEILING_FLOOR_MS;
+	return Math.min(Math.floor(n), WARM_CEILING_MAX_MS);
+}
+
+/** the default ceiling, which the lever cannot go below */
+const WARM_CEILING_FLOOR_MS = 9_500;
+
+/** the highest ceiling the lever accepts */
+const WARM_CEILING_MAX_MS = 120_000;
 
 /**
  * The longest warming interval a writer accepts.

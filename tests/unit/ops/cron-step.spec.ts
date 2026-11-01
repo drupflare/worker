@@ -16,6 +16,7 @@ import {
 	siteWarmEnabled,
 	skippedCronHooks,
 	WARM_INTERVAL_MAX_MS,
+	warmCeilingMs,
 	warmForced,
 	warmIntervalConfigured,
 	warmIntervalMs,
@@ -320,6 +321,19 @@ describe('the warm re-arm has to beat the hibernation threshold', () => {
 
 	it('ignores nonsense rather than producing 0 or NaN', () => {
 		expect(warmIntervalMs({ WARM_INTERVAL_MS: 'abc' })).toBeGreaterThan(0);
+	});
+
+	it('reads the warm ceiling lever, and falls back to 9,500 on anything unusable', () => {
+		expect(warmCeilingMs({})).toBe(9_500);
+		expect(warmCeilingMs({ WARM_CEILING_MS: '' })).toBe(9_500);
+		expect(warmCeilingMs({ WARM_CEILING_MS: 'abc' })).toBe(9_500);
+		expect(warmCeilingMs({ WARM_CEILING_MS: '9000' })).toBe(9_500);
+		expect(warmCeilingMs({ WARM_CEILING_MS: '30000' })).toBe(30_000);
+		expect(warmCeilingMs({ WARM_CEILING_MS: 30_000 })).toBe(30_000);
+		expect(warmCeilingMs({ WARM_CEILING_MS: '900000' })).toBe(120_000);
+		// without retention a firing past hibernation re-boots every time
+		expect(warmCeilingMs({ WARM_CEILING_MS: '30000', RETAIN_INTERPRETER: '0' })).toBe(9_500);
+		expect(warmCeilingMs({ WARM_CEILING_MS: '30000' }, false)).toBe(9_500);
 	});
 
 	/**

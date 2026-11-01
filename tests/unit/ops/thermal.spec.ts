@@ -6,6 +6,7 @@ import {
 	COLD_BOOT_MS,
 	HIBERNATION_ASSUMED_MS,
 	RATE_WINDOW_MS,
+	WARM_CEILING_STEP_MS,
 	WARM_CLEAN_WINDOWS,
 	WARM_FIRING_COST_MS,
 	WARM_INTERVAL_STEP_MS,
@@ -21,6 +22,7 @@ import {
 	solveWarmInterval,
 	warmDecision,
 	windowRate,
+	windowVerdict,
 	writeRenderWindow,
 	type Arrival
 } from '../../../src/ops/thermal';
@@ -255,7 +257,8 @@ describe('the render window that outlives an incarnation', () => {
 		startedAt,
 		renders,
 		intervalMs: WARM_INTERVAL_VERIFIED_MS,
-		clean: 0
+		clean: 0,
+		colds: 0
 	});
 
 	it('round trips through the packed meta value', () => {
@@ -440,7 +443,8 @@ describe('the warm interval, solved from what the object survived', () => {
 			startedAt: NOW - RATE_WINDOW_MS - 1,
 			renders: 900,
 			intervalMs: 9_000,
-			clean: 1
+			clean: 1,
+			colds: 0
 		};
 		const rolled = foldRenderWindow(climbed, 1, NOW, RATE_WINDOW_MS, true);
 		expect(rolled.intervalMs).toBe(9_500);
@@ -454,9 +458,132 @@ describe('the warm interval, solved from what the object survived', () => {
 	/** an open bucket is not a decision point, so it must leave the solver alone */
 	it('leaves the interval untouched when the window has not rolled', () => {
 		const NOW = 1_700_000_000_000;
-		const open = { startedAt: NOW - 1_000, renders: 4, intervalMs: 9_000, clean: 1 };
+		const open = { startedAt: NOW - 1_000, renders: 4, intervalMs: 9_000, clean: 1, colds: 0 };
 		const folded = foldRenderWindow(open, 3, NOW, RATE_WINDOW_MS, false);
 		expect(folded.intervalMs).toBe(9_000);
 		expect(folded.clean).toBe(1);
+	});
+});
+
+/**
+ * A ceiling above hibernation, behind a lever that defaults off.
+ *
+ * Past 10 s an incarnation can never span a window, so the observation for a long interval is
+ * whether the window rendered and met no cold boot.
+ */
+describe('the warm interval past hibernation', () => {
+	const NOW = 1_700_000_000_000;
+	const CEILING = 30_000;
+
+	it('keeps the 9,500 clamp when no ceiling is passed', () => {
+		expect(clampWarmInterval(30_000)).toBe(9_500);
+		expect(clampWarmInterval(30_000, CEILING)).toBe(30_000);
+		expect(clampWarmInterval(45_000, CEILING)).toBe(CEILING);
+		let state = { intervalMs: WARM_INTERVAL_VERIFIED_MS, clean: 0 };
+		for (let i = 0; i < 200; i++) state = solveWarmInterval(state, true);
+		expect(state.intervalMs).toBe(9_500);
+	});
+
+	it('climbs 500 ms below 9,500 and 2,000 ms from there, then stops at the ceiling', () => {
+		let state = { intervalMs: WARM_INTERVAL_VERIFIED_MS, clean: 0 };
+		const seen: number[] = [];
+		for (let i = 0; i < 200; i++) {
+			const next = solveWarmInterval(state, true, CEILING);
+			if (next.intervalMs !== state.intervalMs) seen.push(next.intervalMs);
+			state = next;
+		}
+		expect(seen.slice(0, 5)).toEqual([
+			8_500,
+			9_000,
+			9_500,
+			9_500 + WARM_CEILING_STEP_MS,
+			13_500
+		]);
+		expect(seen.at(-1)).toBe(CEILING);
+		expect(state.intervalMs).toBe(CEILING);
+		expect(WARM_CEILING_STEP_MS).toBe(2_000);
+	});
+
+	it('retreats from 20,000 to the verified interval on a broken window', () => {
+		const after = solveWarmInterval({ intervalMs: 20_000, clean: 1 }, false, CEILING);
+		expect(after).toEqual({ intervalMs: WARM_INTERVAL_VERIFIED_MS, clean: 0 });
+	});
+
+	it('holds the state when there is no evidence', () => {
+		const state = { intervalMs: 20_000, clean: 1 };
+		expect(solveWarmInterval(state, undefined, CEILING)).toEqual(state);
+	});
+
+	it.each([
+		['at or below 9,500: spanned', 9_000, 5, 3, true, true],
+		['at or below 9,500: not spanned, whatever the colds', 9_000, 5, 0, false, false],
+		['above 9,500: a cold means broken', 20_000, 5, 1, true, false],
+		['above 9,500: renders and no cold is clean', 20_000, 5, 0, false, true],
+		['above 9,500: no renders is no evidence', 20_000, 0, 0, true, undefined]
+	])('verdict, %s', (_name, intervalMs, renders, colds, spanned, expected) => {
+		expect(windowVerdict(intervalMs, { renders, colds }, spanned)).toBe(expected);
+	});
+
+	it('round trips five fields and still reads four and two', () => {
+		const window = { startedAt: NOW, renders: 7, intervalMs: 20_000, clean: 1, colds: 2 };
+		const packed = writeRenderWindow(window);
+		expect(packed).toBe(`${NOW}:7:20000:1:2`);
+		expect(readRenderWindow(packed, CEILING)).toEqual(window);
+		expect(readRenderWindow(`${NOW}:7:9000:1`)).toEqual({
+			...window,
+			intervalMs: 9_000,
+			colds: 0
+		});
+		expect(readRenderWindow(`${NOW}:7`)).toEqual({
+			startedAt: NOW,
+			renders: 7,
+			intervalMs: WARM_INTERVAL_VERIFIED_MS,
+			clean: 0,
+			colds: 0
+		});
+		// without the ceiling a stored 20,000 is forced back into the old band on read
+		expect(readRenderWindow(packed)?.intervalMs).toBe(9_500);
+	});
+
+	it('folds the closing window verdict into the roll, and carries pending colds forward', () => {
+		const closing = {
+			startedAt: NOW - RATE_WINDOW_MS - 1,
+			renders: 40,
+			intervalMs: 20_000,
+			clean: 1,
+			colds: 0
+		};
+		const clean = foldRenderWindow(closing, 1, NOW, RATE_WINDOW_MS, false, 2, CEILING);
+		expect(clean).toMatchObject({ intervalMs: 22_000, clean: 0, renders: 1, colds: 2 });
+		const broken = foldRenderWindow(
+			{ ...closing, colds: 1 },
+			1,
+			NOW,
+			RATE_WINDOW_MS,
+			false,
+			0,
+			CEILING
+		);
+		expect(broken).toMatchObject({ intervalMs: WARM_INTERVAL_VERIFIED_MS, clean: 0, colds: 0 });
+		const quiet = foldRenderWindow(
+			{ ...closing, renders: 0 },
+			1,
+			NOW,
+			RATE_WINDOW_MS,
+			false,
+			0,
+			CEILING
+		);
+		expect(quiet).toMatchObject({ intervalMs: 20_000, clean: 1 });
+		const open = foldRenderWindow(
+			{ ...closing, startedAt: NOW - 1_000 },
+			3,
+			NOW,
+			RATE_WINDOW_MS,
+			false,
+			2,
+			CEILING
+		);
+		expect(open).toMatchObject({ renders: 43, colds: 2, intervalMs: 20_000 });
 	});
 });

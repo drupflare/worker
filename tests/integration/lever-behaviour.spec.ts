@@ -206,6 +206,7 @@ describe('the fixture covers the allow-list', () => {
 			'REPLICA_LAG_MS',
 			'SITE_WARM',
 			'WARM_INTERVAL_MS',
+			'WARM_CEILING_MS',
 			'SLEEP_BUDGET_MS',
 			'EDGE_PLAN',
 			'ASSET_AGGREGATES',
@@ -786,6 +787,51 @@ describe('SITE_WARM decides the idle re-arm', () => {
 		expect(seen.climbed).toBe(9_000);
 		// an operator who stated an interval is not overruled by what the object worked out
 		expect(seen.stated).toBe(6_000);
+	});
+
+	it('re-arms past hibernation only when WARM_CEILING_MS raises the ceiling', async () => {
+		const rearmWith = (overrides: Record<string, unknown>) =>
+			inObject(freshSite(), async (site) => {
+				site.env = { ...site.env, SITE_WARM: '1', ...overrides };
+				markProvisioned(site);
+				const obj = site as unknown as {
+					thermalRearmMs(): number;
+					metaSet(k: string, v: string): void;
+				};
+				obj.metaSet('render_window', `${site.nowMs() - 1_000}:900:20000:1:0`);
+				return obj.thermalRearmMs();
+			});
+		expect(await rearmWith({ WARM_CEILING_MS: '30000' })).toBe(20_000);
+		// the control: the same stored row with the lever unset is forced back under hibernation
+		expect(await rearmWith({})).toBe(9_500);
+		expect(await rearmWith({ WARM_CEILING_MS: '30000', RETAIN_INTERPRETER: '0' })).toBe(9_500);
+	});
+
+	it('counts a cold boot and writes it into the fifth field on the next roll', async () => {
+		const out = await inObject(freshSite(), async (site: ServeDo) => {
+			await site.fetch(new Request('https://cfw.local/__migrate?all=1&prefill=0'));
+			const s = site as unknown as {
+				php: unknown;
+				coldsSinceFlush?: number;
+				rendersSinceFlush?: number;
+				ensurePhp(): Promise<unknown>;
+				flushRenderWindow(nowMs: number): unknown;
+				metaGet(k: string): string | undefined;
+				metaSet(k: string, v: string): void;
+			};
+			s.php = undefined;
+			s.coldsSinceFlush = 0;
+			await s.ensurePhp();
+			const counted = s.coldsSinceFlush;
+			const now = site.nowMs();
+			s.metaSet('render_window', `${now - 1_000_000}:5:8000:0:0`);
+			s.rendersSinceFlush = 1;
+			s.flushRenderWindow(now);
+			return { counted, packed: s.metaGet('render_window'), left: s.coldsSinceFlush, now };
+		});
+		expect(out.counted).toBe(1);
+		expect(out.packed).toBe(`${out.now}:1:8000:0:1`);
+		expect(out.left).toBe(0);
 	});
 });
 

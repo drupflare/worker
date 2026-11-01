@@ -76,16 +76,38 @@ export const HIBERNATION_ASSUMED_MS = 10_000;
 /** one probe step, which is 1.5 hours from the verified interval to the ceiling */
 export const WARM_INTERVAL_STEP_MS = 500;
 
+/** the step from 9,500 up, where a 500 ms step to 30 s would be 44 steps over 22 hours */
+export const WARM_CEILING_STEP_MS = 2_000;
+
 /** clean windows before a climb; two, so one lucky window cannot move the interval */
 export const WARM_CLEAN_WINDOWS = 2;
 
 /** what a window carries before anything has been solved */
 const ZERO_SOLVED = { intervalMs: WARM_INTERVAL_VERIFIED_MS, clean: 0 };
 
+/** the ceiling when no lever raises it */
+const DEFAULT_CEILING_MS = HIBERNATION_ASSUMED_MS - WARM_MARGIN_MIN_MS;
+
 /** the feasible band, which a stored value is forced back into on every read */
-export function clampWarmInterval(ms: number, thresholdMs = HIBERNATION_ASSUMED_MS): number {
-	const ceiling = Math.max(1, thresholdMs - WARM_MARGIN_MIN_MS);
-	return Math.min(ceiling, Math.max(1, Math.round(ms)));
+export function clampWarmInterval(ms: number, ceilingMs = DEFAULT_CEILING_MS): number {
+	return Math.min(Math.max(1, ceilingMs), Math.max(1, Math.round(ms)));
+}
+
+/**
+ * Whether the closing window held, for the interval that was in force during it.
+ *
+ * At or below the default ceiling the observation is `spanned`. Above it the instance hibernates
+ * between firings, so a window holds when it rendered and met no cold boot; undefined means no
+ * render, so no evidence.
+ */
+export function windowVerdict(
+	intervalMs: number,
+	window: { renders: number; colds: number },
+	spanned: boolean
+): boolean | undefined {
+	if (intervalMs <= DEFAULT_CEILING_MS) return spanned;
+	if (window.colds > 0) return false;
+	return window.renders > 0 ? true : undefined;
 }
 
 /**
@@ -98,22 +120,21 @@ export function clampWarmInterval(ms: number, thresholdMs = HIBERNATION_ASSUMED_
  * all the way to {@link WARM_INTERVAL_VERIFIED_MS} on a window it did not (the next-lower step has
  * no more evidence than the one that failed).
  *
- * @param survived whether a single incarnation spanned the closing window; a re-created object
- *   cannot have stayed resident, so this is the observation, not a proxy
+ * @param survived whether the closing window held, from {@link windowVerdict}; undefined holds
+ *   the state
  */
 export function solveWarmInterval(
 	state: { intervalMs: number; clean: number },
-	survived: boolean,
-	thresholdMs = HIBERNATION_ASSUMED_MS
+	survived: boolean | undefined,
+	ceilingMs = DEFAULT_CEILING_MS
 ): { intervalMs: number; clean: number } {
-	const current = clampWarmInterval(state.intervalMs, thresholdMs);
+	const current = clampWarmInterval(state.intervalMs, ceilingMs);
+	if (survived === undefined) return { intervalMs: current, clean: state.clean };
 	if (!survived) return { intervalMs: WARM_INTERVAL_VERIFIED_MS, clean: 0 };
 	const clean = state.clean + 1;
 	if (clean < WARM_CLEAN_WINDOWS) return { intervalMs: current, clean };
-	return {
-		intervalMs: clampWarmInterval(current + WARM_INTERVAL_STEP_MS, thresholdMs),
-		clean: 0
-	};
+	const step = current >= DEFAULT_CEILING_MS ? WARM_CEILING_STEP_MS : WARM_INTERVAL_STEP_MS;
+	return { intervalMs: clampWarmInterval(current + step, ceilingMs), clean: 0 };
 }
 
 /** the verdict of {@link warmDecision} with the figures behind it */
@@ -156,44 +177,54 @@ export type RenderWindow = {
 	intervalMs: number;
 	/** consecutive whole windows the warming chain survived without a re-creation */
 	clean: number;
+	/** cold boots met during this window; the observation for an interval past hibernation */
+	colds: number;
 };
 
 /**
  * Parses the packed meta value; undefined for anything malformed.
  *
- * Two fields or four; the two-field form is still read so a deploy does not reset every warmed
- * object's rate estimate.
+ * Two, four or five fields; the shorter forms are still read so a deploy does not reset every
+ * warmed object's rate estimate, and a missing fifth is zero.
  */
-export function readRenderWindow(value: string | null | undefined): RenderWindow | undefined {
+export function readRenderWindow(
+	value: string | null | undefined,
+	ceilingMs = DEFAULT_CEILING_MS
+): RenderWindow | undefined {
 	const parts = String(value ?? '').split(':');
-	if (parts.length !== 2 && parts.length !== 4) return undefined;
+	if (parts.length !== 2 && parts.length !== 4 && parts.length !== 5) return undefined;
 	const startedAt = Number(parts[0]);
 	const renders = Number(parts[1]);
 	if (!Number.isFinite(startedAt) || !Number.isFinite(renders)) return undefined;
 	if (startedAt <= 0 || renders < 0) return undefined;
-	const solved = parts.length === 4 ? readSolvedInterval(parts[2], parts[3]) : undefined;
-	return { startedAt, renders, ...(solved ?? ZERO_SOLVED) };
+	const colds = parts.length === 5 ? Number(parts[4]) : 0;
+	if (!Number.isFinite(colds) || colds < 0) return undefined;
+	const solved =
+		parts.length >= 4 ? readSolvedInterval(parts[2], parts[3], ceilingMs) : undefined;
+	return { startedAt, renders, ...(solved ?? ZERO_SOLVED), colds: Math.round(colds) };
 }
 
 /** parses the solved-interval half of the packed value; undefined when malformed */
 function readSolvedInterval(
 	rawInterval: string | undefined,
-	rawClean: string | undefined
+	rawClean: string | undefined,
+	ceilingMs: number
 ): { intervalMs: number; clean: number } | undefined {
 	const intervalMs = Number(rawInterval);
 	const clean = Number(rawClean);
 	if (!Number.isFinite(intervalMs) || !Number.isFinite(clean)) return undefined;
 	if (intervalMs <= 0 || clean < 0) return undefined;
-	return { intervalMs: clampWarmInterval(intervalMs), clean: Math.round(clean) };
+	return { intervalMs: clampWarmInterval(intervalMs, ceilingMs), clean: Math.round(clean) };
 }
 
-/** packs a window as `startedAt:renders:intervalMs:clean` for the meta row */
+/** packs a window as `startedAt:renders:intervalMs:clean:colds` for the meta row */
 export function writeRenderWindow(window: RenderWindow): string {
 	return [
 		Math.round(window.startedAt),
 		Math.round(window.renders),
 		Math.round(window.intervalMs),
-		Math.round(window.clean)
+		Math.round(window.clean),
+		Math.round(window.colds)
 	].join(':');
 }
 
@@ -207,27 +238,28 @@ export function foldRenderWindow(
 	pending: number,
 	nowMs: number,
 	windowMs = RATE_WINDOW_MS,
-	/** whether ONE incarnation spanned the window that is closing; see {@link solveWarmInterval} */
-	survived = false
+	/** whether ONE incarnation spanned the window that is closing; see {@link windowVerdict} */
+	survived = false,
+	pendingColds = 0,
+	ceilingMs = DEFAULT_CEILING_MS
 ): RenderWindow {
 	if (stored === undefined || nowMs - stored.startedAt >= windowMs) {
-		const carried = stored ?? ZERO_SOLVED;
-		return {
-			startedAt: nowMs,
-			renders: pending,
-			...(stored === undefined
+		const solved =
+			stored === undefined
 				? ZERO_SOLVED
 				: solveWarmInterval(
-						{ intervalMs: carried.intervalMs, clean: carried.clean },
-						survived
-					))
-		};
+						{ intervalMs: stored.intervalMs, clean: stored.clean },
+						windowVerdict(stored.intervalMs, stored, survived),
+						ceilingMs
+					);
+		return { startedAt: nowMs, renders: pending, ...solved, colds: pendingColds };
 	}
 	return {
 		startedAt: stored.startedAt,
 		renders: stored.renders + pending,
 		intervalMs: stored.intervalMs,
-		clean: stored.clean
+		clean: stored.clean,
+		colds: stored.colds + pendingColds
 	};
 }
 

@@ -50,6 +50,7 @@ const PROBE: Record<KvOverridable, string> = {
 	REPLICA_LAG_MS: '45000',
 	SITE_WARM: '0',
 	WARM_INTERVAL_MS: '60000',
+	WARM_CEILING_MS: '30000',
 	SLEEP_BUDGET_MS: '750',
 	EDGE_PLAN: '0',
 	ASSET_AGGREGATES: '1',
@@ -263,5 +264,25 @@ describe('the KV lever seam inside the object', () => {
 		expect(viaOwner.written.SPOOL).toBe('0');
 		expect(viaOwner.written.SPOOL_VIDEO).toBe('0');
 		expect(viaOwner.refused).toEqual([]);
+	});
+
+	it('hands the warm interval marks to the settings reader as JSON', async () => {
+		const outcome = await inObject(freshSite(), async (obj) => {
+			await obj.adoptSettings();
+			const binary = (
+				obj as unknown as {
+					installCapabilities(
+						b: Record<string, (json: string) => string>
+					): Record<string, (json: string) => string>;
+				}
+			).installCapabilities({});
+			return binary.cfwSettings!(JSON.stringify({ action: 'get' }));
+		});
+		const listed = JSON.parse(outcome) as {
+			levers?: { name: string; domain?: { marks?: unknown[] } }[];
+		};
+		const warm = listed.levers?.find((l) => l.name === 'WARM_INTERVAL_MS');
+		expect(warm?.domain?.marks).toHaveLength(3);
+		expect(JSON.stringify(JSON.parse(outcome))).toBe(outcome);
 	});
 });

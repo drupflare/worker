@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { warmCeilingMs, warmIntervalMs } from '../../../src/ops/cron';
 import {
 	canWriteKv,
 	isPaid,
@@ -374,5 +375,80 @@ describe('writing the levers', () => {
 		expect(canWriteKv(readOnly)).toBe(false);
 		expect(canWriteKv(writable)).toBe(true);
 		expect(canWriteKv(undefined)).toBe(false);
+	});
+});
+
+describe('the marks and defaults the settings form reads', () => {
+	const intDomains = Object.entries(LEVER_DOMAINS).flatMap(([name, d]) =>
+		d.kind === 'int' ? [[name, d] as const] : []
+	);
+	const marked = intDomains.filter(([, d]) => d.marks !== undefined);
+	const thousands = (n: number) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+	it('marks exactly the two warm levers', () => {
+		expect(marked.map(([name]) => name).sort()).toEqual([
+			'WARM_CEILING_MS',
+			'WARM_INTERVAL_MS'
+		]);
+	});
+
+	it('keeps each mark strictly ascending and inside the domain', () => {
+		for (const [name, d] of marked) {
+			const values = d.marks!.map((m) => m.value);
+			expect(values, name).toEqual([...values].sort((a, b) => a - b));
+			expect(new Set(values).size, name).toBe(values.length);
+			for (const v of values) {
+				expect(v, name).toBeGreaterThanOrEqual(d.min);
+				expect(v, name).toBeLessThanOrEqual(d.max);
+			}
+		}
+	});
+
+	it('writes every label and note as short ASCII', () => {
+		for (const [name, d] of marked) {
+			for (const m of d.marks!) {
+				for (const text of [m.label, m.note]) {
+					expect(text, name).toMatch(/^[\x20-\x7e]+$/);
+				}
+				expect(m.label.length, name).toBeGreaterThan(0);
+				expect(m.note.length, name).toBeGreaterThan(0);
+				expect(m.note.length, name).toBeLessThanOrEqual(220);
+			}
+		}
+	});
+
+	it('puts each default inside the range, on a mark, for exactly the two warm levers', () => {
+		const withDefault = intDomains.filter(([, d]) => d.default !== undefined);
+		expect(withDefault.map(([name]) => name).sort()).toEqual([
+			'WARM_CEILING_MS',
+			'WARM_INTERVAL_MS'
+		]);
+		for (const [name, d] of withDefault) {
+			expect(d.default!, name).toBeGreaterThanOrEqual(d.min);
+			expect(d.default!, name).toBeLessThanOrEqual(d.max);
+			expect(
+				d.marks?.map((m) => m.value),
+				name
+			).toContain(d.default);
+		}
+	});
+
+	it('agrees with the readers the defaults describe', () => {
+		expect(LEVER_DOMAINS.WARM_INTERVAL_MS).toMatchObject({ default: warmIntervalMs({}) });
+		expect(LEVER_DOMAINS.WARM_CEILING_MS).toMatchObject({ default: warmCeilingMs({}) });
+	});
+
+	it('states a wakes-a-day figure that matches the interval beside it', () => {
+		let checked = 0;
+		for (const [name, d] of marked) {
+			for (const m of d.marks!) {
+				const quoted = /([\d,]+) wakes a day/.exec(m.note)?.[1];
+				if (quoted === undefined) continue;
+				checked++;
+				expect(quoted, `${name} at ${m.value}`).toBe(thousands(86_400_000 / m.value));
+			}
+		}
+		// the five figures in the warm marks; a zero here would pass the loop above vacuously
+		expect(checked).toBe(5);
 	});
 });

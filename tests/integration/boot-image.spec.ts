@@ -490,6 +490,45 @@ echo json_encode([
 	);
 
 	it(
+		'gives every replayed site and every request its own session, never the bake or a neighbour',
+		async () => {
+			const captured = await image();
+			expect(captured.sid, 'the bake held a session id').toMatch(/^[A-Za-z0-9,-]{20,}$/);
+			const probe = `
+echo json_encode([
+	'sid' => session_id(),
+	'keys' => array_keys($_SESSION ?? []),
+	'uid' => (int) Drupal::currentUser()->id(),
+]);`;
+			const plain = freshSite();
+			await migrated(plain);
+			await render(plain, '/user/login');
+			const control = await php(plain, probe);
+
+			const seen: string[] = [captured.sid!];
+			for (let replay = 0; replay < 4; replay++) {
+				const restored = freshSite();
+				await migrated(restored);
+				await inObject(restored, (site) => withImage(site, captured));
+				for (const path of ['/user/login', '/user/register']) {
+					const served = await render(restored, path);
+					expect(served.bootImage?.used).toBe(true);
+					const after = await php(restored, probe);
+					expect(after.uid).toBe(0);
+					expect(after.keys).toEqual(control.keys);
+					expect(after.sid).toMatch(/^[A-Za-z0-9,-]{20,}$/);
+					expect(seen, `replay ${replay} ${path} reused a session id`).not.toContain(
+						after.sid
+					);
+					seen.push(String(after.sid));
+				}
+			}
+			expect(new Set(seen).size).toBe(seen.length);
+		},
+		TIMEOUT
+	);
+
+	it(
 		'boots plain when the site differs from the bake, and says which part',
 		async () => {
 			const captured = await image();

@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { copyFile, glob, lstat, mkdir, readdir, rm, utimes } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
@@ -50,6 +51,15 @@ const SKIP = [/\/tests?\//i, /\/node_modules\//, /\.pcss\.css$/i, /profiles\/dem
  */
 const SUBTREES = new Set(['core', 'modules', 'themes']);
 
+/**
+ * drupflare's browser files live in its checkout, not under drupal-src, because the module is
+ * mounted there from the sibling repo. It answers at `/modules/custom/drupflare/...`, so only the
+ * `modules` subtree carries it. Resolved from the repo, as gen-driver-assets.ts resolves its copy.
+ */
+const CHECKOUT = resolve(import.meta.dirname, '..', process.env.DRUPFLARE_SRC ?? '../drupflare');
+const CHECKOUT_MOUNT = 'custom/drupflare';
+const CHECKOUT_DIRS = ['js', 'css'];
+
 const root = process.argv[2];
 const flag = process.argv.find((a) => a.startsWith('--subtree='));
 const subtree = flag ? flag.slice('--subtree='.length) : 'core';
@@ -79,6 +89,21 @@ async function servedPaths(from: string): Promise<string[]> {
 	return out.sort();
 }
 
+/** the checkout's served files keyed by out-dir path; empty when there is no checkout */
+async function checkoutPaths(): Promise<Map<string, string>> {
+	const out = new Map<string, string>();
+	if (!existsSync(CHECKOUT)) return out;
+	for (const dir of CHECKOUT_DIRS) {
+		for await (const p of glob(`${dir}/**/*`, { cwd: CHECKOUT })) {
+			const rel = join(CHECKOUT_MOUNT, p);
+			if (!SERVED.test(rel) || SKIP.some((re) => re.test(rel))) continue;
+			if (!(await lstat(join(CHECKOUT, p))).isFile()) continue;
+			out.set(rel, join(CHECKOUT, p));
+		}
+	}
+	return out;
+}
+
 /** every file already in the target, relative and sorted */
 async function existing(dir: string): Promise<string[]> {
 	const out: string[] = [];
@@ -104,7 +129,8 @@ async function pruneEmpty(dir: string, keepRoot: string): Promise<boolean> {
 }
 
 await mkdir(outDir, { recursive: true });
-const wanted = await servedPaths(root);
+const checkout = subtree === 'modules' ? await checkoutPaths() : new Map<string, string>();
+const wanted = [...new Set([...(await servedPaths(root)), ...checkout.keys()])].sort();
 const have = await existing(outDir);
 
 // a file this packer could not have written means the target is somebody else's directory
@@ -123,7 +149,7 @@ let held = 0;
 let bytes = 0;
 
 for (const rel of wanted) {
-	const src = join(root, subtree, rel);
+	const src = checkout.get(rel) ?? join(root, subtree, rel);
 	const dst = join(outDir, rel);
 	const from = await lstat(src);
 	bytes += from.size;
@@ -158,6 +184,7 @@ console.log(
 			copied,
 			unchanged: held,
 			pruned: stale.length,
+			checkout: checkout.size,
 			bytes,
 			mb: +(bytes / 1048576).toFixed(2)
 		},

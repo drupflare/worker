@@ -78,6 +78,8 @@ const MODULE_PARTS = [
 	// feature looked unbuilt. Exactly the failure the note above this list describes, one file over.
 	'.links.task.yml',
 	'.links.action.yml',
+	// the library a render attaches; without it the module's css and js never load
+	'.libraries.yml',
 	// `help_topics` joined it when the module grew one. A topic Drupal cannot read is a help page
 	// that is absent on every deployed site and present in every checkout
 	'help_topics'

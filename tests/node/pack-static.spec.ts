@@ -57,6 +57,7 @@ type Summary = {
 	copied: number;
 	unchanged: number;
 	pruned: number;
+	checkout: number;
 	bytes: number;
 	mb: number;
 };
@@ -74,11 +75,17 @@ async function buildTree(): Promise<void> {
 	}
 }
 
-function pack(target = out, root = tree): { summary: Summary; status: number; stderr: string } {
-	const r = spawnSync('bun', [PACKER, root, target], {
+function pack(
+	target = out,
+	root = tree,
+	args: string[] = [],
+	env?: NodeJS.ProcessEnv
+): { summary: Summary; status: number; stderr: string } {
+	const r = spawnSync('bun', [PACKER, root, target, ...args], {
 		cwd: ROOT,
 		encoding: 'utf8',
-		timeout: 120_000
+		timeout: 120_000,
+		env
 	});
 	return {
 		summary: r.status === 0 ? (JSON.parse(r.stdout) as Summary) : ({} as Summary),
@@ -200,5 +207,89 @@ describe('the packer refuses a run it cannot complete', () => {
 		expect(r.status).toBe(1);
 		expect(r.stderr).toContain('pack-static.ts did not write');
 		expect(existsSync(join(out, 'site.sqlite'))).toBe(true);
+	});
+
+	describe('the drupflare checkout reaches /modules/custom/drupflare', () => {
+		const CHECKOUT: [string, string][] = [
+			['js/app.js', 'app();\n'],
+			['css/app.css', '.app {}\n'],
+			['css/nested/theme.css', '.theme {}\n'],
+			// a PostCSS source and a test file: both skipped, as they are under core/ and modules/
+			['css/base/app.pcss.css', '.src {}\n'],
+			['js/tests/unit.js', 'test();\n'],
+			// not a browser-fetchable type
+			['js/readme.txt', 'notes\n']
+		];
+		let checkout = '';
+
+		function modulePack(from = checkout) {
+			return pack(out, tree, ['--subtree=modules'], { ...process.env, DRUPFLARE_SRC: from });
+		}
+
+		beforeEach(async () => {
+			checkout = join(dir, 'drupflare');
+			for (const [rel, body] of CHECKOUT) {
+				await mkdir(dirname(join(checkout, rel)), { recursive: true });
+				await writeFile(join(checkout, rel), body);
+			}
+			// a contrib module in the drupal tree, so the run has to keep both halves together
+			await mkdir(join(tree, 'modules/contrib/token/css'), { recursive: true });
+			await writeFile(join(tree, 'modules/contrib/token/css/token.css'), '.token {}\n');
+		});
+
+		it('copies js and css under custom/drupflare, beside the contrib tree', async () => {
+			const { status, summary } = modulePack();
+			expect(status).toBe(0);
+			expect(await listing(out)).toEqual(
+				[
+					'contrib/token/css/token.css',
+					'custom/drupflare/css/app.css',
+					'custom/drupflare/css/nested/theme.css',
+					'custom/drupflare/js/app.js'
+				].sort()
+			);
+			expect(summary.files).toBe(4);
+			expect(summary.copied).toBe(4);
+			expect(summary.checkout).toBe(3);
+		});
+
+		it('is a no-op on a second run', () => {
+			modulePack();
+			const again = modulePack();
+			expect(again.summary.copied).toBe(0);
+			expect(again.summary.unchanged).toBe(4);
+			expect(again.summary.pruned).toBe(0);
+		});
+
+		it('prunes a checkout file that was deleted, and the directory it emptied', async () => {
+			modulePack();
+			await rm(join(checkout, 'css/nested/theme.css'));
+			const again = modulePack();
+			expect(again.summary.pruned).toBe(1);
+			expect(existsSync(join(out, 'custom/drupflare/css/nested'))).toBe(false);
+			expect(existsSync(join(out, 'custom/drupflare/js/app.js'))).toBe(true);
+		});
+
+		it('tolerates a checkout with only a css directory', async () => {
+			const only = join(dir, 'css-only');
+			await mkdir(join(only, 'css'), { recursive: true });
+			await writeFile(join(only, 'css/x.css'), '.x {}\n');
+			const r = modulePack(only);
+			expect(r.status).toBe(0);
+			expect(await listing(out)).toContain('custom/drupflare/css/x.css');
+			expect(r.summary.checkout).toBe(1);
+		});
+
+		it('tolerates a checkout that is not there at all', () => {
+			const r = modulePack(join(dir, 'absent'));
+			expect(r.status).toBe(0);
+			expect(r.summary.checkout).toBe(0);
+		});
+
+		it('leaves the checkout out of a core run, which only answers /core/', async () => {
+			const r = pack(out, tree, [], { ...process.env, DRUPFLARE_SRC: checkout });
+			expect(r.status).toBe(0);
+			expect(existsSync(join(out, 'custom'))).toBe(false);
+		});
 	});
 });

@@ -227,18 +227,15 @@ describe('the packer carries every declaration file a sibling module has', () =>
 	 * the list still missed a member of it.
 	 *
 	 * So the guard is the general one rather than a line per suffix: every `*.yml` a sibling module
-	 * declares at its root must reach the pack. A file the packer should genuinely skip has to be
-	 * named here, which makes the omission a decision somebody wrote down.
+	 * declares at its root must reach the pack.
 	 */
-	const SKIPPABLE = new Set(['drupflare.libraries.yml']);
-
 	it('packs every root-level yml declaration the drupflare module ships', () => {
 		const src = process.env.DRUPFLARE_SRC ?? join(root, '..', 'drupflare');
 		if (!existsSync(src)) return;
 		// `<machine name>.*.yml` at the root is what Drupal reads as a module declaration; a
 		// `codecov.yml` beside it is repository config and has no business on a deployed site
 		const declared = readdirSync(src).filter(
-			(f) => f.startsWith('drupflare.') && f.endsWith('.yml') && !SKIPPABLE.has(f)
+			(f) => f.startsWith('drupflare.') && f.endsWith('.yml')
 		);
 		expect(declared.length).toBeGreaterThan(0);
 
@@ -248,6 +245,13 @@ describe('the packer carries every declaration file a sibling module has', () =>
 			missing,
 			`these declarations never reach a deployed site: ${missing.join(', ')}`
 		).toEqual([]);
+	});
+});
+
+describe('the packer ships the libraries a page attaches', () => {
+	it('lists .libraries.yml among the parts gen-driver-assets packs', () => {
+		const source = readFileSync(join(root, 'scripts', 'gen-driver-assets.ts'), 'utf8');
+		expect(source).toMatch(/const MODULE_PARTS = \[[^\]]*'\.libraries\.yml'/);
 	});
 });
 

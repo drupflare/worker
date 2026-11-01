@@ -64,6 +64,26 @@ describe.skipIf(skipPack)('the packed driver asset is current', () => {
 		).toBe(true);
 	});
 
+	it('matches the module copies inside drupal-src, which the shipping pack is built from', async () => {
+		// a stale copy there ships an old file, and a longer one splices its tail onto the new one
+		const root = join(ROOT, 'drupal-src');
+		if (!existsSync(join(root, 'core', 'lib', 'Drupal.php'))) return;
+		const packed = JSON.parse(await readFile(DRIVER_ASSET_PATH, 'utf8')) as Record<
+			string,
+			string
+		>;
+		const stale: string[] = [];
+		for (const [path, text] of Object.entries(packed)) {
+			if (!path.startsWith('modules/custom/')) continue;
+			const copy = join(root, path);
+			if (!existsSync(copy) || readFileSync(copy, 'utf8') !== text) stale.push(path);
+		}
+		expect(
+			stale,
+			'drupal-src holds other bytes than assets/driver.json. Run: bun run build:local -- --only=mount,patch,twig,core,pack,container,sql --force'
+		).toEqual([]);
+	});
+
 	/**
 	 * The digest is what the reconciliation step compares a site against, so a stale one means an
 	 * existing site never rebuilds its container and a hook class added to a sibling stays invisible

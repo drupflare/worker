@@ -2,6 +2,7 @@ import { SURFACE_PREFIX } from '../ui/admin';
 import { renderAdmin } from './admin';
 import { deploymentRoute, settingsRoute } from './deployment';
 import { runFillWindow } from './fill-window';
+import { retireRoute } from './retire';
 import type { FrontContext } from './types';
 
 /** The warm window driver, answered in the Worker because an object cannot message itself. */
@@ -35,6 +36,10 @@ export async function surfaceRoute(f: FrontContext): Promise<Response | undefine
 	}
 	if (url.pathname === '/deployment') {
 		return await deploymentRoute(request, url, env);
+	}
+
+	if (url.pathname === '/retire') {
+		return await retireRoute(f);
 	}
 
 	if (url.pathname.startsWith(SURFACE_PREFIX) || url.pathname === '/fleet') {

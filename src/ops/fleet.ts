@@ -343,3 +343,8 @@ export function rolloutProgress(
 		fraction: Number((patched / rows.length).toFixed(4))
 	};
 }
+
+/** Deletes one site's row, so the warm cron stops driving it. */
+export async function forgetSite(db: FleetDb, site: string): Promise<void> {
+	await db.prepare('DELETE FROM cfw_fleet WHERE site = ?').bind(site).run();
+}

@@ -65,6 +65,7 @@ const WORKER_ANSWERED = new Set([
 	'/fleet',
 	'/settings',
 	'/deployment',
+	'/retire',
 	'/recover-token',
 	'/csp-report'
 ]);

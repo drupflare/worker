@@ -77,6 +77,42 @@ is refused on the public routes, so a link cannot choose which site answers; an 
 it because the object checks the token itself, and `PW_DIAGNOSTICS=1` accepts it everywhere, which
 is what `/serve?site=X&path=Y` uses.
 
+## Retiring a Site
+
+`POST /retire?site=<id>` with the body `{"confirm": "<id>"}` removes one site from a deployment. It
+is an owner route answered by the Worker, with no route table entry for the object, because
+it edits `CONFIG_KV` and the fleet database. The token is the target site's own, checked in the
+Worker (with the same per-address failure budget as the other owner routes) and again in the
+object. `PW_DIAGNOSTICS=1` does not open it.
+
+The Worker refuses, before touching anything:
+
+- the deployment's primary, and a sole claimed site, with 409; choose another primary with
+  `PUT /deployment` first
+- a body whose `confirm` is not the site id, with 400
+- a site that is not in the deployment's claimed list, with 409, unless the URL carries `force=1`
+
+An object that was never claimed usually has no owner token. With `force=1` on a deployment that
+sets `PW_DIAGNOSTICS=1`, a caller with no token may retire it; a claimed site is never reachable
+that way. A name whose object holds no tables and no alarm answers 404, so a typo does not mint an
+object just to wipe it.
+
+The audit entry is written first, to the `site:retired-log` key in `CONFIG_KV`, as a hash chain in
+the format of the owner audit log, and is also printed with `console.log`. The object's own audit
+ring is in the storage that the wipe deletes, so it cannot hold the entry. A refused or failed wipe
+adds a second entry carrying the failing status.
+
+The object then deletes its alarm and all of its storage, drops its interpreter and any retained
+one, and answers 410 to every later request while that instance is resident. Its alarm and fill
+scheduling do nothing from then on. After the instance is evicted the name is an empty object: a
+request that reaches the host provisions a new site under it. Remove the host mapping, or the
+route, to stop that.
+
+The Worker then removes the site from the claimed list in the deployment document, deletes its
+`cfw_fleet` row so the scheduled warm window stops driving it, and deletes every `site:host:<host>`
+key that points at it. A failure in any of those three is reported under `warnings` in the answer,
+and the wipe stands.
+
 ## Scripts
 
 | command                      | what it does                                                |

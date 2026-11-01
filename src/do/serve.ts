@@ -12,6 +12,7 @@ import { openFillWindow } from './fill';
 import { noteResident } from './isolate';
 import { agedServeAllowed, agedServeMaxMs } from './levers';
 import { CFW_HEADER_VERSION, SERVE_REQUESTS_FLUSH } from './limits';
+import { retire } from './routes/retire';
 import { noteLaneTiming } from './stats';
 import type { PageRow } from './types';
 
@@ -135,6 +136,12 @@ export async function route(site: SitePhpDurableObject, request: Request): Promi
 	site.doRequestsSinceFlush = (site.doRequestsSinceFlush ?? 0) + 1;
 	// what the front worker answered itself since its last hop; read where both lanes converge
 	site.encounters = foldAbsorbed(site.encounters, request.headers.get(ABSORBED_HEADER));
+
+	// alone in the gate, with none of the post-request work below, which would write into the
+	// storage it just emptied
+	if (url.pathname === '/__retire') {
+		return site.gate.run(() => retire(site, request, url));
+	}
 
 	// the warm window, before the gate: accepting the socket inside a gate entry deadlocks the
 	// per-message work queued behind it

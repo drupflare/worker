@@ -141,6 +141,8 @@ export const OWNER_ROUTES = new Set([
 	'/audit',
 	// which site this deployment serves on an unmapped host; answered in the Worker (CONFIG_KV)
 	'/deployment',
+	// wipes one site's object and forgets it; answered in the Worker (CONFIG_KV and FLEET_DB)
+	'/retire',
 	// the product surfaces; `PW_DIAGNOSTICS` does not reach them (they install code)
 	...ADMIN_PAGES.map((p) => p.path)
 ]);

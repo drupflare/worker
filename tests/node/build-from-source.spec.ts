@@ -894,10 +894,11 @@ describe('the commands the docs and package.json promise', () => {
 		expect(undocumented).toEqual([]);
 	});
 
-	it('points the README at both routes', () => {
+	it('names both routes on the build page and links it from the README', () => {
 		const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
-		expect(readme).toContain('bun run hydrate');
-		expect(readme).toContain('bun run build:local');
+		const page = readFileSync(join(ROOT, 'docs', 'building-from-source.md'), 'utf8');
 		expect(readme).toContain('docs/building-from-source.md');
+		expect(page).toContain('bun run hydrate');
+		expect(page).toContain('bun run build:local');
 	});
 });

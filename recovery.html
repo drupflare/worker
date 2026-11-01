@@ -131,7 +131,15 @@
 				display: grid;
 				gap: 0.85rem;
 				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-				margin: 0 0 3rem;
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
 			}
 			a.card {
 				display: block;
@@ -276,6 +284,27 @@
 				max-width: 100%;
 				vertical-align: middle;
 			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
 
 			footer {
 				margin-top: 4rem;
@@ -302,14 +331,12 @@
 					/>
 					Drupflare
 				</a>
-				<a href="impact.html">Impact</a>
-				<a href="security.html">Security</a>
-				<a href="technical-report.html">Technical Report</a>
+				<a href="getting-started.html">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
 				<a href="configuration.html">Configuration</a>
-				<a href="compatibility.html">Compatibility</a>
-				<a href="building-from-source.html">Building From Source</a>
-				<a href="recovery.html" aria-current="page">Recovery</a>
-				<a href="database.html">The Site Database</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="api/index.html">API</a>
 				<a href="php/index.html">PHP</a>
 				<a href="https://github.com/drupflare/worker">GitHub</a>
@@ -361,9 +388,9 @@ It lives in the same place as the data it protects, so a deleted namespace, a de
 lost account takes the recovery log with it. The <code>/export</code> dump is the only thing on this page that
 leaves the platform, and it is the only thing that answers &quot;the object is gone&quot;.</p>
 <h2 id="point-in-time-recovery">Point-in-Time Recovery</h2>
-<p>SQLite-backed Durable Objects can be restored to any point in the <strong>past 30 days</strong>. The window
+<p>SQLite-backed Durable Objects can be restored to any point in the past 30 days. The window
 covers the whole of <code>ctx.storage</code>, both SQL tables and key-value pairs.</p>
-<p>Recovery is addressed by <strong>bookmarks</strong>, not timestamps. A bookmark is a mostly alphanumeric string
+<p>Recovery is addressed by bookmarks, not timestamps. A bookmark is a mostly alphanumeric string
 such as <code>0000007b-0000b26e-00001538-0c3e87bb37b3db5cc52eedb93cd3b96b</code>, and bookmarks are lexically
 comparable, so ordering them as strings orders them in time. Three methods:</p>
 <div class="table"><table>
@@ -386,7 +413,7 @@ comparable, so ordering them as strings orders them in time. Three methods:</p>
 <td>a bookmark that undoes the restore it schedules</td>
 </tr>
 </tbody></table></div>
-<p>The restore is applied on the object&#39;s <strong>next</strong> start, not immediately. The bookmark returned by
+<p>The restore is applied on the object&#39;s next start, not immediately. The bookmark returned by
 <code>onNextSessionRestoreBookmark()</code> is the undo, so capture it before restarting.</p>
 <p><strong>There is no wrangler command and no dashboard button.</strong> PITR is a runtime API only, so an operator
 can reach it only through code running inside the Durable Object.</p>
@@ -410,7 +437,7 @@ one the platform holds.</p>
 </tr>
 <tr>
 <td><code>POST /pitr?bookmark=&lt;b&gt;</code></td>
-<td>schedules the restore and returns the <strong>undo</strong> bookmark</td>
+<td>schedules the restore and returns the undo bookmark</td>
 </tr>
 </tbody></table></div>
 <p>The restore applies on the object&#39;s next start. The undo bookmark is obtainable only from the call
@@ -514,7 +541,7 @@ complete stored import exists.</p>
 </tr>
 <tr>
 <td>Bad module update</td>
-<td>PITR, then <code>wrangler rollback</code> if code moved</td>
+<td>PITR, and <code>wrangler rollback</code> if code moved</td>
 <td>files already mirrored to R2; a config change an editor made after the update</td>
 <td>as above, plus <code>wrangler rollback [VERSION_ID]</code></td>
 </tr>
@@ -549,11 +576,19 @@ complete stored import exists.</p>
 <td>no operator route; <code>/__mirror</code> is DO-internal and the alarm drains the queue</td>
 </tr>
 </tbody></table></div>
-<p>Two rows carry the distinctions that matter most.</p>
+<p>The flowchart reads the matrix from the top: whether the object survived, then what caused the change.</p>
+<pre><code class="mermaid">flowchart TD
+    A[&quot;Something went wrong&quot;] --> B{&quot;Does the site object still exist?&quot;}
+    B -->|no| C[&quot;POST /restore into a new object, from the last /export dump&quot;]
+    B -->|yes| D{&quot;Did a Worker deploy cause it?&quot;}
+    D -->|yes| E[&quot;Roll back the Worker and restore the data with PITR&quot;]
+    D -->|no| F{&quot;Content or configuration?&quot;}
+    F -->|content| G[&quot;PITR to a bookmark taken before the change&quot;]
+    F -->|configuration| H[&quot;POST /restore with the last good dump, needs PW_DIAGNOSTICS=1&quot;]</code></pre><p>Two rows carry the distinctions that matter most.</p>
 <p><strong>A Worker rollback is not a data rollback.</strong> <code>wrangler rollback</code> creates a new deployment from a
 previous version and becomes active across every route immediately. It reaches the 100 most recent
 versions. It does not touch <code>ctx.storage</code>, so a bad deploy that also wrote bad rows needs both a
-rollback and a PITR restore, in that order. Cloudflare refuses the rollback outright if a Durable
+rollback and a PITR restore. Cloudflare refuses the rollback outright if a Durable
 Object class lifecycle change happened between the two versions, or if the target version binds an R2
 bucket, KV namespace or queue that no longer exists.</p>
 <p><strong>R2 is a mirror, not a backup.</strong> With no <code>FILES</code> bucket bound, which is the shipped configuration, the
@@ -569,15 +604,19 @@ built is not replayable, so a backup job can fail loudly instead of storing some
 like a backup.</p>
 <h2 id="related">Related</h2>
 <ul>
-<li><code>docs/configuration.md</code>: <code>PW_DIAGNOSTICS</code>, the <code>FILES</code> binding and the runtime overrides</li>
-<li><code>docs/external-database.md</code>: why the data lives in the object</li>
-<li><code>TECHNICAL_REPORT.md</code>, Platform Constraints: the 100,000-character statement ceiling and the other
-measured Durable Object SQLite limits</li>
+<li><a href="configuration.html">Configuration</a>: <code>PW_DIAGNOSTICS</code>, the <code>FILES</code> binding and the runtime overrides</li>
+<li><a href="external-database.html">External Databases and Hyperdrive</a>: why the data lives in the object</li>
+<li><a href="technical-report.html">Technical report</a>, Platform Constraints: the 100,000-character statement
+ceiling and the other measured Durable Object SQLite limits</li>
 </ul>
 			</div>
 		</main>
 		<footer>
 			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
 		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
 	</body>
 </html>

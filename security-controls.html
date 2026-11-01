@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Security Controls - Drupflare</title>
+		<meta
+			name="description"
+			content="The controls in place today, from the host surface to patching."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Security Controls - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The controls in place today, from the host surface to patching."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="getting-started.html">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="security-controls">Security Controls</h1>
+<p>What Drupflare provides today, control by control: the host surface, the request path, outbound requests, uploads, credentials, response headers, the build and patching. The claims and their labels are on <a href="security.html">Security</a>.</p>
+<h2 id="host-surface">Host Surface</h2>
+<p>The interpreter reaches the outside through two routes: the imports of the wasm module, and the
+<code>cfw*</code> functions the Durable Object installs on the Emscripten <code>Module</code>.</p>
+<p><strong>The module.</strong> The shipping module, <code>.interp/php8.5.wasm</code> as pinned in <code>interp.lock.json</code>, imports
+102 functions, all from <code>env</code> and <code>wasi_snapshot_preview1</code>. The tuned copy derived from it imports
+103, the extra one being <code>env.memory</code> (Measured: <code>WebAssembly.Module.imports()</code> on both files).
+<code>config/host-imports.json</code> holds every one with a class, and <code>bun scripts/import-census.ts</code> fails on
+an import that is not on file, a name that is gone, or a class that is missing
+(<code>tests/node/host-import-census.spec.ts</code>, Measured, falsified by removing an entry and by leaving
+one unclassified). A new import therefore cannot join the surface without a reviewed line.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Imports</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>hard</code></td>
+<td>18</td>
+<td>The host has no such function: five abort stubs, 11 closed in the tuned glue (below), two asyncjs stubs</td>
+</tr>
+<tr>
+<td><code>policy</code></td>
+<td>2</td>
+<td>The function exists and a list decides: the two <code>emscripten_asm_const_*</code> entries that carry the bridge</td>
+</tr>
+<tr>
+<td><code>compute</code></td>
+<td>60</td>
+<td>libc, time, memory, in-isolate pipes and fake name lookups; no outside effect</td>
+</tr>
+<tr>
+<td><code>io</code></td>
+<td>22</td>
+<td>The in-isolate file system and the wasi read and write calls</td>
+</tr>
+</tbody></table></div>
+<p>The five abort stubs are <code>posix_spawnp</code>, <code>getdtablesize</code>, <code>__assert_fail</code>, <code>_abort_js</code> and
+<code>emscripten_fiber_swap</code>. <code>posix_spawnp</code> aborts (<code>.interp/php8.5-worker.mjs</code>, &quot;missing function:
+posix_spawnp&quot;), so there is no fork, no exec and no process table.</p>
+<p><strong>Raw sockets, closed in v1.0.4.</strong> Emscripten&#39;s stock glue implements <code>socket</code>, <code>connect</code> and the
+rest of the socket calls over a <code>WebSocket</code>, and resolves names through a fake DNS.
+<code>closeSockets()</code> in <code>scripts/measure/growth-glue.ts</code> replaces the bodies of the 10 socket syscalls
+and <code>getaddrinfo</code> in the tuned glue, so each returns a fixed refusal. Measured in node with a
+recording <code>WebSocket</code> on <code>globalThis</code>: on the stock glue <code>fsockopen</code> and <code>stream_socket_client</code>
+constructed 3 WebSockets, including one to <code>probe.invalid</code>; on the tuned glue 0
+(<code>tests/node/growth-glue.spec.ts</code>). Every legitimate network path here goes through a <code>cfw*</code> host
+function, and 149 park, Redis, mail, HTTP-queue and TCP tests ran with a recording <code>WebSocket</code> and
+constructed none.</p>
+<p><strong>The vrzno bridge, closed in v1.0.4.</strong> The interpreter carries <code>vrzno</code>, the extension that lets PHP
+call JavaScript. Its <code>EM_ASM</code> bodies reached all of <code>globalThis</code>, an <code>eval</code>, a dynamic <code>import</code> and
+every property of <code>Module</code>, so userland PHP could call a JavaScript global directly, including
+<code>fetch</code> and <code>WebSocket</code>, with no host function and no outbound guard in the way. The shipping PHP
+uses only <code>vrzno_env(&#39;&lt;cfw name&gt;&#39;)</code>. <code>closeVrznoBridge()</code> in the same file now leaves three things:
+<code>vrzno_env</code> answers only names of the form <code>cfw[A-Za-z0-9]*</code>, the root handle is an empty frozen
+object instead of <code>globalThis</code>, and each <code>cfw*</code> function reaches PHP as a sealed wrapper with no
+prototype, whose object or function replies become null. <code>vrzno_eval</code>, <code>vrzno_run</code> and
+<code>vrzno_import</code> answer a fixed string. Measured in node, 14 attempts, control against shipping glue:
+the stock glue made 3 recorded calls (a <code>fetch</code> to a metadata address, a <code>WebSocket</code>, a <code>fetch</code> to
+another host) and returned live proxies for <code>process</code>, <code>crypto</code> and <code>Function</code>; the tuned glue
+made 0 calls and returned null for each (<code>tests/node/growth-glue.spec.ts</code>,
+<code>tests/integration/interpreter-lifecycle.spec.ts</code>, both falsified). What it leaves open: PHP can
+still call any <code>cfw*</code> function with any argument, which is the capability list below, and a PHP
+write to the frozen root throws a JavaScript <code>TypeError</code> through the wasm frame, which ends that
+invocation. Whether the open bridge could read <code>process.env</code> on a hosted Worker, where the secrets
+sit, was not measured on the platform and is treated as having been possible. The fix reaches a
+deployed site only with the next deploy of the tuned glue.</p>
+<p><strong>The <code>cfw*</code> functions</strong> are the intended capability set (<code>src/do/capabilities.ts</code>,
+<code>src/ops/park-drive.ts</code>, <code>src/ops/tcp.ts</code>, Read):</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Function</th>
+<th>What it reaches</th>
+<th>Limit</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>cfwSqlExec</code>, <code>cfwSqlTxn</code>, <code>cfwSqlPark</code></td>
+<td>Any SQL on the site&#39;s own Durable Object SQLite</td>
+<td>It is Drupal&#39;s own database connection; <code>_cf_KV</code> answers <code>SQLITE_AUTH</code></td>
+</tr>
+<tr>
+<td><code>cfwFetch</code>, <code>cfwHttpCacheGet</code></td>
+<td>The fetch cache only; a miss queues a request and returns</td>
+<td>No synchronous network by construction</td>
+</tr>
+<tr>
+<td><code>cfwQueueFetch</code>, <code>cfwParkFetch</code></td>
+<td>Any public HTTP(S) URL, with PHP&#39;s headers and body</td>
+<td>Deny-list for private and metadata hosts, applied to every redirect hop</td>
+</tr>
+<tr>
+<td><code>cfwTcp</code></td>
+<td>Redis and syslog at the endpoint the operator configured</td>
+<td>PHP names no host; port must match the configured endpoint</td>
+</tr>
+<tr>
+<td><code>cfwMail</code></td>
+<td>A message queued through the site&#39;s mail transport</td>
+<td>From-domain check and size caps</td>
+</tr>
+<tr>
+<td><code>cfwFile*</code>, <code>cfwFilePublicBase</code></td>
+<td>The site&#39;s own file tables</td>
+<td><code>..</code> rejected; flat keyspace inside one object</td>
+</tr>
+<tr>
+<td><code>cfwSettings</code></td>
+<td><code>CONFIG_KV</code>, for the allow-listed levers</td>
+<td><code>PLAN</code>, <code>CSP_MODE</code> and the outbound guard are refused; writes are scoped to the site</td>
+</tr>
+<tr>
+<td><code>cfwOidcClaims</code>, <code>cfwModules</code>, <code>cfwHealth</code></td>
+<td>One redeemed OIDC ticket, the module list, the health ledger</td>
+<td>Read or own-object only</td>
+</tr>
+<tr>
+<td><code>cfwAead</code>, <code>cfwArgon2</code>, <code>cfwBlake2b</code>, <code>cfwSign</code>, zlib, image, stats, log</td>
+<td>Computation in JavaScript inside the object</td>
+<td>Canvas and operation caps</td>
+</tr>
+</tbody></table></div>
+<p><code>cfwSettings</code> is the one host function that reaches <code>CONFIG_KV</code>. No host function names the <code>SITE</code>
+namespace or the fleet D1 database, so PHP cannot address another site&#39;s object or the fleet table
+(Measured: the census spec asserts that scan, and a planted function naming <code>SITE</code> through a
+computed key is caught). The scan reads what a host function&#39;s own source names and not what its
+helpers reach, which is why <code>writeSettings</code> has its own spec.</p>
+<p>Shell functions go through a router in the <code>drupflare</code> module (<code>src/Exec/Commands.php</code>) that serves
+a fixed program list, including <code>echo</code>, <code>zip</code>, <code>curl</code> and <code>wget</code>, and refuses pipes, redirection
+and every other program. The router is a compatibility layer written in PHP. It decides what
+ordinary PHP code can do. The property that matters for an attacker is different: the wasm module
+has no process to fork or exec into, because <code>posix_spawnp</code> aborts and there is no kernel.</p>
+<h2 id="request-path">Request Path</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Where it is enforced</th>
+<th>Strength</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>__</code> object routes answer 404 from outside</td>
+<td>front worker, <code>src/site/entry.ts:174</code></td>
+<td>route table</td>
+</tr>
+<tr>
+<td>Owner routes need the owner token</td>
+<td>front worker, <code>src/site/owner.ts</code>; object check in <code>src/do/routes/auth.ts</code></td>
+<td>policy check, against a stored hash</td>
+</tr>
+<tr>
+<td>Failed-token budget, 12 per 60 s per IP</td>
+<td>front worker, <code>src/ops/admin-session.ts</code></td>
+<td>policy check; in memory, not a brute-force defence</td>
+</tr>
+<tr>
+<td><code>?site=</code> ignored on visitor routes</td>
+<td>front worker, <code>src/site.ts</code></td>
+<td>policy check</td>
+</tr>
+<tr>
+<td>Forged <code>x-cfw-*</code> headers stripped</td>
+<td><code>src/ops/forwarded-headers.ts</code></td>
+<td>policy check</td>
+</tr>
+<tr>
+<td>Request body capped at 2 MiB, multipart at 100 MiB</td>
+<td><code>src/site/guards.ts</code>, <code>src/ops/body-limit.ts</code>; a chunked body is read under the cap</td>
+<td>policy check</td>
+</tr>
+<tr>
+<td><code>PLAN</code> and <code>CSP_MODE</code> cannot be written by PHP</td>
+<td><code>src/ops/plan.ts</code>, <code>src/do/capabilities.ts</code></td>
+<td>policy check at the writer</td>
+</tr>
+<tr>
+<td>The outbound guard has no lever</td>
+<td><code>src/ops/outbound-guard.ts</code>; four spellings tried in <code>settings-capability.spec.ts</code></td>
+<td>read from the operator&#39;s environment only</td>
+</tr>
+<tr>
+<td>One Durable Object per site, id from host</td>
+<td><code>src/ops/site-id.ts</code></td>
+<td>naming convention plus the platform&#39;s per-object storage</td>
+</tr>
+</tbody></table></div>
+<p>A hard boundary is one where the host has no such function. A policy check is one where the
+function exists and a list or a flag decides. The distinction matters for an attacker who can
+change what PHP asks for, because a policy check is a decision about that request and a missing
+function is not.</p>
+<p>Before v1.0.4 the request cap exempted multipart bodies and nothing counted a chunked body while it
+streamed, so the only bound was the platform&#39;s 100 MB request limit. A declared length is now
+checked up front and a chunked body is read under the cap (<code>tests/integration/serve-edge.spec.ts</code>,
+falsified).</p>
+<h2 id="outbound-requests">Outbound Requests</h2>
+<p>The guard in <code>src/ops/outbound-guard.ts</code> refuses private, link-local, metadata and credentialed
+hosts, and <code>fetchGuarded</code> re-checks every redirect hop. Both fetch paths, the queue and the park,
+call the same function. v1.0.4 closed four spellings that passed the string checks: a trailing dot
+(<code>metadata.google.internal.</code>), the NAT64 prefix <code>64:ff9b::/96</code> and <code>64:ff9b:1::/48</code>, site-local
+<code>fec0::/10</code> and multicast <code>ff00::/8</code> (<code>tests/unit/ops/outbound-guard.spec.ts</code>, falsified). 6to4
+(<code>2002::/16</code>) and Teredo also embed a v4 address and are not matched.</p>
+<p>The guard judges a string. A public name that resolves to a private address cannot be refused by it,
+and whether a hosted Worker&#39;s <code>fetch</code> reaches link-local addresses was not measured. Both stay
+<code>open</code>, and a deployed probe against a name with an A record of 169.254.169.254 would settle the
+second. Egress to public hosts is open by design (see
+<a href="security.html#data-in-the-same-object">Data in the Same Object</a>).</p>
+<h2 id="uploads-and-request-parsing">Uploads and Request Parsing</h2>
+<p>PHP&#39;s multipart handling is not entered for an inbound request. No SAPI delivers the request: the
+render fragment receives the method, body and cookies as arguments, parses multipart by hand and
+builds <code>UploadedFile</code> objects in userland (<code>src/site/php/pw-serve-inline.php</code>), and <code>$_FILES</code> is
+empty. Nothing in <code>worker/src</code> or <code>phasm/src</code> calls <code>php_request_startup</code>, <code>sapi_activate</code> or
+<code>php_default_treat_data</code>, and <code>pib_run</code> runs no request-startup cycle (Read).</p>
+<p>Measured since v1.0.4: <code>tests/integration/multipart-submit.spec.ts</code> posts a multipart body with a
+file and asserts from inside PHP that <code>$_FILES</code> is <code>[]</code>, that <code>is_uploaded_file()</code> is false on the
+userland path, that the file arrived as a Symfony <code>UploadedFile</code> built by the render fragment, and
+that its bytes match. Removing the fragment&#39;s record of the temp path fails it. The C-level claim
+that PHP&#39;s own upload handler never runs stays Inferred, because php-src is fetched at build time.</p>
+<p>The boot ini also sets <code>session.upload_progress.enabled=0</code>, <code>file_uploads=0</code>, <code>expose_php=0</code> and
+<code>allow_url_include=0</code> (<code>PhpStatic</code> in <code>src/site-do.ts</code>). <code>session.upload_progress.enabled</code> is
+<code>PHP_INI_PERDIR</code>, so boot is the only place to change it. Each value is read back from the running
+interpreter in <code>interpreter-lifecycle.spec.ts</code>, and <code>disable_functions</code> is unchanged.</p>
+<h2 id="credentials-and-persistence">Credentials and Persistence</h2>
+<p>Drupal&#39;s database connection reaches <code>cfwSqlExec</code>, which applies no table filter, so any code that
+can run SQL can read and write every table in the object. These changes move authority out of SQL.</p>
+<p><strong>Sealed storage.</strong> <code>ctx.storage.kv</code> is a separate table in the object&#39;s SQLite file that the SQL
+bridge cannot read or write. Measured on a local <code>workerd</code> 1.20261012.1 (<code>owner-recovery.spec.ts</code>):
+<code>SELECT</code>, <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code> and <code>DROP</code> on <code>_cf_KV</code> all answer <code>SQLITE_AUTH</code>, from the SQL
+bridge and from PHP&#39;s <code>cfw_sql()</code>; <code>ATTACH</code> and <code>DETACH</code> are denied; a view, a subquery, a table
+copy and a trigger over <code>_cf_KV</code> read nothing; and a table renamed onto the name <code>_cf_KV</code> does not
+become the key-value table. <code>sqlite_master</code> and <code>pragma_table_list</code> still reveal that the table
+exists. The rename case is tested because Check Point reported a rename-based authorizer bypass in
+2026 that Cloudflare says it fixed in production, with no date given
+(<a href="https://research.checkpoint.com/2026/when-agentic-glue-melts/">Check Point</a>, extract). The local
+build refuses the rename, and the hosted fix is not independently dated, so the sealed-storage
+claim on the platform is <code>contained</code> and not <code>removed</code>.</p>
+<p><strong>The owner token.</strong> Only its SHA-256 is stored, in sealed storage, and the check compares hashes
+in constant time. A claim returns the token once. Recovery rotates the token, returns
+<code>rotated: true</code> and the new value, and <code>drangler recover-token</code> stores the new value and lists every
+place that still holds the old one. A site upgraded from a version that kept a plaintext
+<code>owner_token</code> row adopts it at wake and at every alarm: the row is hashed into sealed storage and
+deleted, and a sealed value always wins over a row. The git tokens, webhook secrets and Cloudflare
+OAuth grant follow the same path. A restore point from before the upgrade brings the old row back
+and the next wake adopts it again, so rotate through recovery after restoring to one. Verdict:
+contained (Measured, <code>site-secrets.spec.ts</code>, <code>owner-recovery.spec.ts</code>, <code>git-remotes.spec.ts</code>,
+falsified by mirroring the hash into <code>cfw_meta</code> and by removing rotation). Residual: a Cloudflare
+account holder can read the object&#39;s storage.</p>
+<p><strong>Export and import.</strong> A default export carries none of these values. <code>/export?secrets=1</code> carries
+the sealed values as ordinary <code>cfw_meta</code> rows (<code>owner_token_hash</code>, <code>cf_oauth_token</code>, <code>git_token_*</code>,
+<code>git_hooksecret_*</code>), and an import adopts them on the next wake, so a demo or a migration keeps
+working without a manual step (<code>serve-restore.spec.ts</code>, 7 cases). A dump from a pre-sealed worker
+still carries the owner token in the clear.</p>
+<p><strong>Module files.</strong> <code>mountInstalledModules()</code> mounts every row of <code>cfw_module_file</code> into the
+interpreter&#39;s file system on every boot, and PHP&#39;s SQL connection can write that table, so a planted
+row used to survive a restart, a Drupal patch and a redeploy. On a claimed site each row is now
+checked, when the file is first opened, against a SHA-256 record in sealed storage. One function,
+<code>changeModuleFiles</code> in <code>src/do/module-files.ts</code>, writes records and rows together for installs,
+git pulls, <code>/modify</code>, rollbacks, removals and branch switches. A row with no record or other bytes
+mounts as an empty file, is counted under <code>moduleIntegrity</code> in <code>/__serve-stats</code>, and is logged once
+per path. Measured on a local <code>workerd</code>: hashing 1,040 files and 6.1 MB costs 4 to 10 ms with
+<code>node:crypto</code> (550 ms with the pure-JavaScript SHA-256, which is why it is not used), and first open
+of every file read 42 to 46 ms claimed against 41 to 49 unclaimed (<code>modify-upload.spec.ts</code>,
+falsified). Verdict: <code>contained</code>. It stays <code>contained</code> for these reasons:</p>
+<ul>
+<li><strong>Unclaimed sites.</strong> Not held, because a migrated site&#39;s code arrives as rows before the claim.
+The first mount after the claim adopts the rows as they stand, so a site compromised before the
+upgrade stays compromised.</li>
+<li><strong>Replica lanes.</strong> Not checked. A planted row on the primary still reaches them (<code>L</code>).</li>
+<li><strong>Other database-resident paths.</strong> The compiled container row in <code>cache_container</code>,
+<code>unserialize</code> of stored data, <code>cfw_package_autoload</code>, <code>cfw_module_blob</code> until a revision applies
+it, and <code>/__moduleasset</code>, which serves a stored text file to a browser without a record check.</li>
+<li><strong>Imports.</strong> An import brings module rows with no records, so they are refused until the owner
+redelivers the package through <code>/modify</code>, <code>/install</code> or <code>/git</code>.</li>
+</ul>
+<p><strong>Heap images.</strong> A boot restores a stored interpreter heap from <code>cfw_heap_snapshot</code> and
+<code>cfw_heap_chunk</code> instead of booting PHP. The restore is gated by <code>HEAP_SNAPSHOT</code>, which is on unless
+it is <code>0</code> or a deployment environment is set, and not by <code>HEAP_IMAGE</code>, which gates only the
+producer. The digests sat in the same tables as the bytes, so code with SQL write could plant a
+snapshot with matching digests and have its memory restored on the next boot. That was <code>open</code> on a
+default site: with the new check bypassed, a planted row restored on the shipping configuration
+(Measured, <code>heap-restore-autoload.spec.ts</code>). A SHA-256 root over the stored rows and over the
+metadata that steers a restore (page index, fd table, handle table, generation, sizes) is now sealed
+and verified before any byte, handle or descriptor reaches the instance, and per chunk on a sliced
+restore. A planted, altered or unsealed image is refused and deleted, the site boots from the pack,
+and <code>heapIntegrity</code> in <code>/__serve-stats</code> counts it. Verified restore cost: 2 to 3 ms against 71 to
+72 ms of copying, local <code>workerd</code>. Verdict: <code>contained</code>. SQL write can still delete images, which
+costs a boot and nothing more, and the survival of a sealed record across a point-in-time restore is
+Inferred.</p>
+<p><strong>Still in SQL.</strong> These <code>cfw_meta</code> keys carry authority and have not moved: <code>git_remotes</code> (point a
+remote at a repository the writer controls, and the next pull installs that tree), <code>recover_spent</code>,
+<code>first_run_at</code> and <code>first_run_keys</code> (reopen the claim window), and the OIDC issuer and client id
+(point logins at another provider). All are <code>open</code>.</p>
+<p><strong>The owner audit log.</strong> Owner calls that change something append to a hash chain held in sealed
+storage: sequence, time, route label, method, status, a token fingerprint, and the previous hash,
+in a ring of 1,000. Each append also writes <code>{seq, hash}</code> to Workers observability, so a rewrite of
+the ring is checkable against a copy outside the object. <code>GET /audit</code> and <code>drangler audit --verify</code>
+recompute the chain. It is evidence against a site-level attacker and none against the account
+holder, who can edit the object&#39;s storage. Two gaps: a point-in-time restore rewinds the log and
+nothing in the object can append after it, and the first claim is not an entry. A refused token adds
+no row.</p>
+<h2 id="response-headers">Response Headers</h2>
+<p>Until v1.0.3, the front worker sent none of <code>X-Content-Type-Options</code>, <code>X-Frame-Options</code>,
+<code>Referrer-Policy</code>, <code>Strict-Transport-Security</code> or <code>Content-Security-Policy</code> on a Drupal page. The
+render fragment forwarded only <code>x-drupal-*</code> headers, so core&#39;s own <code>X-Content-Type-Options</code> and
+<code>X-Frame-Options</code> never reached a browser.</p>
+<p>The v1.0.4 line sends three defaults on every response the Worker answers, and
+<code>Strict-Transport-Security: max-age=31536000</code> over https (<code>src/ops/edge-rules.ts</code>):</p>
+<ul>
+<li><code>X-Content-Type-Options: nosniff</code></li>
+<li><code>X-Frame-Options: SAMEORIGIN</code></li>
+<li><code>Referrer-Policy: strict-origin-when-cross-origin</code></li>
+</ul>
+<p>It also stores eleven allow-listed headers a module sets, such as Security Kit&#39;s, with the page and
+replays them on every tier: the object, <code>caches.default</code>, the isolate memo, KV, the stale answer
+and the compiled plan. Precedence is the default, then the module&#39;s header, then an operator
+<code>RESPONSE_HEADERS</code> rule, and a rule value of <code>&quot;&quot;</code> removes a header. <code>set-cookie</code>, <code>location</code>,
+<code>link</code>, <code>content-*</code> and <code>access-control-*</code> are never replayed, and a stored value is re-checked on
+read, so a row written through SQL cannot replay a cookie
+(<code>tests/unit/ops/module-headers.spec.ts</code> and the tier cases in <code>serve-chain.spec.ts</code>,
+<code>serve-edge.spec.ts</code> and <code>edge-read.spec.ts</code>, falsified).</p>
+<p><code>CSP_MODE</code> sets a baseline <code>Content-Security-Policy</code> on HTML that carries none:
+<code>object-src &#39;none&#39;; base-uri &#39;self&#39;; frame-ancestors &#39;self&#39;; report-uri /csp-report</code>. The default is
+<code>report-only</code> on paid plans and <code>off</code> on free. A page that already carries an enforcing policy keeps
+only its own. The baseline constrains <code>&lt;object&gt;</code>, <code>&lt;embed&gt;</code>, <code>&lt;base&gt;</code> and framing, and nothing else.
+It sets no <code>script-src</code>, so it does not stop injected script (a strict nonce policy is <code>L</code>).
+<code>form-action</code> is out of the baseline: a form that posts here and redirects to an identity provider
+would break, and the OIDC and git-provider flows were not driven in a browser. <code>POST /csp-report</code>
+answers in the front worker, rate limited, and logs one line per report. A real browser has not
+loaded a core page under the header; the workers-pool check shows only that <code>/</code>, <code>/user/login</code> and
+<code>/user/password</code> contain none of the four elements the baseline constrains. Verdict: <code>contained</code>
+for plugin embedding and clickjacking, <code>open</code> for script injection.</p>
+<p>A compromised Drupal administrator can still remove the baseline, because <code>RESPONSE_HEADERS</code> is
+writable from Drupal&#39;s settings form and <code>{&quot;path&quot;:&quot;/*&quot;,&quot;set&quot;:{&quot;Content-Security-Policy&quot;:&quot;&quot;}}</code>
+removes it. Refusing <code>CSP_MODE</code> from PHP closes only the direct switch. This is <code>open</code>, and
+whether the form should lose <code>RESPONSE_HEADERS</code> is a decision the page leaves to the maintainer.</p>
+<p>Two limits remain. Pages mirrored to R2 carry none of these headers (<code>L</code>: R2 serves a fixed header
+set), and static files served by the asset layer carry cache rules and none of them.</p>
+<p>A page whose response varies by <code>Accept</code>, <code>Origin</code>, <code>User-Agent</code> or <code>*</code> is not stored. The page
+key holds no request header, so storing such a page would hand one visitor&#39;s variant to everyone.
+On the stock pack nothing varies: <code>/</code> and <code>/user/login</code> rendered the same under five header sets,
+and four requests through the front worker with different headers got one body
+(<code>forwarded-headers.spec.ts</code>, <code>serve-edge.spec.ts</code>, Measured). The refusal is for modules that vary.</p>
+<h2 id="the-build">The Build</h2>
+<p>The shipping interpreter is built by <code>phasm</code>, which drives <code>seanmorris/php-wasm</code>&#39;s Makefile with an
+rc file per variant. The Makefile sets <code>TOTAL_STACK=32MB</code>. The extension list is short. <code>soap</code>,
+<code>phar</code>, <code>intl</code>, <code>gd</code>, <code>openssl</code>, <code>exif</code> and <code>sqlite</code> are not compiled in (<code>WITH_*</code> settings in
+<code>long64.rc</code>; the binary contains no <code>SoapServer</code> string, Measured with <code>grep -a -c</code>). Every extension
+left out is an extension its bugs cannot reach.</p>
+<p><code>phasm</code> now pins the PHP patch release (<code>src/php-versions.lock</code>, 8.5.12) and the php-wasm commit.
+php-wasm&#39;s Makefile hardcodes 8.5.2, and an rc cannot move it, so the pinned release arrives as make
+variables, <code>build-variant.sh</code> refuses a php-src tree that disagrees with the pin, and
+<code>inspect-build.sh</code> fails a binary that reports a PHP below the pin. The worker&#39;s <code>interpreter.yml</code>
+now runs <code>gh attestation verify</code> on the fetched files before it prices or pins them, against the
+phasm build workflow&#39;s identity. That verification was written and tested for its position in the
+workflow. The workflow step itself has not run against a real attestation; the one real artifact checked with the command is under <a href="#patching">Patching</a>.</p>
+<h2 id="patching">Patching</h2>
+<p>Cloudflare patches V8 and the platform. Drupal core and the PHP interpreter are the project&#39;s to
+patch, and that path has a manual step. A new interpreter build travels from <code>phasm</code> to a pull
+request in this repository and ends there. The workflow has no deploy step, and a person merges,
+releases and deploys (<code>docs/php-update-delivery.md</code>). The pin records <code>.interp/php8.5.wasm</code> with its
+sha256.</p>
+<p>The interpreter in the tree reports PHP 8.5.12, the first 8.5 release that carries the PHP2Shell
+fixes (Measured: <code>interpreter-lifecycle.spec.ts</code> asserts <code>PHP_VERSION &gt;= 8.5.12</code>). The advisory was
+published 2026-10-21 13:34 UTC. A local rig build that passes the park, heap and static-sweep specs
+finished 31 hours 39 minutes after it, and the attested CI artifact (phasm run 39861586180, artifact
+12463245201, <code>gh attestation verify</code> exit 0) was created 32 hours 35 minutes after it. The advisory
+time is read from the PHP announcement; the build times come from the rig log and the workflow run
+record. That is one interval on one build, not a rate. Deployed sites move only when someone
+publishes the artifact, merges the pin and deploys. The root <code>composer.lock</code> pins Drupal core 11.4.10, the fixed release for the 11.4 line of SA-CORE-2026-014.</p>
+<p>Rebuilding found a defect in <code>phasm</code>&#39;s own park extension. When a parked chain completes after a
+resume, the root frame&#39;s <code>return_value</code> still pointed at a C local of <code>zend_eval_stringl</code> that the
+<code>longjmp</code> had destroyed, so the final <code>ZEND_RETURN</code> wrote a 16-byte zval onto whatever the resuming
+stack held. On 8.5.2 the bytes were dead and nothing showed. On 8.5.12 the write corrupted the
+dispatch state and the next call trapped. The extension now points the root at a slot it owns
+(<code>park_pin_root()</code> in <code>cfwpark.c</code>). The fix is covered natively (22 pass with the fix; 21 pass and
+1 fail without it) and by <code>park-interpreter.spec.ts</code>. It matters here because it is a memory-safety bug in
+code the project wrote, reachable only on a site that arms the park (<code>REDIS_URL</code> set, or an OIDC or
+other outbound fetch that parks).</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
+	</body>
+</html>

@@ -131,7 +131,15 @@
 				display: grid;
 				gap: 0.85rem;
 				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-				margin: 0 0 3rem;
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
 			}
 			a.card {
 				display: block;
@@ -276,6 +284,27 @@
 				max-width: 100%;
 				vertical-align: middle;
 			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
 
 			footer {
 				margin-top: 4rem;
@@ -302,14 +331,12 @@
 					/>
 					Drupflare
 				</a>
-				<a href="impact.html">Impact</a>
-				<a href="security.html">Security</a>
-				<a href="technical-report.html">Technical Report</a>
+				<a href="getting-started.html">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
 				<a href="configuration.html">Configuration</a>
-				<a href="compatibility.html">Compatibility</a>
-				<a href="building-from-source.html">Building From Source</a>
-				<a href="recovery.html">Recovery</a>
-				<a href="database.html">The Site Database</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="api/index.html">API</a>
 				<a href="php/index.html">PHP</a>
 				<a href="https://github.com/drupflare/worker">GitHub</a>
@@ -375,9 +402,9 @@ reverses it, all against the wrangler version pinned in <code>package.json</code
 <h2 id="notification">Notification</h2>
 <p>phasm&#39;s <code>notify</code> job runs after <code>publish</code>, so it fires when a build publishes interpreter artifacts
 and not on the pull-request or archive-only paths. It sends one <code>repository_dispatch</code> per variant
-listed in <code>CONSUMER_VARIANTS</code>, currently <code>long64</code>, the variant <code>interp.lock.json</code> pins. It named
-<code>control85</code> until 2026-10-22, and <code>interpreter.yml</code> skips any dispatch for a variant other than the
-pin, so no update for the shipping interpreter was ever proposed by this pipeline.</p>
+listed in <code>CONSUMER_VARIANTS</code>, currently <code>long64</code>, the variant <code>interp.lock.json</code> pins. Earlier
+builds named <code>control85</code>. <code>interpreter.yml</code> skips any dispatch for a variant other than the pin, so a
+dispatch for an old variant never proposes an update for the shipping interpreter.</p>
 <pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">{</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  "event_type"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"phasm-interpreter-published"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">,</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  "client_payload"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: {</span></span>
@@ -394,8 +421,8 @@ when the consumer looks.</p>
 <p>A variant with no rc, no <code>PHP_VERSION</code> or no artifact in the run is skipped with a warning. A run
 that notifies nothing fails, because a silent no-op leaves <code>worker</code> on its old pin with a green
 build behind it.</p>
-<p><code>POST /repos/{owner}/{repo}/dispatches</code> requires <strong>Contents: write</strong> on <code>drupflare/worker</code>. When
-<code>PHASM_TOKEN</code> carries only <strong>Actions: write</strong>, the dispatch is refused and the job falls back to
+<p><code>POST /repos/{owner}/{repo}/dispatches</code> requires Contents: write on <code>drupflare/worker</code>. When
+<code>PHASM_TOKEN</code> carries only Actions: write, the dispatch is refused and the job falls back to
 <code>POST /repos/{owner}/{repo}/actions/workflows/interpreter.yml/dispatches</code>, which that permission
 does cover. The fallback carries the variant, the PHP version and the artifact id; the phasm run id,
 commit and tag reach the consumer only over <code>repository_dispatch</code>.</p>
@@ -404,7 +431,7 @@ commit and tag reach the consumer only over <code>repository_dispatch</code>.</p
 three values, and the workflow refuses a variant that is not a phasm rc name, a PHP version that is
 not <code>&lt;major&gt;.&lt;minor&gt;</code>, and a non-numeric artifact id.</p>
 <p>The run hydrates the current release payload first. That supplies <code>assets/</code> and the incumbent
-interpreter, so the bundle is measured against the tree that actually ships, and the incumbent figure
+interpreter, so the bundle is measured against the tree that ships, and the incumbent figure
 is recorded before the swap.</p>
 <p>Two checks stand between the download and the pull request. Each throws, each fails its step, and
 a failed step ends the run: no payload is uploaded and no branch is pushed.</p>
@@ -492,7 +519,8 @@ stored heap snapshot does outlive it.</strong> <code>HEAP_SNAPSHOT</code> is on 
 deployment carries environment variables or config. One measured site held 31,784,960 bytes of
 snapshot across 159 rows. Restoring an image taken on one interpreter into another is corruption
 rather than a slow path.</p>
-<p><code>cfw_heap_snapshot</code> rows are keyed on the <strong>pack generation</strong> (<code>latestSnapshotMeta(sql, packGeneration())</code>), not on the interpreter. An interpreter bump that leaves the pack alone therefore
+<p><code>cfw_heap_snapshot</code> rows are keyed on the heap generation (<code>latestSnapshotMeta(sql, heapGeneration())</code> in <code>src/do/routes/heap.ts</code>), which is the pack generation plus the module set.
+Neither is the interpreter. An interpreter bump that leaves the pack alone therefore
 selects a snapshot taken on the previous binary. Ship an interpreter bump with <code>HEAP_SNAPSHOT=0</code>, or
 move the pack generation with it, until the snapshot key carries the interpreter pin.</p>
 <h2 id="staged-rollout">Staged Rollout</h2>
@@ -555,8 +583,9 @@ fetched, the bundle resolves and fits, and every file is content-addressed in th
 staged asset carries its own subject digest, but nothing in this repository runs
 <code>gh attestation verify</code> against a downloaded artifact. Add it against
 <code>--repo drupflare/phasm --signer-workflow drupflare/phasm/.github/workflows/build.yml</code> to close the
-gap. Behaviour is proved after deploy by <code>BootSelfTest::run()</code>, which runs before the first request
-is served.</p>
+gap. Behaviour on the deployed site is checked by the health self-test, <code>BootSelfTest::run()</code>, which the
+host calls through <code>runHealthSelfTest()</code> in <code>src/drupal/cron-php.ts</code> from the cron path in
+<code>src/ops/cron.ts</code>.</p>
 <h2 id="self-hosted-sites">Self-Hosted Sites</h2>
 <p>A self-hosted site runs in the user&#39;s own Cloudflare account and drupflare holds no credential
 there. The one-click template is the user&#39;s own repository with Workers Builds connected, so an
@@ -674,5 +703,9 @@ independently deployed scripts is N rollouts.</li>
 		<footer>
 			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
 		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
 	</body>
 </html>

@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Modules - Drupflare</title>
+		<meta
+			name="description"
+			content="Contributed modules, module revisions, and which modules have run on a real site."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Modules - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Contributed modules, module revisions, and which modules have run on a real site."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="getting-started.html">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="modules">Modules</h1>
+<p>Contributed modules, module revisions, and which modules have been run against a real site.</p>
+<h2 id="module-revisions">Module Revisions</h2>
+<p>A module that lives on your machine and not on a git host is uploaded through <code>/modify</code>. Every
+upload is a revision, and the site keeps the last five per package (<code>REVISION_RETENTION</code> in
+<code>src/ops/module-rev.ts</code>). Each <code>/modify</code> request takes the owner token.</p>
+<p>A revision is a manifest of files addressed by the hash of their contents. A second upload sends
+only the files that changed. A file the site already holds costs nothing to keep, and dropping a
+revision deletes only the file contents that no surviving revision names.</p>
+<p>An upload is three steps: plan, send the blobs, then commit. The table lists every route.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Route</th>
+<th>Method</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Plan</td>
+<td><code>?action=plan&amp;package=X</code></td>
+<td>POST</td>
+<td>splits declared files into what the site has and what it needs</td>
+</tr>
+<tr>
+<td>Blobs</td>
+<td><code>?action=blobs&amp;package=X</code></td>
+<td>POST</td>
+<td>stores the missing file bytes, verified against the hash sent with each</td>
+</tr>
+<tr>
+<td>Commit</td>
+<td><code>?action=commit&amp;package=X</code></td>
+<td>POST</td>
+<td>records a revision from a manifest and makes it live</td>
+</tr>
+<tr>
+<td>Revisions</td>
+<td><code>?action=revisions&amp;package=X</code></td>
+<td>GET</td>
+<td>the stored revisions, newest first, and which one is active</td>
+</tr>
+<tr>
+<td>Manifest</td>
+<td><code>?action=manifest&amp;package=X&amp;rev=Y</code></td>
+<td>GET</td>
+<td>one revision&#39;s file list; <code>rev</code> takes <code>active</code> by default</td>
+</tr>
+<tr>
+<td>Activate</td>
+<td><code>?action=activate&amp;package=X&amp;rev=Y</code></td>
+<td>POST</td>
+<td>makes a stored revision live again, with no bytes on the wire</td>
+</tr>
+<tr>
+<td>Rollback</td>
+<td><code>?action=activate&amp;package=X&amp;rev=previous</code></td>
+<td>POST</td>
+<td>activates the revision before the active one</td>
+</tr>
+<tr>
+<td>Status</td>
+<td><code>?action=status</code></td>
+<td>GET</td>
+<td>what is live per package, with its size and age</td>
+</tr>
+<tr>
+<td>Drop</td>
+<td><code>?action=drop&amp;package=X&amp;rev=Y</code></td>
+<td>POST</td>
+<td>deletes a revision and the blobs nothing else names</td>
+</tr>
+</tbody></table></div>
+<p><code>plan</code> answers the have and want split and the change an apply would make: <code>counts</code> over every
+declared file, the <code>removed</code> paths by name, and the rows an apply would charge. A file whose new
+bytes have not been sent yet counts as <code>modified</code> and not as a removal, because the site does not
+hold those bytes yet.</p>
+<p>Commit and activate use the same apply, verify and restore path that a git pull takes. The files are
+written in one transaction, and the kernel boots with every enabled module&#39;s PHP loaded. A boot that
+fails restores the previous file set. A module whose <code>.module</code> no longer parses is rolled back, and
+the reply names the parse error. A refused commit or activation returns 409. A refused commit stays
+stored, and the revision it replaced stays active. A path another package already owns is reported
+as a conflict and not taken (<code>applyRevision()</code> in <code>src/do/modify.ts</code>).</p>
+<pre><code class="mermaid">flowchart TD
+    U[Plan and send the blobs] --> C[Commit records a revision]
+    C --> A[Apply the files in one transaction]
+    AC[Activate a stored revision] --> A
+    RB[Rollback activates the previous revision] --> AC
+    A --> B[Boot the kernel and load modules]
+    B -->|boot passes| OK[Revision is active, five kept]
+    B -->|boot refuses| FL[Previous files restored, prior revision serves]
+    DR[Drop removes a revision and unreferenced blobs]</code></pre><p>File contents are verified against the hash they were sent under before they are stored, so a
+manifest cannot come to name content the site never received. Stored blobs are checked against their
+hash again before a revision is applied.</p>
+<p>Bytes are bounded twice: by <code>MAX_BODY_BYTES</code> per request, and by a 2,199,995-byte cap per file,
+since each file is one stored row. A client batches to stay under both.</p>
+<p>A <code>commit</code> body may carry <code>autoload</code>, one object or an array, for vendor packages a build delivers:
+<code>{&quot;name&quot;:&quot;acme/widget&quot;,&quot;version&quot;:&quot;1.4.0&quot;,&quot;mount&quot;:&quot;vendor/acme/widget&quot;,&quot;autoload&quot;:{&quot;psr-4&quot;:{...}}}</code>.
+The mount must sit under <code>vendor/</code> or <code>libraries/</code>. The site registers each map with the class loader
+before it boots the kernel, and puts the previous row back if the boot refuses. <code>/install</code> does not
+fetch a package that is already registered.</p>
+<p>A revision may also carry paths under <code>core/</code>, which shadow the packed files at the next boot. A
+changed <code>core/**/*.yml</code> drops <code>cache_container</code> and <code>cache_discovery</code> first, so the verifying boot
+rebuilds them.</p>
+<p>A requirement on a virtual package such as <code>psr/log-implementation</code> is met by the shipped lock&#39;s
+<code>provide</code> and <code>replace</code> entries, and is not fetched.</p>
+<hr>
+<h2 id="contrib-modules">Contrib Modules</h2>
+<p>Installing a module works on a deployed site, with the module present in <code>core.extension</code> afterwards
+on 6 of 6 attempts. The cache is cold for one visit while the pages the install invalidated are
+re-rendered.</p>
+<p>Every contrib module has one of three states: verified, untested or blocked. A module is verified
+only when the gate enabled it against a real site and asserted an observable the module owns.
+Nothing reaches that state by inspection. A blocked row says which capability is missing.
+<code>moduleTable()</code> in <code>src/ops/module-table.ts</code> is the census the lists below are rendered from.</p>
+<p>Contrib is a development dependency. The shipped pack carries four modules (<code>admin_toolbar</code>,
+<code>ctools</code>, <code>pathauto</code>, <code>token</code>). The rest are verified against a test build and installed by a site
+that asks for them, so a new site stays small.</p>
+<h3 id="installing-one">Installing One</h3>
+<p>Three owner-token routes, in the order a site uses them. Each takes <code>Authorization: Bearer &lt;owner token&gt;</code>, the token <code>/firstrun</code> mints when the site is claimed.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Route</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/installable?module=X</code></td>
+<td>resolves the package and names any conflict with the shipped lock</td>
+</tr>
+<tr>
+<td><code>/install?module=X</code></td>
+<td>fetches it and writes its files; runs the check first unless <code>force=1</code></td>
+</tr>
+<tr>
+<td><code>/enable?module=X</code></td>
+<td>installs it through Drupal&#39;s own module installer</td>
+</tr>
+</tbody></table></div>
+<p><code>drupal/*</code> resolves against <code>packages.drupal.org/8</code>, and everything else against
+<code>repo.packagist.org</code>. Resolution is registry first. It covers a composer graph&#39;s <code>replace</code>, stability
+flags, branch aliases, branch archives, metapackages and virtual packages. Composer plugins are
+skipped. Installing does not enable a module. The two are separate steps, because a package that
+lands is not yet a module Drupal knows about.</p>
+<p>A module you wrote yourself arrives through a git remote or through <code>/modify</code>. A git pull fetches
+one commit at depth one and boots the kernel against the new tree, rolling back if it fatals. See
+<a href="git-remotes.html">Git Remotes</a> and <a href="#module-revisions">Module Revisions</a>. The same <code>/enable</code> step
+applies afterwards.</p>
+<h3 id="verified">Verified</h3>
+<p><code>address</code>, <code>admin_toolbar</code>, <code>backup_migrate</code>, <code>better_exposed_filters</code>, <code>captcha</code>, <code>coffee</code>,
+<code>colorbox</code>, <code>config_ignore</code>, <code>crop</code>, <code>csv_serialization</code>, <code>ctools</code>, <code>devel</code>, <code>easy_breadcrumb</code>,
+<code>editor_advanced_link</code>, <code>entity</code>, <code>entity_browser</code>, <code>entity_reference_revisions</code>, <code>externalauth</code>,
+<code>facets</code>, <code>field_group</code>, <code>filefield_sources</code>, <code>focal_point</code>, <code>google_analytics</code>, <code>google_tag</code>,
+<code>honeypot</code>, <code>imageapi_optimize</code>, <code>imageapi_optimize_binaries</code>, <code>imce</code>, <code>jquery_ui</code>, <code>jquery_ui_autocomplete</code>,
+<code>jquery_ui_datepicker</code>, <code>jquery_ui_menu</code>, <code>json_field</code>, <code>key</code>, <code>libraries</code>, <code>linkit</code>, <code>mailsystem</code>,
+<code>memcache</code>, <code>menu_block</code>, <code>metatag</code>, <code>metatag_search_gov</code>, <code>migrate_plus</code>, <code>module_filter</code>, <code>openid_connect</code>,
+<code>paragraphs</code>, <code>pathauto</code>, <code>purge</code>, <code>queue_ui</code>, <code>recaptcha</code>, <code>redirect</code>, <code>redis</code>, <code>scheduler</code>,
+<code>search_api</code>, <code>search_api_solr</code>, <code>simple_sitemap</code>, <code>smtp</code>, <code>stage_file_proxy</code>, <code>svg_image</code>, <code>token</code>,
+<code>twig_tweak</code>, <code>usfedgov_google_analytics</code>, <code>uswds_base</code>, <code>video_embed_field</code>,
+<code>views_bulk_operations</code>, <code>views_data_export</code>, <code>webform</code>, <code>xmlsitemap</code>.</p>
+<p><code>uswds_base</code> is a theme and installs through <code>theme_installer</code> and not the module installer.</p>
+<h3 id="blocked">Blocked</h3>
+<p>Nothing. <code>openid_connect</code>, <code>redis</code> and <code>smtp</code> were here.</p>
+<p><code>smtp</code> sends over the host transport from its own <code>smtp.settings</code>, and nothing in a render waits for
+delivery. <code>redis</code> and <code>openid_connect</code> both need an answer inside the request that asked. The PHP
+call is suspended, the Worker performs the socket read or the HTTP exchange, and the same call
+resumes with the answer. For <code>openid_connect</code> that is the authorization-code POST and the userinfo
+GET, so a login completes through the module&#39;s own client. For <code>redis</code>, the Durable Object&#39;s own
+SQLite is still the faster cache backend and the recommended one.</p>
+<h3 id="untested">Untested</h3>
+<p><code>search_gov_results_api</code> renders results from an API call made while its form is building. That call
+completes inside the render that makes it, so a search answers on the first request. No run has
+exercised it against a live Search.gov key.</p>
+<hr>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
+	</body>
+</html>

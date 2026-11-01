@@ -131,7 +131,15 @@
 				display: grid;
 				gap: 0.85rem;
 				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-				margin: 0 0 3rem;
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
 			}
 			a.card {
 				display: block;
@@ -276,6 +284,27 @@
 				max-width: 100%;
 				vertical-align: middle;
 			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
 
 			footer {
 				margin-top: 4rem;
@@ -302,14 +331,12 @@
 					/>
 					Drupflare
 				</a>
-				<a href="impact.html">Impact</a>
-				<a href="security.html">Security</a>
-				<a href="technical-report.html">Technical Report</a>
+				<a href="getting-started.html">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
 				<a href="configuration.html">Configuration</a>
-				<a href="compatibility.html">Compatibility</a>
-				<a href="building-from-source.html">Building From Source</a>
-				<a href="recovery.html">Recovery</a>
-				<a href="database.html">The Site Database</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="api/index.html">API</a>
 				<a href="php/index.html">PHP</a>
 				<a href="https://github.com/drupflare/worker">GitHub</a>
@@ -390,5 +417,9 @@ the rest is a determination its agency makes.</p>
 		<footer>
 			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
 		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
 	</body>
 </html>

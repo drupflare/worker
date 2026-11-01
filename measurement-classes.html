@@ -131,7 +131,15 @@
 				display: grid;
 				gap: 0.85rem;
 				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-				margin: 0 0 3rem;
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
 			}
 			a.card {
 				display: block;
@@ -276,6 +284,27 @@
 				max-width: 100%;
 				vertical-align: middle;
 			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
 
 			footer {
 				margin-top: 4rem;
@@ -302,14 +331,12 @@
 					/>
 					Drupflare
 				</a>
-				<a href="impact.html">Impact</a>
-				<a href="security.html">Security</a>
-				<a href="technical-report.html">Technical Report</a>
+				<a href="getting-started.html">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
 				<a href="configuration.html">Configuration</a>
-				<a href="compatibility.html">Compatibility</a>
-				<a href="building-from-source.html">Building From Source</a>
-				<a href="recovery.html">Recovery</a>
-				<a href="database.html">The Site Database</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="api/index.html">API</a>
 				<a href="php/index.html">PHP</a>
 				<a href="https://github.com/drupflare/worker">GitHub</a>
@@ -385,8 +412,8 @@ no step.</li>
 <li><strong>Tolerances live in code, not in the baseline.</strong> A newer master document moves the recorded
 values and cannot widen what is allowed. The baseline is data; <code>CHECKS</code> is the contract. What a
 master-relative baseline gives up is the cumulative reading: creep since a release rather than
-since the previous commit; the absolute checks carry that instead, and which any archived
-document restores by being passed as <code>--baseline-metrics</code>.</li>
+since the previous commit. The absolute checks carry that instead. Passing an older archived
+document as <code>--baseline-metrics</code> restores that reading.</li>
 </ul>
 <h3 id="what-the-toolchain-contributes">What the Toolchain Contributes</h3>
 <p>Two Class A metrics are deterministic only against a pinned toolchain. The bundle figure is what
@@ -412,19 +439,20 @@ bucket attribution that puts event dispatch at 4.3x native, <code>cache_contexts
 at 1.6x. Both halves move together when the machine is loaded, so the ratio survives what the
 absolutes do not.</p>
 <p>These stay out of CI. A ratio is only meaningful next to the conditions it was taken under, and a
-runner cannot state those conditions. They are recorded in <code>TECHNICAL_REPORT.md</code> with the cache
+runner cannot state those conditions. They are recorded in the <a href="technical-report.html">technical report</a> with the cache
 bins that were emptied, the <code>n</code>, and the spread, which is what makes them readable a year later.</p>
 <h2 id="class-c-absolute-wall-clock">Class C: Absolute Wall Clock</h2>
 <p>Banned outright, in CI and out of it.</p>
-<p>In-PHP <code>microtime()</code> returns 0 on the edge. <code>Date.now()</code> inside the isolate returns 0 or a
-plausible wrong number; it has reported 114 ms for a 1,374 ms invocation. Zero is obviously broken
-and 114 survives review, which is what makes this class dangerous as well as useless. A local
+<p>A duration taken from PHP&#39;s <code>microtime()</code> around a synchronous PHP run reads 0 on the edge, because
+the clock does not advance across it. <code>Date.now()</code> inside the isolate returns 0 or a plausible wrong
+number; it has reported 114 ms for a 1,374 ms invocation. A zero is obviously broken. The 114 passes
+review, which makes this class dangerous as well as useless. A local
 <code>wrangler dev</code> wall clock cannot even order two profiles correctly.</p>
 <p>Nothing in the metrics workflow may emit, archive or render a duration. <code>tests/node/metrics.spec.ts</code>
 asserts that the collected document matches no <code>durationMs</code>/<code>elapsed</code>/<code>timestamp</code> key and that the
 rendered summary carries no millisecond figure, so a build enforces the ban.</p>
-<h3 id="the-one-wall-clock-that-is-allowed-and-why">The one wall clock that is allowed, and why</h3>
-<p>A <code>Date.now()</code> delta <strong>spanning I/O</strong> is a different measurement and is usable. The clock updates on
+<h3 id="the-one-wall-clock-that-is-allowed">The One Wall Clock That Is Allowed</h3>
+<p>A <code>Date.now()</code> delta spanning I/O is a different measurement and is usable. The clock updates on
 I/O completion, so a delta bracketing an HTTP call measures that call; what it cannot do is span a
 synchronous <code>php._run()</code>, where the clock does not advance at all.</p>
 <p>That is what <code>scripts/measure/vps-compare.ts</code> runs on. It executes under bun rather than inside a
@@ -439,8 +467,7 @@ empty tail proves nothing.</p>
 <p>It cannot be automated here. It needs a real deploy against an account that holds production
 workers, a <code>cfw-*</code> name, a teardown, and a check that the worker list returns to its prior
 baseline. It also needs an <code>n</code> and a spread with every figure: the platform&#39;s reported 400-600 ms
-bimodality is unverified as a standing property
-on the same object, so an n=1 or n=3 verdict about anything under ~500 ms is unsupportable.</p>
+bimodality is unverified as a standing property on the same object, so an n=1 or n=3 verdict about anything under ~500 ms is unsupportable.</p>
 <p>That makes it a <code>workflow_dispatch</code> shape with a credential and a human deciding to spend it, never
 a nightly. <code>scripts/measure/read-tail-cpu.mjs</code> is the reader; the readings live in
 <code>TECHNICAL_REPORT.md</code>.</p>
@@ -463,5 +490,9 @@ zero, so a partially hydrated master run cannot silently drop the bundle figure 
 		<footer>
 			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
 		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
 	</body>
 </html>

@@ -131,7 +131,15 @@
 				display: grid;
 				gap: 0.85rem;
 				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-				margin: 0 0 3rem;
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
 			}
 			a.card {
 				display: block;
@@ -276,6 +284,27 @@
 				max-width: 100%;
 				vertical-align: middle;
 			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
 
 			footer {
 				margin-top: 4rem;
@@ -302,14 +331,12 @@
 					/>
 					Drupflare
 				</a>
-				<a href="impact.html">Impact</a>
-				<a href="security.html">Security</a>
-				<a href="technical-report.html">Technical Report</a>
+				<a href="getting-started.html">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
 				<a href="configuration.html">Configuration</a>
-				<a href="compatibility.html">Compatibility</a>
-				<a href="building-from-source.html">Building From Source</a>
-				<a href="recovery.html">Recovery</a>
-				<a href="database.html">The Site Database</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="api/index.html">API</a>
 				<a href="php/index.html">PHP</a>
 				<a href="https://github.com/drupflare/worker">GitHub</a>
@@ -319,22 +346,57 @@
 			<h1>Drupflare</h1>
 <p class="lead">Drupal 11 on Cloudflare Workers</p>
 <p class="badges"><img src="https://img.shields.io/github/v/release/drupflare/worker" alt="release"> <img src="https://img.shields.io/github/license/drupflare/worker" alt="license"> <img src="https://img.shields.io/github/stars/drupflare/worker?style=flat" alt="stars"> <img src="https://img.shields.io/github/commit-activity/t/drupflare/worker?color=violet" alt="commit activity"> <img src="https://img.shields.io/github/actions/workflow/status/drupflare/worker/build.yml?label=build" alt="build"> <img src="https://img.shields.io/github/actions/workflow/status/drupflare/worker/prettier.yml?label=prettier" alt="prettier"> <img src="https://img.shields.io/codecov/c/github/drupflare/worker" alt="codecov"></p>
+<h2 class="group">Start</h2>
+<div class="links">
+<a class="card" href="getting-started.html"><strong>Getting Started</strong><span>From a clean clone to a running site, claimed, and moving an existing one in.</span></a>
+<a class="card" href="architecture.html"><strong>Architecture</strong><span>How a request is answered, what the build packs, and how a site repairs itself.</span></a>
+<a class="card" href="free-vs-paid.html"><strong>Free vs Paid</strong><span>What each Cloudflare plan allows a site, and which limit binds first.</span></a>
+<a class="card" href="vps-comparison.html"><strong>Drupflare vs a Traditional VPS</strong><span>Latency, throughput and cost against nginx and PHP-FPM on the same tree.</span></a>
+<a class="card" href="limitations.html"><strong>Limitations</strong><span>What does not run, what runs differently, and the limit behind each.</span></a>
+</div>
+<h2 class="group">Operate</h2>
+<div class="links">
+<a class="card" href="administration.html"><strong>Administration</strong><span>The surfaces an owner operates a site from, and how each is authorised.</span></a>
+<a class="card" href="configuration.html"><strong>Configuration</strong><span>Every variable and binding in wrangler.jsonc, and the page each lives on.</span></a>
+<a class="card" href="configuration-serving.html"><strong>Serving and Caching Settings</strong><span>Page caching, static assets, prefill, files and images.</span></a>
+<a class="card" href="configuration-runtime.html"><strong>Runtime Settings</strong><span>Cron, warming, the interpreter lifecycle, boot and storage.</span></a>
+<a class="card" href="configuration-replicas.html"><strong>Replica Settings</strong><span>Lane count, autoscaling, write forwarding and lag.</span></a>
+<a class="card" href="configuration-operations.html"><strong>Operations Settings</strong><span>Maintenance, owner access, audit, overrides, updates and reconciliation.</span></a>
+<a class="card" href="configuration-integrations.html"><strong>Integration Settings</strong><span>Mail, TCP, Workers AI, OIDC login and Spool.</span></a>
+<a class="card" href="replica-lanes.html"><strong>Replica Lanes</strong><span>Read replicas for a site: what a lane buys, how it scales, how it is built.</span></a>
+<a class="card" href="git-remotes.html"><strong>Git Remotes</strong><span>Delivering modules and themes from a git host.</span></a>
+<a class="card" href="modules.html"><strong>Modules</strong><span>Contributed modules, module revisions, and which modules have run on a real site.</span></a>
+<a class="card" href="recovery.html"><strong>Recovery</strong><span>The four ways a site moves backwards and how to come back.</span></a>
+<a class="card" href="external-database.html"><strong>External Databases and Hyperdrive</strong><span>Hyperdrive and external databases, and what they change.</span></a>
+</div>
+<h2 class="group">Measure</h2>
+<div class="links">
+<a class="card" href="impact.html"><strong>Impact</strong><span>The labels, limits and references behind every energy, carbon and cost figure.</span></a>
+<a class="card" href="energy.html"><strong>Energy</strong><span>The saving against conventional hosting, operating states and the per-request model.</span></a>
+<a class="card" href="energy-views.html"><strong>Energy Per View</strong><span>The energy of one view, the traffic mix, visitor devices and Spool.</span></a>
+<a class="card" href="energy-fleet.html"><strong>Fleet Energy</strong><span>Many sites at once, institutional workloads and the saving by site count.</span></a>
+<a class="card" href="economics.html"><strong>Economics</strong><span>What each host costs at each traffic level.</span></a>
+<a class="card" href="environment.html"><strong>Environment</strong><span>Carbon, water and embodied carbon.</span></a>
+<a class="card" href="measurement-classes.html"><strong>Measurement Classes</strong><span>The four classes a number belongs to, and which instrument each allows.</span></a>
+</div>
+<h2 class="group">Reference</h2>
+<div class="links">
+<a class="card" href="security.html"><strong>Security</strong><span>What the architecture removes and what it leaves, with the label on every claim.</span></a>
+<a class="card" href="security-controls.html"><strong>Security Controls</strong><span>The controls in place today, from the host surface to patching.</span></a>
+<a class="card" href="security-incidents.html"><strong>Security Incidents and Planned Work</strong><span>The CVE and incident map, PHP2Shell, and the work still planned.</span></a>
+<a class="card" href="government.html"><strong>Federal Sites</strong><span>OMB M-23-22 and the 21st Century IDEA for US federal sites.</span></a>
+<a class="card" href="compatibility.html"><strong>Compatibility</strong><span>Which Drupal codebases run, per codebase, from the corpus lane.</span></a>
+<a class="card" href="building-from-source.html"><strong>Building From Source</strong><span>From a clean clone to a deployable tree, and the release payload.</span></a>
+<a class="card" href="repository-layout.html"><strong>Repository Layout</strong><span>Every path outside src/ and how it arrives on a clean clone.</span></a>
+<a class="card" href="database.html"><strong>The Site Database</strong><span>How the site database every new site starts from is built.</span></a>
+<a class="card" href="php-update-delivery.html"><strong>PHP Interpreter Update Delivery</strong><span>How a new PHP interpreter build reaches a deployed site.</span></a>
+<a class="card" href="testing.html"><strong>Testing</strong><span>The test lanes, what each can see, and how to add a test.</span></a>
+<a class="card" href="technical-report.html"><strong>Technical Report: Drupal on Cloudflare Workers</strong><span>The engineering record: architecture, platform limits, costs and measurements.</span></a>
+</div>
+<h2 class="group">Code</h2>
 <div class="links">
 <a class="card" href="api/index.html"><strong>API Reference</strong><span>The TypeScript modules under src/, from TypeDoc.</span></a>
 <a class="card" href="php/index.html"><strong>PHP Reference</strong><span>The PHP the interpreter runs, under src/site/php/.</span></a>
-<a class="card" href="building-from-source.html"><strong>Building From Source</strong><span>From a clean clone to a deployable tree, and the release payload.</span></a>
-<a class="card" href="compatibility.html"><strong>Compatibility</strong><span>Which Drupal codebases run, per codebase, from the corpus lane.</span></a>
-<a class="card" href="configuration.html"><strong>Configuration</strong><span>Every variable and binding in wrangler.jsonc, and how each is changed.</span></a>
-<a class="card" href="database.html"><strong>The Site Database</strong><span>How the site database every new site starts from is built.</span></a>
-<a class="card" href="external-database.html"><strong>External Databases and Hyperdrive</strong><span>Hyperdrive and external databases, and what they change.</span></a>
-<a class="card" href="government.html"><strong>Federal Sites</strong><span>OMB M-23-22 and the 21st Century IDEA for US federal sites.</span></a>
-<a class="card" href="impact.html"><strong>Impact</strong><span>Cost, electricity, carbon and water, and how far each figure holds.</span></a>
-<a class="card" href="measurement-classes.html"><strong>Measurement Classes</strong><span>The four classes a number belongs to, and which instrument each allows.</span></a>
-<a class="card" href="php-update-delivery.html"><strong>PHP Interpreter Update Delivery</strong><span>How a new PHP interpreter build reaches a deployed site.</span></a>
-<a class="card" href="recovery.html"><strong>Recovery</strong><span>The four ways a site moves backwards and how to come back.</span></a>
-<a class="card" href="repository-layout.html"><strong>Repository Layout</strong><span>Every path outside src/ and how it arrives on a clean clone.</span></a>
-<a class="card" href="security.html"><strong>Security</strong><span>What the architecture removes, what it leaves, and a CVE and incident map.</span></a>
-<a class="card" href="technical-report.html"><strong>Technical Report: Drupal on Cloudflare Workers</strong><span>The engineering record: architecture, platform limits, costs and measurements.</span></a>
 </div>
 			<div class="readme">
 				<p><a href="https://deploy.workers.cloudflare.com/?url=https://github.com/drupflare/worker"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a></p>
@@ -342,40 +404,25 @@
 executes as WebAssembly inside a Durable Object, with the Durable Object&#39;s own SQLite as the
 database. PHP 8.5 is what ships, with no extension dropped to fit.</p>
 <p>The interpreter ships as a raw WebAssembly module that the platform compiles ahead of time, so
-startup costs a few milliseconds where a compressed frame cost about a hundred. A cold boot is
-expensive and a paid site does not normally pay it: a Durable Object holds its interpreter across an
-8-second alarm re-arm, measured across 71 consecutive alarms. A quiet free site pays it unless it
-opts into warming. Rows written is the meter that binds, not CPU. See <a href="#free-vs-paid">Free vs Paid</a>.</p>
+startup costs a few milliseconds. A paid site holds its interpreter warm between requests; a quiet
+free site pays a cold boot unless it opts into warming. See <a href="free-vs-paid.html">Free vs Paid</a>.</p>
 <p>A site is one Durable Object by default and does not have to be. <code>REPLICA_COUNT</code> gives it read
 replica lanes, each a separate object filled from the primary and kept current by a replication log,
-so an authenticated read workload scales past one thread. See <a href="#replica-lanes">Replica Lanes</a>.</p>
+so an authenticated read workload scales past one thread. See <a href="replica-lanes.html">Replica Lanes</a>.</p>
 <hr>
-<h2 id="table-of-contents">Table of Contents</h2>
+<h2 id="-table-of-contents">📋 Table of Contents</h2>
 <ul>
-<li><a href="#why">Why</a></li>
-<li><a href="#how-it-works">How It Works</a></li>
-<li><a href="#what-it-runs">What It Runs</a></li>
-<li><a href="#getting-started">Getting Started</a></li>
-<li><a href="#moving-a-site-in">Moving a Site In</a></li>
-<li><a href="#drupflare-vs-a-traditional-vps">Drupflare vs a Traditional VPS</a></li>
-<li><a href="#impact">Impact</a></li>
-<li><a href="#replica-lanes">Replica Lanes</a></li>
-<li><a href="#free-vs-paid">Free vs Paid</a></li>
-<li><a href="#administration">Administration</a></li>
-<li><a href="#configuration">Configuration</a></li>
-<li><a href="#git-remotes">Git Remotes</a></li>
-<li><a href="#module-revisions">Module Revisions</a></li>
-<li><a href="#contrib-modules">Contrib Modules</a></li>
-<li><a href="#production-codebases">Production Codebases</a></li>
-<li><a href="#limitations">Limitations</a></li>
-<li><a href="#project-structure">Project Structure</a></li>
-<li><a href="#repositories">Repositories</a></li>
-<li><a href="#testing">Testing</a></li>
-<li><a href="#documentation">Documentation</a></li>
-<li><a href="#contributing">Contributing</a></li>
+<li><a href="#-why">Why</a></li>
+<li><a href="#-how-it-works">How It Works</a></li>
+<li><a href="#-what-it-runs">What It Runs</a></li>
+<li><a href="#-getting-started">Getting Started</a></li>
+<li><a href="#-impact">Impact</a></li>
+<li><a href="#-documentation">Documentation</a></li>
+<li><a href="#-contributing">Contributing</a></li>
+<li><a href="#-license">License</a></li>
 </ul>
 <hr>
-<h2 id="why">Why</h2>
+<h2 id="-why">🎯 Why</h2>
 <p>A small Drupal site is a strange thing to host. It needs a webserver, a PHP runtime, a database, a
 cache, a CDN, backups, and someone to apply security patches, and it serves almost entirely
 anonymous, cacheable traffic. The infrastructure is sized for the 1% of requests that render.</p>
@@ -385,2247 +432,79 @@ level, nothing to keep running, and no origin to go down.</p>
 <p>The comparison is $5 against a VPS plus CDN, backups, monitoring and patching labour. The labour is
 the part that does not scale down.</p>
 <hr>
-<h2 id="how-it-works">How It Works</h2>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span>request</span></span>
-<span class="line"><span>  │</span></span>
-<span class="line"><span>  ├─ 0. Workers Assets (/core/**)          stylesheets, scripts, fonts; never reaches the Worker</span></span>
-<span class="line"><span>  │</span></span>
-<span class="line"><span>  ├─ 1. edge cache (caches.default)        ~85% of traffic, 0 Durable Object requests</span></span>
-<span class="line"><span>  │</span></span>
-<span class="line"><span>  ├─ 2. Durable Object page cache (SQL)    ~14%, stored HTML, no PHP</span></span>
-<span class="line"><span>  │</span></span>
-<span class="line"><span>  └─ 3. PHP renders inside the Durable Object   ~1%, then fills the caches above</span></span></code></pre><p>Four things make it work:</p>
-<ol>
-<li><strong>A purpose-built PHP wasm binary.</strong> No published php-wasm build can do this. workerd forbids the
-runtime wasm codegen that emscripten&#39;s dynamic linker needs, so every extension Drupal requires
-is statically linked (<code>MAIN_MODULE=0</code>). The toolchain is
-<a href="https://github.com/drupflare/phasm"><code>drupflare/phasm</code></a>; this repository consumes its output.</li>
-<li><strong>PHP runs inside the Durable Object, not beside it.</strong> <code>ctx.storage.sql</code> is synchronous only
-from within the object, and PHP&#39;s database calls are blocking. Any other arrangement cannot
-connect the two.</li>
-<li><strong>A real Drupal database driver.</strong> <code>cfw_do_sqlite</code>, from the
-<a href="https://github.com/drupflare/rom"><code>rom</code></a> sibling, is a Drupal 11 driver for Durable Object
-SQLite. Drupal&#39;s query builders, schema handling and condition compiler are used unchanged; what
-is replaced is everything that assumed PDO and a file on disk.</li>
-<li><strong>Divisibility.</strong> A long invocation is a risk on free, and the language a step runs in decides
-whether it can be split at all. First-run migration moved from PHP to JavaScript and from one
-long invocation into chunks, each sized to complete on its own. <code>assets/drupal-sql/manifest.json</code>
-carries the current chunk count.</li>
-</ol>
-<h3 id="static-assets">Static Assets</h3>
-<p>Drupal&#39;s stylesheets, scripts, fonts and images are served by Workers Assets from <code>assets/core/</code>, at
-the <code>/core/**</code> URLs Drupal already emits. All three PHP packers skip those extensions because PHP
-never opens them, and nothing serves a file out of the in-memory filesystem over HTTP, so the asset
-layer is the only thing that can answer them. <code>scripts/pack-static.ts</code> copies the tree. Workers
-Assets content-hashes, caches and compresses what it serves, and a hit never reaches the Worker, so
-it costs nothing against either free-tier ceiling.</p>
-<p>Drupal&#39;s own CSS and JS aggregation is off, because an aggregate has no file to read: a hash
-mismatch 301s and a match sends Drupal&#39;s optimiser at a path no pack carries.</p>
-<p>The build produces its own aggregates instead. <code>bun run assets:agg</code> reads the library definitions
-where the source files exist and emits one immutable file per library, and <code>ASSET_AGGREGATES=1</code>
-substitutes them into a page as it is stored. The substitution is all or nothing per library, so a
-partial match leaves that library&#39;s tags alone. It buys render time and a smaller stored page, not
-Worker requests, since the individual files already cost none.</p>
-<p><code>tests/unit/runtime/assets-ignore.spec.ts</code> holds three properties: no prefilled page references a
-Drupal aggregate, every <code>/core/**</code> URL those pages reference answers 200, and every aggregate URL
-the substitution emits answers 200.</p>
-<h3 id="self-repair">Self-Repair</h3>
-<p>The self-repair layer acts; it is not a monitoring dashboard. It is a capped, GC&#39;d health ledger; 12
-host tripwires (empty render, size anomaly, asyncify called, mask leaked, semaphore dirty,
-incomplete migration, halted updb, pack generation mismatch, memory highwater rising, memory trend
-rising, ledger oversized, image cap projected) plus budget pressure and its forward projection; 7
-PHP tripwires (anonymous cache purity, missing cache header, leaked transaction, account not
-restored, over-100 params, over-50-byte LIKE, config drift); a mandatory boot self-test; and a
-repair ladder whose breaker escalates on repeated failure and decays on a clean interval.</p>
-<p>The tripwires run on the alarm and never on the request path. Recording a finding is a row write,
-and rows written is the meter that binds regeneration, so a per-request pass would spend the budget
-it exists to watch. A healthy site writes zero rows here: the repair state is persisted only when it
-changes.</p>
-<p><code>RepairLadder::maySafelyRepair()</code> fails closed. It refuses to act while a transaction is open,
-because a repair that runs mid-transaction is worse than the fault it was fixing.</p>
-<p>L4 quarantine and L5 rollback act. Three consecutive findings of the same code at <code>error</code> or above
-quarantine the site; a different code resets the count, because two unrelated faults are not one
-durable condition. A quarantined site stops writing and stops filling, and keeps serving, so a
-visitor sees a stale page and not an error. Rollback additionally requires ten consecutive failures
-and a restore point that exists; with none it refuses by name, because reverting to nothing is
-worse than the fault. Leaving quarantine is an explicit operator act at <code>/health?clear=1</code>, never
-automatic.</p>
+<h2 id="-how-it-works">🔧 How It Works</h2>
+<p>A request stops at the first layer that can answer it.</p>
+<pre><code class="mermaid">flowchart TD
+    A[Request] --> B{Static asset?}
+    B -- yes --> C[Workers Assets]
+    B -- no --> D{Edge cache hit?}
+    D -- yes --> E[Edge cache]
+    D -- no --> F{Stored page?}
+    F -- yes --> G[Durable Object page cache]
+    F -- no --> H[PHP renders in the Durable Object]
+    H --> I[Fills the caches above]</code></pre><p>Workers Assets answers <code>/core/**</code> without reaching the Worker. About 85% of the remaining traffic
+comes from the edge cache with no Durable Object request, about 14% from the object&#39;s stored HTML
+with no PHP, and about 1% renders. Authenticated pages skip the shared caches and are answered from a
+compiled plan or by the object.</p>
+<ul>
+<li><strong>A purpose-built PHP wasm binary.</strong> Every extension Drupal needs is statically linked, because
+workerd forbids the runtime wasm codegen that a dynamic linker needs. The toolchain is
+<a href="https://github.com/drupflare/phasm"><code>drupflare/phasm</code></a>.</li>
+<li><strong>PHP inside the Durable Object.</strong> <code>ctx.storage.sql</code> is synchronous only from within the object,
+and PHP&#39;s database calls block.</li>
+<li><strong>A Drupal database driver.</strong> <code>cfw_do_sqlite</code>, from <a href="https://github.com/drupflare/rom"><code>rom</code></a>,
+replaces everything in Drupal&#39;s database layer that assumed PDO and a file on disk.</li>
+<li><strong>Divisibility.</strong> First-run migration runs in JavaScript, in chunks that each finish inside one
+invocation.</li>
+</ul>
+<p><a href="architecture.html">Architecture</a> covers static assets, self-repair and each layer in detail.</p>
 <hr>
-<h2 id="what-it-runs">What It Runs</h2>
+<h2 id="-what-it-runs">🧩 What It Runs</h2>
 <ul>
 <li><strong>Drupal core</strong>, at the version <code>composer.lock</code> pins, with four contributed modules in the pack: <code>admin_toolbar</code>, <code>ctools</code>, <code>pathauto</code> and <code>token</code>.</li>
 <li><strong>PHP 8.5</strong> with 27 loaded extensions and stand-ins for curl, openssl, zip, exif, fileinfo and
-xmlwriter; see <a href="#limitations">Limitations</a>. The interpreter starts at 64 MiB of linear memory, and
-a boot after a dropped interpreter reuses its memory instead of allocating a second heap.</li>
+xmlwriter; see <a href="limitations.html">Limitations</a>. The interpreter starts at 64 MiB of linear
+memory, and a boot after a dropped interpreter reuses its memory instead of allocating a second
+heap.</li>
 <li><strong>A database</strong> in the object&#39;s own SQLite, created at first boot by replaying the packed
 <code>assets/drupal/site.sqlite</code> through the <code>cfw_do_sqlite</code> driver.</li>
 <li><strong>Real codebases.</strong> 27 production Drupal codebases pinned in <code>config/corpus.yml</code> are scored on 13
-capabilities; see <a href="#production-codebases">Production Codebases</a>.</li>
+capabilities; see <a href="compatibility.html">Compatibility</a>.</li>
 </ul>
 <hr>
-<h2 id="getting-started">Getting Started</h2>
-<h3 id="prerequisites">Prerequisites</h3>
-<ul>
-<li><a href="https://bun.sh/">Bun</a></li>
-<li>Node 24+ as well; a few scripts need <code>node:sqlite</code>, which Bun does not ship</li>
-<li>PHP 8.3+ with <code>pdo_sqlite</code> (only to run the database driver&#39;s test suite)</li>
-<li>A Cloudflare account with Durable Objects enabled (available on the free plan)</li>
-</ul>
-<h3 id="install-and-run">Install and Run</h3>
+<h2 id="-getting-started">🚀 Getting Started</h2>
+<p>You need <a href="https://bun.sh/">Bun</a>, Node 24+ (a few scripts use <code>node:sqlite</code>, which Bun does not
+ship), and a Cloudflare account with Durable Objects enabled, which the free plan includes.</p>
 <pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> clone</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://github.com/drupflare/worker.git</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">cd</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> worker</span></span>
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> install</span></span>
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> hydrate</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> dev</span></span></code></pre><p><code>assets/</code> and <code>.interp/</code> are generated and gitignored, so a clean clone has nothing to deploy until
-<code>bun run hydrate</code> lands them. See <a href="#building-from-a-clean-clone">Building From a Clean Clone</a>.</p>
-<p>Then open it:</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">open</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> http://localhost:8787/</span></span></code></pre><p>The first visit starts the site up, which is <a href="#first-boot">First Boot</a> below. To replay the whole
-database in one shot, which is faster locally:</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "localhost:8787/migrate?all=1"</span></span></code></pre><h3 id="first-boot">First Boot</h3>
-<p>A deployed site has an empty Durable Object until something asks it for a page. The first request
-records the ask, arms the alarm chain and answers 503 with a self-refreshing page, and the object
-replays the packed database a batch of chunks at a time until the cursor is done.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>header</th>
-<th>value</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>x-cfw-migrate</code></td>
-<td><code>starting</code>, then <code>&lt;chunk&gt;/&lt;chunks&gt;</code></td>
-</tr>
-<tr>
-<td><code>x-cfw-migrate-state</code></td>
-<td><code>queued</code>, <code>running</code> or <code>failed</code></td>
-</tr>
-<tr>
-<td><code>retry-after</code></td>
-<td><code>2</code> on the first request, <code>1</code> while chunks are going</td>
-</tr>
-</tbody></table></div>
-<p>A browser follows the <code>&lt;meta http-equiv=&quot;refresh&quot;&gt;</code> on that page and lands on the site by itself.
-Every other client gets the same 503 with the one-word body <code>migrating</code>.</p>
-<p>Measured on a deployed free worker with the 75-chunk pack of that release, the replay took 2
-invocations, <code>x-cfw-migrate</code> read <code>40/75</code> on the first poll, and a real Drupal page answered about 6
-seconds after the deploy. A 503 in that window means the site is starting, not that the deploy
-failed.</p>
-<p>Free replays <code>FREE_CHUNKS_PER_INVOCATION</code> chunks per invocation, which is 40; paid and local replay
-the whole pack in one. Batching is bound by chunk count because the clock does not advance across a
-synchronous replay. The chunk count is whatever <code>assets/drupal-sql/manifest.json</code> reports, and it
-moves whenever the packed database does.</p>
-<h3 id="claim-the-site">Claim the Site</h3>
-<p>The pack ships an installed database, so Drupal&#39;s <code>install.php</code> never runs and never asks you to
-pick a password. <code>/firstrun</code> does that, and until it runs, uid 1 carries an empty hash that no
-password can match.</p>
-<p>An unclaimed site says so. Once the migration finishes, a browser asking for any HTML page gets a
-one-click claim page instead of the front page: enter a site name, an administrator email and
-optionally a password, and the credentials come back in the response. The page carries
-<code>x-cfw-setup: required</code> and is never stored. A <code>curl</code>, an asset fetch and a POST all fall through to
-the normal path, so only a browser navigation is blocked.</p>
-<p>To claim it from a terminal instead:</p>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> dev</span></span></code></pre><p><code>assets/</code> and <code>.interp/</code> are generated and gitignored, so <code>bun run hydrate</code> lands them on a clean
+clone. Open <code>http://localhost:8787/</code>: the first visit starts the site, answering 503 with a
+self-refreshing page while the packed database replays.</p>
+<p>A new site is unclaimed until <code>POST /firstrun</code> mints the administrator password and the owner
+token, each shown once:</p>
 <pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -X</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> POST</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "localhost:8787/firstrun"</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  -H</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> 'content-type: application/json'</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  -d</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> '{"siteName":"My Site","adminMail":"you@example.com"}'</span></span></code></pre><p>The response carries <code>adminPass</code> and <code>ownerToken</code>, each shown once and stored nowhere. Save both
-before closing the terminal. Pass <code>&quot;adminPass&quot;:&quot;...&quot;</code> in the body to choose your own instead of
-taking the minted one. Claiming a site also pins its render origin; see
-<a href="#configuration">Configuration</a>.</p>
-<p>The body takes <code>siteName</code>, <code>siteMail</code>, <code>adminName</code>, <code>adminMail</code>, <code>adminPass</code> and <code>timezone</code>, all
-optional. A password never travels in a query string: <code>?pass=</code> is refused by name, because the
-request line is what <code>wrangler tail</code>, observability and every intermediary log.</p>
-<p>A bare <code>GET /firstrun</code> reports whether a site has been claimed without claiming it:</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "localhost:8787/firstrun"</span></span></code></pre><p>Once claimed, <code>/firstrun</code> answers 409. Reconfiguring is <code>POST /firstrun?force=1</code> with
-<code>Authorization: Bearer &lt;ownerToken&gt;</code>, which resets the administrator password.</p>
-<p>A claim is one invocation on a site still on the module set the pack baked. A migrated site claims
-in three, each with its own CPU budget: a warm-up that fills the discovery caches, the module
-install, then the claim itself. A CPU kill rolls back every write in its invocation, so a single
-long claim restarted from nothing on each retry.</p>
-<h3 id="log-in">Log In</h3>
-<p>Log in at <code>/user/login</code> as <code>admin</code> with the <code>adminPass</code> from the claim. That is the Drupal account,
-and it is the only credential that reaches the administrative UI.</p>
-<p>The owner token is a different credential and is not a Drupal login. It signs in to the <code>/_cfw</code>
-pages at <code>/_cfw/login</code>, and it is sent as <code>Authorization: Bearer &lt;ownerToken&gt;</code> to reach the owner
-routes directly, without turning on <code>PW_DIAGNOSTICS</code>. These are the ones this page uses:</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>route</th>
-<th>what it does</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>/export</code></td>
-<td>dumps the site database; the &quot;a customer can leave&quot; property</td>
-</tr>
-<tr>
-<td><code>/health</code></td>
-<td>the health ledger, the repair state and the budget projections</td>
-</tr>
-<tr>
-<td><code>/settings</code></td>
-<td>every runtime lever with its value and source; <code>PUT</code> merges a patch</td>
-</tr>
-<tr>
-<td><code>/setup/cf</code></td>
-<td>connect, inspect or revoke a Cloudflare account for the site</td>
-</tr>
-<tr>
-<td><code>/setup/mail</code></td>
-<td>onboard a sending domain onto a zone</td>
-</tr>
-<tr>
-<td><code>/setup/oidc</code></td>
-<td>set the OpenID Connect issuer and client id</td>
-</tr>
-<tr>
-<td><code>/installable</code></td>
-<td>whether a package can be installed here</td>
-</tr>
-<tr>
-<td><code>/install</code></td>
-<td>fetch a package from a registry and write its files</td>
-</tr>
-<tr>
-<td><code>/enable</code></td>
-<td>turn an installed module on</td>
-</tr>
-<tr>
-<td><code>/modify</code></td>
-<td>upload a module tree as a revision</td>
-</tr>
-<tr>
-<td><code>/reconcile</code></td>
-<td>what a site still owes the shipping pack, and one step of it</td>
-</tr>
-<tr>
-<td><code>/sweep</code></td>
-<td>coverage of the site&#39;s URLs, and one step of the sweep</td>
-</tr>
-<tr>
-<td><code>/git</code></td>
-<td>remotes, branches, pull requests and the working-tree diff</td>
-</tr>
-</tbody></table></div>
-<p><code>OWNER_ROUTES</code> in <code>src/site/routes.ts</code> is the whole list. Without the token these routes answer 401
-with a <code>WWW-Authenticate: Bearer</code> challenge; a diagnostic route answers 404 to the same caller.</p>
-<p>Signing in at <code>/_cfw/login</code> exchanges the token for a session cookie that page script cannot read and
-that no cross-site request carries. It expires after twelve hours, and <code>/_cfw/logout</code> ends it.</p>
-<p>A dump withholds the owner token, the Cloudflare OAuth tokens and the hash salt, and reports how many
-rows it held back. <code>?secrets=1</code> carries them: a faithful restore needs the salt, since it signs
-one-time login links and form tokens, and a backup kept anywhere else should not have it.</p>
-<p>A lost <code>adminPass</code> is recovered through Drupal&#39;s own password reset, which needs mail configured. A
-lost <code>ownerToken</code> comes back with <code>drangler recover-token &lt;site&gt; --store</code>, which proves write access
-to the site&#39;s <code>CONFIG_KV</code> namespace with a single-use record and receives the stored token;
-<code>--store</code> saves it in the system keychain. <a href="configuration.html#owner-token-recovery"><code>docs/configuration.md</code></a>
-has the protocol.</p>
-<h3 id="manage-the-site">Manage the Site</h3>
-<p><a href="https://github.com/drupflare/drangler"><code>drangler</code></a> is the CLI for the rest of a site&#39;s life. It
-needs no checkout of anything:</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> add</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -g</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> @drupflare/drangler</span></span>
-<span class="line"></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> status</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # plan, generation, header contract, claim state, diagnostics</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> health</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # is it up, and which cache tier answered</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> doctor</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">                 # the local toolchain and the Cloudflare credential</span></span></code></pre><p>Moving to a newer Drupflare is <code>drangler update</code>. With no argument it fast-forwards the local
-checkout and rebuilds the artifacts that belong to the version it left behind; naming a deployed
-worker updates the checkout and then deploys it there.</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> update</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">             # the local .drupflare checkout, to the latest</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> update</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --to</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> v0.3.0</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # or to a named version</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> update</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">     # and then deploy it to an existing worker</span></span></code></pre><p>The same CLI claims a site (<code>site claim</code>), recovers its owner token (<code>recover-token</code>), maps
-hostnames (<code>domain add</code>), drives reconciliation and the sweep, uploads module revisions (<code>modify</code>)
-and migrates a site in either direction. Its README has the command table and says which commands
-write to a live site.</p>
-<h3 id="updating-a-deployed-worker">Updating a Deployed Worker</h3>
-<p>The deploy button creates a repository from this one, so your worker is a copy and not a fork, and
-the two share no history. Adding this repository as a remote lets you merge later releases into it.</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"># one time</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> remote</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> add</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> template</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://github.com/drupflare/worker</span></span>
-<span class="line"></span>
-<span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"># to install an update</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> switch</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> master</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> fetch</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --all</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> merge</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> template</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --allow-unrelated-histories</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -m</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "chore: merge upstream"</span></span></code></pre><p>Pushing the result deploys it, if you connected the repository to Cloudflare when you created it.
-Otherwise run <code>bunx wrangler deploy</code>, or <code>drangler update my-site</code> to update the checkout and deploy
-in one step.</p>
-<ul>
-<li>The <code>git remote add</code> runs once per clone.</li>
-<li>Switch to the branch you want to update before merging.</li>
-<li><code>--allow-unrelated-histories</code> is what lets two repositories with no common commit merge at all.</li>
-<li>Take a backup branch first, so a merge you dislike costs nothing:</li>
-</ul>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> switch</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -c</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> before-template-merge</span></span></code></pre><p>To take a specific release instead of the tip:</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> fetch</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --tags</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> template</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> switch</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> master</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> merge</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> v1.0.4</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --allow-unrelated-histories</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -m</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "chore: merge template v1.0.4"</span></span></code></pre><p>Your own changes are the ones that conflict, and <code>wrangler.jsonc</code> is the usual place: it carries the
-worker name and the bindings you added. Resolve it in favour of your values and take the template&#39;s
-side elsewhere. <code>-X theirs</code> does that in one pass when you have made no changes worth keeping.</p>
-<p>A merge that changes <code>src/</code> or the packed modules needs a deploy to take effect. A merge that changes
-the pack reaches existing sites through reconciliation, described next.</p>
-<h3 id="keeping-an-existing-site-current">Keeping an Existing Site Current</h3>
-<p>The pack is delivered when a site is provisioned, so a fix that lands inside it reaches new sites on
-its own. Reconciliation carries the same fix to sites that already exist. Each step is an
-observation of the site&#39;s end state, not a script: it is checked before the step runs and again
-afterwards, so a site that already matches is marked done without doing any work, and a step that
-ran without converging is reported and not assumed.</p>
-<p>The alarm chain drives one step per firing. <code>drangler reconcile</code> shows where a site stands and which
-step is stuck, and <code>--run</code> takes a step now instead of at the next firing.</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> reconcile</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">       # version, every step, and its standing</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> reconcile</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --all</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # drive steps until the version stops moving</span></span></code></pre><p>Steps that change configuration or state go through Drupal&#39;s own writers, so every cached copy of a
-value is invalidated by the code that owns it. A step that changes what the compiled container holds
-drops the container and any stored heap image, and the next boot rebuilds it.</p>
-<h3 id="covering-the-rest-of-the-site">Covering the Rest of the Site</h3>
-<p>A page is rendered when a visitor asks for it, and that visitor waits. The sweep enumerates the URLs
-a site actually has, from its router table and its entity tables, ranks them by observed views then
-recency then depth, and queues the top of the list for the same fill batch a visitor&#39;s request would
-use. It never renders, so it cannot compete with a request for the interpreter.</p>
-<p>It runs by default and is bounded: it refuses below a remaining-budget floor, spends at most a
-declared share of the day&#39;s writes, and resumes the next day when that share is gone. Left unasked it
-takes the smaller share; <code>SWEEP</code> sets it explicitly in both directions, and <code>SWEEP=0</code> turns it off.</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> sweep</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">       # coverage, and what bounded the last step</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> sweep</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --run</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # take a step now</span></span></code></pre><h3 id="building-from-a-clean-clone">Building From a Clean Clone</h3>
-<p><code>assets/</code> is generated packs and <code>.interp/</code> holds the interpreter. Both are gitignored, so a fresh
-clone has nothing to deploy until one of two routes lands them.</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> install</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">     # postinstall restores the interpreter from the CDN, verified by sha256</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> hydrate</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # the payload if one is published, a source build if not</span></span>
-<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> dev</span></span></code></pre><div class="table"><table>
-<thead>
-<tr>
-<th>route</th>
-<th>command</th>
-<th>needs</th>
-<th>takes</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>payload</strong></td>
-<td><code>bun run hydrate</code></td>
-<td>network</td>
-<td>seconds</td>
-</tr>
-<tr>
-<td><strong>source</strong></td>
-<td><code>bun run build:local</code></td>
-<td>network, PHP, composer, node 24+</td>
-<td>minutes</td>
-</tr>
-</tbody></table></div>
-<p>The payload route is one verified HTTPS GET of a release asset, which is what lets the Deploy to
-Cloudflare button work: Workers Builds has no Docker. The source route regenerates the same bytes
-locally, for a commit no release was cut from. <code>bun run hydrate</code> takes the payload route and falls
-back to the source route when there is no payload; <code>--payload-only</code> forbids the fallback and
-<code>--from-source</code> skips straight to it.</p>
-<p>The source route runs seventeen steps in one order, each skipped when what it produces is already
-on disk, and together they produce every artifact a release payload carries:</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span>interpreter → frame                the two files the binary seam needs</span></span>
-<span class="line"><span>siblings    → driver               the Drupal modules, packed into assets/driver.json</span></span>
-<span class="line"><span>tree → mount → site → patch        the Drupal tree, with the driver, installed and patched for wasm</span></span>
-<span class="line"><span>bootstrap → twig → core → pack     the file list, the compiled Twig cache, the per-file pack</span></span>
-<span class="line"><span>static → agg                       the browser-fetchable half of core/, and the per-library aggregates</span></span>
-<span class="line"><span>container → sql                    the packed container row, and the migration chunks</span></span>
-<span class="line"><span>prefill                            the pages, rendered by a local wrangler dev and lifted back</span></span></code></pre><p>Run <code>bun run build:plan</code> first. It prints the plan and names every tool this machine is missing
-before it spends a minute on the 180 MB tree download. No step needs Docker.</p>
-<p><a href="building-from-source.html"><code>docs/building-from-source.md</code></a> is the full account: what each step
-produces, why the order is the order, what caches on what, and why <code>prefill</code> is the one step allowed
-to fail without failing the build.</p>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  -d</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> '{"siteName":"My Site","adminMail":"you@example.com"}'</span></span></code></pre><p><a href="getting-started.html">Getting Started</a> covers first boot, claiming, logging in, deploying and
+updating a worker, and moving an existing site in with <a href="https://github.com/drupflare/drangler"><code>drangler</code></a>.</p>
 <hr>
-<h2 id="moving-a-site-in">Moving a Site In</h2>
-<p><a href="https://github.com/drupflare/drangler"><code>drangler</code></a> reads an existing Drupal site, scores the move
-and carries it over; the worker accepts what it sends.</p>
-<ul>
-<li><strong>Preview.</strong> <code>drangler preview --host &lt;ssh target&gt; --root &lt;docroot&gt;</code> makes a working duplicate of
-a live site with read-only commands on the old server. It converts a MySQL, MariaDB or PostgreSQL
-dump to SQLite, carries the public and private files and the code, and reads <code>$config</code> literals
-and <code>.htaccess</code> redirects and headers. The duplicate runs on <code>wrangler dev</code>, or deploys with
-<code>--deploy</code>.</li>
-<li><strong>Drupal 10 sources.</strong> A Drupal 10 site is a migration source that drangler plans onto the Drupal
-11 pack. A custom install profile travels inside the database, so the site can be claimed.</li>
-<li><strong>Registry-first delivery.</strong> <code>/install</code> resolves a composer graph: <code>replace</code>, stability flags,
-branch aliases, branch archives, metapackages, virtual packages and <code>InstalledVersions</code>.
-Composer plugins are skipped. <code>drangler build --project</code> covers patches and private repositories.</li>
-<li><strong>Settings from the old host.</strong> <code>DRUPAL_ENV_&lt;NAME&gt;</code>, <code>DRUPAL_CONFIG</code> and <code>DRUPAL_SETTINGS</code> reach PHP, and
-<code>RESPONSE_HEADERS</code> and <code>REDIRECTS</code> carry a migrated site&#39;s header and redirect rules. See
-<a href="configuration.html#migrated-project-settings"><code>docs/configuration.md</code></a>.</li>
-<li><strong>Security headers.</strong> Every response carries <code>X-Content-Type-Options</code>, <code>X-Frame-Options</code> and
-<code>Referrer-Policy</code>, and <code>Strict-Transport-Security</code> over https. <code>RESPONSE_HEADERS</code> replaces or
-removes any of them and is where a <code>Content-Security-Policy</code> goes.</li>
-<li><strong>Hostnames.</strong> One deployment is one site on any number of hostnames; see
-<a href="#url-routing">URL Routing</a>. <code>drangler domain add &lt;host&gt;</code> maps a hostname and adds its Custom
-Domain route.</li>
-<li><strong>Claiming.</strong> A migrated site claims with <code>POST /firstrun</code> and <code>{&quot;migrated&quot;: true}</code>, which mints
-the owner token and marks the site claimed without changing uid 1, the site name or any mail
-setting.</li>
-</ul>
-<hr>
-<h2 id="drupflare-vs-a-traditional-vps">Drupflare vs a Traditional VPS</h2>
-<p>Drupflare targets solo, enterprise, indie and budget-bound sites, where the cost is the hours and not
-the hosting bill.</p>
-<p>Drupflare is faster than a single-region VPS for any visitor who is not sitting next to it, and the
-margin grows with distance. Traffic-weighted across the workload mix, against nginx and PHP-FPM 8.5
-serving the same Drupal tree and the same database:</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>the visitor is</th>
-<th>ratio</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>in the VPS&#39;s own datacenter</td>
-<td><strong>1.50x</strong></td>
-</tr>
-<tr>
-<td>on the same continent</td>
-<td><strong>6.35x</strong></td>
-</tr>
-<tr>
-<td>one ocean away</td>
-<td><strong>11.32x</strong></td>
-</tr>
-<tr>
-<td>on the far side of the world</td>
-<td><strong>23.09x</strong></td>
-</tr>
-</tbody></table></div>
-<p>Same-datacenter is the VPS at its theoretical best and nobody&#39;s real audience. The rest is
-<a href="#geography">Geography</a>. Where Drupflare is slower is under <a href="#limitations">Limitations</a>, and a raw
-uncached render is one of them.</p>
-<p>Every Drupflare figure marked <strong>M</strong> is measured, on deployed Cloudflare infrastructure or on this
-machine, and the column says which. <strong>D</strong> is derived from measured inputs and is arithmetic, not a
-reading. <strong>L</strong> is a vendor&#39;s published list price. <strong>n/m</strong> is not measured, and is stated as a range
-or omitted.</p>
-<h3 id="against-a-vps">Against a VPS</h3>
-<p><code>docker/vps.yml</code> runs nginx 1.29 and PHP 8.5 FPM with opcache and tracing JIT against the same
-Drupal tree and the same site database Drupflare serves, so the runtime is the only variable.
-<code>bun run measure:vps</code> drives both. The generator&#39;s own ceiling on the same machine is 8,308 req/s
-against nginx and 1,231 against the front worker, so it constrains neither arm.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>workload</th>
-<th>VPS</th>
-<th>Drupflare</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Anonymous cached, p50</td>
-<td>3 ms</td>
-<td><strong>2 ms</strong></td>
-</tr>
-<tr>
-<td>Anonymous cached, p95</td>
-<td>49 ms</td>
-<td><strong>4 ms</strong></td>
-</tr>
-<tr>
-<td>Anonymous cached, 32 clients</td>
-<td>122 req/s, p50 10 ms</td>
-<td><strong>438 req/s</strong>, 62 ms</td>
-</tr>
-<tr>
-<td>Re-render, tag-invalidated</td>
-<td><strong>24 ms</strong></td>
-<td>30 ms</td>
-</tr>
-<tr>
-<td>Re-render, page cache hit</td>
-<td>24 ms</td>
-<td><strong>22 ms</strong></td>
-</tr>
-</tbody></table></div>
-<p>An authenticated session is a curve and not a median: the first three requests render and compile a
-plan, and everything after is answered in the isolate with no Durable Object hop. Converged p50 for
-one session driven sequentially, n=14 per path:</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>authenticated path</th>
-<th>VPS</th>
-<th>Drupflare</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>/</code></td>
-<td>11 ms</td>
-<td><strong>5 ms</strong></td>
-</tr>
-<tr>
-<td><code>/admin/content</code></td>
-<td>71 ms</td>
-<td><strong>5 ms</strong></td>
-</tr>
-<tr>
-<td><code>/user/1</code></td>
-<td>56 ms</td>
-<td><strong>5 ms</strong></td>
-</tr>
-<tr>
-<td><code>/admin/structure/types</code></td>
-<td>18 ms</td>
-<td><strong>6 ms</strong></td>
-</tr>
-</tbody></table></div>
-<p>Under concurrency Drupflare holds about 312 req/s flat from 4 to 32 clients on both authenticated
-workloads. The VPS peaks at 204 req/s on the front page and 67 on admin, then declines.</p>
-<p>Three caveats apply to these tables.</p>
-<p><strong>Both arms are on localhost, which is the VPS&#39;s best case.</strong> A VPS sits in one region; Drupflare
-answers from the visitor&#39;s own colo. The network term a real user pays on every VPS request is
-absent from the tables above. <a href="#geography">Geography</a> measures it, and it is the largest term in the
-comparison.</p>
-<p><strong>A re-render is 1.21x on the pages a save invalidates, and Drupflare is faster on the rest.</strong> A
-save purges only the cache entries matching its tags, so every other page re-renders from a warm
-dynamic page cache. The larger ratios elsewhere in this file are a warm-kernel interpreter
-comparison and a both-bins-emptied edge render, which are different workloads on different
-instruments and do not divide into each other. The authenticated rows are not a runtime ratio
-either: they are a hop that does not happen.</p>
-<p><strong>The authenticated arm is one Durable Object with no replica lanes.</strong> A four-lane pool measured
-3.29x on real authenticated renders and none of it is in the numbers above. Bodies agree to within
-10 bytes on the anonymous arms; on the authenticated arms Drupflare serves the larger page (103,689
-against 96,177 on the front page) and the difference is unexplained.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th></th>
-<th>Drupflare</th>
-<th>Traditional VPS</th>
-<th>prov.</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>Setup, from zero to a rendering site</strong></td>
-<td>one deploy, no server</td>
-<td>provision, webserver, PHP-FPM, MariaDB, TLS, cron, firewall, backups</td>
-<td>n/m</td>
-</tr>
-<tr>
-<td><strong>Local toolchain you must learn first</strong></td>
-<td>none for deploy; <code>bun</code> to develop</td>
-<td>ddev or Lando, Composer, Drush, ssh, a database client</td>
-<td>n/m</td>
-</tr>
-<tr>
-<td><strong>Monthly infrastructure</strong></td>
-<td>itemised in <a href="#the-cost-model">The Cost Model</a></td>
-<td>the same table</td>
-<td>L</td>
-</tr>
-<tr>
-<td><strong>What &quot;scaling up&quot; means</strong></td>
-<td>nothing to do; the edge absorbs it</td>
-<td>resize the box, tune PHP-FPM workers, add a cache layer</td>
-<td>n/m</td>
-</tr>
-<tr>
-<td><strong>OS patching, PHP upgrades, kernel CVEs</strong></td>
-<td>none exist to patch</td>
-<td>yours, forever</td>
-<td>n/m</td>
-</tr>
-<tr>
-<td><strong>Anonymous page served from</strong></td>
-<td>edge cache, <strong>~85%</strong> of traffic, <strong>0</strong> Durable Object requests</td>
-<td>your box, every request</td>
-<td>M edge</td>
-</tr>
-<tr>
-<td><strong><code>page_cache</code> hit</strong></td>
-<td><strong>1 ms</strong> of Durable Object CPU, 1 statement</td>
-<td>full LEMP round trip</td>
-<td>M edge</td>
-</tr>
-<tr>
-<td><strong><code>dynamic_page_cache</code> hit</strong></td>
-<td>a handful of ms and 6 statements</td>
-<td>n/m</td>
-<td>M edge</td>
-</tr>
-<tr>
-<td><strong>Full uncached render</strong></td>
-<td>seconds of Durable Object CPU with both cache bins emptied; the technical report carries the figure</td>
-<td>tens of ms native PHP, warm kernel</td>
-<td>M edge</td>
-</tr>
-<tr>
-<td><strong>Wasm penalty, warm kernel only</strong></td>
-<td>a same-machine interpreter ratio, not the edge cost above; the technical report carries it</td>
-<td>1x by definition</td>
-<td>M local</td>
-</tr>
-<tr>
-<td><strong>Authenticated page, plan hit</strong></td>
-<td>answered in the front worker with no Durable Object hop; see the curve above</td>
-<td>tens of ms on a warm PHP-FPM pool</td>
-<td>M edge</td>
-</tr>
-<tr>
-<td><strong>Authenticated read concurrency</strong></td>
-<td>scales with the replica pool: <strong>1.00 / 2.03 / 3.29x</strong> at 1 / 2 / 4 lanes, on real renders</td>
-<td>one box, until you resize it</td>
-<td>M edge</td>
-</tr>
-<tr>
-<td><strong>Cold start</strong></td>
-<td>over a second; paid absorbs it and free amortises it off the request path</td>
-<td>~0; the box is already running</td>
-<td>M edge</td>
-</tr>
-<tr>
-<td><strong>Free-plan capacity</strong></td>
-<td><strong>~100,000 page views/day</strong> (~3M/month), saturated; every visit costs one Worker request, cached or not</td>
-<td>whatever the box does before it swaps</td>
-<td>M edge</td>
-</tr>
-<tr>
-<td><strong>Worker bundle</strong></td>
-<td>fits the 64 MiB Worker size limit</td>
-<td>n/a</td>
-<td>M local</td>
-</tr>
-<tr>
-<td><strong>First-run migration</strong></td>
-<td>chunked, one per invocation on free, each sized to complete on its own</td>
-<td><code>drush si</code>, then hope</td>
-<td>M local</td>
-</tr>
-<tr>
-<td><strong>When something breaks at 3am</strong></td>
-<td>a self-repair ladder runs: L0 observe, L1 reset, L2 reconstruct, L3 reconfigure, L4 quarantine, L5 rollback</td>
-<td>you, or someone you pay</td>
-<td>M built</td>
-</tr>
-<tr>
-<td><strong>Failure detection</strong></td>
-<td><strong>19 tripwires</strong> (12 host, 7 PHP) plus a mandatory boot self-test</td>
-<td>uptime ping, if configured</td>
-<td>M built</td>
-</tr>
-</tbody></table></div>
-<h3 id="the-cost-model">The Cost Model</h3>
-<p>The infrastructure saving is small. The labour saving is the large one.</p>
-<p>Infrastructure, for one small content site. Vendor figures are list prices and are marked so:</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>line item</th>
-<th>Drupflare free</th>
-<th>Drupflare paid</th>
-<th>small VPS</th>
-<th>prov.</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Compute</td>
-<td>$0.00</td>
-<td>$5.00 Workers Paid</td>
-<td>$10-12 for 1-2 vCPU and 2 GiB</td>
-<td>L</td>
-</tr>
-<tr>
-<td>Database</td>
-<td>$0.00 (the object&#39;s own SQLite)</td>
-<td>included</td>
-<td>on the box, or $15+ managed</td>
-<td>L</td>
-</tr>
-<tr>
-<td>Backups</td>
-<td>$0.00</td>
-<td>included in the plan&#39;s storage</td>
-<td>$0.50-2.50, snapshots or a plan surcharge</td>
-<td>L</td>
-</tr>
-<tr>
-<td>CDN</td>
-<td>included</td>
-<td>included</td>
-<td>$0 with Cloudflare in front, which most do</td>
-<td>L</td>
-</tr>
-<tr>
-<td>TLS</td>
-<td>included</td>
-<td>included</td>
-<td>$0 via Let&#39;s Encrypt, yours to renew</td>
-<td>L</td>
-</tr>
-<tr>
-<td><strong>Monthly total</strong></td>
-<td><strong>$0.00</strong></td>
-<td><strong>~$5.00</strong></td>
-<td><strong>~$10.50-14.50</strong></td>
-<td></td>
-</tr>
-<tr>
-<td><strong>Annual</strong></td>
-<td><strong>$0</strong></td>
-<td><strong>~$60</strong></td>
-<td><strong>~$126-174</strong></td>
-<td></td>
-</tr>
-</tbody></table></div>
-<p>Paid against a VPS is roughly $66-114 a year. The VPS is the smallest box that meets Drupal&#39;s
-documented memory minimum, priced from provider list prices in <a href="impact.html">the impact report</a>.
-The row with no VPS equivalent is the first one: there is no $0 VPS, and free carries about 3.0M
-visits a month with the same feature set as paid, including both performance levers, which default
-on regardless of plan. At fleet scale the infrastructure works out near $0.028 per site per month.</p>
-<p>The column that cannot be filled in is the difference:</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>recurring obligation</th>
-<th>Drupflare</th>
-<th>VPS</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>OS and kernel CVEs</td>
-<td>nothing to patch</td>
-<td>monthly, forever</td>
-</tr>
-<tr>
-<td>PHP minor and major upgrades</td>
-<td>a binary swap, built in CI</td>
-<td>yours, with a compatibility risk each time</td>
-</tr>
-<tr>
-<td>Webserver and PHP-FPM tuning</td>
-<td>does not exist</td>
-<td>yours</td>
-</tr>
-<tr>
-<td>Drupal security releases</td>
-<td>detected on the cron chain, reported by <code>/health</code></td>
-<td>yours, on the advisory&#39;s schedule</td>
-</tr>
-<tr>
-<td>Backup verification</td>
-<td>export and restore chunked, resumable, rehearsed</td>
-<td>yours to configure, and to test</td>
-</tr>
-<tr>
-<td>Uptime and alerting</td>
-<td>19 tripwires plus a self-repair ladder</td>
-<td>uptime ping, if configured</td>
-</tr>
-<tr>
-<td>Traffic spike</td>
-<td>nothing to do</td>
-<td>resize, tune, add caching</td>
-</tr>
-</tbody></table></div>
-<p>Price those at your own rate; this project states no hourly figure.</p>
-<p>Performance, with the full provenance in
-<a href="technical-report.html#-executive-summary">the report&#39;s executive summary</a>:</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th></th>
-<th>Drupflare</th>
-<th>native PHP on a VPS</th>
-<th>prov.</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Cached page (the ~99% case)</td>
-<td><strong>1 ms</strong> DO CPU, 1 statement</td>
-<td>full LEMP round trip</td>
-<td>M edge</td>
-</tr>
-<tr>
-<td>Re-render, tag-invalidated</td>
-<td><strong>30 ms</strong></td>
-<td><strong>24 ms</strong></td>
-<td>M local</td>
-</tr>
-<tr>
-<td>Re-render, page cache hit</td>
-<td><strong>22 ms</strong></td>
-<td>24 ms</td>
-<td>M local</td>
-</tr>
-<tr>
-<td>Uncached render, cold bins</td>
-<td><strong>2,127 ms</strong> DO CPU (n=10); a different cache state</td>
-<td>n/m on this instrument</td>
-<td>M edge</td>
-</tr>
-<tr>
-<td>Wasm penalty, warm kernel</td>
-<td><strong>3.57x</strong> warm / 3.94x cold, same-machine ratio</td>
-<td>1x by definition</td>
-<td>M local</td>
-</tr>
-<tr>
-<td>Isolate startup</td>
-<td><strong>5 ms</strong>, not billed to the request</td>
-<td>n/a; the box is running</td>
-<td>M edge</td>
-</tr>
-<tr>
-<td>Cold boot</td>
-<td><strong>1,264 ms</strong>, amortised off the request path</td>
-<td>~0</td>
-<td>M edge</td>
-</tr>
-<tr>
-<td>Authenticated page</td>
-<td><strong>208 ms</strong> p50 from a client, both levers on</td>
-<td>tens of ms, warm pool</td>
-<td>M edge</td>
-</tr>
-</tbody></table></div>
-<p>The architecture wins by not rendering. The tiers above answer without a render, and where a
-logged-in visitor forces one, shell assembly cuts the render and not the boot.</p>
-<p>The two render rows are different workloads on different instruments and must not be divided. The
-30/24 pair is one machine and one instrument, with Drupal&#39;s <code>render</code> and <code>dynamic_page_cache</code> bins
-warm on both sides, which is the state a content change produces. The 2,127 ms is the edge billing a
-render with both bins emptied. Dividing an edge cold figure by a local warm one is how an external
-review published a 225x that this project had to retract; the technical report keeps that correction
-at its Provenance section.</p>
-<p>Authenticated traffic is the harder case. Shell assembly and a resident interpreter put a logged-in
-page at about 467 ms against 3,391, and a replica pool spreads authenticated reads across objects
-instead of queueing them behind one. A VPS with a warm PHP-FPM pool is still ahead on a single
-request. Drupflare answers the concurrency question with lanes: adding one is a config change and a
-provisioning call, not a resize.</p>
-<p>Write-heavy traffic is a narrow loss. A lane runs a write locally, discards its own effect and
-forwards the statement list to the primary, which sequences it, so the work spreads and only the
-commit serialises. The class of write that originates a value two objects would mint differently
-cannot spread; those are refused, because a retry cannot repair them.</p>
-<h3 id="geography">Geography</h3>
-<p>Every table above gives the VPS a visitor standing in its own datacenter. A real visitor is
-somewhere else, and a single-region VPS answers all of them from one place while Cloudflare answers
-from the colo nearest each. That difference is the largest term in the comparison. It is measured:
-<code>scripts/measure/delay-proxy.mjs</code> puts a real delaying proxy in front of the VPS arm, so its
-connection pays the network instead of having a number added afterwards.</p>
-<p>The injected delays are Azure&#39;s published P50 round-trip figures between regions. From US-East: West
-US 69 ms, West Europe 83 ms, Brazil 117 ms, India 198 ms, Australia 201 ms, Southeast Asia 224 ms.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>injected round trip</th>
-<th>VPS weighted p50</th>
-<th>Drupflare weighted p50</th>
-<th>ratio</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>0 ms, same datacenter</td>
-<td>14.8 ms</td>
-<td>9.9 ms</td>
-<td><strong>1.50x</strong></td>
-</tr>
-<tr>
-<td>40 ms, same continent</td>
-<td>56.5 ms</td>
-<td>8.9 ms</td>
-<td><strong>6.35x</strong></td>
-</tr>
-<tr>
-<td>82 ms, transatlantic</td>
-<td>100.2 ms</td>
-<td>8.9 ms</td>
-<td><strong>11.32x</strong></td>
-</tr>
-<tr>
-<td>200 ms, antipodal</td>
-<td>218.0 ms</td>
-<td>9.4 ms</td>
-<td><strong>23.09x</strong></td>
-</tr>
-</tbody></table></div>
-<p>Traffic-weighted across the workload mix, three replica lanes, <code>viable: true</code> with zero regressions
-on all three network arms. Drupflare&#39;s figure barely moves, because the term being added is one a
-single-region VPS pays and an edge network does not.</p>
-<p>Cloudflare Containers accept a placement constraint, so the same comparison runs on real
-infrastructure. The VPS arm was pinned first to western Europe and then to eastern North America,
-same image and same instance type, driven from a US-East client, n=15 interleaved with the arm order
-alternating:</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>VPS placement</th>
-<th>VPS floor</th>
-<th>Drupflare floor</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Western Europe</td>
-<td>174.3 ms</td>
-<td>82.6 ms</td>
-</tr>
-<tr>
-<td>Eastern North America</td>
-<td>111.7 ms</td>
-<td>78.0 ms</td>
-</tr>
-</tbody></table></div>
-<p>These are minima and not medians, because the client&#39;s own round trip is in both and the floor is
-where it shows. Moving the container across the Atlantic costs 62.6 ms on an otherwise identical
-arm, and a same-continent VPS still sits about 34 ms above Drupflare, because a region is not the
-visitor&#39;s own colo. Subtracting the shared client round trip leaves figures that agree with the
-proxy table above, so two instruments reach the same answer.</p>
-<p>The advantage is zero for a visitor in the VPS&#39;s own city and largest for one on the other side of
-the world, so a site whose audience sits beside its VPS gains nothing here. There is no single
-worldwide number to quote in place of the rows above: internet penetration is published by region,
-users per region are not, and averaging without that table would invent a figure. The proxy also
-understates the gap, since it delays data and not the TCP handshake, and Drupflare&#39;s own arm stays on
-localhost.</p>
-<hr>
-<h2 id="impact">Impact</h2>
-<p><a href="impact.html"><code>docs/impact.md</code></a> prices the energy, carbon and water of a deployment and says how
-far each figure can be trusted. The saving is a total: it compares a deployment&#39;s whole year of
-energy, idle included, with Drupflare&#39;s whole year for the same site. It is not a claim about the
-efficiency of one view, because most of a conventional deployment&#39;s energy is idle power that does
-not depend on views.</p>
+<h2 id="-impact">📊 Impact</h2>
+<p>The saving is a total: it compares a deployment&#39;s whole year of energy, idle included, with
+Drupflare&#39;s whole year for the same site. It makes no claim about the efficiency of one view,
+because most of a conventional deployment&#39;s energy is idle power that does not depend on views.</p>
 <p>Against a production deployment of three regions, each with a high-availability web pair and
 database pair sized at 15% utilisation, one Drupflare site at 1,000,000 views a month draws 18.3 Wh a
 year where the baseline draws 224 kWh, a total saving of 99.99%. The smallest conventional
 deployment, one small VPS, still saves 99.80% at that traffic and 94.24% at 30 million views a
 month. Per request the two runtimes are at parity, so the saving comes from idle nodes and not from
 PHP running faster.</p>
-<p>Every figure is derived and modelled, because no source sizes a production node. The page labels
-each one.</p>
+<p>Every figure is derived and modelled, because no source sizes a production node. <a href="impact.html">Impact</a>
+labels each one; <a href="energy.html">Energy</a>, <a href="economics.html">Economics</a> and
+<a href="environment.html">Environment</a> hold the detail.</p>
 <hr>
-<h2 id="replica-lanes">Replica Lanes</h2>
-<p>A Durable Object runs one request at a time, and a PHP render holds it for the whole render. A site
-is not confined to one object: a namespace holds unlimited objects, so a site spreads its serving
-path across lanes, each a separate object named <code>&lt;site&gt;#r&lt;n&gt;</code>. Only <code>/serve</code> spreads. Owner and
-diagnostic routes pin to the primary, so <code>/export</code> cannot answer from a lane&#39;s copy.</p>
-<p>A lane removes queueing and not service time. A cached page is answered from the edge cache or the
-object&#39;s own SQLite without booting PHP, so a site taking 100 req/s of cached traffic queues nothing
-and needs no lane, while a site taking 20 req/s of authenticated renders may need several.</p>
-<p>This works because an authenticated GET writes no authoritative state under this SAPI. Measured
-per-table on real renders: no <code>sessions</code> row, no <code>users_field_data.access</code>, no <code>flood</code>. Core
-throttles the access write on <code>KernelEvents::TERMINATE</code>, which this SAPI never dispatches. A lane
-maintains its own copy, sweeping expired rows and applying the primary&#39;s replication log, and
-refuses anything authoritative with a 421 that the front worker retries against the primary.</p>
-<h3 id="scaling">Scaling</h3>
-<p>Two quantities carry different claims.</p>
-<p><strong>Per object, measured.</strong> One object is one Durable Object, and it serves one request at a time.
-Driven alone on a deployed paid worker, a lane answered 31 authenticated renders per second at a p50
-of 216 ms, with 8 concurrent clients and every response reporting <code>x-cfw-cache: RENDER</code>. The same
-object answered 268 cached pages per second at a p50 near 20 ms, reporting <code>x-cfw-cache: HIT</code>. A
-render is roughly ten times the work of a cached hit, which is the ratio the architecture is built
-around.</p>
-<p><strong>Across a pool, by topology.</strong> Addressing each object directly and summing, a pool reaches
-<strong>1.00 / 1.72 / 3.64 / 7.10 / 15.19x at 1 / 2 / 4 / 8 / 16 lanes</strong>, which is 95% of perfect at
-sixteen. That is a statement about how many objects a site has and what each one serves, not about
-what a visitor gets; the routed figure below is the smaller one and is the one to quote.</p>
-<p><strong>Across a pool, as routed.</strong> Real traffic does not address a lane; it is hashed to one, and the
-primary serves bucket 0 as well as feeding replication. Driven that way against deployed sites with
-authenticated admin pages and a fixed 20 second window per cell:</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>lanes</th>
-<th>served, 16 clients</th>
-<th>p50</th>
-<th>served, 64 clients</th>
-<th>p50</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>0</td>
-<td>62</td>
-<td>5969 ms</td>
-<td>98</td>
-<td>16048 ms</td>
-</tr>
-<tr>
-<td>1</td>
-<td>54</td>
-<td>7712 ms</td>
-<td>78</td>
-<td>33741 ms</td>
-</tr>
-<tr>
-<td>2</td>
-<td>79</td>
-<td>3172 ms</td>
-<td>154</td>
-<td>10431 ms</td>
-</tr>
-<tr>
-<td>4</td>
-<td>81</td>
-<td>2867 ms</td>
-<td>147</td>
-<td>6506 ms</td>
-</tr>
-<tr>
-<td>8</td>
-<td>128</td>
-<td>1715 ms</td>
-<td>220</td>
-<td>6125 ms</td>
-</tr>
-<tr>
-<td>16</td>
-<td><strong>294</strong></td>
-<td>364 ms</td>
-<td><strong>445</strong></td>
-<td>647 ms</td>
-</tr>
-</tbody></table></div>
-<p>The table counts served requests and not a rate, because every cell drives the same window and a
-rate computed over elapsed time charges an arm twice for its own tail. Sixteen lanes serve 4.74x and
-4.54x what one object serves, and the latency effect is larger than the throughput one: p50 falls
-16.4x at 16 clients and 24.8x at 64.</p>
-<p><strong>Under saturation the baseline is zero.</strong> The table above drives 16 and 64 clients against admin
-pages. Driven instead at 512 concurrent clients over 200 distinct authenticated node pages, same 20
-second window:</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>lanes</th>
-<th>served, 512 clients</th>
-<th>vs one lane</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>0</td>
-<td><strong>0</strong></td>
-<td>--</td>
-</tr>
-<tr>
-<td>1</td>
-<td>426</td>
-<td>1.00x</td>
-</tr>
-<tr>
-<td>2</td>
-<td>814</td>
-<td>1.91x</td>
-</tr>
-<tr>
-<td>8</td>
-<td><strong>1,889</strong></td>
-<td>4.43x</td>
-</tr>
-</tbody></table></div>
-<p>A single object serves nothing at this load; it sheds every request. The 4-lane cell is withheld
-because its site returned a 500 rate the other arms did not reproduce, and the rig was torn down
-before it could be re-driven. The two workloads are not comparable and their numbers must not be
-divided into each other.</p>
-<p><strong>A lane is paid for in rows written.</strong> Every row written on the primary is written again on each
-lane, so a pool of N costs N+1 rows for the same change. Rows written is the meter that bounds
-regeneration, so a pool buys read throughput at a write-amplification cost: an 8-lane pool reaches
-the daily row ceiling nine times sooner than one object. Size a pool against the write rate as well
-as the read rate; it is a lever for read-heavy sites and a penalty on write-heavy ones.</p>
-<p>What one lane is worth depends on whether the single object was already saturated. Below saturation
-it loses, 0.87x at 32 clients and 0.98x at 64: routing hashes over two buckets, so the lane takes
-about 60% of the traffic onto an object whose Drupal caches are colder than the primary&#39;s while
-adding no parallelism. Above saturation it is the difference between answering and not. At 128
-clients one lane serves 2.06x what no pool serves, and at 512 a single object sheds every request
-while one lane still serves 426. The load for this comes from a Worker and not a laptop, driven
-through a service binding and fanned out across sub-invocations. A probe that holds service time
-fixed and sweeps only the fan-out puts that generator&#39;s own ceiling above 512 concurrent
-subrequests, so the pool is the thing being measured and the rig is not.</p>
-<p>The rig confirms the pool is addressed correctly: at 32 lanes all 33 objects answer, the
-distribution across buckets is even, and content writes forward from a lane to the primary without
-collision.</p>
-<h3 id="what-a-lane-buys-against-a-vps">What a Lane Buys Against a VPS</h3>
-<p>A VPS has no lane axis. Its ceiling is the cores it was bought with, and raising it means resizing
-the box or putting a load balancer in front of several, with shared session and cache state behind
-them. That is an architecture change, done by hand.</p>
-<p>A lane is a Durable Object the primary copies itself into, addressed by a hash of the visitor&#39;s
-affinity key. Adding one changes no configuration a site owner writes. The comparison therefore
-splits by traffic shape and not by hardware:</p>
-<ul>
-<li><strong>Anonymous cached traffic</strong>, which is most of it, never reaches an object on either side.
-Drupflare answers from the colo nearest the visitor and a VPS answers from its one region, so the
-difference is the network term in <a href="#geography">Geography</a>.</li>
-<li><strong>Authenticated traffic</strong> is where lanes decide it. A converged session is answered from the
-compiled plan in the front worker&#39;s isolate, and the lanes exist for the requests that miss it.</li>
-</ul>
-<p>Economically the two bill on different axes. A VPS bills for its box whether or not anyone visits;
-Hetzner&#39;s CX22 is 2 vCPU and 4 GB for EUR 3.79 a month, and DigitalOcean&#39;s equivalent is $24.
-Drupflare bills per request and per row written on a $5 Workers Paid plan. For one busy site the
-monthly figures are close enough that the choice is not about price. For a fleet, or for a site
-whose traffic is bursty, they are not comparable: the VPS is paying for its peak all month.</p>
-<p>Drupflare does not need to win a raw uncached render, and it does not; it needs to be the better
-answer for the traffic a real site receives. Where it is slower is listed under
-<a href="#limitations">Limitations</a>.</p>
-<h3 id="autoscaling">Autoscaling</h3>
-<p>The primary counts, per alarm window, how many requests waited for its gate. Three consecutive
-windows must all show waiting before a lane is provisioned, and the target is the smallest queue
-depth across those three, one lane per sustained waiter. A burst that clears inside one window
-provisions nothing.</p>
-<p>Autoscaling stops at 32 lanes by default. That bound is per-lane idle cost, which is storage plus
-replication catch-up, and is not a throughput limit. <code>REPLICA_MAX_LANES</code> moves it and
-<code>REPLICA_AUTOSCALE=0</code> turns autoscaling off.</p>
-<p><code>REPLICA_COUNT</code> pins a size by hand, up to a hard ceiling of 256 lanes. That ceiling is arithmetic:
-a lane mints forwarded row ids from its own residue class modulo the pool&#39;s partition, and the
-primary takes class 0, so 256 is the largest pool whose writers all hold a class of their own. Past
-it two writers would mint the same id. Set <code>REPLICA_COUNT</code> above the lanes a site has provisioned and
-the router hashes over buckets whose objects do not exist, which costs a wasted hop and a retry on
-the primary for each one. All three settings are KV-overridable, so a pool can be turned on, resized
-or turned off without a redeploy.</p>
-<h3 id="how-a-lane-is-built">How a Lane Is Built</h3>
-<div class="table"><table>
-<thead>
-<tr>
-<th>piece</th>
-<th>what it does</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>Provisioning</strong></td>
-<td><code>?action=provision&amp;lane=&lt;n&gt;</code> on the primary copies itself into a lane, bounded per invocation and resumable by a cursor it hands back</td>
-</tr>
-<tr>
-<td><strong>Restore</strong></td>
-<td>each chunk carries the table&#39;s DDL, so a lane needs no Drupal install of its own</td>
-</tr>
-<tr>
-<td><strong>Catch-up</strong></td>
-<td>the lane pulls the primary&#39;s replication log on its own alarm and promotes itself through <code>admissionVerdict()</code></td>
-</tr>
-<tr>
-<td><strong>Routing</strong></td>
-<td>a lane is chosen by hashing a stable per-visitor key</td>
-</tr>
-<tr>
-<td><strong>Failover</strong></td>
-<td>a lane refuses work it may not do with 421 and a retry-safety flag it computes</td>
-</tr>
-<tr>
-<td><strong>Staleness</strong></td>
-<td><code>REPLICA_LAG_MS</code> bounds how far behind a serving lane may fall, at 30 s</td>
-</tr>
-</tbody></table></div>
-<p>Three refusals hold it up. A torn copy, where table A is at generation 12 and table B at 13, is
-refused and the position stays in flight until a whole consistent copy lands. A lane that has not
-finished cannot pass for one that has, because the first chunk declares which tables the copy will
-deliver and the lane holds the driver to that. And no lane is admitted until <code>system.private_key</code>
-arrives from the primary, since two objects each minting their own would issue CSRF tokens the other
-rejects.</p>
-<hr>
-<h2 id="free-vs-paid">Free vs Paid</h2>
-<p>The product goal is that free and paid are the same host. Paid buys performance and headroom. It
-does not buy features, and free is not a demo: both are viable Drupal hosts, or the project has
-failed.</p>
-<p>Free&#39;s limits are aggregate daily budgets, not the 10 ms per-invocation CPU cap. The cap constrains
-one execution unit, and the architecture chooses what an execution unit is. The model is
-<code>scripts/measure/free-envelope.ts</code>; score any change with it and not against a millisecond figure.</p>
-<h3 id="free-plan-meters">Free-Plan Meters</h3>
-<p>Measured on deployed infrastructure, per-invocation <code>cpuTime</code> read through the Workers Observability
-API.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>meter</th>
-<th>free-plan ceiling</th>
-<th>binds at</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>Worker requests</strong></td>
-<td>100,000/day</td>
-<td><strong>~100,000 page views/day</strong> ← the real limit</td>
-</tr>
-<tr>
-<td>Durable Object requests</td>
-<td>100,000/day</td>
-<td>~588,000 PV/day</td>
-</tr>
-<tr>
-<td>Rows written</td>
-<td>100,000/day</td>
-<td>~555,000 PV/day</td>
-</tr>
-<tr>
-<td>Duration, rows read, storage</td>
-<td>n/m</td>
-<td>not close</td>
-</tr>
-</tbody></table></div>
-<p>A free site serves about 100,000 page views a day (about 3M a month) for a well-cached site,
-saturated at 1.00x, and every meter except Worker requests has roughly 5x headroom.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>artifact</th>
-<th>what it is</th>
-<th>from</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Worker bundle</td>
-<td>fits the 64 MiB Worker size limit</td>
-<td><code>bun run release:check</code></td>
-</tr>
-<tr>
-<td>PHP 8.5, nothing cut</td>
-<td>a raw wasm module the platform compiles ahead of time</td>
-<td><code>interp.lock.json</code></td>
-</tr>
-<tr>
-<td>First-run migration</td>
-<td>chunked and resumable, each batch sized to complete on its own</td>
-<td><code>assets/drupal-sql/manifest.json</code></td>
-</tr>
-<tr>
-<td>Static asset tree</td>
-<td>served by Workers Assets, never reaching the Worker</td>
-<td><code>assets/core/</code></td>
-</tr>
-<tr>
-<td>Cold boot</td>
-<td>amortised off the request path</td>
-<td>deployed <code>cpuTime</code></td>
-</tr>
-</tbody></table></div>
-<h3 id="what-one-site-gets">What One Site Gets</h3>
-<p>Both performance levers are on by default on paid, managed or self-managed, where a warm object
-costs $0 marginal. On free, shell assembly is on and warming follows the thermal policy: a site
-rendering more than about 505 pages a day warms itself and a quieter one does not, because a warm
-object spends 10.8% of free&#39;s two daily meters. <code>SITE_WARM=1</code> on <code>/settings</code> forces it, and
-<code>WARM_INTERVAL_MS=30000</code> is a cheaper middle point at 2.9%. The numbers below are what a paid site
-gets, and what a free site gets once it is busy or has opted in.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>authenticated page</th>
-<th align="right">boot</th>
-<th align="right">render</th>
-<th align="right">total</th>
-<th align="right">vs neither</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>neither lever</td>
-<td align="right">1,264 ms</td>
-<td align="right">2,127 ms</td>
-<td align="right">3,391 ms</td>
-<td align="right">-</td>
-</tr>
-<tr>
-<td>warm only</td>
-<td align="right">0</td>
-<td align="right">2,127 ms</td>
-<td align="right">2,127 ms</td>
-<td align="right">-37%</td>
-</tr>
-<tr>
-<td>shell assembly only</td>
-<td align="right">1,264 ms</td>
-<td align="right">~467 ms</td>
-<td align="right">~1,731 ms</td>
-<td align="right">-49%</td>
-</tr>
-<tr>
-<td><strong>both, on by default</strong></td>
-<td align="right">0</td>
-<td align="right">~467 ms</td>
-<td align="right"><strong>~467 ms</strong></td>
-<td align="right"><strong>-86%</strong></td>
-</tr>
-</tbody></table></div>
-<p>Every number in that table is derived, and the shipping configuration has since been measured
-directly at 208 ms p50 from a client. The boot saving is a measured subtraction; the render saving
-comes from a measured 4-5 ms against 20-21 ms ratio for a fragment render against the render it
-replaces, and applying that ratio to an edge <code>cpuTime</code> figure is an assumption. The table stays
-because it separates the two levers, which the measured figure does not.</p>
-<p>A cached page is 0 ms in every row: it answers off the object&#39;s own SQL without booting PHP, so
-neither lever can make one faster. What they speed up is the tier that always renders, which is the
-logged-in one.</p>
-<p>A fill is one page being rendered and stored so the next visitor gets it instantly, and a save is
-what causes most of them: a content change empties the whole site&#39;s page cache, not just the page
-edited, so every page has to be earned back. <code>PREFILL_ON_SAVE</code> re-queues the 25 busiest paths
-automatically; the rest fill when somebody asks. For one site, fills/day is roughly
-<code>saves/day x 25</code> plus whatever else gets visited.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>your site</th>
-<th align="right">saves/day</th>
-<th align="right">fills/day</th>
-<th align="right">share of free</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>personal blog, 80 pages</td>
-<td align="right">1</td>
-<td align="right">~55</td>
-<td align="right">2%</td>
-</tr>
-<tr>
-<td>small business, 200 pages</td>
-<td align="right">2</td>
-<td align="right">~150</td>
-<td align="right">5%</td>
-</tr>
-<tr>
-<td>club or nonprofit, 500 pages</td>
-<td align="right">5</td>
-<td align="right">~375</td>
-<td align="right">14%</td>
-</tr>
-<tr>
-<td>local news, 1,500 pages</td>
-<td align="right">20</td>
-<td align="right">~1,300</td>
-<td align="right">47%</td>
-</tr>
-<tr>
-<td>busy news, 3,000 pages</td>
-<td align="right">50</td>
-<td align="right">~2,750</td>
-<td align="right">99%</td>
-</tr>
-</tbody></table></div>
-<p>On free you can publish about 50 times a day on a 3,000-page site before regeneration binds, and
-serve about 3M pageviews a month while doing it. Free&#39;s quotas are account-wide, so several warm
-sites on one free account share them; a site that spends its daily meter drops back to the slow
-re-arm on its own and recovers at midnight UTC.</p>
-<h3 id="the-two-ceilings">The Two Ceilings</h3>
-<div class="table"><table>
-<thead>
-<tr>
-<th>ceiling</th>
-<th>what it limits</th>
-<th>bound by</th>
-<th>free today</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>Serving</strong></td>
-<td>visits/month that can be answered</td>
-<td>Worker requests, 100k/day</td>
-<td><strong>3.0M/month</strong>, saturated at 1.00x</td>
-</tr>
-<tr>
-<td><strong>Regeneration</strong></td>
-<td>distinct pages re-rendered per day</td>
-<td>rows written</td>
-<td><strong>50,916/day</strong></td>
-</tr>
-</tbody></table></div>
-<p>The regeneration figure is the shipping default, with <code>dynamic_page_cache</code> and <code>menu</code> held in
-memory. With <code>MEMORY_CACHE_BINS=none</code> it is 10,866 a day. Regeneration decides whether free is a
-Drupal host and not a cache.</p>
-<p>No page is served off the Worker. Both page tiers, the edge cache and the optional KV tier, cost one
-Worker request each because the Worker has to run to consult them. The alarm drains the file and
-page mirrors to an R2 bucket when one is bound, with pages ordered by view count so a limited budget
-publishes what moves traffic; the canonical <code>wrangler.jsonc</code> binds no bucket. Workers Static Assets
-are uploaded at deploy time, so they cannot hold a page rendered at runtime.</p>
-<p>There is no single rows-per-fill figure. A fill costs 2 to 94 rows depending on what is already
-warm, so the model names five measured warmth classes. <code>ROWS_PER_FILL</code> in
-<code>scripts/measure/free-envelope.ts</code> carries all five, and <code>warmthMix</code> prices a realistic spread.
-Every figure is counted at the storage handle, so it includes the host&#39;s own writes, notably the
-<code>cfw_page</code> insert that stores the whole rendered page.</p>
-<h3 id="where-the-work-pays">Where the Work Pays</h3>
-<div class="table"><table>
-<thead>
-<tr>
-<th>lever</th>
-<th align="right">worth</th>
-<th>note</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>Null the <code>page</code> bin</strong> (8 -&gt; 3 rows, warm fill)</td>
-<td align="right"><strong>2.67x</strong></td>
-<td>done. It duplicated bytes the host already stores in <code>cfw_page</code></td>
-</tr>
-<tr>
-<td><strong>Anything boot-directed</strong> (JSPI, heap restore, <code>-O3</code>)</td>
-<td align="right"><strong>~1.01x</strong></td>
-<td>saturated for this ceiling: a 20x cut in boot cost per fill buys 1.1% of the regeneration budget. It says nothing about latency, where holding the object resident removes the boot outright</td>
-</tr>
-<tr>
-<td>More slicing / decomposition</td>
-<td align="right">negative</td>
-<td>alarms are counted DO requests; a 6-way split measured 5,555 -&gt; 4,166 fills/day</td>
-</tr>
-</tbody></table></div>
-<p>Two levers that look plausible are not levers. Uninstalling <code>dblog</code> does not reduce rows per fill:
-measured, zero rows of a fill go to <code>watchdog</code>. And past about 85% off-Worker serving the binding
-meter becomes DO requests and not rows, so trimming rows per fill beyond that point moves the rows
-meter and does not move the ceiling at all.</p>
-<h3 id="the-image-transform-cap">The Image Transform Cap</h3>
-<p>This applies to <code>IMAGE_ENGINE=images</code> only. The default engine encodes in the Worker and has no
-transform allowance; it spends CPU, which is not a meter this project is bound by.</p>
-<p>Cloudflare Images allows 5,000 unique transformations per month on free, and it fails as a hard cap
-and not a bill. Every image style is a transformation, so ten styles over 2,000 images is 20,000, 4x
-over. It is the only quota here measured per month and not per day, so it does not clear at
-midnight.</p>
-<p>It is projected and not counted, because it is a function of the site&#39;s content and configuration
-and both are known in advance. The object multiplies its image styles by its managed images on every
-alarm and records <code>budget.image_transforms</code> in the health ledger at 80% of the allowance. It is a
-warning and never a repair: the remedies are dropping a style, cutting the image count, or switching
-to the default engine, and all three are decisions a human makes. <code>/health</code> shows it, and <code>/_cfw</code>
-shows the full projection with the largest style count that still fits.</p>
-<blockquote>
-<p>[!CAUTION]
-Do not enable the Workers Caching feature. Its cache key does not include the host, and this
-product is multi-tenant by host; every site serves <code>/</code>, so one site&#39;s pages would be served to
-another site&#39;s visitors. Cloudflare states it plainly: <em>&quot;The cache key does not include the host,
-so a request to <code>/api/users/42</code> hits the same cached entry whether it came in through
-<code>api.example.com</code>, <code>api.example.net</code>, a service binding, or a <code>workers.dev</code> URL.&quot;</em></p>
-<p>Zone settings cannot add the host back. <em>&quot;No zone configuration for caching applies to Workers
-Caching. Cache Rules, Cache Response Rules, Page Rules, cache level settings … have no effect on a
-Worker&#39;s cache.&quot;</em> The zone-level cache-key documentation does put the host in the key, and it
-describes a different product, so it is not evidence about this one.</p>
-<p>It is also not a serving lever. A hit skips Worker execution but is still <em>&quot;billed at the standard
-Workers request rate&quot;</em>, so the 100,000/day meter does not move, and it <em>&quot;bills requests that are
-normally free: static asset requests and worker-to-worker invocations&quot;</em>, making it a net increase.
-What it saves is CPU, which is not a meter this project is bound by.</p>
-<p>The <code>caches.default</code> tier this project does use is a different mechanism and is safe: its key
-carries both the origin and the site id. <code>tests/node/cache-partition.spec.ts</code> holds both halves.</p>
-</blockquote>
-<hr>
-<h2 id="administration">Administration</h2>
-<h3 id="the-admin-surfaces">The Admin Surfaces</h3>
-<p>Seven pages under <code>/_cfw</code>, each one driving machinery that already exists. They take the owner
-token: sign in at <code>/_cfw/login</code>, and any page reached without a session redirects there and comes
-back afterwards.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>page</th>
-<th>path</th>
-<th>what it does</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>Limits</strong></td>
-<td><code>/_cfw</code></td>
-<td>every metered resource, what spends it, and whether exceeding it bills or stops working</td>
-</tr>
-<tr>
-<td><strong>Extend</strong></td>
-<td><code>/_cfw/extend</code></td>
-<td>whether a contrib module installs here, answered against the shipped lock</td>
-</tr>
-<tr>
-<td><strong>Commands</strong></td>
-<td><code>/_cfw/commands</code></td>
-<td>a Drush-shaped field over the site&#39;s operations</td>
-</tr>
-<tr>
-<td><strong>Operate</strong></td>
-<td><code>/_cfw/operate</code></td>
-<td>the repair actions: purge, reconcile, sweep, database updates, restart the fill chain</td>
-</tr>
-<tr>
-<td><strong>Deploy</strong></td>
-<td><code>/_cfw/deploy</code></td>
-<td>the provisioning steps, two of which cannot be automated</td>
-</tr>
-<tr>
-<td><strong>Git</strong></td>
-<td><code>/_cfw/git</code></td>
-<td>remotes, branches, pull requests and the working-tree diff</td>
-</tr>
-<tr>
-<td><strong>Access</strong></td>
-<td><code>/_cfw/access</code></td>
-<td>the OpenID Connect provider</td>
-</tr>
-</tbody></table></div>
-<p>The Commands field takes Drush spellings and resolves them to the operation the site registers, so
-<code>cache:rebuild</code>, <code>cache-rebuild</code>, <code>cc</code> and <code>cr</code> are the same command. <code>en &lt;module&gt;</code> routes to the
-module installer and not to the operations registry, and an operation given arguments it cannot
-take is refused by name instead of being truncated to its first word.</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span>cr                  rebuild the caches</span></span>
-<span class="line"><span>en webform          install a module</span></span>
-<span class="line"><span>en webform --dry    check whether it would install, without installing</span></span>
-<span class="line"><span>status              generation, migration state, queue depth</span></span></code></pre><p>An operation with no driver is listed and disabled, not hidden, because a refusal with no named
-alternative is a refusal that gets retried.</p>
-<p>Extend checks a package against the shipped lock, installs it, and enables it. The page keeps those
-three steps separate: a check writes nothing, an install fetches the package and writes its files,
-and enabling turns the module on and reboots the interpreter. The same three are <code>/installable</code>,
-<code>/install</code> and <code>/enable</code> for a script.</p>
-<h3 id="inside-drupals-own-admin">Inside Drupal&#39;s Own Admin</h3>
-<p><code>/_cfw</code> is the host&#39;s surface and sits outside Drupal. The module adds a second one where a Drupal
-administrator looks first:</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>page</th>
-<th>path</th>
-<th>what it shows</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong>Drupflare</strong></td>
-<td><code>/admin/config/drupflare</code></td>
-<td>the section, alongside Drupal&#39;s own configuration groups</td>
-</tr>
-<tr>
-<td><strong>Runtime Status</strong></td>
-<td><code>/admin/config/drupflare/runtime</code></td>
-<td>the replica pool, page tiers, warming, edge plan and write lanes</td>
-</tr>
-<tr>
-<td><strong>Help</strong></td>
-<td><code>/admin/help/topic/drupflare</code></td>
-<td>what runs where, and which Drupal assumptions do not hold here</td>
-</tr>
-</tbody></table></div>
-<p>Runtime Status reads the same payload <code>/serve-stats</code> returns, so the admin page and the host report
-cannot disagree.</p>
-<h3 id="single-sign-on">Single Sign-On</h3>
-<p>The Access page configures an OpenID Connect provider that the host serves at <code>/oidc</code>: it performs
-the token exchange and verifies the <code>id_token</code> signature before PHP is entered, so a site gets
-single sign-on without installing an OIDC module. An unverified <code>id_token</code> is an unauthenticated
-login, so the verification is mandatory. A site that prefers <code>drupal/openid_connect</code> can use it
-instead; its own client completes the login, with the token request parked and the signature
-checked over the host&#39;s crypto.</p>
-<p>Single sign-on needs <code>drupal/externalauth</code>, which maps the verified identity onto an account. No
-contrib module ships in the packed tree, so install it from the Extend page before the first login.</p>
-<p>Set the issuer and client id on the page, and the client secret as the <code>OIDC_CLIENT_SECRET</code> binding.
-The redirect URI to register with the provider is shown on the page. Saving verifies the issuer&#39;s
-discovery document immediately, so a typo surfaces there and not at someone&#39;s first login.</p>
-<p>Writing the provider takes the owner token, not the page&#39;s own gate. Whoever sets the issuer decides
-which provider every login on the site authenticates against.</p>
-<p>A login is refused when the signature comes from a key outside the provider&#39;s JWKS, when the issuer
-does not match, when the audience belongs to another client of the same provider, when the token has
-expired, or when the nonce belongs to a different login. The signing algorithm is taken from the key
-and not from the token header, and an account is keyed by issuer and subject together.</p>
-<h3 id="url-routing">URL Routing</h3>
-<p>Drupal owns the URL space. Any path the Worker does not claim is served as a page, so <code>/</code>,
-<code>/user/login</code>, <code>/admin</code> and <code>/node/1</code> all work. The Worker&#39;s own surfaces live under <code>/_cfw</code>, which
-Drupal does not generate; its diagnostic and owner routes are single-segment names like <code>/health</code>
-and <code>/export</code>.</p>
-<p>Which site a request resolves to is decided in <a href="https://github.com/drupflare/worker/blob/master/src/ops/site-id.ts"><code>src/ops/site-id.ts</code></a>: a KV
-mapping for the host, then the <code>SITE_ID</code> var, then the deployment&#39;s primary site, then the hostname
-itself, then <code>site</code>. One deployment is one site, so a second domain pointed at the worker reaches
-the site already claimed and does not open a new one. A host mapped in KV is an alias: its pages,
-redirects and login cookie carry that host, and <code>drangler domain add &lt;host&gt;</code> writes the mapping and
-the Custom Domain route. On <code>localhost</code> the hostname names no site, so it lands on <code>site</code>. <code>?site=</code>
-is refused on the public routes, so a link cannot choose which site answers; an owner route accepts
-it because the object checks the token itself, and <code>PW_DIAGNOSTICS=1</code> accepts it everywhere, which
-is what <code>/serve?site=X&amp;path=Y</code> uses.</p>
-<h3 id="scripts">Scripts</h3>
-<div class="table"><table>
-<thead>
-<tr>
-<th>command</th>
-<th>what it does</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>bun run dev</code></td>
-<td>local worker with a real Durable Object</td>
-</tr>
-<tr>
-<td><code>bun run deploy</code></td>
-<td>deploy to Cloudflare</td>
-</tr>
-<tr>
-<td><code>bun run test</code></td>
-<td>vitest: both projects, <strong>workers inside workerd</strong></td>
-</tr>
-<tr>
-<td><code>bun run test:coverage</code></td>
-<td>the same, with merged coverage</td>
-</tr>
-<tr>
-<td><code>bun run test:node</code></td>
-<td>only the node project (needs <code>node:sqlite</code>, a real PHP)</td>
-</tr>
-<tr>
-<td><code>bun run test:php</code></td>
-<td>the Drupal database driver suite, under real PHP</td>
-</tr>
-<tr>
-<td><code>bun run typecheck</code></td>
-<td>all three tsconfig projects; bare <code>tsc</code> covers only one</td>
-</tr>
-<tr>
-<td><code>bun run check:reachability</code></td>
-<td>which modules the edge actually imports, and which are dead</td>
-</tr>
-<tr>
-<td><code>bun run assets:driver</code></td>
-<td>repacks <code>assets/driver.json</code> from the sibling module repos</td>
-</tr>
-<tr>
-<td><code>bun run build</code></td>
-<td>hydrate the release payload: what a deploy runs</td>
-</tr>
-<tr>
-<td><code>bun run build:local</code></td>
-<td>build every generated artifact from source</td>
-</tr>
-<tr>
-<td><code>bun run build:plan</code></td>
-<td>what a source build would do, and what tools are missing</td>
-</tr>
-<tr>
-<td><code>bun run assets:sql</code></td>
-<td>rebuild only the migration chunks</td>
-</tr>
-<tr>
-<td><code>bun run build:site-db</code></td>
-<td>build the packed Drupal database from nothing</td>
-</tr>
-</tbody></table></div>
-<hr>
-<h2 id="configuration">Configuration</h2>
-<p>Every knob is a <code>vars</code> entry in <code>wrangler.jsonc</code>, and every one has a working default. The levers on
-<code>KV_OVERRIDABLE</code> in <code>src/ops/plan.ts</code> can also be overridden at runtime through the <code>CONFIG_KV</code>
-namespace without a redeploy: <code>GET /settings</code> lists them with the value in force and its source, and
-<code>PUT /settings</code> merges a patch. <a href="configuration.html"><code>docs/configuration.md</code></a> is the full
-reference: every variable, its default, what reads it, and what breaks when it is wrong. Three vars
-are covered below, plus the two setup flows a new site runs once.</p>
-<h3 id="site_origin"><code>SITE_ORIGIN</code></h3>
-<p>The <code>scheme://host[:port]</code> Drupal builds absolute URLs against: the canonical tag, a form action, a
-<code>Location:</code>, the link in a password-reset mail. Unset, the object pins the first non-local origin it
-serves into <code>cfw_meta</code> and measures every later request against that and not the inbound <code>Host</code>;
-<code>/firstrun</code> re-pins, so claiming a site also fixes its origin. Set it when a site is reached through
-a host it cannot observe, such as behind a proxy that rewrites <code>Host</code>, or on a deploy whose first
-request is a health check.</p>
-<p>A local origin is never pinned, so running the suite or a <code>wrangler dev</code> against a persisted object
-cannot fix a real site&#39;s canonical URL to a developer&#39;s laptop. Cron boots against the same origin,
-which is what stops a mailed reset link pointing the recipient at their own machine.</p>
-<h3 id="php_log_level"><code>PHP_LOG_LEVEL</code></h3>
-<p>The highest RFC 5424 severity that PHP&#39;s log mirrors to <code>console.log</code>, and therefore to
-<code>wrangler tail</code>. <code>off | error | warn | log | info | debug</code>, defaulting to <code>info</code>. <code>debug</code> is off
-because a single render on 8.5 emits several severity-7 deprecation notices with full stack traces.
-An unrecognised value is the default and not an error.</p>
-<h3 id="max_body_bytes"><code>MAX_BODY_BYTES</code></h3>
-<p>The largest non-file request body the edge forwards, defaulting to 2 MiB. Over it, the request is
-refused with 413 before any Durable Object hop. It guards the heap and not bandwidth: <code>parse_str()</code>
-on a form body allocates inside a 128 MB isolate, and <code>foo[][][][][]=bar</code> repeated turns a few
-hundred kilobytes of wire into far more of it. A chunked body is counted as it is read. <code>multipart/form-data</code>
-has its own ceiling, <code>MAX_UPLOAD_BYTES</code>, which defaults to 100 MiB (the platform&#39;s request limit). <code>0</code>
-disables either guard.</p>
-<h3 id="connecting-a-cloudflare-account">Connecting a Cloudflare Account</h3>
-<p>Mail needs an account behind it. Either paste <code>CF_EMAIL_ACCOUNT_ID</code> and <code>CF_EMAIL_TOKEN</code>, or run the
-OAuth flow at <code>/setup/cf</code>, which issues a short-lived scoped grant that is revocable from the
-Cloudflare dashboard. <code>?action=status</code>, <code>?action=connect</code> and <code>?action=disconnect</code> are the three
-actions; the callback at <code>/setup/cf/callback</code> is the one public part of it.</p>
-<p><a href="configuration.html#connecting-a-cloudflare-account"><code>docs/configuration.md</code></a> has the whole
-contract: the client an operator registers once, the scopes requested, and why the client ID lives in
-the site&#39;s database and not in KV.</p>
-<h3 id="onboarding-a-sending-domain">Onboarding a Sending Domain</h3>
-<p><code>GET /setup/mail?zone=&lt;zone-id&gt;</code> reports which step the domain is waiting on, and <code>?action=apply</code>
-creates the sending subdomain and writes the DNS. It is safe to re-run: a settled zone costs zero
-API calls, and an existing DMARC record is reported and not overwritten.</p>
-<p><a href="configuration.html#onboarding-a-sending-domain"><code>docs/configuration.md</code></a> has the five stages, the
-six records written, and what <code>settled</code> does and does not mean.</p>
-<p>Both routes take the owner token; see <a href="#log-in">Log In</a>.</p>
-<hr>
-<h2 id="git-remotes">Git Remotes</h2>
-<p>A site follows as many repositories as you connect to it. A push installs the module; the result is
-written back to the provider as a commit status. The page is <code>/_cfw/git</code>.</p>
-<h3 id="the-transport">The Transport</h3>
-<p>The transport is git&#39;s own smart HTTP, so anything that serves a repository over HTTPS works:
-GitHub, GitLab, Bitbucket, Gitea, Forgejo, a bare repository behind nginx, an internal mirror. Two
-requests do the whole job:</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>Step</th>
-<th>Request</th>
-<th>Cost</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Poll</td>
-<td><code>GET /info/refs?service=git-upload-pack</code></td>
-<td>a few hundred bytes when nothing has moved</td>
-</tr>
-<tr>
-<td>Pull</td>
-<td><code>POST /git-upload-pack</code>, one commit, depth 1</td>
-<td>the changed objects, as a packfile</td>
-</tr>
-</tbody></table></div>
-<p>The packfile is read in the Worker: pkt-line framing, both delta forms, and the tree walk that turns
-a commit into files. Private repositories authenticate with the operator&#39;s access token over HTTPS.
-A public repository needs no credential at all.</p>
-<h3 id="what-gets-installed">What Gets Installed</h3>
-<p>Module names come from <code>*.info.yml</code> and not from the directory, so a repository checked out under
-one name that provides another installs correctly, and a repository holding several extensions
-installs all of them at their own paths. Modules land in <code>modules/custom/</code>, themes in
-<code>themes/custom/</code>, profiles in <code>profiles/custom/</code>.</p>
-<p>Only mountable files are kept (PHP, YAML, Twig, JavaScript, CSS), with <code>tests/</code>, <code>vendor/</code>,
-<code>node_modules/</code> and dotfiles dropped. Every file is stored as its own row, and the pull reports what
-it skipped and why.</p>
-<p>PHP costs no bundle bytes. Module source is fetched over the assets binding and not compiled into
-the Worker, so the size ceiling that governs the rest of the runtime does not apply to a custom
-module written in PHP.</p>
-<h3 id="branches-requests-and-diffs">Branches, Requests and Diffs</h3>
-<div class="table"><table>
-<thead>
-<tr>
-<th>Action</th>
-<th>What it does</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Check</td>
-<td>reads the remote head without downloading anything</td>
-</tr>
-<tr>
-<td>Diff</td>
-<td>fetches the commit and reports added, modified and removed files with line counts</td>
-</tr>
-<tr>
-<td>Pull</td>
-<td>applies that diff and mounts the result</td>
-</tr>
-<tr>
-<td>Branch switch</td>
-<td>moves the site to another branch, deleting what the old one had and the new one does not</td>
-</tr>
-<tr>
-<td>Requests</td>
-<td>lists open pull and merge requests</td>
-</tr>
-<tr>
-<td>Preview</td>
-<td>installs a request&#39;s head instead of the branch, and holds it there</td>
-</tr>
-</tbody></table></div>
-<p>A preview is held against polling and against pushes, so a branch that moves while somebody is
-reviewing does not replace what they are looking at. Leaving the preview returns the site to its
-branch.</p>
-<h3 id="triggers">Triggers</h3>
-<p>Polling works against any remote and needs no cooperation from it. The interval is per repository
-and defaults to an hour; a poll costs one ref advertisement.</p>
-<p>Webhooks make a push arrive immediately. GitHub, GitLab, Bitbucket, Gitea and Forgejo can register
-one from the page; for anything else the page mints a secret and shows the delivery URL to register
-by hand. Every delivery is verified before it is acted on: HMAC-SHA256 where the provider signs, and
-a shared secret on GitLab installs older than 19.0. An unverifiable delivery is refused.</p>
-<h3 id="provider-coverage">Provider Coverage</h3>
-<div class="table"><table>
-<thead>
-<tr>
-<th>Provider</th>
-<th>State</th>
-<th>Exercised Against</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>GitHub</td>
-<td>verified</td>
-<td>github.com</td>
-</tr>
-<tr>
-<td>GitLab</td>
-<td>verified</td>
-<td>GitLab CE</td>
-</tr>
-<tr>
-<td>Gitea</td>
-<td>verified</td>
-<td>Gitea 28.0.0</td>
-</tr>
-<tr>
-<td>Forgejo</td>
-<td>verified</td>
-<td>Forgejo 16</td>
-</tr>
-<tr>
-<td>Any HTTPS remote</td>
-<td>verified</td>
-<td><code>git upload-pack</code> directly</td>
-</tr>
-<tr>
-<td>Bitbucket</td>
-<td>supported</td>
-<td>n/m</td>
-</tr>
-</tbody></table></div>
-<p>Bitbucket authenticates with one API token and two names: the REST API takes the Atlassian account
-email, and git over HTTPS takes the Bitbucket username, which is case sensitive. Both fields are on
-the page.</p>
-<h3 id="safety">Safety</h3>
-<p>A pull is applied in one transaction and then verified by booting the Drupal kernel against the new
-tree. If the boot fails, the previous files are restored and the site keeps serving. A path already
-owned by another repository or by a <code>composer require</code> is reported as a conflict and not taken.</p>
-<p>Access tokens live in the site&#39;s own database, never in the KV namespace that carries runtime
-overrides. <a href="configuration.html#git-remotes"><code>docs/configuration.md</code></a> has the scopes each provider
-needs and the storage contract.</p>
-<hr>
-<h2 id="module-revisions">Module Revisions</h2>
-<p>A module that lives on your machine and not on a git host is uploaded through <code>/modify</code>, and every
-upload is a revision the site keeps.</p>
-<p>A revision is a manifest of files addressed by the hash of their contents. A second upload sends only
-the files that changed, and a file the site already holds costs nothing to keep. Five revisions per
-package are retained, and dropping one deletes only the file contents no surviving revision still
-names.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>Action</th>
-<th>What it does</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>Plan</td>
-<td>splits the tree into what the site has and what it needs</td>
-</tr>
-<tr>
-<td>Upload</td>
-<td>sends the missing files and records a revision</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>reports what is live per package, with its size and age</td>
-</tr>
-<tr>
-<td>Revisions</td>
-<td>lists what is stored, newest first</td>
-</tr>
-<tr>
-<td>Activate</td>
-<td>makes a stored revision live again, with no bytes on the wire</td>
-</tr>
-<tr>
-<td>Rollback</td>
-<td>activates the revision before the active one</td>
-</tr>
-<tr>
-<td>Drop</td>
-<td>deletes a revision and the file contents nothing else references</td>
-</tr>
-</tbody></table></div>
-<p>An upload lands the same way a git pull does: one transaction, then a Drupal kernel boot with every
-enabled module&#39;s PHP loaded, and a restore of the previous file set if that boot fails. A module
-whose PHP no longer parses is rolled back and the reply names the parse error. A path another package
-already owns is reported as a conflict and not taken.</p>
-<p>File contents are verified against the hash they were sent under before they are stored, so a
-manifest cannot come to name content the site never received.</p>
-<hr>
-<h2 id="contrib-modules">Contrib Modules</h2>
-<p>Installing a module works on a deployed site, with the module present in <code>core.extension</code> afterwards
-on 6 of 6 attempts. The cache is cold for one visit while the pages the install invalidated are
-re-rendered.</p>
-<p>A module is <strong>verified</strong> only when the gate enabled it against a real site and asserted an
-observable the module owns. Nothing reaches that state by inspection. The other two states are
-<strong>untested</strong> and <strong>blocked</strong>, and a blocked row says which capability is missing. <code>moduleTable()</code> in
-<code>src/ops/module-table.ts</code> is the census the lists below are rendered from.</p>
-<p>Contrib is a development dependency. The shipped pack carries four modules (<code>admin_toolbar</code>,
-<code>ctools</code>, <code>pathauto</code>, <code>token</code>); the rest are verified against a test build and installed by a site
-that asks for them, so a new site stays small.</p>
-<h3 id="installing-one">Installing One</h3>
-<p>Three owner-token routes, in the order a site uses them. Each takes <code>Authorization: Bearer &lt;owner token&gt;</code>, the token <code>/firstrun</code> mints when the site is claimed.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>route</th>
-<th>what it does</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>/installable?module=X</code></td>
-<td>resolves the package and names any conflict with the shipped lock</td>
-</tr>
-<tr>
-<td><code>/install?module=X</code></td>
-<td>fetches it and writes its files; runs the check first unless <code>force=1</code></td>
-</tr>
-<tr>
-<td><code>/enable?module=X</code></td>
-<td>installs it through Drupal&#39;s own module installer</td>
-</tr>
-</tbody></table></div>
-<p><code>drupal/*</code> resolves against <code>packages.drupal.org/8</code>; everything else against <code>repo.packagist.org</code>.
-Resolution is registry first and covers a composer graph&#39;s <code>replace</code>, stability flags, branch
-aliases, branch archives, metapackages and virtual packages; composer plugins are skipped. Installing
-does not enable: they are separate steps because a package that lands is not yet a module Drupal
-knows about.</p>
-<p>A module you wrote yourself arrives through a git remote instead, which pulls one commit at depth
-one and boots the kernel against the new tree, rolling back if it fatals. See
-<a href="#git-remotes">Git Remotes</a>. The same <code>/enable</code> step applies afterwards.</p>
-<h3 id="verified">Verified</h3>
-<p><code>address</code>, <code>admin_toolbar</code>, <code>backup_migrate</code>, <code>better_exposed_filters</code>, <code>captcha</code>, <code>coffee</code>,
-<code>colorbox</code>, <code>config_ignore</code>, <code>crop</code>, <code>csv_serialization</code>, <code>ctools</code>, <code>devel</code>, <code>easy_breadcrumb</code>,
-<code>editor_advanced_link</code>, <code>entity</code>, <code>entity_browser</code>, <code>entity_reference_revisions</code>, <code>externalauth</code>,
-<code>facets</code>, <code>field_group</code>, <code>filefield_sources</code>, <code>focal_point</code>, <code>google_analytics</code>, <code>google_tag</code>,
-<code>honeypot</code>, <code>imageapi_optimize</code>, <code>imageapi_optimize_binaries</code>, <code>imce</code>, <code>jquery_ui</code>, <code>jquery_ui_autocomplete</code>,
-<code>jquery_ui_datepicker</code>, <code>jquery_ui_menu</code>, <code>json_field</code>, <code>key</code>, <code>libraries</code>, <code>linkit</code>, <code>mailsystem</code>,
-<code>memcache</code>, <code>menu_block</code>, <code>metatag</code>, <code>metatag_search_gov</code>, <code>migrate_plus</code>, <code>module_filter</code>, <code>openid_connect</code>,
-<code>paragraphs</code>, <code>pathauto</code>, <code>purge</code>, <code>queue_ui</code>, <code>recaptcha</code>, <code>redirect</code>, <code>redis</code>, <code>scheduler</code>,
-<code>search_api</code>, <code>search_api_solr</code>, <code>simple_sitemap</code>, <code>smtp</code>, <code>stage_file_proxy</code>, <code>svg_image</code>, <code>token</code>,
-<code>twig_tweak</code>, <code>usfedgov_google_analytics</code>, <code>uswds_base</code>, <code>video_embed_field</code>,
-<code>views_bulk_operations</code>, <code>views_data_export</code>, <code>webform</code>, <code>xmlsitemap</code>.</p>
-<p><code>uswds_base</code> is a theme and installs through <code>theme_installer</code> and not the module installer.</p>
-<h3 id="blocked">Blocked</h3>
-<p>Nothing. <code>openid_connect</code>, <code>redis</code> and <code>smtp</code> were here.</p>
-<p><code>smtp</code> sends over the host transport from its own <code>smtp.settings</code>, and nothing in a render waits for
-delivery. <code>redis</code> and <code>openid_connect</code> both need an answer inside the request that asked: the PHP
-call is suspended, the Worker performs the socket read or the HTTP exchange, and the same call
-resumes with the answer. For <code>openid_connect</code> that is the authorization-code POST and the userinfo
-GET, so a login completes through the module&#39;s own client. For <code>redis</code> the Durable Object&#39;s own
-SQLite is still the faster cache backend and the recommended one.</p>
-<h3 id="untested">Untested</h3>
-<p><code>search_gov_results_api</code> renders results from an API call made while its form is building. That call
-completes inside the render that makes it, so a search answers on the first request. No run has
-exercised it against a live Search.gov key.</p>
-<hr>
-<h2 id="production-codebases">Production Codebases</h2>
-<p>27 real Drupal codebases, each pinned to a commit in <code>config/corpus.yml</code>, are delivered the way a
-migration would deliver them and scored on 13 capabilities: install, container build, anonymous and
-authenticated render, entity CRUD, form submit, file read and write, queue and cron, outbound HTTP,
-update, cache rebuild, config import and module workflow.</p>
-<p>15 pass all 13 on a local runtime, among them GovCMS, Thunder, farmOS, Droopler, DrupalX, Open
-Intranet and YMCA Open Y. farmOS, GovCMS and Thunder also pass all 13 on a Worker deployed to a
-Cloudflare account, migrated and claimed the way a customer site would be. Thunder&#39;s heaviest admin
-pages can still exhaust a fresh isolate&#39;s memory, so its deployed result varies by deploy (11 of 13
-on one); a GET that meets the reset is retried once. Three more are partial, each with a recorded cause
-(varbase, openculturas and atelier), two stop on an upstream defect, six need an upgrade from Drupal
-10 or older, and one is a composer plugin and not a site.</p>
-<p><a href="compatibility.html"><code>docs/compatibility.md</code></a> is the per-codebase table, rendered from
-<code>docs/compatibility.json</code>, which the lane writes. <code>bun scripts/e2e/corpus-lane.ts --repo=&lt;id&gt;</code>
-drives one codebase.</p>
-<hr>
-<h2 id="limitations">Limitations</h2>
-<p>Measured properties of the runtime, listed so they are known before they are hit.</p>
-<ul>
-<li><strong>Case-insensitive matching is ASCII-only.</strong> Durable Object SQLite has no user-defined
-collations, so Drupal&#39;s <code>NOCASE_UTF8</code> becomes builtin <code>NOCASE</code>. <code>Ünicode</code> does not match
-<code>ünicode</code>. This affects username and email uniqueness and taxonomy matching.</li>
-<li><strong><code>LIKE</code>/<code>GLOB</code> patterns cap at 50 bytes.</strong> A Views &quot;contains&quot; filter on a longer search string
-fails in the engine.</li>
-<li><strong>A statement caps at 100 bound parameters.</strong></li>
-<li><strong><code>REGEXP</code> is evaluated in PHP by the driver</strong>, as are <code>MD5()</code> and <code>SUBSTRING_INDEX()</code> in a select
-list. The engine has none of them, so the driver widens the statement and filters the rows
-itself: Views regex filters work, and on a large table they cost a scan.</li>
-<li><strong>Integers above 2^53</strong> are read back through a second, casting query. The cursor returns doubles,
-so the driver detects a value a double cannot hold and re-reads that statement with the affected
-columns cast to text.</li>
-<li><strong>A 64-bit integer does not survive a JSON round trip.</strong> <code>PHP_INT_SIZE</code> is 8 and <code>PHP_INT_MAX</code> is
-9,223,372,036,854,775,807, but a JSON number is a double, so a value above 2^53 handed across the
-host boundary comes back rounded. Cast it to a string first. The database path already does this.</li>
-<li><strong>The interpreter loads 27 extensions</strong>: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache,
-cfwpark, ctype, date, dom, filter, hash, json, lexbor, libxml, mbstring, pcre, pib, random,
-session, standard, tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by
-default; see <code>OPCACHE_MODE</code> in the configuration reference. <code>mbstring</code> is the native extension;
-<code>iconv</code> is a PHP polyfill. There is no <code>gd</code> and no <code>pdo_sqlite</code>. <code>/php</code> reports the live list.</li>
-<li><strong>Six more extensions are stand-ins the driver installs at boot</strong>: curl, openssl, zip (including
-<code>ZipArchive</code>), exif, fileinfo (including <code>finfo</code>) and xmlwriter. Each is parity-tested against the
-real extension, and what a stand-in does not implement is refused at the call and recorded as a
-degradation, never answered wrongly. The openssl stand-in covers AES and x509.</li>
-<li><strong><code>curl_*</code> works without <code>ext-curl</code>.</strong> The functions are supplied over the same transport as the
-rest of outbound traffic, so an SDK that bundles its own curl transport runs unmodified.
-<code>curl_version()</code> reports <code>0.0.0-drupflare-shim</code>, and an option the shim does not understand is
-refused and not ignored. The options Stripe and elastica set are understood.</li>
-<li><strong>Passwords hash with bcrypt by default, and argon2id is available.</strong> <code>ARGON2=1</code> switches the
-password service to argon2id at m=19456 KiB, t=2, p=1, computed on the host and not in PHP.
-Existing bcrypt hashes keep working and are upgraded at each account&#39;s next login. Hashes are
-written in PHP&#39;s own encoded form, so they verify on any PHP with <code>ext-argon2</code>.</li>
-<li><strong>Image derivatives are produced in the Worker and not by <code>gd</code>.</strong> The toolkit hands the work to
-<code>@gmitch215/tinyimg</code>, a wasm encoder that runs in the front worker and needs no zone, no binding
-and no monthly transform allowance. It covers scale, crop, rotate, desaturate and format
-conversion, and encodes JPEG, PNG and WebP. It does not encode AVIF: core asks the toolkit before
-applying an AVIF effect and falls through to the style&#39;s <code>webp</code> fallback. Cloudflare Images is
-reachable with <code>IMAGE_ENGINE=images</code> on a zone that wants AVIF. Styles at or below 480 px on the
-long edge are produced during the request; larger ones are produced on the alarm chain. A public
-image style URL is rewritten to the <code>/cfw-img/</code> delivery path.</li>
-<li><strong>Outbound HTTP completes inside the request that asks.</strong> <code>Drupal::httpClient()</code> and a Symfony HTTP
-client park the PHP call while the Worker performs the fetch, and the same call resumes with the
-answer. Where a park is refused (a call made from inside an internal function such as
-<code>array_map</code>), the request falls back to the deferred transport: a previous fetch&#39;s response is
-returned and no connection is opened. A URL the site can predict from its own installed projects
-is warmed on the alarm before Drupal asks for it. A URL it cannot predict is queued, and an
-idempotent request that deferred is drained and rendered once more inside the same visit, so the
-answer usually arrives on the first request. Request headers are carried across the queue and are
-part of the cache key, except <code>User-Agent</code>, which is sent but not keyed. A non-idempotent request
-is never re-driven: a replayed POST is a different outcome.</li>
-<li><strong>A page that has been rendered before never waits for a re-render, on a paid plan.</strong> After a
-content change, a request for a path with history is answered from the previous generation with
-<code>x-cfw-edge: STALE</code> while the current one regenerates on the alarm chain. It is bounded two
-generations and 24 hours deep, never applies to a session-carrying response, and refuses a
-deny-list that <code>NEVER_STALE</code> extends. The tier is stored in KV and follows the KV page tier&#39;s own
-plan gate, so a free site does not store a previous generation to fall back to;
-<code>PAGE_KV_ENABLED=1</code> turns it on regardless of plan.</li>
-<li><strong>Outbound TCP is either parked or declared, depending on which the module needs.</strong>
-<code>Drupal\drupflare\Network\CfwTcp</code> describes a whole exchange and reads the answer on a later
-request over a queue, which suits syslog. A module that needs the answer inside the request that
-asked, which is what a cache read is, gets it from the park: the PHP call is suspended mid-frame,
-the Worker performs the socket read, and the same call resumes with the result. <code>drupal/redis</code> is
-verified on that path. The endpoint and its credentials come from <code>REDIS_URL</code> and <code>SYSLOG_URL</code> and
-not from the calling code, and administrative Redis commands are refused. The Durable Object&#39;s own
-SQLite is still the recommended cache backend, because a parked get is a network round trip where
-SQLite is a local read.</li>
-<li><strong>Shell commands run only through a router.</strong> <code>exec()</code>, <code>shell_exec()</code>, <code>proc_open()</code> and the rest
-serve a fixed set of programs with platform equivalents (<code>echo</code>, <code>date</code>, <code>file</code>, <code>zip</code>, <code>unzip</code>,
-<code>gzip</code>, <code>wget</code>, <code>curl</code>, checksums and a few more). Pipes, redirection and any other program fail
-with a recorded degradation and not a fatal. <code>sleep()</code> parks the call and is capped per request by
-<code>SLEEP_BUDGET_MS</code>.</li>
-<li><strong>Config import and queue drains run in steps.</strong> <code>POST /ops?op=cim&amp;drive=1</code> and
-<code>op=queue-drain&amp;drive=1</code> run the first step in the request and leave the rest to the alarm, one
-step per firing. <a href="configuration.html#extensibility-routes"><code>docs/configuration.md</code></a> has the
-parameters.</li>
-<li><strong>Fibers are not available.</strong> <code>new Fiber()</code> aborts the interpreter, because emscripten implements
-none of the context-switching calls it needs. The build rewrites core&#39;s five uses to a
-synchronous stand-in with the same surface.</li>
-<li><strong>Greek word-final sigma lowercases differently</strong> from native PHP, and <code>mb_strwidth</code> under-counts
-emoji. Neither affects Drupal core.</li>
-<li><strong>Writes do not scale, and a replica pool does not change that.</strong> A lane refuses an authoritative
-write and hands it back, so every write is still one object and one thread. What a pool scales is
-authenticated reads; see <a href="#replica-lanes">Replica Lanes</a>.</li>
-<li><strong>A module install leaves the object with little room to do anything else.</strong> It is the most
-expensive thing a site can do, and a booted interpreter already holds most of the object&#39;s
-~195 MiB memory budget. <code>memory.grow</code> has no inverse, so the heap never shrinks; a further growth
-is served at a smaller step and not refused. The install queues the pages it invalidated instead
-of re-rendering them, and the cache is cold for one visit.</li>
-<li><strong>An object reset for memory costs a form submission a retry by hand.</strong> A GET or HEAD that meets a
-reset is sent once more to the fresh instance and answers normally with <code>x-cfw-retried: reset</code>. A
-POST is repeated only when the object never started it: it records an attempt id before the page
-runs, so a missing record means nothing was saved. A POST it had started gets a short &quot;Try Again
-in a Moment&quot; page with <code>Retry-After: 2</code> instead of Cloudflare&#39;s 1101, because it may already have
-saved.</li>
-<li><strong>A cold object rebuilds Drupal, and the heap image does not help.</strong> An evicted Durable Object has
-no interpreter, so the next request that needs one pays a boot. <code>HEAP_IMAGE</code> stores a heap so that
-boot can be replaced by a restore, and it is off by default: measured on two deployed workers, the
-restore costs more than the boot it replaces, and it consumes storage on every site as well. <code>1</code>
-opts in. What keeps a cold boot off the visitor&#39;s path is the page cache, the compiled plan, the
-stale-generation serve, and a resident object while a session is active.</li>
-<li><strong>A freshly deployed site is claimable until it is provisioned.</strong> <code>/firstrun</code> answers without a
-credential while the site has never been configured, because the owner token that <code>/export</code> takes
-is minted by that route and nowhere else; gating it would mean the only way to get your data out
-was to expose <code>/sql</code>, <code>/restore</code> and <code>/php</code> first. The window is the unprovisioned state only:
-once configured the route answers 409, and reconfiguring needs the token. It is the same model as
-Drupal&#39;s own <code>install.php</code>, and the window is signposted: an unclaimed site answers a browser
-navigation with the claim page instead of its front page. Claim the site as the first thing you do
-after deploying.</li>
-</ul>
-<hr>
-<h2 id="project-structure">Project Structure</h2>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span>src/</span></span>
-<span class="line"><span>  site.ts            the edge front end: cache tiers, generation counter, deny filter, body cap</span></span>
-<span class="line"><span>  site-do.ts         the Durable Object: PHP lifecycle, render, fill queue, alarms</span></span>
-<span class="line"><span>  env.ts             the vars this worker reads beyond @drupflare/durabledb's own</span></span>
-<span class="line"><span>  runtime/           interpreter plumbing: mount, lazy FS, interrupt mask, gate, binary seam</span></span>
-<span class="line"><span>  db/                codec, the ctx.storage.sql bridge, chunked migration, heap snapshot store</span></span>
-<span class="line"><span>  drupal/            PHP composition helpers and the shims Drupal runs</span></span>
-<span class="line"><span>  do/                the object split by concern: routes/, alarm/ phases, capabilities, meters</span></span>
-<span class="line"><span>  site/              the front worker split by concern, plus the assets it serves</span></span>
-<span class="line"><span>    php/             the PHP fragments, real files, packed by gen-assets into generated/assets.ts</span></span>
-<span class="line"><span>    html|css|js/     the setup, warming and guard pages</span></span>
-<span class="line"><span>  ops/               cron/GC, sliced database updates, site identity, origin, setup page</span></span>
-<span class="line"><span>  util/              shared helpers and the null/undefined contract types</span></span>
-<span class="line"><span>  ui/admin/          the /_cfw admin surface</span></span>
-<span class="line"><span>  probes/            measurement workers, kept so a report figure can be reproduced</span></span>
-<span class="line"><span>assets/</span></span>
-<span class="line"><span>  core/              the browser-fetchable Drupal tree, served by Workers Assets</span></span>
-<span class="line"><span>  driver.json        the two Drupal modules and the stream-http library, packed; this executes</span></span>
-<span class="line"><span>  drupal-pf/         the per-file pack PHP materialises from</span></span>
-<span class="line"><span>  drupal-sql/        the migration chunks, counted by their own manifest</span></span>
-<span class="line"><span>  drupal/site.sqlite the installed database the chunks are cut from; the one tracked database</span></span>
-<span class="line"><span>config/              the contrib census, the corpus, the traffic mix and the quotas</span></span>
-<span class="line"><span>docker/              the integration rig and the VPS comparison arm</span></span>
-<span class="line"><span>tests/               unit (in workerd), integration (live Durable Object), e2e</span></span>
-<span class="line"><span>scripts/             packers, benches, and the measurement instruments</span></span>
-<span class="line"><span>experiments/         61 wrangler probe configs, kept for reproduction</span></span>
-<span class="line"><span>docs/                the pages published at docs.drupflare.com, and the site's template</span></span></code></pre><p>The PHP lives in the sibling repositories, not here: <code>cfw_do_sqlite</code> in
-<a href="https://github.com/drupflare/rom"><code>rom</code></a>, the capability module in
-<a href="https://github.com/drupflare/drupflare"><code>drupflare</code></a>, and the wasm build toolchain in
-<a href="https://github.com/drupflare/phasm"><code>phasm</code></a>. See <a href="#repositories">Repositories</a>.</p>
-<hr>
-<h2 id="repositories">Repositories</h2>
-<p>This started as one repository and is split, so each piece is usable on its own.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>repo</th>
-<th>what it is</th>
-<th>install</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><strong><code>worker</code></strong> (this one)</td>
-<td>the Worker: cache tiers, the Durable Object, the packers</td>
-<td>clone</td>
-</tr>
-<tr>
-<td><strong><code>drangler</code></strong></td>
-<td>the CLI: stand a site up, check it, migrate one on or off</td>
-<td><code>bun add -g @drupflare/drangler</code></td>
-</tr>
-<tr>
-<td><strong><code>drupflare</code></strong></td>
-<td>the capability module: mail, fetch, images and KV bridged to Workers bindings</td>
-<td><code>composer require drupflare/drupflare</code></td>
-</tr>
-<tr>
-<td><strong><code>rom</code></strong></td>
-<td><code>cfw_do_sqlite</code>, the Drupal database driver for Durable Object SQLite</td>
-<td><code>composer require drupflare/rom</code></td>
-</tr>
-<tr>
-<td><strong><code>stream-http</code></strong></td>
-<td>the <code>https://</code> stream wrapper <code>drupflare</code> extends</td>
-<td>pulled in by <code>drupflare/drupflare</code></td>
-</tr>
-<tr>
-<td><strong><code>phasm</code></strong></td>
-<td>the PHP-to-WebAssembly build toolchain</td>
-<td>GitHub Releases</td>
-</tr>
-<tr>
-<td><strong><code>cartridge</code></strong></td>
-<td>the pack format and the lazy filesystem</td>
-<td><code>@drupflare/cartridge</code></td>
-</tr>
-<tr>
-<td><strong><code>durabledb</code></strong></td>
-<td>the <code>ctx.storage.sql</code> bridge and its codec</td>
-<td><code>@drupflare/durabledb</code></td>
-</tr>
-</tbody></table></div>
-<h3 id="how-the-php-reaches-the-edge">How the PHP Reaches the Edge</h3>
-<p>A <code>composer require</code> ships nothing. Composer does not run on the edge, so the packed tree is the
-vendor directory. <code>bun run assets:driver</code> reads the sibling checkouts directly and writes
-<code>assets/driver.json</code>, which the Durable Object mounts into its in-memory filesystem; that packed copy
-is what executes. <code>composer.json</code> records provenance and lets a developer resolve the packages
-normally, and both are on Packagist as <code>drupflare/rom</code> and <code>drupflare/drupflare</code>.</p>
-<p>The packer resolves each sibling as <code>DRUPFLARE_SRC</code> / <code>ROM_SRC</code> / <code>STREAM_HTTP_SRC</code>, then
-<code>../&lt;name&gt;</code>, then <code>.siblings/&lt;name&gt;</code>, and takes an allow-list of module-shaped paths (<code>src</code>,
-<code>.info.yml</code>, <code>.install</code>, <code>.module</code>, <code>.services.yml</code>). A module repository is not a module, and
-walking a checkout wholesale would pull <code>node_modules/</code> and <code>vendor/</code> into the bundle.</p>
-<p>Run <code>bun run assets:driver</code> after any change in a sibling. <code>tests/node/driver-pack.spec.ts</code> rebuilds
-the pack from the modules on disk and compares it to <code>assets/driver.json</code> byte for byte, so a stale
-pack fails the gate.</p>
-<hr>
-<h2 id="testing">Testing</h2>
-<p>Three vitest projects, plus PHP suites in the sibling repositories and an end-to-end lane that needs
-a running server.</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>lane</th>
-<th>command</th>
-<th>runs in</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>vitest <code>workers</code></td>
-<td><code>bun run test:workers</code></td>
-<td>workerd, via <code>@cloudflare/vitest-pool-workers</code></td>
-</tr>
-<tr>
-<td>vitest <code>node</code></td>
-<td><code>bun run test:node</code></td>
-<td>Node, for oracles workerd cannot host</td>
-</tr>
-<tr>
-<td>both, merged coverage</td>
-<td><code>bun run test</code></td>
-<td>one invocation; this is the commit gate</td>
-</tr>
-<tr>
-<td>PHP suites</td>
-<td>see below</td>
-<td>real PHP, in the sibling repos</td>
-</tr>
-<tr>
-<td>e2e</td>
-<td><code>bun run test:e2e</code></td>
-<td>needs a running server</td>
-</tr>
-</tbody></table></div>
-<p>The e2e lane talks to real servers and not mocks: Keycloak for single sign-on, Gitea, Forgejo and
-GitLab for git, GreenMail for SMTP, Redis and a syslog collector for the TCP tier, and Postgres and
-MySQL as external databases. <code>docker/compose.yml</code> carries all of them pinned by digest, with GitLab
-behind <code>--profile heavy</code>, and <code>tests/e2e/README.md</code> has the commands.</p>
-<p>The PHP suites live in the sibling repositories, which are the authority on their own module. Two
-have a script here; all take this repository&#39;s <code>drupal-src/</code> as <code>DRUPAL_ROOT</code>:</p>
-<div class="table"><table>
-<thead>
-<tr>
-<th>suite</th>
-<th>repo</th>
-<th>run from here</th>
-</tr>
-</thead>
-<tbody><tr>
-<td><code>tests/health-suite.php</code></td>
-<td><code>drupflare</code></td>
-<td><code>bun run test:health</code></td>
-</tr>
-<tr>
-<td><code>tests/run-driver-suite.php</code></td>
-<td><code>rom</code></td>
-<td><code>bun run test:php</code></td>
-</tr>
-<tr>
-<td><code>tests/load-classes.php</code></td>
-<td><code>drupflare</code></td>
-<td><code>php</code>, with the var</td>
-</tr>
-<tr>
-<td><code>tests/pdo-shim.php</code></td>
-<td><code>rom</code></td>
-<td><code>php</code>, with the var</td>
-</tr>
-<tr>
-<td><code>tests/cfw-tcp.php</code></td>
-<td><code>drupflare</code></td>
-<td><code>php</code></td>
-</tr>
-<tr>
-<td><code>tests/solarium-transport.php</code></td>
-<td><code>drupflare</code></td>
-<td><code>bun run test:solarium</code></td>
-</tr>
-<tr>
-<td><code>tests/run-installer.php</code></td>
-<td><code>rom</code></td>
-<td><code>php</code>, with the var</td>
-</tr>
-</tbody></table></div>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">DRUPAL_ROOT</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$PWD</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">/drupal-src</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> php</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> ../rom/tests/run-installer.php</span></span></code></pre><p><code>run-installer.php</code> drives Drupal&#39;s own installer against the driver with core&#39;s sqlite driver as a
-child-process control. It needs a real filesystem, so it has no counterpart here.</p>
-<h3 id="three-vitest-projects">Three Vitest Projects</h3>
-<p><code>workers</code> is the default lane and where most of the subject lives. <code>node</code> exists because workerd
-cannot host two things the suite needs:</p>
-<ul>
-<li><code>node:child_process</code> is not implemented. A probe calling <code>execFileSync(&#39;php&#39;, ...)</code> fails with
-&quot;The child_process.execFileSync method is not implemented&quot;, so any suite whose oracle is a real
-PHP process cannot run in the workers project at all.</li>
-<li><code>node:sqlite</code> does not exist, which <code>test-migrate-sql.mjs</code> needs to diff a replayed database
-against its source.</li>
-</ul>
-<p>Without that second project a PHP-oracle suite has to either transliterate the PHP and test the
-copy, or stay outside vitest. <code>tests/node/mb-fix-iconv.spec.ts</code> is the first occupant: it recovers
-two platform controls that had to be dropped when <code>mb-fix</code> moved into workerd, and it skips when no
-<code>php</code> is on PATH.</p>
-<p><code>e2e</code> is the third and is excluded from <code>bun run test</code>: it needs a running worker and, for most of
-its specs, a running server to talk to. A commit gate that can be unavailable is not a gate. It
-skips when nothing is reachable and fails when <code>CI</code> is set, so a lane that quietly stopped running
-is distinguishable from one that passed.</p>
-<p>Coverage from the two gate projects is merged into one lcov by <code>bun run test:coverage</code>; Codecov gets
-a <code>coverage</code> flag for the merged report and <code>workers</code> / <code>node</code> flags for per-lane test results, all
-with <code>carryforward: true</code>.</p>
-<h3 id="the-integration-lane">The Integration Lane</h3>
-<p>Specs under <code>tests/integration/</code> use <code>ctx.storage.sql</code>, <code>transactionSync()</code>, <code>setAlarm()</code> and
-<code>caches.default</code>. A mock of any of those would be testing the mock, and <code>runInDurableObject</code> from
-<code>cloudflare:test</code> gives the real thing without a manually started server.</p>
-<h3 id="testing-inside-workerd">Testing Inside workerd</h3>
-<p>Every one of these has already produced a defect that a Node-hosted mock passed:</p>
-<ul>
-<li><code>ctx.storage.sql</code> is synchronous only from inside a Durable Object.</li>
-<li><code>transactionSync()</code> has no Node equivalent; <code>BEGIN</code> as SQL is refused outright.</li>
-<li>The host caps a statement at 100 bound parameters; local PDO allows 32,766. That gap hid a live
-cache-write defect behind a green suite.</li>
-<li>Neither clock advances across a synchronous <code>php._run()</code>, so a duration taken by subtracting two
-readings either side of one is 0. A <code>Date.now()</code> delta that spans I/O is usable, because the
-clock updates on I/O completion.</li>
-</ul>
-<h3 id="coverage">Coverage</h3>
-<p>Coverage uses <code>provider: &#39;istanbul&#39;</code>, not <code>v8</code>. The v8 provider reads coverage off the Node
-inspector and these tests run inside workerd&#39;s isolate, so it instruments every statement and
-attributes none of them while the suite passes. istanbul instruments at transform time, so it
-travels into the isolate with the code.</p>
-<p>The sibling repos split on the same axis: <code>earth-app/cloud</code> and <code>js/edgeport</code> are workerd and use
-istanbul; <code>earth-app/crust</code> and <code>earth-app/sky</code> are happy-dom and use v8.</p>
-<p>Thresholds sit just under the current measured figure and are ratcheted upward as coverage lands.</p>
-<h3 id="rules-for-a-new-test">Rules for a New Test</h3>
-<p>Assert on behaviour or a counter, never on timing, except where timing is the claim. Name which
-cache bins were emptied for every render figure. An absolute CPU number comes only from a deployed
-worker; nothing in <code>tests/</code> can produce one. <code>docs/measurement-classes.md</code> is the full rule: which
-instrument may produce which class of number, and which class is banned outright.</p>
-<hr>
-<h2 id="documentation">Documentation</h2>
+<h2 id="-documentation">📚 Documentation</h2>
+<h3 id="start">Start</h3>
 <div class="table"><table>
 <thead>
 <tr>
@@ -2634,48 +513,147 @@ instrument may produce which class of number, and which class is banned outright
 </tr>
 </thead>
 <tbody><tr>
-<td><a href="configuration.html"><code>docs/configuration.md</code></a></td>
-<td>every variable and binding, its default, and what breaks when it is wrong</td>
+<td><a href="getting-started.html">Getting Started</a></td>
+<td>first boot, claiming a site, deploying, and moving an existing site in</td>
 </tr>
 <tr>
-<td><a href="building-from-source.html"><code>docs/building-from-source.md</code></a></td>
-<td>the payload and source routes, each build step, and upgrading Drupal core</td>
+<td><a href="architecture.html">Architecture</a></td>
+<td>how a request is answered, static assets, and self-repair</td>
 </tr>
 <tr>
-<td><a href="repository-layout.html"><code>docs/repository-layout.md</code></a></td>
-<td>every path outside <code>src/</code> and how it arrives on a clean clone</td>
+<td><a href="free-vs-paid.html">Free vs Paid</a></td>
+<td>what each Cloudflare plan allows a site, and which limit binds first</td>
 </tr>
 <tr>
-<td><a href="database.html"><code>docs/database.md</code></a></td>
-<td>how <code>assets/drupal/site.sqlite</code> is built</td>
+<td><a href="vps-comparison.html">VPS Comparison</a></td>
+<td>latency, throughput and cost against nginx and PHP-FPM on the same tree</td>
 </tr>
 <tr>
-<td><a href="compatibility.html"><code>docs/compatibility.md</code></a></td>
-<td>the per-codebase results for the 27 production codebases</td>
+<td><a href="limitations.html">Limitations</a></td>
+<td>what does not run, what runs differently, and the limit behind each</td>
+</tr>
+</tbody></table></div>
+<h3 id="operate">Operate</h3>
+<div class="table"><table>
+<thead>
+<tr>
+<th>page</th>
+<th>what it covers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="administration.html">Administration</a></td>
+<td>the surfaces an owner operates a site from</td>
 </tr>
 <tr>
-<td><a href="recovery.html"><code>docs/recovery.md</code></a></td>
-<td>point-in-time recovery, export, restore, and which primitive answers which failure</td>
+<td><a href="configuration.html">Configuration</a></td>
+<td>every variable and binding, and the page each one lives on</td>
 </tr>
 <tr>
-<td><a href="external-database.html"><code>docs/external-database.md</code></a></td>
-<td>external databases, Hyperdrive, and why the site database lives in the object</td>
+<td><a href="replica-lanes.html">Replica Lanes</a></td>
+<td>read replicas: what a lane buys, how it scales, how it is built</td>
 </tr>
 <tr>
-<td><a href="impact.html"><code>docs/impact.md</code></a></td>
-<td>energy, carbon, water and cost, with the label on every figure</td>
+<td><a href="git-remotes.html">Git Remotes</a></td>
+<td>delivering modules and themes from a git host</td>
 </tr>
 <tr>
-<td><a href="government.html"><code>docs/government.md</code></a></td>
+<td><a href="modules.html">Modules</a></td>
+<td>contributed modules, revisions, and which have run on a real site</td>
+</tr>
+<tr>
+<td><a href="recovery.html">Recovery</a></td>
+<td>point-in-time recovery, export, restore</td>
+</tr>
+<tr>
+<td><a href="external-database.html">External Database</a></td>
+<td>Hyperdrive and external databases</td>
+</tr>
+</tbody></table></div>
+<h3 id="measure">Measure</h3>
+<div class="table"><table>
+<thead>
+<tr>
+<th>page</th>
+<th>what it covers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="impact.html">Impact</a></td>
+<td>the labels, limits and references behind every figure</td>
+</tr>
+<tr>
+<td><a href="energy.html">Energy</a></td>
+<td>the saving against conventional hosting and the per-request model</td>
+</tr>
+<tr>
+<td><a href="energy-views.html">Energy Per View</a></td>
+<td>one view, the traffic mix, visitor devices and Spool</td>
+</tr>
+<tr>
+<td><a href="energy-fleet.html">Fleet Energy</a></td>
+<td>many sites at once and institutional workloads</td>
+</tr>
+<tr>
+<td><a href="economics.html">Economics</a></td>
+<td>what each host costs at each traffic level</td>
+</tr>
+<tr>
+<td><a href="environment.html">Environment</a></td>
+<td>carbon, water and embodied carbon</td>
+</tr>
+<tr>
+<td><a href="measurement-classes.html">Measurement Classes</a></td>
+<td>which instrument may produce which class of number</td>
+</tr>
+</tbody></table></div>
+<h3 id="reference">Reference</h3>
+<div class="table"><table>
+<thead>
+<tr>
+<th>page</th>
+<th>what it covers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="security.html">Security</a></td>
+<td>what the architecture removes and what it leaves</td>
+</tr>
+<tr>
+<td><a href="security-controls.html">Security Controls</a></td>
+<td>the controls in place today</td>
+</tr>
+<tr>
+<td><a href="security-incidents.html">Security Incidents</a></td>
+<td>the CVE and incident map, PHP2Shell, planned work</td>
+</tr>
+<tr>
+<td><a href="government.html">Government</a></td>
 <td>what a US federal site owner owns and what the host owns</td>
 </tr>
 <tr>
-<td><a href="measurement-classes.html"><code>docs/measurement-classes.md</code></a></td>
-<td>which instrument may produce which class of number</td>
+<td><a href="compatibility.html">Compatibility</a></td>
+<td>per-codebase results for the 27 production codebases</td>
 </tr>
 <tr>
-<td><a href="php-update-delivery.html"><code>docs/php-update-delivery.md</code></a></td>
+<td><a href="building-from-source.html">Building From Source</a></td>
+<td>the payload and source routes, and upgrading Drupal core</td>
+</tr>
+<tr>
+<td><a href="repository-layout.html">Repository Layout</a></td>
+<td>every path outside <code>src/</code> and how it arrives on a clean clone</td>
+</tr>
+<tr>
+<td><a href="database.html">Database</a></td>
+<td>how <code>assets/drupal/site.sqlite</code> is built</td>
+</tr>
+<tr>
+<td><a href="php-update-delivery.html">PHP Update Delivery</a></td>
 <td>how a new PHP interpreter reaches this repository</td>
+</tr>
+<tr>
+<td><a href="testing.html">Testing</a></td>
+<td>the test lanes and how to add a test</td>
 </tr>
 </tbody></table></div>
 <p><a href="technical-report.html"><code>TECHNICAL_REPORT.md</code></a> is the engineering record: every measurement, the
@@ -2685,7 +663,7 @@ frozen between I/O on the edge, so a duration taken by subtracting two of its re
 report was written by Claude (Anthropic) while doing the work. Where a number is a local ratio and
 not an edge absolute, it says so.</p>
 <hr>
-<h2 id="contributing">Contributing</h2>
+<h2 id="-contributing">🤝 Contributing</h2>
 <pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> install</span></span>
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> typecheck</span></span>
 <span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> test</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # the workers and node lanes</span></span>
@@ -2695,12 +673,16 @@ not an edge absolute, it says so.</p>
 Composer never runs on the edge, so <code>assets/driver.json</code> is the copy that actually executes, and
 <code>tests/node/driver-pack.spec.ts</code> is what catches it going stale. The PHP suites live in those repos
 and are the authority on their own module.</p>
-<h2 id="license">License</h2>
+<h2 id="-license">📄 License</h2>
 <p>See <a href="https://github.com/drupflare/worker/blob/master/LICENSE">LICENSE</a>.</p>
 			</div>
 		</main>
 		<footer>
 			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
 		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
 	</body>
 </html>

@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Getting Started - Drupflare</title>
+		<meta
+			name="description"
+			content="From a clean clone to a running site, claimed, and moving an existing one in."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Getting Started - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="From a clean clone to a running site, claimed, and moving an existing one in."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="getting-started.html" aria-current="page">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="getting-started">Getting Started</h1>
+<p>From a clean clone to a running site, then claiming it and moving an existing one in.</p>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li><a href="https://bun.sh/">Bun</a></li>
+<li>Node 24+ as well; a few scripts need <code>node:sqlite</code>, which Bun does not ship</li>
+<li>PHP 8.3+ with <code>pdo_sqlite</code> (only to run the database driver&#39;s test suite)</li>
+<li>A Cloudflare account with Durable Objects enabled (available on the free plan)</li>
+</ul>
+<h2 id="install-and-run">Install and Run</h2>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> clone</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://github.com/drupflare/worker.git</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">cd</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> worker</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> install</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> hydrate</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> dev</span></span></code></pre><p><code>assets/</code> and <code>.interp/</code> are generated and gitignored, so a clean clone has nothing to deploy until
+<code>bun run hydrate</code> lands them. See <a href="#building-from-a-clean-clone">Building From a Clean Clone</a>.</p>
+<p>Then open it:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">open</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> http://localhost:8787/</span></span></code></pre><p>The first visit starts the site up, which is <a href="#first-boot">First Boot</a> below. To replay the whole
+database in one shot, which is faster locally:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "localhost:8787/migrate?all=1"</span></span></code></pre><h2 id="first-boot">First Boot</h2>
+<p>A deployed site has an empty Durable Object until something asks it for a page. The first request
+records the ask, arms the alarm chain and answers 503 with a self-refreshing page, and the object
+replays the packed database a batch of chunks at a time until the cursor is done.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>header</th>
+<th>value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>x-cfw-migrate</code></td>
+<td><code>starting</code>, then <code>&lt;chunk&gt;/&lt;chunks&gt;</code></td>
+</tr>
+<tr>
+<td><code>x-cfw-migrate-state</code></td>
+<td><code>queued</code>, <code>running</code> or <code>failed</code></td>
+</tr>
+<tr>
+<td><code>retry-after</code></td>
+<td><code>2</code> on the first request, <code>1</code> while chunks are going</td>
+</tr>
+</tbody></table></div>
+<p>A browser follows the <code>&lt;meta http-equiv=&quot;refresh&quot;&gt;</code> on that page and lands on the site by itself.
+Every other client gets the same 503 with the one-word body <code>migrating</code>.</p>
+<p>Measured on a deployed free worker with the 75-chunk pack of that release, the replay took 2
+invocations, <code>x-cfw-migrate</code> read <code>40/75</code> on the first poll, and a real Drupal page answered about 6
+seconds after the deploy. A 503 in that window means the site is starting, not that the deploy
+failed.</p>
+<p>Free replays <code>FREE_CHUNKS_PER_INVOCATION</code> chunks per invocation, which is 40; paid and local replay
+the whole pack in one. Batching is bound by chunk count because the clock does not advance across a
+synchronous replay. The chunk count is whatever <code>assets/drupal-sql/manifest.json</code> reports, and it
+moves whenever the packed database does.</p>
+<h2 id="claim-the-site">Claim the Site</h2>
+<p>The pack ships an installed database, so Drupal&#39;s <code>install.php</code> never runs and never asks you to
+pick a password. <code>/firstrun</code> does that, and until it runs, uid 1 carries an empty hash that no
+password can match.</p>
+<p>An unclaimed site says so. Once the migration finishes, a browser asking for any HTML page gets a
+one-click claim page instead of the front page: enter a site name, an administrator email and
+optionally a password, and the credentials come back in the response. The page carries
+<code>x-cfw-setup: required</code> and is never stored. A <code>curl</code>, an asset fetch and a POST all fall through to
+the normal path, so only a browser navigation is blocked.</p>
+<p>To claim it from a terminal instead:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -X</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> POST</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "localhost:8787/firstrun"</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  -H</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> 'content-type: application/json'</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  -d</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> '{"siteName":"My Site","adminMail":"you@example.com"}'</span></span></code></pre><p>The response carries <code>adminPass</code> and <code>ownerToken</code>, each shown once and stored nowhere. Save both
+before closing the terminal. Pass <code>&quot;adminPass&quot;:&quot;...&quot;</code> in the body to choose your own instead of
+taking the minted one. Claiming a site also pins its render origin; see
+<a href="configuration.html#site-identity-and-origin">Site Identity and Origin</a>.</p>
+<p>The body takes <code>siteName</code>, <code>siteMail</code>, <code>adminName</code>, <code>adminMail</code>, <code>adminPass</code> and <code>timezone</code>, all
+optional. A password never travels in a query string: <code>?pass=</code> is refused by name, because the
+request line is what <code>wrangler tail</code>, observability and every intermediary log.</p>
+<p>A bare <code>GET /firstrun</code> reports whether a site has been claimed without claiming it:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "localhost:8787/firstrun"</span></span></code></pre><p>Once claimed, <code>/firstrun</code> answers 409. Reconfiguring is <code>POST /firstrun?force=1</code> with
+<code>Authorization: Bearer &lt;ownerToken&gt;</code>, which resets the administrator password.</p>
+<p>A claim is one invocation on a site still on the module set the pack baked. A migrated site claims
+in three, each with its own CPU budget: a warm-up that fills the discovery caches, the module
+install, then the claim itself. A CPU kill rolls back every write in its invocation, so a single
+long claim restarted from nothing on each retry.</p>
+<p>A migrated site claims with <code>POST /firstrun</code> and <code>{&quot;migrated&quot;: true}</code>, which mints the owner token and
+marks the site claimed without changing uid 1, the site name or any mail setting.</p>
+<h2 id="log-in">Log In</h2>
+<p>Log in at <code>/user/login</code> as <code>admin</code> with the <code>adminPass</code> from the claim. That is the Drupal account,
+and it is the only credential that reaches the administrative UI.</p>
+<p>The owner token is a different credential and is not a Drupal login. It signs in to the <code>/_cfw</code>
+pages at <code>/_cfw/login</code>, and it is sent as <code>Authorization: Bearer &lt;ownerToken&gt;</code> to reach the owner
+routes directly, without turning on <code>PW_DIAGNOSTICS</code>. These are the ones this page uses:</p>
+<details>
+<summary>Owner routes used on this page</summary><div class="table"><table>
+<thead>
+<tr>
+<th>route</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/export</code></td>
+<td>dumps the site database; the &quot;a customer can leave&quot; property</td>
+</tr>
+<tr>
+<td><code>/health</code></td>
+<td>the health ledger, the repair state and the budget projections</td>
+</tr>
+<tr>
+<td><code>/settings</code></td>
+<td>every runtime lever with its value and source; <code>PUT</code> merges a patch</td>
+</tr>
+<tr>
+<td><code>/setup/cf</code></td>
+<td>connect, inspect or revoke a Cloudflare account for the site</td>
+</tr>
+<tr>
+<td><code>/setup/mail</code></td>
+<td>onboard a sending domain onto a zone</td>
+</tr>
+<tr>
+<td><code>/setup/oidc</code></td>
+<td>set the OpenID Connect issuer and client id</td>
+</tr>
+<tr>
+<td><code>/installable</code></td>
+<td>whether a package can be installed here</td>
+</tr>
+<tr>
+<td><code>/install</code></td>
+<td>fetch a package from a registry and write its files</td>
+</tr>
+<tr>
+<td><code>/enable</code></td>
+<td>turn an installed module on</td>
+</tr>
+<tr>
+<td><code>/modify</code></td>
+<td>upload a module tree as a revision</td>
+</tr>
+<tr>
+<td><code>/reconcile</code></td>
+<td>what a site still owes the shipping pack, and one step of it</td>
+</tr>
+<tr>
+<td><code>/sweep</code></td>
+<td>coverage of the site&#39;s URLs, and one step of the sweep</td>
+</tr>
+<tr>
+<td><code>/git</code></td>
+<td>remotes, branches, pull requests and the working-tree diff</td>
+</tr>
+</tbody></table></div>
+</details><p><code>OWNER_ROUTES</code> in <code>src/site/routes.ts</code> is the whole list. Without the token these routes answer 401
+with a <code>WWW-Authenticate: Bearer</code> challenge; a diagnostic route answers 404 to the same caller.</p>
+<p>Signing in at <code>/_cfw/login</code> exchanges the token for a session cookie that page script cannot read and
+that no cross-site request carries. It expires after twelve hours, and <code>/_cfw/logout</code> ends it.</p>
+<p>A dump withholds the owner token, the Cloudflare OAuth tokens and the hash salt, and reports how many
+rows it held back. <code>?secrets=1</code> carries them: a faithful restore needs the salt, since it signs
+one-time login links and form tokens, and a backup kept anywhere else should not have it.</p>
+<p>A lost <code>adminPass</code> is recovered through Drupal&#39;s own password reset, which needs mail configured. A
+lost <code>ownerToken</code> comes back with <code>drangler recover-token &lt;site&gt; --store</code>, which proves write access
+to the site&#39;s <code>CONFIG_KV</code> namespace with a single-use record and receives the stored token;
+<code>--store</code> saves it in the system keychain. <a href="configuration-operations.html#owner-token-recovery">Owner Token Recovery</a>
+has the protocol.</p>
+<h2 id="manage-the-site">Manage the Site</h2>
+<p><a href="https://github.com/drupflare/drangler"><code>drangler</code></a> is the CLI for the rest of a site&#39;s life. It
+needs no checkout of anything:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> add</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -g</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> @drupflare/drangler</span></span>
+<span class="line"></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> status</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # plan, generation, header contract, claim state, diagnostics</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> health</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # is it up, and which cache tier answered</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> doctor</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">                 # the local toolchain and the Cloudflare credential</span></span></code></pre><p>Moving to a newer Drupflare is <code>drangler update</code>. With no argument it fast-forwards the local
+checkout and rebuilds the artifacts that belong to the version it left behind; naming a deployed
+worker updates the checkout and then deploys it there.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> update</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">             # the local .drupflare checkout, to the latest</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> update</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --to</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> v0.3.0</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # or to a named version</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> update</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">     # and then deploy it to an existing worker</span></span></code></pre><p>The same CLI claims a site (<code>site claim</code>), recovers its owner token (<code>recover-token</code>), maps
+hostnames (<code>domain add</code>), drives reconciliation and the sweep, uploads module revisions (<code>modify</code>)
+and migrates a site in either direction. Its README has the command table and says which commands
+write to a live site.</p>
+<p>One deployment serves one site on any number of hostnames. <code>drangler domain add &lt;host&gt;</code> maps a
+hostname and adds its Custom Domain route; <a href="administration.html#url-routing">URL Routing</a> covers the
+rest.</p>
+<h2 id="updating-a-deployed-worker">Updating a Deployed Worker</h2>
+<p>The deploy button creates a repository from this one, so your worker is a copy and not a fork, and
+the two share no history. Adding this repository as a remote lets you merge later releases into it.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"># one time</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> remote</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> add</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> template</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://github.com/drupflare/worker</span></span>
+<span class="line"></span>
+<span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"># to install an update</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> switch</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> master</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> fetch</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --all</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> merge</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> template</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --allow-unrelated-histories</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -m</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "chore: merge upstream"</span></span></code></pre><p>Pushing the result deploys it, if you connected the repository to Cloudflare when you created it.
+Otherwise run <code>bunx wrangler deploy</code>, or <code>drangler update my-site</code> to update the checkout and deploy
+in one step.</p>
+<ul>
+<li>The <code>git remote add</code> runs once per clone.</li>
+<li>Switch to the branch you want to update before merging.</li>
+<li><code>--allow-unrelated-histories</code> is what lets two repositories with no common commit merge at all.</li>
+<li>Take a backup branch first, so a merge you dislike costs nothing:</li>
+</ul>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> switch</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -c</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> before-template-merge</span></span></code></pre><p>To take a specific release instead of the tip:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> fetch</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --tags</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> template</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> switch</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> master</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> merge</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> v1.0.4</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --allow-unrelated-histories</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -m</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "chore: merge template v1.0.4"</span></span></code></pre><p>Your own changes are the ones that conflict, and <code>wrangler.jsonc</code> is the usual place: it carries the
+worker name and the bindings you added. Resolve it in favour of your values and take the template&#39;s
+side elsewhere. <code>-X theirs</code> does that in one pass when you have made no changes worth keeping.</p>
+<p>A merge that changes <code>src/</code> or the packed modules needs a deploy to take effect. A merge that changes
+the pack reaches existing sites through reconciliation, described next.</p>
+<h2 id="keeping-an-existing-site-current">Keeping an Existing Site Current</h2>
+<p>The pack is delivered when a site is provisioned, so a fix that lands inside it reaches new sites on
+its own. Reconciliation carries the same fix to sites that already exist. Each step is an
+observation of the site&#39;s end state, not a script: it is checked before the step runs and again
+afterwards, so a site that already matches is marked done without doing any work, and a step that
+ran without converging is reported and not assumed.</p>
+<p>The alarm chain drives one step per firing. <code>drangler reconcile</code> shows where a site stands and which
+step is stuck, and <code>--run</code> takes a step now instead of at the next firing.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> reconcile</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">       # version, every step, and its standing</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> reconcile</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --all</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # drive steps until the version stops moving</span></span></code></pre><p>Steps that change configuration or state go through Drupal&#39;s own writers, so every cached copy of a
+value is invalidated by the code that owns it. A step that changes what the compiled container holds
+drops the container and any stored heap image, and the next boot rebuilds it.</p>
+<h2 id="covering-the-rest-of-the-site">Covering the Rest of the Site</h2>
+<p>A page is rendered when a visitor asks for it, and that visitor waits. The sweep enumerates the URLs
+a site actually has, from its router table and its entity tables, ranks them by observed views then
+recency then depth, and queues the top of the list for the same fill batch a visitor&#39;s request would
+use. It never renders, so it cannot compete with a request for the interpreter.</p>
+<p>It runs by default and is bounded: it refuses below a remaining-budget floor, spends at most a
+declared share of the day&#39;s writes, and resumes the next day when that share is gone. Left unasked it
+takes the smaller share; <code>SWEEP</code> sets it explicitly in both directions, and <code>SWEEP=0</code> turns it off.
+The sweep&#39;s settings are listed in <a href="configuration-operations.html#the-addressable-sweep">The Addressable Sweep</a>.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> sweep</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">       # coverage, and what bounded the last step</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> sweep</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --run</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # take a step now</span></span></code></pre><h2 id="building-from-a-clean-clone">Building From a Clean Clone</h2>
+<p><code>bun install</code> restores the interpreter from the CDN in its postinstall step. <code>bun run hydrate</code> then
+lands the packs: from the release payload when one is published, and from a source build when none
+is. <a href="building-from-source.html">Building From Source</a> covers the two routes, the prerequisites for
+each, the seventeen build steps, and why <code>prefill</code> is the one step allowed to fail without failing
+the build.</p>
+<hr>
+<h2 id="moving-a-site-in">Moving a Site In</h2>
+<p><a href="https://github.com/drupflare/drangler"><code>drangler</code></a> reads an existing Drupal site, scores the move
+and carries it over; the worker accepts what it sends.</p>
+<ul>
+<li><strong>Preview.</strong> <code>drangler preview --host &lt;ssh target&gt; --root &lt;docroot&gt;</code> makes a working duplicate of
+a live site with read-only commands on the old server. It converts a MySQL, MariaDB or PostgreSQL
+dump to SQLite, carries the public and private files and the code, and reads <code>$config</code> literals
+and <code>.htaccess</code> redirects and headers. The duplicate runs on <code>wrangler dev</code>, or deploys with
+<code>--deploy</code>.</li>
+<li><strong>Drupal 10 sources.</strong> A Drupal 10 site is a migration source that drangler plans onto the Drupal
+11 pack. A custom install profile travels inside the database, so the site can be claimed.</li>
+<li><strong>Registry-first delivery.</strong> <code>/install</code> resolves a composer graph: <code>replace</code>, stability flags,
+branch aliases, branch archives, metapackages, virtual packages and <code>InstalledVersions</code>.
+Composer plugins are skipped. <code>drangler build --project</code> covers patches and private repositories.</li>
+<li><strong>Settings from the old host.</strong> <code>DRUPAL_ENV_&lt;NAME&gt;</code>, <code>DRUPAL_CONFIG</code> and <code>DRUPAL_SETTINGS</code> reach PHP, and
+<code>RESPONSE_HEADERS</code> and <code>REDIRECTS</code> carry a migrated site&#39;s header and redirect rules. See
+<a href="configuration.html#migrated-project-settings">Migrated Project Settings</a>.</li>
+<li><strong>Response headers.</strong> Every response carries <code>X-Content-Type-Options</code>, <code>X-Frame-Options</code> and
+<code>Referrer-Policy</code>, and <code>Strict-Transport-Security</code> over https. <code>RESPONSE_HEADERS</code> replaces or
+removes any of them and is where a <code>Content-Security-Policy</code> goes. The baseline is described on
+<a href="security-controls.html#response-headers">Response Headers</a>.</li>
+</ul>
+<hr>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
+	</body>
+</html>

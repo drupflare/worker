@@ -131,7 +131,15 @@
 				display: grid;
 				gap: 0.85rem;
 				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-				margin: 0 0 3rem;
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
 			}
 			a.card {
 				display: block;
@@ -276,6 +284,27 @@
 				max-width: 100%;
 				vertical-align: middle;
 			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
 
 			footer {
 				margin-top: 4rem;
@@ -302,14 +331,12 @@
 					/>
 					Drupflare
 				</a>
-				<a href="impact.html">Impact</a>
-				<a href="security.html">Security</a>
-				<a href="technical-report.html">Technical Report</a>
+				<a href="getting-started.html">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
 				<a href="configuration.html">Configuration</a>
-				<a href="compatibility.html">Compatibility</a>
-				<a href="building-from-source.html">Building From Source</a>
-				<a href="recovery.html">Recovery</a>
-				<a href="database.html">The Site Database</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="api/index.html">API</a>
 				<a href="php/index.html">PHP</a>
 				<a href="https://github.com/drupflare/worker">GitHub</a>
@@ -324,8 +351,8 @@ holds both the interpreter and the SQLite database. That is the default.</p>
 <p>An external database is an option for self-hosted deployments. It is not offered on the managed tier.
 The limits listed below, such as the configuration cap, the daily query limit and the missing MySQL
 <code>COM_STMT_PREPARE</code>, are properties of a Cloudflare account, and a workerd an operator runs has no
-account behind it. An external database also makes a site portable, and it removes the 5 GB
-account-wide storage cap that is otherwise the only hard limit on fleet size.</p>
+account behind it. An external database also makes a site portable, and it moves site storage off the 5 GB
+account-wide storage cap, which otherwise bounds how many sites a free account holds.</p>
 <h2 id="selecting-one">Selecting One</h2>
 <p><code>DB_BACKEND</code> chooses: <code>do-sqlite</code> (the default, the object&#39;s own storage) or <code>hyperdrive</code>. Choosing
 <code>hyperdrive</code> with no <code>HYPERDRIVE</code> binding is reported as misconfigured and does not fall back, because
@@ -476,7 +503,7 @@ no coordination.</p>
 executing inside. The external backend therefore yields each statement from PHP: <code>CfwSqlClient</code> hands
 it to the Worker, which performs it, and the call resumes with the result. Every statement is then a
 park and a network round trip, where the default backend answers it with a local read. A render issues 15 to 48
-statements (see below), and none of them can be deferred, because the render is waiting on the
+statements (see <a href="#the-query-budget">The Query Budget</a>), and none of them can be deferred, because the render is waiting on the
 answer.</p>
 <h3 id="the-consistency-story-lives-in-the-object">The Consistency Story Lives in the Object</h3>
 <p>One object per site is what makes the rest of the design work. The Durable Object gives strict
@@ -520,12 +547,12 @@ accrues duration charges for up to 15 minutes per connection. The backend opens 
 statement and closes it, so no connection outlives a statement. A driver that held one across a render
 would make it a billed residency decision. <code>src/ops/hibernation.ts</code> transcribes the eligibility list.</p>
 <h3 id="the-query-budget">The Query Budget</h3>
-<p>Hyperdrive on Free allows 100,000 database queries/day. A warm render costs <strong>15 host statements</strong>,
+<p>Hyperdrive on Free allows 100,000 database queries/day. A warm render costs 15 host statements,
 measured on a deployed throwaway with the <code>page</code> and <code>dynamic_page_cache</code> bins emptied and the rest
 warm (14 without the theme reset; 20 with <code>bootstrap</code> also emptied). So 100,000 queries is roughly
 <strong>6,666 renders/day</strong>.</p>
-<p>Regeneration on the free plan is bound by rows written at <strong>10,866 renders/day</strong> with
-<code>MEMORY_CACHE_BINS=none</code> and <strong>50,916</strong> at the shipping default; <code>bun scripts/measure/free-envelope.ts</code>
+<p>Regeneration on the free plan is bound by rows written at 10,866 renders/day with
+<code>MEMORY_CACHE_BINS=none</code> and 50,916 at the shipping default; <code>bun scripts/measure/free-envelope.ts</code>
 prints both. Hyperdrive&#39;s free query budget is below both, so it cannot raise the ceiling and would
 lower it. The serving ceiling is unaffected: an edge cache hit never reaches the object and issues no
 database query under either design, so 100,000 Worker requests/day still binds first.</p>
@@ -545,8 +572,8 @@ local read, which is why SQLite is the default and the cache backend.</p>
 <p>An external database also avoids the compatibility gaps that come from Durable Object SQLite and not
 from SQLite itself: the 100 bound-parameter cap, the 50-byte LIKE/GLOB pattern limit, integer reads
 that lose precision above 2^53, and the absence of <code>NOCASE_UTF8</code> and <code>REGEXP</code>. They are documented
-under Platform Constraints in <code>TECHNICAL_REPORT.md</code>. Hyperdrive is a compatibility option and not a
-capacity lever.</p>
+under Platform Constraints in the <a href="technical-report.html">technical report</a>. Hyperdrive is a compatibility option. It does not
+add capacity.</p>
 <h2 id="what-it-costs">What It Costs</h2>
 <ul>
 <li><strong>The one-click goal.</strong> Standing a site up requires provisioning and paying for a database first.
@@ -562,14 +589,18 @@ external database it is up when the object, Hyperdrive and the database are all 
 </ul>
 <h2 id="related">Related</h2>
 <ul>
-<li><code>docs/recovery.md</code>: what backs the site up and what restores it</li>
-<li><code>docs/configuration.md</code>: every var and binding</li>
-<li><code>TECHNICAL_REPORT.md</code>, Platform Constraints: the measured Durable Object SQLite limits</li>
+<li><a href="recovery.html">Recovery</a>: what backs the site up and what restores it</li>
+<li><a href="configuration.html">Configuration</a>: every var and binding</li>
+<li><a href="technical-report.html">Technical report</a>, Platform Constraints: the measured Durable Object SQLite limits</li>
 </ul>
 			</div>
 		</main>
 		<footer>
 			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
 		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
 	</body>
 </html>

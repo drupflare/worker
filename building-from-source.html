@@ -131,7 +131,15 @@
 				display: grid;
 				gap: 0.85rem;
 				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-				margin: 0 0 3rem;
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
 			}
 			a.card {
 				display: block;
@@ -276,6 +284,27 @@
 				max-width: 100%;
 				vertical-align: middle;
 			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
 
 			footer {
 				margin-top: 4rem;
@@ -302,14 +331,12 @@
 					/>
 					Drupflare
 				</a>
-				<a href="impact.html">Impact</a>
-				<a href="security.html">Security</a>
-				<a href="technical-report.html">Technical Report</a>
+				<a href="getting-started.html">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
 				<a href="configuration.html">Configuration</a>
-				<a href="compatibility.html">Compatibility</a>
-				<a href="building-from-source.html" aria-current="page">Building From Source</a>
-				<a href="recovery.html">Recovery</a>
-				<a href="database.html">The Site Database</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
 				<a href="api/index.html">API</a>
 				<a href="php/index.html">PHP</a>
 				<a href="https://github.com/drupflare/worker">GitHub</a>
@@ -386,9 +413,8 @@ against the <code>SHA256SUMS</code> published beside it.</p>
 <td>that branch&#39;s tip, replaced on every push</td>
 </tr>
 </tbody></table></div>
-<p><strong>The CDN copy is tried before the GitHub Release.</strong> A Workers Builds job stalled for its whole
-timeout on a release asset download, in a container that had restored the same 13.4 MB from the CDN
-seconds earlier. The Release stays canonical and stays the fallback, so a CDN outage costs a retry
+<p><strong>The CDN copy is tried before the GitHub Release.</strong> A Workers Builds job once stalled for its whole
+timeout on a release asset download, while the same 13.4 MB restored from the CDN in seconds. The Release stays canonical and stays the fallback, so a CDN outage costs a retry
 rather than a deploy.</p>
 <p><strong>The dev line is tried last and never displaces a release.</strong> It is keyed by branch: the checkout&#39;s
 own branch first, then <code>master</code>. It lets a checkout on a commit no release was cut from download a
@@ -622,7 +648,7 @@ without this step there is no site to boot.</p>
 <p><strong>This step&#39;s database is a throwaway; the shipping one is built by the same script.</strong> Both come from
 <code>scripts/drupal/install-site-db.php</code>, and it refuses to write <code>assets/drupal/site.sqlite</code> without
 <code>--allow-shipping-pack</code>, so the normal loop is build elsewhere and compare with
-<code>node scripts/diff-site-db.ts</code>. <code>docs/database.md</code> is the recipe and lists every value the shipped
+<code>node scripts/diff-site-db.ts</code>. <a href="database.html">Site Database</a> is the recipe and lists every value the shipped
 database disagrees with a stock install about.</p>
 <p><code>patch</code> rewrites the tree for the wasm runtime, and is idempotent. Drupal 11 uses <code>new \Fiber()</code> in
 five places; PHP builds Fibers on ucontext, emscripten provides none, and the first Fiber aborts the
@@ -672,7 +698,7 @@ profiled set is completed by rules that already reach most of the tree.</p>
 </tbody></table></div>
 <p>The Worker bundle is unaffected; the packs are Workers assets and carry no bundle bytes.</p>
 <p><code>twig</code> bakes the precompiled Twig cache and writes two records: <code>twig-bake.json</code>, which the gate
-reads, and <code>core.list.json</code>, <strong>the file list both packers then read</strong>.</p>
+reads, and <code>core.list.json</code>, the file list both packers then read.</p>
 <p><code>core</code> repacks the tree from that list. It runs under <code>PACK_INDEX=1</code>, which takes <code>core.list.json</code>
 verbatim with no re-globbing, so a repack measures the tree and never the completion rules. It
 rewrites the two files <code>bootstrap</code> wrote, and it is skipped only when they are NEWER than the list;
@@ -733,13 +759,13 @@ that hash covers every installed composer package. Any change in <code>drupal-sr
 packed row and the pack disagree, the first <code>$kernel-&gt;boot()</code> on every site misses and rebuilds a
 482 KB container, which took 1,024 ms against 86 ms for a boot that hits.</p>
 <p>The row cannot be retargeted by editing its key. A compiled container embeds the absolute root it was
-built against, so it has to come from a boot where the root is <code>/drupal</code>. The step runs <code>wrangler dev --local</code>, migrates a throwaway site, renders one page
-and reads back the row that boot rebuilt.</p>
+built against, so it has to come from a boot where the root is <code>/drupal</code>. The step runs <code>wrangler dev --local</code>, migrates a throwaway site, renders the paths in
+<code>RENDER_PATHS</code> until the row appears, and reads back the row that boot rebuilt.</p>
 <p><code>tests/node/container-cid.spec.ts</code> compares the pack against the database and fails when they
 disagree. Run the step on its own with <code>bun run assets:container</code>, which re-chunks afterwards.</p>
 <h3 id="17-the-prefill">17, The Prefill</h3>
 <p><code>prefill</code> produces <code>assets/prefill.json</code>, which holds the bytes the site returns for five paths. A
-prefilled path is a <strong>hit on its first ever request</strong>, so whatever is in that file is the page a
+prefilled path is a hit on its first ever request, so whatever is in that file is the page a
 visitor sees.</p>
 <p>The bytes depend on the runtime, so native PHP cannot produce them. Native PHP returns suffixed block
 ids, because <code>Html::$seenIds</code> is a static that <code>drupal_static_reset()</code> does not clear. It also
@@ -753,7 +779,7 @@ lift a page from a Durable Object left behind by an earlier run.</p>
 <p>The migration runs with <code>prefill=0</code>, which is what makes it a bake. <code>/migrate</code> seeds the serving
 table from the shipped <code>assets/prefill.json</code>, so with it on every <code>/serve</code> is a hit of the file being
 rebuilt. <code>migrateSite()</code> asks for an unseeded site and throws if the route prefills anyway.</p>
-<p>It is the <strong>only optional step</strong>. It binds a port and boots an interpreter, and a busy port must not
+<p>It is the only optional step. It binds a port and boots an interpreter, and a busy port must not
 discard sixteen finished steps: a failure here is reported, the build continues, and the run ends
 naming the file and the command that retries it. An absent <code>prefill.json</code> is normal at runtime; the
 first request to each path renders, and misses the prefill hit.</p>
@@ -826,7 +852,7 @@ on a real upgrade, since it re-renders the prefilled pages and a core patch can 
 <tbody><tr>
 <td>a core-version swap, end to end</td>
 <td align="center">6</td>
-<td><strong>23-27 s</strong>, median 25 s</td>
+<td>23-27 s, median 25 s</td>
 </tr>
 <tr>
 <td>of which: tarball fetch, extract, contrib install</td>
@@ -860,7 +886,7 @@ to 11.4.5:</p>
 </thead>
 <tbody><tr>
 <td>pack objects to upload</td>
-<td><strong>209</strong></td>
+<td>209</td>
 </tr>
 <tr>
 <td>pack objects to delete</td>
@@ -872,7 +898,7 @@ to 11.4.5:</p>
 </tr>
 <tr>
 <td>static assets that also change</td>
-<td><strong>2</strong></td>
+<td>2</td>
 </tr>
 </tbody></table></div>
 <p>The 209 are 93 <code>.info.yml</code> version stamps, 86 files under <code>vendor/</code>, 28 PHP classes under <code>core/</code>
@@ -915,18 +941,22 @@ discovery pass on the first render. <code>scripts/bake-collectors.php</code> pro
 wired into <code>build:local</code>. It reads <code>&lt;root&gt;/sites/default/files/.sqlite</code>, which the <code>site</code> step does
 not create (that step writes <code>sites/build/files/build-site.sqlite</code>), and it writes into the build
 database, from which the rows were copied by hand into <code>site.sqlite</code>.</p>
-<h2 id="related">Related</h2>
-<ul>
-<li><code>docs/configuration.md</code>: every variable and binding, and what breaks when one is wrong</li>
-<li><code>docs/repository-layout.md</code>: every path outside <code>src/</code> and how it arrives</li>
-<li><code>scripts/README.md</code>: why each script is in the language it is in</li>
-</ul>
 <p><code>bun run release:payload</code> builds the payload the fast route downloads and <code>bun run release:check</code>
 prices the canonical config against the 64 MiB ceiling.</p>
+<h2 id="related">Related</h2>
+<ul>
+<li><a href="configuration.html">Configuration</a>: every variable and binding, and what breaks when one is wrong</li>
+<li><a href="repository-layout.html">Repository Layout</a>: every path outside <code>src/</code> and how it arrives</li>
+<li><a href="https://github.com/drupflare/worker/blob/master/scripts/README.md">Scripts</a>: why each script is in the language it is in</li>
+</ul>
 			</div>
 		</main>
 		<footer>
 			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
 		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
 	</body>
 </html>

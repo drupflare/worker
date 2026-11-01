@@ -131,7 +131,15 @@
 				display: grid;
 				gap: 0.85rem;
 				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-				margin: 0 0 3rem;
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
 			}
 			a.card {
 				display: block;
@@ -276,6 +284,27 @@
 				max-width: 100%;
 				vertical-align: middle;
 			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
 
 			footer {
 				margin-top: 4rem;
@@ -302,14 +331,12 @@
 					/>
 					Drupflare
 				</a>
-				<a href="impact.html">Impact</a>
-				<a href="security.html">Security</a>
-				<a href="technical-report.html" aria-current="page">Technical Report</a>
+				<a href="getting-started.html">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
 				<a href="configuration.html">Configuration</a>
-				<a href="compatibility.html">Compatibility</a>
-				<a href="building-from-source.html">Building From Source</a>
-				<a href="recovery.html">Recovery</a>
-				<a href="database.html">The Site Database</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html" aria-current="page">Technical Report</a>
 				<a href="api/index.html">API</a>
 				<a href="php/index.html">PHP</a>
 				<a href="https://github.com/drupflare/worker">GitHub</a>
@@ -326,7 +353,7 @@ and which classes of defect it has produced.</p>
 <p>Every figure here is measured. The instrument is named in each table, because a local wall clock and
 a deployed <code>cpuTime</code> reading are not interchangeable.</p>
 <hr>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#-executive-summary">🧭 Executive Summary</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#platform-constraints">Platform Constraints</a></li><li><a href="#measured-costs">Measured Costs</a></li><li><a href="#the-interpreter-build">The Interpreter Build</a></li><li><a href="#real-workloads">Real Workloads</a></li><li><a href="#defect-classes">Defect Classes</a></li><li><a href="#measurement-rules">Measurement Rules</a></li><li><a href="#repository-layout">Repository Layout</a></li><li><a href="#verifying-the-tree">Verifying the Tree</a></li><li><a href="#design-records">Design Records</a></li></ol></nav><h2 id="-executive-summary">🧭 Executive Summary</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#executive-summary">Executive Summary</a></li><li><a href="#architecture">Architecture</a></li><li><a href="#platform-constraints">Platform Constraints</a></li><li><a href="#measured-costs">Measured Costs</a></li><li><a href="#the-interpreter-build">The Interpreter Build</a></li><li><a href="#real-workloads">Real Workloads</a></li><li><a href="#defect-classes">Defect Classes</a></li><li><a href="#measurement-rules">Measurement Rules</a></li><li><a href="#repository-layout">Repository Layout</a></li><li><a href="#verifying-the-tree">Verifying the Tree</a></li><li><a href="#design-records">Design Records</a></li></ol></nav><h2 id="executive-summary">Executive Summary</h2>
 <p>The bundle ships PHP 8.5 with every extension Drupal requires and nothing dropped. The interpreter
 travels as a raw <code>CompiledWasm</code> import, which the platform compiles ahead of upload, so startup does
 no decompression and no runtime codegen. Cloudflare removed the compressed size limit on 2026-09-04
@@ -9118,5 +9145,9 @@ the wildcard is accurate rather than a blanket <code>any</code>.</p>
 		<footer>
 			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
 		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
 	</body>
 </html>

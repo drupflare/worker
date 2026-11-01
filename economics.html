@@ -1,0 +1,1143 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Economics - Drupflare</title>
+		<meta
+			name="description"
+			content="What each host costs at each traffic level."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Economics - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="What each host costs at each traffic level."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="getting-started.html">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="economics">Economics</h1>
+<p>What a Drupflare site costs to run against the hosting it replaces, at each traffic level. Prices are list prices; the energy behind them is on <a href="energy.html">Energy</a>, and the scope of each claim is on <a href="impact.html#what-this-does-not-claim">Impact</a>. Citations in brackets refer to the <a href="impact.html#references">references on Impact</a>.</p>
+<p>The figures are <code>derived</code>: Cloudflare&#39;s published rates [18], [19] applied to the measured workload, and the list prices of the conventional hosts they are compared with. <code>bun scripts/economics/comparison.ts --md</code> generates the tables, so they follow the model behind them.</p>
+<p>You deploy to your own Cloudflare account. There is no platform fee in any figure below and no
+per-tenant charge. Quotas are account-wide, so several sites share one envelope and do not each pay
+their own floor.</p>
+<p>The tables down to <a href="#kept-warm">Kept Warm</a> are for sites that sleep, which is the free plan&#39;s default and
+<code>SITE_WARM=0</code> on any plan. <a href="#kept-warm">Kept Warm</a> prices the paid plan&#39;s default, where every site stays warm.</p>
+<h2 id="the-conventional-hosts">The Conventional Hosts</h2>
+<ul>
+<li><strong>Your cost:</strong> Cloudflare&#39;s published rates on your own account. <code>free</code> means the whole account
+fits inside the free plan.</li>
+<li><strong>Cheapest VPS:</strong> <code>derived</code>. Each priced provider&#39;s list price for the smallest box that meets the
+load in What A Conventional Host Needs, plus backups and any transfer overage, taking the lowest.
+It excludes the labour of running the server, which for most people is the largest real cost, and
+it excludes a CDN.</li>
+<li><strong>Most popular cloud:</strong> Amazon Lightsail, the VPS product of AWS. AWS is the most-used cloud among
+professional developers, at 45.9% in the 2025 Stack Overflow survey [20], and the largest by market
+share, at 28% in Synergy Research&#39;s second quarter of 2026 [21]. DigitalOcean, the most-used
+specialist VPS provider in that survey at 11.1%, is shown beside it in the price table.</li>
+<li><strong>Latency-matched VPS:</strong> <code>derived (modelled)</code>. One origin in each of three regions (US East,
+Europe and Asia Pacific), each sized for a third of the traffic on DigitalOcean&#39;s plans, behind
+DigitalOcean&#39;s global load balancer at $15 a month [22]. It is what serving visitors from nearby
+costs conventionally. It is a floor: the database replica, file replication and cross-region
+transfer that multi-region architectures carry [23], [24] are not priced, and three regions still
+leave most visitors tens of milliseconds from an origin where the edge answers from their own colo.</li>
+<li><strong>Managed floor:</strong> Pantheon Basic at $500 a year billed annually, or $55 billed monthly [25].
+<code>published</code>. The $41.67 a month in the tables is $500 divided by twelve, so it is <code>derived</code>. It is
+held flat because overage is not published in a form that can be quoted.</li>
+<li><strong>Energy:</strong> <code>derived</code>, from the energy model on <a href="energy.html">Energy</a>. The servers-not-built figure is modelled: the
+hardware share of the host, rounded down, with no manufacturing or recycling figure attached.</li>
+</ul>
+<p>Google Cloud, Oracle Cloud, Kamatera, OVHcloud, Contabo, IONOS, Scaleway and Hetzner are not priced.
+Each lacked a complete USD list price for the components below on its own pages, or listed its
+cheapest plan as unavailable. Linode&#39;s per-plan backup price comes from its API [26].</p>
+<h2 id="what-a-conventional-host-needs">What A Conventional Host Needs</h2>
+<p>A conventional price here is the bill for the hardware the traffic needs, and it moves with traffic.
+Peak load is five times the average, and every view is charged to the origin as a render. A render
+costs 44.7 ms of CPU, the capacity of one core of a Ryzen 9 9900X running the shipped nginx and
+PHP-FPM stack (<a href="#what-running-it-showed">What Running It Showed</a>). The cores a box needs are the fewest whole cores
+that keep the p95 response inside a bound in an M/M/c queue, and never above a utilisation cap, at that peak rate.</p>
+<p>Two bounds give two sizings. A viable box keeps the p95 under 60 seconds, the default read timeout
+of nginx and Apache [7], [27], [28], so no client or proxy gives up, with utilisation capped at 95%.
+Cloudflare&#39;s own cutoff is 125 seconds [29]. A matched box keeps the p95 under 0.8 seconds, the
+first-byte time web.dev rates good (poor starts at 1.8 seconds) [30], with utilisation capped at 80%.
+The caps are modelled, and the 80% matches Linode&#39;s guidance to stay below 80% sustained CPU on a
+shared plan [31]. A burstable plan has a lower baseline, such as the 10% of a vCPU on a <code>t3.micro</code>
+[32], but the average load here is a few percent of one core.</p>
+<p>Memory sets the floor and does not grow with traffic. The Ubuntu 24.04 cloud image needs 1 GB of RAM
+for the operating system alone [33]. The shipped stack&#39;s nginx and 8 PHP-FPM children held 169 MB
+under the render load, and MariaDB&#39;s default InnoDB buffer pool is 128 MiB [34]. Together that is
+1.29 GiB a box, so a 1 GiB plan is below the floor and 2 GiB is the smallest size that meets it.
+Drupal&#39;s own documentation gives 1 GB as the minimum for Composer [35], which is a build requirement
+and not a serving one. Disk is about 10 GB in use (the operating system, the 167 MB Drupal tree and
+the 5.8 MB database, modelled) against 25 GB on the smallest 2 GiB plans. Transfer is 166 KB a view,
+the first load of the demo site (66 requests, 17.2 KB of HTML, n=1), so 3 million views move about
+498 GB. Every view is charged as a first load, and no CDN is assumed. What a conventional host needs at each
+traffic level, with the cheapest priced provider for each sizing:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>peak req/s</th>
+<th>viable vCPU</th>
+<th>matched vCPU</th>
+<th>GiB a box</th>
+<th>transfer GB</th>
+<th>cheapest viable</th>
+<th>cheapest matched</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>10,000</td>
+<td>0.0</td>
+<td>1</td>
+<td>1</td>
+<td>1.29</td>
+<td>2</td>
+<td>Vultr vc2-1c-2gb x1</td>
+<td>Vultr vc2-1c-2gb x1</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>0.2</td>
+<td>1</td>
+<td>1</td>
+<td>1.29</td>
+<td>17</td>
+<td>Vultr vc2-1c-2gb x1</td>
+<td>Vultr vc2-1c-2gb x1</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>1.9</td>
+<td>1</td>
+<td>1</td>
+<td>1.29</td>
+<td>166</td>
+<td>Vultr vc2-1c-2gb x1</td>
+<td>Vultr vc2-1c-2gb x1</td>
+</tr>
+<tr>
+<td>3,000,000</td>
+<td>5.7</td>
+<td>1</td>
+<td>1</td>
+<td>1.29</td>
+<td>498</td>
+<td>Vultr vc2-1c-2gb x1</td>
+<td>Vultr vc2-1c-2gb x1</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>19.0</td>
+<td>1</td>
+<td>2</td>
+<td>1.29</td>
+<td>1,660</td>
+<td>Vultr vc2-1c-2gb x1</td>
+<td>Amazon $12 bundle x1</td>
+</tr>
+<tr>
+<td>30,000,000</td>
+<td>57.0</td>
+<td>3</td>
+<td>4</td>
+<td>1.29</td>
+<td>4,980</td>
+<td>Amazon $12 bundle x2</td>
+<td>Amazon $12 bundle x2</td>
+</tr>
+<tr>
+<td>100,000,000</td>
+<td>190.1</td>
+<td>9</td>
+<td>11</td>
+<td>1.29</td>
+<td>16,600</td>
+<td>Vultr vc2-2c-2gb x5</td>
+<td>Amazon $12 bundle x6</td>
+</tr>
+</tbody></table></div>
+<p>Three million views a month is 5.7 requests a second at peak and a quarter of a core, so a single
+vCPU serves it with room to spare, and one vCPU carries a matched box up to about 9.4 million views
+a month and a viable one to 11.2 million. The two sizings differ from there, and the gap widens with
+traffic: 9 vCPU against 11 at 100 million. The floor is the memory a box needs, and the traffic that
+follows moves the bill through the vCPU count above 9 million views and through transfer above a
+plan&#39;s included allowance.</p>
+<p>The providers priced, at the smallest box that meets the floor at 100,000 views a month:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>provider</th>
+<th>plan</th>
+<th>vCPU</th>
+<th>GiB</th>
+<th>transfer TB</th>
+<th>plan</th>
+<th>backups</th>
+<th>other</th>
+<th>total</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Vultr [36]</td>
+<td>vc2-1c-2gb</td>
+<td>1</td>
+<td>2</td>
+<td>2</td>
+<td>$10.00</td>
+<td>$0.50</td>
+<td>$0.00</td>
+<td>$10.50</td>
+</tr>
+<tr>
+<td>Amazon Lightsail [37]</td>
+<td>$12 bundle</td>
+<td>2</td>
+<td>2</td>
+<td>3</td>
+<td>$12.00</td>
+<td>$0.50</td>
+<td>$0.00</td>
+<td>$12.50</td>
+</tr>
+<tr>
+<td>DigitalOcean [38]</td>
+<td>Basic 2 GiB</td>
+<td>1</td>
+<td>2</td>
+<td>2</td>
+<td>$12.00</td>
+<td>$2.40</td>
+<td>$0.00</td>
+<td>$14.40</td>
+</tr>
+<tr>
+<td>Akamai Cloud (Linode) [26]</td>
+<td>g6-standard-1</td>
+<td>1</td>
+<td>2</td>
+<td>2</td>
+<td>$12.00</td>
+<td>$2.50</td>
+<td>$0.00</td>
+<td>$14.50</td>
+</tr>
+<tr>
+<td>Microsoft Azure (East US) [39]</td>
+<td>Standard_B2pls_v2</td>
+<td>2</td>
+<td>4</td>
+<td>none</td>
+<td>$24.53</td>
+<td>$10.22</td>
+<td>$4.40</td>
+<td>$39.15</td>
+</tr>
+</tbody></table></div>
+<h2 id="what-running-it-showed">What Running It Showed</h2>
+<p>The shipped nginx and PHP-FPM 8.5 stack, with opcache and the tracing JIT, on the same Drupal tree and
+SQLite database that drupflare serves, was run in one container image on two hosts and driven by the
+same generator from one machine, <code>measured</code>, by <code>scripts/measure/floor-rig.ts</code>. Every request is a
+render: a unique query string that misses nginx, the page cache and the dynamic page cache, checked on
+each response. Server time is nginx&#39;s own <code>$request_time</code>, so it carries no network.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>host</th>
+<th align="right">CPU a render</th>
+<th align="right">renders a second at one core</th>
+<th align="right">server time, one client</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Ryzen 9 9900X, database on disk</td>
+<td align="right">44.1-46.4 ms</td>
+<td align="right">6.2 to 10.5</td>
+<td align="right">113 to 116 ms</td>
+</tr>
+<tr>
+<td>same, database on tmpfs</td>
+<td align="right">44.8 ms</td>
+<td align="right">22.4</td>
+<td align="right">41 ms</td>
+</tr>
+<tr>
+<td>Cloudflare Container, 1 vCPU</td>
+<td align="right">144.9 ms</td>
+<td align="right">6.6</td>
+<td align="right">144 ms</td>
+</tr>
+</tbody></table></div>
+<ul>
+<li><strong>CPU:</strong> a render costs 44.1 to 46.4 ms of a Zen 5 core in all eight disk and tmpfs runs, across 1
+and 2 CPUs, 8 to 32 children and 1 to 4 GiB limits, and the full-core capacity of 22.4 a second is
+44.7 ms. An earlier rig gave 17.9 ms, which did not reproduce here, and the gap is unexplained.
+Cloudflare&#39;s container vCPU took 145 ms, so a slower core needs proportionally more of them.</li>
+<li><strong>Disk:</strong> with the database on disk a render also waits about 70 ms, and throughput stops near 10 a
+second however many cores it has: the 2-CPU run read 8.5. The container used about 0.45 of its core
+at that ceiling. Moving the database to tmpfs took one client from 113 ms to 41 ms and capacity to
+22.4 a second, a full core. SQLite commits synchronously by default and every unique render writes
+cache rows, so this is that rig&#39;s commit latency, and MariaDB on a production disk was not
+measured. The cost model uses the CPU figure and no disk wait.</li>
+<li><strong>Queueing:</strong> on the tmpfs run the p95 was 190 ms at half of capacity and 272 ms at 80%, against
+268 and 671 ms from an M/M/1 queue with that service time. The model&#39;s bound held with room, since
+render times vary less than an exponential. Errors appeared at 16 clients and in the 80% cell; the
+cause was not examined.</li>
+<li><strong>Memory:</strong> nginx plus PHP-FPM held 169 MB with 8 children, 227 MB with 16 and 342 MB with 32 under
+load, anonymous and shared memory from the container&#39;s cgroup, about 7.2 MB a child. A 1 GiB limit
+was reached 1,743 and 2,386 times, with 8 and 32 children, and killed nothing: anonymous memory
+stayed under 300 MB and the pressure was page cache. Per-child proportional memory could not be
+read, because the probe ran unprivileged.</li>
+</ul>
+<p>The model charges 44.7 ms a render. That moves nothing at or below 3 million views, where a box
+is one vCPU, and above 9 million views it roughly doubles the vCPUs a load needs.</p>
+<h2 id="prices-at-each-traffic-level">Prices At Each Traffic Level</h2>
+<p>What hosting the same site costs conventionally, per site:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>cheapest VPS</th>
+<th>DigitalOcean</th>
+<th>most popular cloud</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>$10.50</td>
+<td>$14.40</td>
+<td>$12.50</td>
+<td>$58.20</td>
+<td>$41.67</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>$10.50</td>
+<td>$14.40</td>
+<td>$12.50</td>
+<td>$58.20</td>
+<td>$41.67</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>$10.50</td>
+<td>$14.40</td>
+<td>$12.50</td>
+<td>$58.20</td>
+<td>$41.67</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>$10.50</td>
+<td>$14.40</td>
+<td>$12.50</td>
+<td>$58.20</td>
+<td>$41.67</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>$12.50</td>
+<td>$21.60</td>
+<td>$12.50</td>
+<td>$58.20</td>
+<td>$41.67</td>
+</tr>
+</tbody></table></div>
+<p>Amazon Lightsail publishes no transfer overage price for instances, so a plan whose transfer is
+exceeded is not priced. At the CPU cost measured here the vCPUs a load needs bring enough included
+transfer in every row, so none is dropped.</p>
+<p>Above 9 million views the hardware grows with the traffic, and so does the bill. The same prices at
+higher traffic, with drupflare&#39;s per-site bill at 1,000 sites:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>cheapest VPS</th>
+<th>DigitalOcean</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+<th>drupflare</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>30,000,000</td>
+<td>$25.00</td>
+<td>$43.20</td>
+<td>$79.80</td>
+<td>$41.67</td>
+<td>$10.92</td>
+</tr>
+<tr>
+<td>100,000,000</td>
+<td>$75.00</td>
+<td>$129.60</td>
+<td>$144.60</td>
+<td>$41.67</td>
+<td>$36.39</td>
+</tr>
+<tr>
+<td>1,000,000,000</td>
+<td>$877.00</td>
+<td>$1,206.40</td>
+<td>$1,221.40</td>
+<td>$41.67</td>
+<td>$363.86</td>
+</tr>
+</tbody></table></div>
+<h2 id="the-free-plan">The Free Plan</h2>
+<p>The free plan covers 3.04 million views a month across the whole account, split however you like:
+one site at 3.04 million views, a hundred sites at 30,439 each, a thousand at 3,043 each. Past that
+the Workers Paid plan is $5 a month, including 10 million requests, 50 million rows written and 5 GB
+of storage.</p>
+<p>Worker requests, one per view, are the meter that runs out first. Every view reaches the Worker,
+cached or not, so no change to rendering moves this ceiling. Only a response that never runs the
+Worker avoids it: a static asset, or a hostname not routed to the Worker. At the shipping default a
+fill writes 1.75 rows, and the re-render ceiling is 50,916 a day, set by rows written. Renders follow
+saves rather than views: at five saves a day a site re-renders about 25 pages, so a thousand active
+sites use under half of that ceiling. For a large idle fleet the binding meter changes to storage, at
+4.7 MB per site, and uploaded files are stored in each site&#39;s database against the same 5 GB.</p>
+<p>What you pay, on your own account:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>$5.80</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>free</td>
+<td>free</td>
+<td>$5.15</td>
+<td>$38.44</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>free</td>
+<td>$5.15</td>
+<td>$37.64</td>
+<td>$365.14</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>$5.15</td>
+<td>$37.56</td>
+<td>$364.34</td>
+<td>$3,644.64</td>
+</tr>
+</tbody></table></div>
+<p>The first free cap you reach, and how much of it is used:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>storage 0%</td>
+<td>storage 1%</td>
+<td>storage 9%</td>
+<td>storage 95%</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>requests 0%</td>
+<td>requests 3%</td>
+<td>requests 33%</td>
+<td>requests</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>requests 3%</td>
+<td>requests 33%</td>
+<td>requests</td>
+<td>requests</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>requests 33%</td>
+<td>requests</td>
+<td>requests</td>
+<td>requests</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>requests</td>
+<td>requests</td>
+<td>requests</td>
+<td>requests</td>
+</tr>
+</tbody></table></div>
+<p>Against each host, one site, as the ratio of the host&#39;s bill to drupflare&#39;s:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>cheapest VPS</th>
+<th>most popular cloud</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>2.4x cheaper</td>
+<td>2.4x cheaper</td>
+<td>11.3x cheaper</td>
+<td>8.1x cheaper</td>
+</tr>
+</tbody></table></div>
+<p>Against each host, a thousand sites:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>cheapest VPS</th>
+<th>most popular cloud</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>1810.9x cheaper</td>
+<td>2155.9x cheaper</td>
+<td>10037.7x cheaper</td>
+<td>7186.2x cheaper</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>273.2x cheaper</td>
+<td>325.2x cheaper</td>
+<td>1514.1x cheaper</td>
+<td>1084.0x cheaper</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>28.8x cheaper</td>
+<td>34.2x cheaper</td>
+<td>159.4x cheaper</td>
+<td>114.1x cheaper</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>3.4x cheaper</td>
+<td>3.4x cheaper</td>
+<td>16.0x cheaper</td>
+<td>11.4x cheaper</td>
+</tr>
+</tbody></table></div>
+<h2 id="kept-warm">Kept Warm</h2>
+<p>A paid plan keeps every site resident by default: the alarm re-arms every 8 s, the object never
+hibernates, and an editor&#39;s first request after idle answers in 156 to 371 ms rather than 2 to 4 s.
+The free plan leaves a site to the thermal policy, which declines any site below about 505 renders a
+day, and any plan can set <code>SITE_WARM=0</code>. One site&#39;s chain sits inside the paid allowances. A fleet&#39;s
+does not, because the allowances are account-wide: each warm site writes 10,896 rows and makes 10,800
+object requests a day, and a thousand of them write 331 million rows a month against 50 million
+included. The chain is billed for its wall time, 23.3 ms a firing (n=116). <code>derived</code>, from the rate
+card and that firing, with a recomputation from the rate card alone pinned in
+<code>tests/node/economics-energy.spec.ts</code>:</p>
+<p>What you pay with every site kept warm:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>$5.45</td>
+<td>$9.80</td>
+<td>$350.03</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>free</td>
+<td>$5.45</td>
+<td>$9.95</td>
+<td>$350.65</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>free</td>
+<td>$5.45</td>
+<td>$10.10</td>
+<td>$383.29</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>free</td>
+<td>$5.75</td>
+<td>$42.59</td>
+<td>$709.99</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>$5.30</td>
+<td>$38.16</td>
+<td>$369.29</td>
+<td>$3,989.49</td>
+</tr>
+</tbody></table></div>
+<p>Kept warm, against each host, one site:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>cheapest VPS</th>
+<th>most popular cloud</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>2.4x cheaper</td>
+<td>2.4x cheaper</td>
+<td>11.0x cheaper</td>
+<td>7.9x cheaper</td>
+</tr>
+</tbody></table></div>
+<p>Kept warm, against each host, a thousand sites:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>cheapest VPS</th>
+<th>most popular cloud</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>30.0x cheaper</td>
+<td>35.7x cheaper</td>
+<td>166.3x cheaper</td>
+<td>119.0x cheaper</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>29.9x cheaper</td>
+<td>35.6x cheaper</td>
+<td>166.0x cheaper</td>
+<td>118.8x cheaper</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>27.4x cheaper</td>
+<td>32.6x cheaper</td>
+<td>151.8x cheaper</td>
+<td>108.7x cheaper</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>14.8x cheaper</td>
+<td>17.6x cheaper</td>
+<td>82.0x cheaper</td>
+<td>58.7x cheaper</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>3.1x cheaper</td>
+<td>3.1x cheaper</td>
+<td>14.6x cheaper</td>
+<td>10.4x cheaper</td>
+</tr>
+</tbody></table></div>
+<p>A fleet pays for keeping its sites warm, about 35 cents a site a month at 1,000 sites. At 10,000 views
+a site that leaves a thousand sites 30 times cheaper than the cheapest VPS, 166 times cheaper than a
+latency-matched origin and 119 times cheaper than the managed floor. The sleeping tables reach 1,810
+times at the cheapest VPS and 10,037 times at the latency-matched one. Those are ceilings, reached by
+a fleet of mostly idle sites left to sleep.</p>
+<h2 id="what-the-price-column-does-not-buy">What The Price Column Does Not Buy</h2>
+<p>A monthly price buys capacity from one place, and this page does not measure capacity beyond the
+sizing above. It does not buy the latency profile: the same workload measures 100.2 ms on a VPS
+against 8.9 ms on drupflare once an 82 ms round trip is injected, because one serves from a region
+and the other from the visitor&#39;s colo. It does not buy the tail either, where the VPS p50 runs from
+59 ms at 4 clients to 182 ms at 96 while drupflare holds. The latency-matched column prices the first
+of those; nothing here prices the second.</p>
+<h2 id="the-shape-of-the-bills">The Shape Of The Bills</h2>
+<p>The two bills differ in shape more than in total. A conventional host charges per site per month
+whether or not anyone visits, and for hardware that grows with traffic; drupflare charges for traffic
+served, against an allowance that costs nothing until it is crossed. The comparison therefore widens
+with the number of idle sites and narrows with traffic.</p>
+<p>On a paid account the monthly bill is a fixed base plus one charge for each meter&#39;s usage above its
+included allowance, as <code>scripts/economics/bill.ts</code> computes it. B is the base subscription, m runs over
+the meters (requests, CPU milliseconds, rows written, storage, Durable Object requests and Durable Object
+duration), u_m is that meter&#39;s usage for the month, I_m is its included allowance, c_m is its rate and
+U_m is the unit the rate is quoted in:</p>
+<pre><code class="math">\text{bill} = B + \sum_{m} c_m \cdot \frac{\mathrm{max}(0, u_m - I_m)}{U_m}</code></pre><p>The two Durable Object meters round their excess up to the next whole unit before the rate applies. Usage
+includes a kept-warm site&#39;s own rows and object requests, which the chain spends before any visitor arrives.
+A month in which every free-plan daily cap stays within its limit costs nothing, and the formula does not
+apply to it.</p>
+<p>For a single site at ten million views a
+month drupflare costs $5.15, the $5 subscription plus $0.15 of usage, against $10.50 for the
+cheapest VPS, and the latency-matched host is 11.3 times dearer.</p>
+<h2 id="where-the-curves-meet">Where The Curves Meet</h2>
+<p>The bill grows with traffic and the conventional host&#39;s grows in whole boxes and in transfer, so the
+lines can cross. Solved on the real functions with <code>comparison.ts --crossover</code>, per site, up to a
+trillion views a site a month. The break-even is the first traffic at which drupflare&#39;s per-site bill reaches
+the host&#39;s price. With s sites, C(s, v) is the account bill from <a href="#the-shape-of-the-bills">The Shape Of The Bills</a>, and P(v) is the
+host&#39;s monthly price per site at v views a site a month:</p>
+<pre><code class="math">v^{*} = \min\{ v \geq 10^{4} : \frac{C(s, v)}{s} \geq P(v) \}</code></pre><p>The search starts at 10,000 views and multiplies v by 1.01 each step, up to 10^12. P(v) is a step
+function, because the VPS is priced in whole boxes sized to its render load, so the search also records
+the last point above which drupflare stays behind. <code>never</code> means no step reached the host&#39;s price.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>against</th>
+<th>1 site</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>cheapest VPS</td>
+<td>never</td>
+<td>never</td>
+</tr>
+<tr>
+<td>latency-matched VPS</td>
+<td>never</td>
+<td>never</td>
+</tr>
+</tbody></table></div>
+<p>drupflare is the cheaper bill at every traffic level against both. At 1,000 sites and 100 million
+views per site the cheapest VPS costs $75.00 a site against drupflare&#39;s $36.39, and at a billion
+views $877.00 against $363.86.</p>
+<p>The managed floor would cross near 112 million views for one site and 115 million for a thousand,
+but only because it is held flat at the entry plan&#39;s price. No managed plan serves that traffic at
+$41.67, so the crossing comes from the flat price.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
+	</body>
+</html>

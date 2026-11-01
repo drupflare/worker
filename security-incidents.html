@@ -1,0 +1,960 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Security Incidents and Planned Work - Drupflare</title>
+		<meta
+			name="description"
+			content="The CVE and incident map, PHP2Shell, and the work still planned."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Security Incidents and Planned Work - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The CVE and incident map, PHP2Shell, and the work still planned."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="getting-started.html">Getting Started</a>
+				<a href="architecture.html">Architecture</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="security.html">Security</a>
+				<a href="impact.html">Impact</a>
+				<a href="technical-report.html">Technical Report</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="security-incidents-and-planned-work">Security Incidents and Planned Work</h1>
+<p>How named vulnerabilities and incident classes map onto the architecture, what the current release addresses, the PHP2Shell analysis, and the work still planned. The claims and their labels are on <a href="security.html">Security</a>.</p>
+<h2 id="the-cve-and-incident-map">The CVE and Incident Map</h2>
+<p>Each row maps a published vulnerability or incident to what an attacker needs on a conventional
+host and what changes inside a Drupflare site. The verdicts are Inferred from the architecture
+above. No exploit was run against a Drupflare site. The verdict words are defined under
+<a href="security.html#how-to-read-the-claims">How to Read the Claims</a>.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Year</th>
+<th>Class</th>
+<th>Verdict</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="https://www.drupal.org/sa-core-2014-005">CVE-2014-3704</a></td>
+<td>2014</td>
+<td>SQL injection, Drupal 7 core</td>
+<td>open</td>
+<td>Reads the same database</td>
+</tr>
+<tr>
+<td><a href="https://www.drupal.org/sa-core-2018-002">CVE-2018-7600</a></td>
+<td>2018</td>
+<td>Unauthenticated RCE, Drupal core</td>
+<td>contained</td>
+<td>PHP runs in the sandbox; no shell for the observed miner payload (CVSS 9.8)</td>
+</tr>
+<tr>
+<td><a href="https://www.drupal.org/sa-core-2018-004">CVE-2018-7602</a></td>
+<td>2018</td>
+<td>RCE, Drupal 7 and 8</td>
+<td>contained</td>
+<td>As CVE-2018-7600</td>
+</tr>
+<tr>
+<td><a href="https://www.drupal.org/sa-core-2019-003">CVE-2019-6340</a></td>
+<td>2019</td>
+<td>RCE through REST input</td>
+<td>contained</td>
+<td>PHP runs in the sandbox</td>
+</tr>
+<tr>
+<td><a href="https://www.drupal.org/sa-core-2020-004">CVE-2020-13663</a></td>
+<td>2020</td>
+<td>CSRF in Form API</td>
+<td>open</td>
+<td>Browser-side flaw</td>
+</tr>
+<tr>
+<td><a href="https://www.drupal.org/sa-core-2026-014">CVE-2026-108097</a></td>
+<td>2026</td>
+<td>RCE in Field UI, Drupal core</td>
+<td>contained</td>
+<td>PHP runs in the sandbox; lock pins 11.4.10, the fixed release</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2019-11043">CVE-2019-11043</a></td>
+<td>2019</td>
+<td>PHP-FPM buffer underflow via nginx</td>
+<td>removed</td>
+<td>No FPM, no nginx, no FastCGI socket</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2024-4577">CVE-2024-4577</a></td>
+<td>2024</td>
+<td>PHP-CGI argument injection, Windows</td>
+<td>removed</td>
+<td>Needs the CGI SAPI on Windows with Apache</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2014-6271">CVE-2014-6271</a></td>
+<td>2014</td>
+<td>Shellshock, Bash through CGI</td>
+<td>removed</td>
+<td>No Bash and no CGI</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2021-41773">CVE-2021-41773</a></td>
+<td>2021</td>
+<td>Apache 2.4.49 path traversal</td>
+<td>removed</td>
+<td>No Apache and no filesystem to traverse</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2016-3714">CVE-2016-3714</a></td>
+<td>2016</td>
+<td>ImageMagick delegate shell injection</td>
+<td>removed</td>
+<td>No ImageMagick; no process to spawn</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2023-4966">CVE-2023-4966</a></td>
+<td>2023</td>
+<td>CitrixBleed, edge appliance memory</td>
+<td>removed</td>
+<td>No appliance in the tenant&#39;s path</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2014-0160">CVE-2014-0160</a></td>
+<td>2014</td>
+<td>Heartbleed, OpenSSL</td>
+<td>removed</td>
+<td>PHP has no OpenSSL; TLS ends at Cloudflare</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2026-7261">CVE-2026-7261</a></td>
+<td>2026</td>
+<td>PHP SoapServer use-after-free</td>
+<td>removed</td>
+<td>ext/soap is not compiled in (no <code>SoapServer</code> string in the binary)</td>
+</tr>
+<tr>
+<td>runc <a href="https://nvd.nist.gov/vuln/detail/CVE-2019-5736">CVE-2019-5736</a>, <a href="https://github.com/opencontainers/runc/security/advisories/GHSA-xr7r-f8xq-vfvv">CVE-2024-21626</a></td>
+<td>2019, 2024</td>
+<td>Container runtime escape</td>
+<td>removed</td>
+<td>The tenant has no container runtime; the platform does</td>
+</tr>
+<tr>
+<td><a href="https://nvd.nist.gov/vuln/detail/CVE-2022-0847">CVE-2022-0847</a>, <a href="https://nvd.nist.gov/vuln/detail/CVE-2016-5195">CVE-2016-5195</a></td>
+<td>2022, 2016</td>
+<td>Linux kernel privilege escalation</td>
+<td>removed</td>
+<td>Needs a local process on a Linux kernel the tenant can reach</td>
+</tr>
+<tr>
+<td><a href="https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w">CVE-2026-109618</a></td>
+<td>2026</td>
+<td>RCE via OOM corruption, PHP</td>
+<td>removed</td>
+<td>The chain needs a request startup and shutdown cycle and a <code>memory_limit</code> bailout, and neither exists here</td>
+</tr>
+<tr>
+<td><a href="https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp">CVE-2026-109619</a></td>
+<td>2026</td>
+<td>RCE via stale global state, PHP</td>
+<td>removed</td>
+<td>The consumers run at request startup, which does not happen per request here, and no request memory is freed between runs</td>
+</tr>
+<tr>
+<td><a href="https://www.php.net/archive/2021.php">php-src malicious commits</a></td>
+<td>2021</td>
+<td>Source supply chain</td>
+<td>open</td>
+<td>A bad commit reaching a build is the same risk on any host</td>
+</tr>
+<tr>
+<td><a href="https://www.cisa.gov/news-events/alerts/2025/09/23/widespread-supply-chain-compromise-impacting-npm-ecosystem">Shai-Hulud npm worm</a></td>
+<td>2025</td>
+<td>Trojaned releases through hijacked maintainers</td>
+<td>open</td>
+<td>The class applies to any registry; the build and publish hosts run <code>postinstall</code></td>
+</tr>
+<tr>
+<td><a href="https://blog.cloudflare.com/revisiting-spectre-attacks-on-workers/">Spectre on Workers</a></td>
+<td>2026</td>
+<td>Co-tenant timing leak</td>
+<td>open</td>
+<td>Platform mitigations apply; not complete by Cloudflare&#39;s own statement</td>
+</tr>
+<tr>
+<td><a href="https://blog.cloudflare.com/incident-report-on-memory-leak-caused-by-cloudflare-parser-bug/">Cloudbleed</a></td>
+<td>2017</td>
+<td>Edge memory disclosure</td>
+<td>open</td>
+<td>Platform-side; a tenant cannot prevent it</td>
+</tr>
+<tr>
+<td><a href="https://research.checkpoint.com/2026/when-agentic-glue-melts/">Check Point workerd research</a></td>
+<td>2026</td>
+<td>Engine memory bugs, KV authorizer bypass</td>
+<td>open</td>
+<td>Cloudflare says fixed in production with no date; the local build refuses the rename, which is not the platform</td>
+</tr>
+<tr>
+<td>CVE-2026-87491 (CISA known-exploited catalog)</td>
+<td>2026</td>
+<td>V8 out-of-bounds write</td>
+<td>open</td>
+<td>The entry names Chrome; whether the Workers build is affected was not established</td>
+</tr>
+</tbody></table></div>
+<h2 id="classes-addressed-in-v104">Classes Addressed in v1.0.4</h2>
+<p>The map above is about published incidents. This table is about attack classes a code-execution
+foothold could use, with the verdict before and after the v1.0.4 work. Each &quot;after&quot; names its
+evidence and its residual.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Before</th>
+<th>After</th>
+<th>Evidence</th>
+<th>Residual</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Owner and git credentials readable through SQL</td>
+<td>open</td>
+<td>contained</td>
+<td>Measured, local <code>workerd</code>; <a href="security-controls.html#credentials-and-persistence">Credentials</a></td>
+<td>Account holder; a pre-upgrade restore point; hosted rename fix undated</td>
+</tr>
+<tr>
+<td>Planted module row survives a restart</td>
+<td>open</td>
+<td>contained</td>
+<td>Measured, local <code>workerd</code></td>
+<td>Unclaimed sites, replica lanes, other SQL-resident paths</td>
+</tr>
+<tr>
+<td>Planted heap image restored on boot</td>
+<td>open</td>
+<td>contained</td>
+<td>Measured: restored by default before, refused after</td>
+<td>SQL write can delete images (a boot of cost)</td>
+</tr>
+<tr>
+<td>PHP opens a raw socket through the glue</td>
+<td>open</td>
+<td>removed</td>
+<td>Measured, node: 3 constructed, 0</td>
+<td>None known; the <code>cfw*</code> list is the only route out</td>
+</tr>
+<tr>
+<td>PHP calls a JavaScript global through vrzno</td>
+<td>open</td>
+<td>removed</td>
+<td>Measured, node: 3 recorded calls, 0</td>
+<td><code>cfw*</code> functions callable with any argument; a <code>TypeError</code> ends an invocation</td>
+</tr>
+<tr>
+<td>Outbound guard bypass by spelling</td>
+<td>open</td>
+<td>contained</td>
+<td>Measured, unit</td>
+<td>Public name resolving to a private address; hosted link-local reach unmeasured</td>
+</tr>
+<tr>
+<td>Oversized chunked or multipart body</td>
+<td>open</td>
+<td>contained</td>
+<td>Measured, <code>serve-edge.spec.ts</code></td>
+<td>Platform 100 MB limit still the outer bound</td>
+</tr>
+<tr>
+<td>A page stored for one visitor served to all</td>
+<td>open</td>
+<td>contained</td>
+<td>Measured: stock pack varies nothing; modules that vary are not stored</td>
+<td>A module varying by something other than the four named headers</td>
+</tr>
+<tr>
+<td>Module headers dropped before a browser</td>
+<td>open</td>
+<td>contained</td>
+<td>Measured, every tier</td>
+<td>R2 mirror carries none (<code>L</code>)</td>
+</tr>
+<tr>
+<td>Plugin embedding and clickjacking</td>
+<td>open</td>
+<td>contained</td>
+<td>Measured: header sent in report-only; no browser run</td>
+<td>Script injection needs a strict policy (<code>L</code>); a Drupal admin can remove the baseline</td>
+</tr>
+<tr>
+<td>PHP2Shell interim mitigations</td>
+<td>open</td>
+<td>contained</td>
+<td>Measured: values read back from the interpreter</td>
+<td>Package updated to 8.5.12; chains have no path here regardless</td>
+</tr>
+<tr>
+<td>Stale write in the park extension</td>
+<td>open</td>
+<td>removed</td>
+<td>Measured: native 21/1 without the fix, 22/0 with</td>
+<td>Present in every interpreter built before the fix</td>
+</tr>
+<tr>
+<td>Swapped Composer archive</td>
+<td>open</td>
+<td>contained</td>
+<td>Measured: drupal.org digests present and verified</td>
+<td>Packagist installs unverified</td>
+</tr>
+<tr>
+<td>Interpreter below the PHP floor ships</td>
+<td>open</td>
+<td>contained</td>
+<td>Measured: <code>inspect-build.sh</code> fails below the pin</td>
+<td>The workflow step has not run against a real attestation; one artifact was verified with the command, see <a href="security-controls.html#patching">Patching</a></td>
+</tr>
+<tr>
+<td>Tenant switches the outbound guard off</td>
+<td>open</td>
+<td>removed</td>
+<td>Measured: four spellings refused from PHP, the owner route and KV</td>
+<td>An operator can still set it in the environment</td>
+</tr>
+<tr>
+<td>Owner action leaves no trace</td>
+<td>open</td>
+<td>contained</td>
+<td>Measured: chain verifies and tamper is caught</td>
+<td>Evidence against a site-level attacker only; PITR rewinds the log</td>
+</tr>
+<tr>
+<td><code>RESPONSE_HEADERS</code> removes the CSP baseline</td>
+<td>open</td>
+<td>open</td>
+<td>Read: writable from the PHP settings form</td>
+<td>A maintainer decision</td>
+</tr>
+<tr>
+<td><code>cfw_meta</code> authority keys (<code>git_remotes</code>, claim, OIDC)</td>
+<td>open</td>
+<td>open</td>
+<td>Read: <a href="security-controls.html#credentials-and-persistence">Credentials</a></td>
+<td>Moving them is <code>M</code></td>
+</tr>
+<tr>
+<td>Planted row on a replica lane</td>
+<td>open</td>
+<td>open</td>
+<td>Read: lanes hold no records</td>
+<td><code>L</code></td>
+</tr>
+</tbody></table></div>
+<h2 id="php2shell">PHP2Shell</h2>
+<p>PHP2Shell is the name given to two critical remote code execution vulnerabilities in PHP,
+CVE-2026-109618 and CVE-2026-109619, published on 2026-10-21 and fixed in PHP 8.5.12, 8.4.27,
+8.3.36 and 8.2.35. This section says what the advisories require, what the shipping interpreter does
+about each requirement. The result: the published PHP2Shell chains do not work against a Drupflare
+site, and the map marks both <code>removed</code>. The reason is the lifecycle described below. The sandbox does
+not account for it: WebAssembly does not stop corruption inside the module.</p>
+<h3 id="what-the-advisories-say">What the Advisories Say</h3>
+<p>CVE-2026-109618, &quot;RCE via OOM corruption&quot;
+(<a href="https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w">GHSA-w8hw-w9fx-j79w</a>):
+&quot;PHP uses <code>longjmp()</code> for out-of-memory (OOM) errors to exit the current context and abort handling
+of the request&quot;, and &quot;does not properly account for the early exit and leaves the request memory in
+an invalid state&quot;. Request shutdown then reads that state. The validated exploit is against Apache
+mod_php, where body parsing at request startup can exhaust <code>memory_limit</code> and shutdown still runs.
+For PHP-FPM the advisory says &quot;no complete FPM exploit has been demonstrated&quot;.</p>
+<p>CVE-2026-109619, &quot;RCE via stale global state&quot;
+(<a href="https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp">GHSA-6wmf-4rv5-p3rp</a>):
+state owned by one request survives after its memory is freed, and a later operation on the same
+worker reads it before normal initialization resets it. The exploit needs a producer, which is a fatal
+error, timeout or OOM that skips a reset, and a consumer that runs before initialization. The
+confirmed consumers are INI diagnostics raised while settings are applied and session upload
+progress. The confirmed producer on PHP 8.5 is <code>fatal_error_backtraces</code>.</p>
+<p>Both are CVSS v4 9.2, unauthenticated and network reachable. PHP&#39;s announcement says &quot;there are no
+complete mitigations, updating is the only safe choice&quot; and names PHP-FPM, Apache with mod_php,
+php-cgi, FrankenPHP and LiteSpeed as at risk
+(<a href="https://www.php.net/archive/2026.php#2026-10-21-5">php.net</a>). It does not address embedded SAPIs.
+Wiz reports working exploits on standard SAPIs against WordPress, Drupal and Joomla, including one
+against Drupal that uses the fatal-error backtrace state
+(<a href="https://www.wiz.io/blog/php2shell-php-rce">Wiz</a>).</p>
+<h3 id="what-the-shipping-interpreter-does">What the Shipping Interpreter Does</h3>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Fact</th>
+<th>Value</th>
+<th>Basis</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>PHP version</td>
+<td>8.5.12</td>
+<td>Measured: <code>tests/integration/interpreter-lifecycle.spec.ts</code></td>
+</tr>
+<tr>
+<td>SAPI</td>
+<td><code>embed</code></td>
+<td>Measured</td>
+</tr>
+<tr>
+<td>A fatal error in one run leaves <code>$GLOBALS</code> and <code>error_get_last()</code> visible to the next run</td>
+<td>yes</td>
+<td>Measured</td>
+</tr>
+<tr>
+<td>Multipart bodies parsed by PHP&#39;s request startup</td>
+<td>no, parsed in userland</td>
+<td>Measured: <code>tests/integration/multipart-submit.spec.ts</code></td>
+</tr>
+<tr>
+<td><code>USE_ZEND_ALLOC</code></td>
+<td><code>0</code>, the system allocator</td>
+<td>Measured</td>
+</tr>
+<tr>
+<td><code>memory_limit</code> enforced</td>
+<td>no: an 8M cap held 40 MB</td>
+<td>Measured, on 8.5.2; not repeated on 8.5.12</td>
+</tr>
+<tr>
+<td>Where PHP 8.5.12 checks <code>memory_limit</code></td>
+<td>inside <code>zend_mm</code> paths a custom heap bypasses</td>
+<td>Read: php-src <code>PHP-8.5.12</code> <code>Zend/zend_alloc.c</code></td>
+</tr>
+<tr>
+<td><code>malloc</code> failure under the system allocator</td>
+<td><code>exit(1)</code>, no bailout</td>
+<td>Read: the same file (8.5.2 was not diffed)</td>
+</tr>
+<tr>
+<td><code>session.upload_progress.enabled</code>, <code>fatal_error_backtraces</code></td>
+<td>both <code>0</code> at boot; <code>fatal_error_backtraces</code> can be set back by user code</td>
+<td>Measured: read back from the interpreter</td>
+</tr>
+<tr>
+<td><code>file_uploads</code>, <code>expose_php</code>, <code>allow_url_include</code></td>
+<td>all <code>0</code></td>
+<td>Measured</td>
+</tr>
+<tr>
+<td>OPcache</td>
+<td>loaded, <code>opcache.enable=0</code></td>
+<td>Measured</td>
+</tr>
+<tr>
+<td><code>soap</code>, <code>phar</code></td>
+<td>not compiled in</td>
+<td>Measured</td>
+</tr>
+</tbody></table></div>
+<p>The two settings PHP lists as interim mitigations are off at boot, and the analysis below does not
+depend on them. <code>session.upload_progress.enabled</code> is a per-directory setting that <code>ini_set</code> cannot
+change, so boot is the only place it could be set. <code>fatal_error_backtraces</code> is a default and not a
+ceiling, because user code can set it back.</p>
+<h3 id="what-follows-and-what-does-not">What Follows and What Does Not</h3>
+<p>These are Inferred from the table.</p>
+<p>Where the published chain breaks in this runtime:</p>
+<pre><code class="mermaid">flowchart TD
+    A[&quot;Request startup: body parsing exhausts memory_limit&quot;] --> B[&quot;longjmp out of the request&quot;]
+    B --> C[&quot;Request shutdown reads the invalid state&quot;]
+    D[&quot;This runtime: pib_run inside one retained request&quot;] --> E[&quot;No request startup or shutdown per run&quot;]
+    E --> F[&quot;Allocator does not enforce memory_limit&quot;]</code></pre><ul>
+<li>The CVE-2026-109618 chain that was demonstrated starts at request startup and ends in request
+shutdown. This runtime runs code through <code>pib_run</code> inside one retained request and performs
+neither per request. Its allocator does not enforce <code>memory_limit</code>, so the <code>longjmp()</code> the
+advisory describes has no limit to fire on, and allocation failure ends the instance through
+<code>exit(1)</code> instead of leaving partial state behind.</li>
+<li>The CVE-2026-109619 consumers run before a request&#39;s normal initialization: per-request INI
+application and the upload-progress handler inside multipart startup. Neither happens per
+request here. A producer does leave state behind, but request memory is never freed between
+runs, so a stale pointer aims at live memory and not at reclaimed memory.</li>
+</ul>
+<p>Neither published chain has a path in this runtime, which is the decision recorded in the map. The
+interpreter is rebuilt at 8.5.12, because it contained the vulnerable code at 8.5.2 and PHP says
+updating is the only complete mitigation. A retained request can also keep per-extension state
+across a fatal error that a request shutdown would reset. That is a logic hazard, of the kind
+documented in <a href="security.html#state-that-survives-between-requests">State That Survives Between Requests</a>, and not
+a use-after-free, because request memory is never freed between runs. What would reverse the
+decision is a working chain against this runtime. The public write-ups use standard SAPIs and
+report none.</p>
+<h2 id="planned-work">Planned Work</h2>
+<p>Items marked shipped are in v1.0.4 and measured as stated above. Everything else is
+not built.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Closes</th>
+<th>Size</th>
+<th>State</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Security headers, module-set headers, CSP baseline and report route</td>
+<td>Missing headers; Security Kit headers dropped</td>
+<td></td>
+<td>v1.0.4, shipped</td>
+</tr>
+<tr>
+<td>Owner credentials and heap and module integrity records in sealed storage</td>
+<td>Plaintext token; planted persistence</td>
+<td></td>
+<td>v1.0.4, shipped</td>
+</tr>
+<tr>
+<td>Host import census gate, socket and vrzno closure, boot ini</td>
+<td>A new import joining the surface unreviewed</td>
+<td></td>
+<td>v1.0.4, shipped</td>
+</tr>
+<tr>
+<td>Owner audit log and <code>drangler audit</code></td>
+<td>Owner actions leaving no trace</td>
+<td></td>
+<td>v1.0.4, shipped</td>
+</tr>
+<tr>
+<td><code>SECURITY.md</code> and a reporting route for researchers</td>
+<td>A documented disclosure path</td>
+<td></td>
+<td>v1.0.4, shipped</td>
+</tr>
+<tr>
+<td>Drupalgeddon 2 against three arms</td>
+<td>The comparison above, first case</td>
+<td>XL</td>
+<td>not built</td>
+</tr>
+<tr>
+<td>Egress allow-list per site</td>
+<td>Open egress</td>
+<td>L</td>
+<td>v1.1</td>
+</tr>
+<tr>
+<td>Fleet security-release rollout, owner patching with rollback</td>
+<td>Manual PHP and Drupal patch delivery</td>
+<td>XL</td>
+<td>v1.1</td>
+</tr>
+<tr>
+<td>Integrity records carried to replica lanes</td>
+<td>A planted row on the primary reaching lanes</td>
+<td>L</td>
+<td>not built</td>
+</tr>
+<tr>
+<td>Page mirror carries module headers</td>
+<td>R2 pages without headers</td>
+<td>L</td>
+<td>not built</td>
+</tr>
+<tr>
+<td>Packagist digest trust (a signed lock)</td>
+<td>Packagist installs unverified</td>
+<td>L</td>
+<td>not built</td>
+</tr>
+<tr>
+<td>Strict <code>script-src</code> with nonces</td>
+<td>Script injection under the baseline</td>
+<td>L</td>
+<td>not built</td>
+</tr>
+<tr>
+<td><code>cfw_meta</code> authority keys out of SQL</td>
+<td><code>git_remotes</code>, claim window, OIDC keys</td>
+<td>M</td>
+<td>not built</td>
+</tr>
+<tr>
+<td>An EXPLAIN-based host-table policy at the SQL bridge</td>
+<td>SQL access to host-owned tables</td>
+<td>M-L</td>
+<td>not built</td>
+</tr>
+<tr>
+<td>Browser-lane proof of the CSP baseline, then <code>form-action</code></td>
+<td>A baseline no browser has loaded</td>
+<td>M</td>
+<td>not built</td>
+</tr>
+<tr>
+<td>A deployed probe for <code>process.env</code>, <code>Function</code> and link-local reach</td>
+<td>Three platform claims that were not measured</td>
+<td>S</td>
+<td>not built</td>
+</tr>
+<tr>
+<td>An audit entry for the first claim and a restore entry after PITR</td>
+<td>Two gaps in the audit log</td>
+<td>S-M</td>
+<td>not built</td>
+</tr>
+<tr>
+<td>An owner action that adopts a package&#39;s current module rows</td>
+<td>A re-imported migrated site&#39;s code being refused</td>
+<td>M</td>
+<td>not built</td>
+</tr>
+<tr>
+<td><code>--source-ref</code> on the attestation check</td>
+<td>A feature branch build verifying</td>
+<td>S</td>
+<td>not built</td>
+</tr>
+<tr>
+<td>Advisory checks for the other ten runtime packages</td>
+<td>Unchecked npm dependencies</td>
+<td>S</td>
+<td>not built</td>
+</tr>
+<tr>
+<td>The full three-arm comparison</td>
+<td>The unmeasured claim</td>
+<td>XL</td>
+<td>v1.1</td>
+</tr>
+</tbody></table></div>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="render.js"
+			defer
+		></script>
+	</body>
+</html>

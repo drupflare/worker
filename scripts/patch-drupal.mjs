@@ -152,6 +152,37 @@ const GUZZLE_HOOK = `$1
 }
 // #endregion
 
+// #region input required static
+// the function static in exposedFilterApplied() outlives the request and is shared by every
+// view in one request; a local is computed per call, which is all the method needs.
+const INPUT_REQUIRED = 'core/modules/views/src/Plugin/views/exposed_form/InputRequired.php';
+const INPUT_REQUIRED_STATIC = 'static $cache = NULL;';
+const INPUT_REQUIRED_LOCAL = '$cache = NULL;';
+
+{
+	const path = join(root, INPUT_REQUIRED);
+	let src = null;
+	try {
+		src = await readFile(path, 'utf8');
+	} catch {
+		skipped.push(`${INPUT_REQUIRED} (not present)`);
+	}
+	if (src !== null) {
+		// the static is tested first: the local is a substring of it
+		if (src.includes(INPUT_REQUIRED_STATIC)) {
+			await writeFile(path, src.replace(INPUT_REQUIRED_STATIC, INPUT_REQUIRED_LOCAL));
+			applied.push(`${INPUT_REQUIRED} (function static -> per-call local)`);
+		} else if (src.includes(INPUT_REQUIRED_LOCAL)) {
+			skipped.push(`${INPUT_REQUIRED} (static already removed)`);
+		} else {
+			throw new Error(
+				`${INPUT_REQUIRED}: exposedFilterApplied() moved; update scripts/patch-drupal.mjs`
+			);
+		}
+	}
+}
+// #endregion
+
 // #region twig php storage
 const SETTINGS = 'sites/default/settings.php';
 const TWIG_STORAGE_MARKER = "$settings['php_storage']['twig']";

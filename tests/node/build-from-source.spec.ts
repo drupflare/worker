@@ -404,6 +404,20 @@ describe('planning is pure, so the resume decision is one testable function', ()
 		expect(stepSatisfied(root, pack)).toBe(false);
 	});
 
+	it('owes the patch step while the InputRequired function static is still there', () => {
+		const root = satisfiedTree();
+		const patch = LOCAL_STEPS.find((s) => s.id === 'patch') as LocalStep;
+		const file = join(
+			root,
+			'drupal-src/core/modules/views/src/Plugin/views/exposed_form/InputRequired.php'
+		);
+		mkdirSync(dirname(file), { recursive: true });
+		writeFileSync(file, '    static $cache = NULL;\n');
+		expect(stepSatisfied(root, patch)).toBe(false);
+		writeFileSync(file, '    $cache = NULL;\n');
+		expect(stepSatisfied(root, patch)).toBe(true);
+	});
+
 	it('names one producer per artifact, counting a rewrite as its own step', () => {
 		const core = LOCAL_STEPS.find((s) => s.id === 'core') as LocalStep;
 		expect(core.produces, 'a rewrite declares refreshes, never produces').toEqual([]);

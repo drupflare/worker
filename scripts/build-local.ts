@@ -456,6 +456,13 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 			contains(
 				join(root, 'drupal-src/sites/default/settings.php'),
 				"$settings['php_storage']"
+			) &&
+			!contains(
+				join(
+					root,
+					'drupal-src/core/modules/views/src/Plugin/views/exposed_form/InputRequired.php'
+				),
+				'static $cache = NULL;'
 			),
 		commands: () => [['node', 'scripts/patch-drupal.mjs', 'drupal-src']]
 	},
@@ -530,7 +537,11 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		// contrib or custom theme produces an empty one, which is a real outcome rather than a
 		// half-finished copy. Naming a representative file broke `build:local` on such a checkout,
 		// so the payload carries that entry as optional instead
-		produces: ['assets/core/misc/drupal.js', 'assets/modules/contrib/token/css/token.css'],
+		produces: [
+			'assets/core/misc/drupal.js',
+			'assets/modules/contrib/token/css/token.css',
+			'assets/modules/custom/drupflare/js/lever-slider.js'
+		],
 		inputs: ['drupal-src/core/lib/Drupal.php'],
 		tools: ['bun'],
 		commands: () => [['bun', 'run', 'assets:static']],

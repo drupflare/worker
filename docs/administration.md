@@ -92,9 +92,10 @@ The Worker refuses, before touching anything:
 - a body whose `confirm` is not the site id, with 400
 - a site that is not in the deployment's claimed list, with 409, unless the URL carries `force=1`
 
-An object that was never claimed usually has no owner token. With `force=1` on a deployment that
-sets `PW_DIAGNOSTICS=1`, a caller with no token may retire it; a claimed site is never reachable
-that way. A name whose object holds no tables and no alarm answers 404, so a typo does not mint an
+An object that was never claimed usually has no owner token. With `force=1`, the owner token of the
+deployment's primary retires it, and the audit entry names the actor as `primary:` plus the first
+eight characters of the token's hash. The object accepts that only while it holds no owner token of
+its own, so a claimed site, or any site with a token, is never reachable that way. A name whose object holds no tables and no alarm answers 404, so a typo does not mint an
 object just to wipe it.
 
 The audit entry is written first, to the `site:retired-log` key in `CONFIG_KV`, as a hash chain in

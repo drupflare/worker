@@ -4130,8 +4130,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.retired = true;
 		this.dropInterpreter();
 		retainedInterpreters.delete(this.ctx.id.toString());
-		await this.ctx.storage.deleteAlarm();
-		await this.ctx.storage.deleteAll();
+		await this.storage.deleteAlarm();
+		await this.storage.deleteAll();
 	}
 
 	/** keeps this object's interpreter in module scope, stamped with the commit it has seen */

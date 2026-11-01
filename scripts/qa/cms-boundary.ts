@@ -106,6 +106,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/do/routes/owner.ts': 'mixed',
 	'src/do/routes/packages.ts': 'mixed',
 	'src/do/routes/replica.ts': 'mixed',
+	'src/do/routes/retire.ts': 'host',
 	'src/do/routes/serve.ts': 'mixed',
 	'src/do/routes/spool.ts': 'host',
 	'src/do/routes/writes.ts': 'mixed',
@@ -145,6 +146,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	// reads the session csrf token out of a Drupal render
 	'src/site/plan-tier.ts': 'mixed',
 	'src/site/recover.ts': 'host',
+	'src/site/retire.ts': 'host',
 	'src/site/routes.ts': 'host',
 	// names Drupal's entry points in the deny headers
 	'src/site/screen.ts': 'mixed',
@@ -259,6 +261,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	// Drupal's session row id derivation
 	'src/ops/replica.ts': 'mixed',
 	'src/ops/replication-log.ts': 'host',
+	'src/ops/retire.ts': 'host',
 	'src/ops/setup-page.ts': 'host',
 	'src/ops/shell-assembly.ts': 'host',
 	'src/ops/shipped-lock.ts': 'cms',

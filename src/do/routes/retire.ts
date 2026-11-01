@@ -1,4 +1,4 @@
-import { bearerToken, ownerTokenMatches } from '../../ops/site-secrets';
+import { bearerToken, ownerTokenIsSet, ownerTokenMatches } from '../../ops/site-secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { jsonError } from '../../util/reply';
 
@@ -7,8 +7,9 @@ import { jsonError } from '../../util/reply';
  * written the audit entry; this checks the token again where the secret lives, and the confirm
  * against the object's own name.
  *
- * A caller with no token is accepted only under `force=1` on a deployment with `PW_DIAGNOSTICS`,
- * which already reaches `/sql` and `/restore` on every site.
+ * A caller with no token is accepted only under `force=1`, when the front worker says the
+ * deployment primary vouched for it and this object holds no owner token of its own. The header
+ * cannot come from outside: a `__` route is refused there, and the front builds this request.
  */
 export async function retire(
 	site: SitePhpDurableObject,
@@ -21,7 +22,8 @@ export async function retire(
 		site.secretStore(),
 		bearerToken(request.headers.get('authorization'))
 	);
-	if (!owner && !(force && site.env.PW_DIAGNOSTICS === '1')) {
+	const byPrimary = force && request.headers.get('x-cfw-retire-by') === 'primary';
+	if (!owner && !(byPrimary && !(await ownerTokenIsSet(site.secretStore())))) {
 		return jsonError('owner token required', 401);
 	}
 	const name = site.ctx.id.name;

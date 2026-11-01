@@ -18,9 +18,10 @@ import type { FrontEntry } from './types';
  *
  * The audit entry is written to `CONFIG_KV` first, because the object's own audit ring is in the
  * storage the wipe removes. Authority is the target's own owner token, checked here and again in
- * the object. The one exception is an object the deployment never claimed, under `force=1` on a
- * deployment with `PW_DIAGNOSTICS`, which already reaches `/sql` and `/restore` on every site.
- * The deployment primary is refused whatever the caller holds.
+ * the object. The one exception is an object the deployment never claimed, under `force=1`: it has
+ * no token to present, so the deployment primary's owner token authorizes it, and the object
+ * accepts that only while it holds no owner token of its own. The deployment primary is refused
+ * whatever the caller holds.
  */
 export async function retireRoute(f: FrontEntry): Promise<Response> {
 	const { request, url, env } = f;
@@ -30,12 +31,20 @@ export async function retireRoute(f: FrontEntry): Promise<Response> {
 	}
 	const site = await siteFor(url, env);
 	const force = url.searchParams.get('force') === '1';
-	// under PW_DIAGNOSTICS the entry stage lets an owner route through unchecked; a wipe asks again
+	// the entry stage does not check this route, since its credential depends on the target
 	const token = f.ownerToken ?? (await ownerCredential(request, env, url));
 	const doc = parseDeployment(await kv.get(DEPLOYMENT_KEY));
 	const claimed = doc.claimed.includes(site);
-	const operator = token === undefined && force && !claimed && env.PW_DIAGNOSTICS === '1';
-	if (token === undefined && !operator) {
+	const primary = unmappedSite(doc);
+	let proof = token;
+	let byPrimary = false;
+	if (proof === undefined && force && !claimed && primary?.from === 'primary') {
+		const asPrimary = new URL(url);
+		asPrimary.searchParams.set('site', primary.site);
+		proof = await ownerCredential(request, env, asPrimary);
+		byPrimary = proof !== undefined;
+	}
+	if (proof === undefined) {
 		return new Response('owner token required\n', {
 			status: 401,
 			headers: {
@@ -55,7 +64,6 @@ export async function retireRoute(f: FrontEntry): Promise<Response> {
 	if (confirm !== site) {
 		return jsonError(`send {"confirm": "${site}"} to retire ${site}`, 400);
 	}
-	const primary = unmappedSite(doc);
 	if (primary?.from === 'primary' && primary.site === site) {
 		return jsonError(
 			`${site} is the primary of this deployment; choose another with PUT /deployment first`,
@@ -74,7 +82,7 @@ export async function retireRoute(f: FrontEntry): Promise<Response> {
 		at: Date.now(),
 		route: `/retire?site=${site}`,
 		method: 'POST',
-		actor: token === undefined ? 'operator' : (await sha256Hex(token)).slice(0, 8)
+		actor: `${byPrimary ? 'primary:' : ''}${(await sha256Hex(proof)).slice(0, 8)}`
 	};
 	const entry = await appendRetireLog(kv as never, { ...call, status: 200 });
 
@@ -85,7 +93,9 @@ export async function retireRoute(f: FrontEntry): Promise<Response> {
 	const res = await stub.fetch(
 		new Request(inner, {
 			method: 'POST',
-			headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
+			headers: byPrimary
+				? { 'x-cfw-retire-by': 'primary' }
+				: { authorization: `Bearer ${proof}` },
 			body: JSON.stringify({ confirm: site })
 		})
 	);

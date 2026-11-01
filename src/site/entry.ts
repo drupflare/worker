@@ -76,6 +76,8 @@ export async function ownerRoute(f: FrontEntry): Promise<Response | undefined> {
 		// an owner route takes a credential, not the diagnostics flag (`/export` must not need
 		// the `/sql` and `/restore` mode)
 		if (OWNER_ROUTES.has(url.pathname)) {
+			// retire checks its own credential, which depends on whether the target was claimed
+			if (url.pathname === '/retire') return undefined;
 			ownerToken = await ownerCredential(request, env, url);
 			if (ownerToken === undefined) {
 				if (surface) {

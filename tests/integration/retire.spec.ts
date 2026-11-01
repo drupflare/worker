@@ -316,47 +316,60 @@ describe('POST /retire', () => {
 			expect(forced.status, await forced.clone().text()).toBe(200);
 			expect(await holdings(OLD)).toEqual({ tables: 0, keys: 0, alarm: null });
 
-			// it holds nothing now, so retiring it again would only mint a phantom object
-			const again = await retire(`ghost-${run}-${count}`, {
-				token: tokens.get(PRIMARY),
-				query: '&force=1'
-			});
-			expect([401, 404]).toContain(again.status);
+			// a retired object answers 410, so a second call cannot wipe or re-arm anything
+			const again = await retire(OLD, { token: tokens.get(PRIMARY), query: '&force=1' });
+			expect(again.status).toBe(410);
+			expect(await holdings(OLD)).toEqual({ tables: 0, keys: 0, alarm: null });
 		},
 		TIMEOUT
 	);
 
 	it(
-		'lets the deployment operator retire an unclaimed object that has no owner, with force=1',
+		'lets the deployment primary retire an unclaimed object that has no owner, with force=1',
 		async () => {
 			await site(PRIMARY);
 			const stray = `retire-stray-${run}-${count}`;
 			await provisionedNamedSite(stray);
+			await site(OLD, false);
 			await kv().put(
 				DEPLOYMENT_KEY,
 				JSON.stringify({ primary: PRIMARY, claimed: [PRIMARY] })
 			);
+			const primaryToken = tokens.get(PRIMARY);
 
-			expect((await retire(stray, { token: null, diagnostics: true })).status).toBe(401);
-			const res = await retire(stray, {
-				token: null,
-				diagnostics: true,
-				query: '&force=1'
-			});
+			// no credential, the diagnostics flag, another site's token and a missing force all fail
+			expect((await retire(stray, { token: null, query: '&force=1' })).status).toBe(401);
+			expect(
+				(await retire(stray, { token: null, diagnostics: true, query: '&force=1' })).status
+			).toBe(401);
+			expect(
+				(await retire(stray, { token: tokens.get(OLD), query: '&force=1' })).status
+			).toBe(401);
+			expect((await retire(stray, { token: primaryToken })).status).toBe(401);
+			expect((await holdings(stray)).tables).toBeGreaterThan(0);
+
+			const res = await retire(stray, { token: primaryToken, query: '&force=1' });
 			expect(res.status, await res.clone().text()).toBe(200);
 			expect((await holdings(stray)).tables).toBe(0);
-			// a claimed site is never reachable this way
-			await site(OLD);
+			const log = JSON.parse((await kv().get(RETIRE_LOG_KEY)) as string);
+			expect(log.at(-1).actor).toMatch(/^primary:[0-9a-f]{8}$/);
+
+			// an object that holds its own owner token is never reachable this way
+			await kv().put(
+				DEPLOYMENT_KEY,
+				JSON.stringify({ primary: PRIMARY, claimed: [PRIMARY] })
+			);
+			const owned = await retire(OLD, { token: primaryToken, query: '&force=1' });
+			expect(owned.status).toBe(401);
+			expect((await holdings(OLD)).tables).toBeGreaterThan(0);
+			// and neither is a claimed one
 			await kv().put(
 				DEPLOYMENT_KEY,
 				JSON.stringify({ primary: PRIMARY, claimed: [PRIMARY, OLD] })
 			);
-			const claimed = await retire(OLD, {
-				token: null,
-				diagnostics: true,
-				query: '&force=1'
-			});
+			const claimed = await retire(OLD, { token: primaryToken, query: '&force=1' });
 			expect(claimed.status).toBe(401);
+			expect((await holdings(OLD)).tables).toBeGreaterThan(0);
 		},
 		TIMEOUT
 	);

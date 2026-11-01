@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	chooseByContent,
 	choosePrimary,
@@ -566,5 +566,94 @@ describe('one deployment is one site', () => {
 			claimed: ['first', 'second'],
 			chosen: 'first-claim'
 		});
+	});
+});
+
+describe('SITE_ID_PORTS decides whether a port is part of the id', () => {
+	const at = (href: string) => new URL(href);
+	const ports = [
+		'https://example.com/',
+		'https://example.com:8443/',
+		'https://example.com:2053/'
+	];
+
+	it('keeps a port in the id by default, so no existing id changes', async () => {
+		const sites = new Set<string>();
+		for (const u of ports) sites.add((await resolveSite(at(u), {})).site);
+		expect(sites.size).toBe(3);
+		expect((await resolveSite(at(ports[1] as string), { SITE_ID_PORTS: 'keep' })).site).toBe(
+			'example.com_3a8443'
+		);
+	});
+
+	it('strips any port under strip, so one hostname on several ports is one site', async () => {
+		const env: SiteIdEnv = { SITE_ID_PORTS: 'strip' };
+		const sites = new Set<string>();
+		for (const u of ports) sites.add((await resolveSite(at(u), env)).site);
+		expect([...sites]).toEqual(['example.com']);
+		expect(siteFromHost('example.com:8080', 'https:', 'strip')).toBe('example.com');
+		expect(siteFromHost('[::2]:8443', 'https:', 'strip')).toBe(siteFromHost('[::2]'));
+	});
+
+	it('leaves the id of a default-port host byte-identical for both values', () => {
+		for (const mode of ['keep', 'strip'] as const) {
+			expect(siteFromHost('example.com', 'https:', mode)).toBe(siteFromHost('example.com'));
+			expect(siteFromHost('example.com:443', 'https:', mode)).toBe('example.com');
+			expect(siteFromHost('example.com:80', 'http:', mode)).toBe('example.com');
+			expect(siteFromHost('Blog.Example.co.uk', 'https:', mode)).toBe('blog.example.co.uk');
+		}
+	});
+
+	it('reads an unrecognised value as keep', async () => {
+		expect((await resolveSite(at(ports[1] as string), { SITE_ID_PORTS: 'drop' })).site).toBe(
+			'example.com_3a8443'
+		);
+	});
+});
+
+describe('a KV read that never settles must not hang the request', () => {
+	const at = (href: string) => new URL(href);
+	const hang = (): Promise<string | null> => new Promise(() => {});
+
+	it('answers within the read bound and falls through to derivation', async () => {
+		const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void) => {
+			fn();
+			return 0;
+		}) as never);
+		try {
+			const pending = resolveSite(at('https://example.com/'), { CONFIG_KV: { get: hang } });
+			expect(await pending).toEqual({ site: 'example.com', from: 'host' });
+		} finally {
+			timer.mockRestore();
+		}
+	});
+
+	it('serves the last known mapping, however old, when the read hangs', async () => {
+		const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void) => {
+			fn();
+			return 0;
+		}) as never);
+		try {
+			let hung = false;
+			const kv = {
+				get: (key: string) =>
+					hung
+						? hang()
+						: Promise.resolve(key === siteKvKey('example.com') ? 'mapped' : null)
+			};
+			await resolveSite(at('https://example.com/'), { CONFIG_KV: kv }, {}, 0);
+			hung = true;
+			const pending = resolveSite(
+				at('https://example.com/'),
+				{ CONFIG_KV: kv },
+				{},
+				HOST_MEMO_MS * 3
+			);
+			expect(await pending).toEqual({ site: 'mapped', from: 'kv' });
+			const other = resolveSite(at('https://other.example/'), { CONFIG_KV: kv });
+			expect((await other).from).toBe('host');
+		} finally {
+			timer.mockRestore();
+		}
 	});
 });

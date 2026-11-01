@@ -26,6 +26,8 @@ export interface SiteWorkerEnv extends SiteEnv {
 	 * Second in the chain: KV, then this, then the hostname, then `site`.
 	 */
 	SITE_ID?: string;
+	/** `strip` drops any port from a derived site id; see `siteFromHost()` */
+	SITE_ID_PORTS?: string;
 }
 
 /** Hands a write to the runtime after the response leaves; a missing promise is ignored. */

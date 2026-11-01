@@ -45,6 +45,27 @@ export type DeploymentKv = {
 	put?(key: string, value: string): Promise<void>;
 };
 
+/** what {@link within} answers when the read outlasts its bound */
+export const TIMED_OUT = Symbol('timed out');
+
+/** a read that never settles must not hold the request, so every KV read here is bounded */
+export async function within<T>(read: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			read,
+			new Promise<typeof TIMED_OUT>((resolve) => {
+				timer = setTimeout(() => resolve(TIMED_OUT), ms);
+			})
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/** how long a KV read may wait; a warm read is 4 ms and a cold key 46-140 ms */
+export const KV_READ_TIMEOUT_MS = 2_000;
+
 const EMPTY: DeploymentSites = { primary: null, claimed: [] };
 
 /** how long an isolate reuses the document; the same trade-off as the host memo */
@@ -94,7 +115,10 @@ export async function readDeployment(
 	if (memo && nowMs - memo.at < DEPLOYMENT_MEMO_MS) return memo.value;
 	let raw: string | null;
 	try {
-		raw = await kv.get(DEPLOYMENT_KEY);
+		const read = await within(kv.get(DEPLOYMENT_KEY), KV_READ_TIMEOUT_MS);
+		// a hung read answers with the last document seen, however old, and is not memoised
+		if (read === TIMED_OUT) return memo?.value ?? { ...EMPTY, claimed: [] };
+		raw = read;
 	} catch {
 		return { ...EMPTY, claimed: [] };
 	}
@@ -232,4 +256,28 @@ export async function censusOf(ns: DurableObjectNamespace, site: string): Promis
 		claimedAt: typeof body.claimedAt === 'number' ? body.claimedAt : null,
 		lastWrite: typeof body.lastWrite === 'number' ? body.lastWrite : null
 	};
+}
+
+/**
+ * Removes a site from the claimed list, the writer `choosePrimary` shares. The primary is never
+ * removed here: the caller refuses it first, and a document that names a primary outside its own
+ * claimed list is not one this writes.
+ *
+ * @returns the document as written, or undefined when the binding cannot be written
+ */
+export async function forgetClaimed(
+	kv: DeploymentKv | undefined,
+	site: string
+): Promise<DeploymentSites | undefined> {
+	if (!kv || typeof kv.put !== 'function') return undefined;
+	const doc = parseDeployment(await kv.get(DEPLOYMENT_KEY));
+	if (doc.primary === site) return undefined;
+	const next: DeploymentSites = {
+		primary: doc.primary,
+		claimed: doc.claimed.filter((s) => s !== site),
+		...(doc.primary !== null && doc.chosen ? { chosen: doc.chosen } : {})
+	};
+	await kv.put(DEPLOYMENT_KEY, JSON.stringify(next));
+	resetDeploymentMemo();
+	return next;
 }

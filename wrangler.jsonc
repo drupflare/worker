@@ -11,7 +11,8 @@
 		"LAZY_FS_BUDGET_BYTES": "4194304",
 		"GEN_BUCKET_MS": "5000",
 		"PLAN": "free",
-		"ASSET_AGGREGATES": "1"
+		"ASSET_AGGREGATES": "1",
+		"SITE_ID_PORTS": "strip"
 	},
 	"rules": [
 		{

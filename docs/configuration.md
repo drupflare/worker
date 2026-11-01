@@ -31,6 +31,7 @@ Every variable and binding on the configuration pages, once each.
 | `SEND_EMAIL`                    | binding                               | [Configuration](configuration.md)                       |
 | `CMS`                           | none, required at build               | [Configuration](configuration.md)                       |
 | `SITE_ID`                       | derived, then `site`                  | [Configuration](configuration.md#site_id)               |
+| `SITE_ID_PORTS`                 | `keep`                                | [Configuration](configuration.md#site_id_ports)         |
 | `SITE_ORIGIN`                   | pinned on first use                   | [Configuration](configuration.md#site_origin)           |
 | `SITE_LOCATION_HINT`            | unset                                 | [Configuration](configuration.md#site_location_hint)    |
 | `PLAN`                          | `free`                                | [Configuration](configuration.md)                       |
@@ -91,6 +92,7 @@ Every variable and binding on the configuration pages, once each.
 | `KEEP_WARM_MS`                  | 240,000                               | [Runtime](configuration-runtime.md)                     |
 | `SITE_WARM`                     | by plan                               | [Runtime](configuration-runtime.md)                     |
 | `WARM_INTERVAL_MS`              | 8,000                                 | [Runtime](configuration-runtime.md)                     |
+| `WARM_CEILING_MS`               | unset                                 | [Runtime](configuration-runtime.md)                     |
 | `RECYCLE_ABOVE_BYTES`           | 117440512                             | [Runtime](configuration-runtime.md)                     |
 | `ISOLATE_ABOVE_BYTES`           | 130023424                             | [Runtime](configuration-runtime.md)                     |
 | `FILL_SETTLE_MS`                | 60,000                                | [Runtime](configuration-runtime.md)                     |
@@ -204,6 +206,7 @@ Drupal under another name. At runtime it is only reported, as the fleet row's `c
 | var                  | default              | what it does                                                   |
 | -------------------- | -------------------- | -------------------------------------------------------------- |
 | `SITE_ID`            | derived, then `site` | which site a request resolves to, when KV maps no host         |
+| `SITE_ID_PORTS`      | `keep`               | whether a port is part of a site id derived from the hostname  |
 | `SITE_ORIGIN`        | pinned on first use  | the `scheme://host[:port]` Drupal builds absolute URLs against |
 | `SITE_LOCATION_HINT` | unset                | which region the site's Durable Object is created in           |
 
@@ -222,6 +225,23 @@ dev server and a deployed site run the same code path.
 Set it when one deployment serves one site under a name you choose. Leave it unset when the hostname
 is the identity. Changing it after a site has content points the Worker at a different, empty object;
 the old one still holds the data.
+
+### `SITE_ID_PORTS`
+
+`keep` or `strip`. `keep` is the default: a non-default port is part of a derived site id, so
+`example.com:8443` and `example.com` are two sites, as they are on a standalone workerd node that
+serves different sites on different ports. `strip` drops any port, which is right on Cloudflare,
+where a hostname is one site and the platform proxies extra ports (8443, 2053 and others) to it;
+under `keep` each one creates a site object that holds an alarm chain and no visitors. The canonical
+`wrangler.jsonc` sets `strip`. An id derived from a default-port host is the same under both values,
+and a KV mapping, `SITE_ID` or the deployment's primary site is unaffected. Do not set `strip` on
+a node that has sites on non-default ports, since their ids would change.
+
+The KV reads in the chain (the host mapping and the deployment document) wait at most 2 seconds. A
+read that does not answer uses the last value this isolate saw, or falls through as a failed read
+does.
+
+Spec: `tests/unit/ops/site-id.spec.ts`.
 
 ### `SITE_LOCATION_HINT`
 

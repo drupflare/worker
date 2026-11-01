@@ -10,9 +10,12 @@
  */
 import {
 	censusOf,
+	KV_READ_TIMEOUT_MS,
 	readDeployment,
 	settlePrimary,
+	TIMED_OUT,
 	unmappedSite,
+	within,
 	type DeploymentKv
 } from './deployment-site';
 
@@ -67,13 +70,20 @@ export function siteStubOptions(env?: {
 }
 
 /**
- * A site id derived from a request host, or undefined when the host names no site. A non-default
- * port is part of the identity; `example.com:443` is `example.com`.
+ * A site id derived from a request host, or undefined when the host names no site. Under `keep` a
+ * non-default port is part of the identity and `example.com:443` is `example.com`; under `strip`
+ * no port is.
  *
  * @param host - `url.host`, so a port is already present when there is one
+ * @param ports - `SITE_ID_PORTS`: `keep` for a node that serves sites on different ports, `strip`
+ * where the platform proxies extra ports to one hostname
  * @returns a lowercase id safe as a Durable Object name, or undefined for a local host
  */
-export function siteFromHost(host: string, protocol = 'https:'): string | undefined {
+export function siteFromHost(
+	host: string,
+	protocol = 'https:',
+	ports: 'keep' | 'strip' = 'keep'
+): string | undefined {
 	const trimmed = host.trim().toLowerCase();
 	if (trimmed === '') return undefined;
 
@@ -85,7 +95,10 @@ export function siteFromHost(host: string, protocol = 'https:'): string | undefi
 		return undefined;
 	}
 
-	const isDefaultPort = port === '' || (protocol === 'https:' ? port === '443' : port === '80');
+	const isDefaultPort =
+		ports === 'strip' ||
+		port === '' ||
+		(protocol === 'https:' ? port === '443' : port === '80');
 	const identity = isDefaultPort ? hostname : `${hostname}:${port}`;
 	const id = encodeSiteId(identity);
 	return id === '' ? undefined : id;
@@ -128,6 +141,8 @@ export interface SiteIdEnv {
 	/** optional: unbound leaves derivation in force */
 	CONFIG_KV?: DeploymentKv;
 	SITE_ID?: string;
+	/** `strip` drops any port from a derived id; anything else keeps a non-default one */
+	SITE_ID_PORTS?: string;
 	/** the site namespace, asked what each claimed site holds when several compete for primary */
 	SITE?: DurableObjectNamespace;
 }
@@ -161,7 +176,10 @@ async function mappedHost(
 	if (!kv) return undefined;
 	let mapped: string | null;
 	try {
-		mapped = await kv.get(siteKvKey(host));
+		const read = await within(kv.get(siteKvKey(host)), KV_READ_TIMEOUT_MS);
+		// a hung read answers with the last mapping seen, however old, and is not memoised
+		if (read === TIMED_OUT) return memo?.site;
+		mapped = read;
 	} catch {
 		return undefined;
 	}
@@ -212,7 +230,11 @@ export async function resolveSite(
 		}
 	}
 
-	const derived = siteFromHost(host, url.protocol);
+	const derived = siteFromHost(
+		host,
+		url.protocol,
+		env?.SITE_ID_PORTS?.trim().toLowerCase() === 'strip' ? 'strip' : 'keep'
+	);
 	if (derived !== undefined) return { site: derived, from: 'host' };
 
 	return { site: FALLBACK_SITE, from: 'fallback' };

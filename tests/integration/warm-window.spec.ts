@@ -1,11 +1,12 @@
-import { env } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	DO_GB_ALLOCATED,
 	FREE_QUOTAS,
 	IDLE_GB_S_PER_DAY
 } from '../../scripts/measure/free-envelope';
-import { runFillWindow } from '../../src/site';
+import type { FleetDb } from '../../src/ops/fleet';
+import worker, { runFillWindow } from '../../src/site';
 import {
 	freshSite,
 	inObject,
@@ -196,6 +197,85 @@ describe('a failing fill stops the window instead of spinning', () => {
 		// the row survives, so the three-strike count still governs the path
 		const depth = await inObject(namedSite(site), (obj) => obj.queueDepth());
 		expect(depth).toBe(1);
+	});
+});
+
+describe('the cron entry point survives a target that fails', () => {
+	const cron = (): ScheduledController => ({
+		scheduledTime: Date.now(),
+		cron: '*/5 * * * *',
+		noRetry: () => {}
+	});
+
+	/** the queue depth after a window: 0 means the window reached the object and drained it */
+	const depthOf = (site: string) => inObject(namedSite(site), (obj) => obj.queueDepth());
+
+	afterEach(() => vi.restoreAllMocks());
+
+	it('warms the other sites when one target throws, and logs that one once', async () => {
+		const healthy = ['warm-ok-a', 'warm-ok-b'];
+		for (const site of healthy) {
+			await inObject(namedSite(site), (obj) => {
+				stubRender(obj, ({ path }) => pageFor(path));
+				queuePath(obj, '/', { arm: false });
+			});
+		}
+		// the target's fetch rejects the way a storage reset surfaces to the caller
+		const failing = env.SITE.idFromName('warm-bad').toString();
+		const flaky = {
+			idFromName: (name: string) => env.SITE.idFromName(name),
+			get: (id: DurableObjectId, opts?: DurableObjectNamespaceGetDurableObjectOptions) =>
+				id.toString() === failing
+					? {
+							fetch: async () => {
+								throw new Error(
+									'Durable Object reset because its code was updated'
+								);
+							}
+						}
+					: env.SITE.get(id, opts)
+		} as unknown as DurableObjectNamespace;
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const ctx = createExecutionContext();
+		await worker.scheduled(
+			cron(),
+			{
+				...env,
+				SITE: flaky,
+				WINDOW_SITES: [...healthy, 'warm-bad'].join(','),
+				FLEET_DB: undefined
+			},
+			ctx
+		);
+		await waitOnExecutionContext(ctx);
+
+		for (const site of healthy) expect(await depthOf(site)).toBe(0);
+		expect(errors).toHaveBeenCalledTimes(1);
+		expect(String(errors.mock.calls[0]?.[0])).toContain('warm-bad');
+		expect(String(errors.mock.calls[0]?.[0])).toContain('Durable Object reset');
+	});
+
+	it('warms the configured sites when the fleet inventory cannot be read', async () => {
+		const site = 'warm-no-fleet';
+		await inObject(namedSite(site), (obj) => {
+			stubRender(obj, ({ path }) => pageFor(path));
+			queuePath(obj, '/', { arm: false });
+		});
+		const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const unreadable = {
+			prepare: () => {
+				throw new Error('D1 unavailable');
+			}
+		} as unknown as FleetDb;
+
+		const ctx = createExecutionContext();
+		await worker.scheduled(cron(), { ...env, WINDOW_SITES: site, FLEET_DB: unreadable }, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(await depthOf(site)).toBe(0);
+		expect(errors).toHaveBeenCalledTimes(1);
+		expect(String(errors.mock.calls[0]?.[0])).toContain('D1 unavailable');
 	});
 });
 

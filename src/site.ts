@@ -126,8 +126,13 @@ export default {
 		let fleet: FleetRow[] | undefined;
 		if (env.FLEET_DB) {
 			// written by the object, so a bound-but-empty database is "no sites yet"
-			await ensureFleetTable(env.FLEET_DB);
-			fleet = await listSites(env.FLEET_DB);
+			try {
+				await ensureFleetTable(env.FLEET_DB);
+				fleet = await listSites(env.FLEET_DB);
+			} catch (e) {
+				const message = String((e as Error)?.message ?? e);
+				console.error(`warm window: fleet unreadable, configured sites only: ${message}`);
+			}
 		}
 		const targets = warmTargets(fleet, configured, Date.now());
 		// warn: `idFromName()` creates whatever it is handed, so an unknown site warmed silently
@@ -140,16 +145,26 @@ export default {
 		if (targets.sites.length === 0) {
 			const why =
 				fleet === undefined
-					? 'no FLEET_DB and no WINDOW_SITES'
+					? 'no inventory and no WINDOW_SITES'
 					: `${fleet.length} reported`;
 			console.warn(`warm window: nothing to warm (${why})`);
 			return;
 		}
 		for (const site of targets.sites) {
-			ctx.waitUntil(runFillWindow(env, site));
+			ctx.waitUntil(warmSite(env, site));
 		}
 	}
 };
+
+/** one target's window; its failure is logged here and stays off the other targets */
+async function warmSite(env: SiteWorkerEnv, site: string): Promise<void> {
+	try {
+		const win = await runFillWindow(env, site);
+		if (!win.ok) console.error(`warm window: ${site}: ${win.error}`);
+	} catch (e) {
+		console.error(`warm window: ${site}: ${String((e as Error)?.message ?? e)}`);
+	}
+}
 
 /** builds the request state the entry stages rewrite, before any site is chosen */
 function openEntry(

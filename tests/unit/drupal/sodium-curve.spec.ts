@@ -71,6 +71,13 @@ describe('RFC 8032 section 7.1 (Ed25519)', () => {
 		expect(ed25519Verify(rOnly, new Uint8Array(0), hex(vectors[0]!.pub))).toBe(false);
 	});
 
+	it('refuses a public key that is not on the curve, in verify and in the Curve25519 map', () => {
+		// y = 2 has no x on the curve
+		const off = hex('02' + '00'.repeat(31));
+		expect(ed25519Verify(hex(vectors[0]!.sig), new Uint8Array(0), off)).toBe(false);
+		expect(ed25519PublicToCurve(off)).toBeUndefined();
+	});
+
 	it('maps the public key and secret key to Curve25519 as the X25519 base point does', () => {
 		const v = vectors[0]!;
 		const { secret, pub } = ed25519FromSeed(hex(v.seed));

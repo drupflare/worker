@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { base64ToBytes, bytesToBase64 } from '../../../src/db/file-store';
-import { brotliHostCall } from '../../../src/site/shims/brotli-fix';
+import { brotliHostCall, installBrotli } from '../../../src/site/shims/brotli-fix';
 import { EXTENSION_TABLE } from '../../../src/site/shims/extension-table';
-import { zstdHostCall } from '../../../src/site/shims/zstd-fix';
+import { installZstd, zstdHostCall } from '../../../src/site/shims/zstd-fix';
 
 /**
  * The host halves on workerd's own `node:zlib`, which is where they run in production. The node
@@ -108,6 +108,63 @@ describe('codec shims on workerd', () => {
 		});
 		expect(reply.ok).toBe(false);
 	});
+
+	it('answers an error reply, not a throw, for a bad brotli level, mode, op or frame', () => {
+		const b64 = bytesToBase64(PLAIN);
+		expect(brotliHostCall({ op: 'compress', b64, level: 12 })).toEqual({
+			ok: false,
+			error: 'compression level (12) must be within 0..11'
+		});
+		expect(brotliHostCall({ op: 'compress', b64, level: 5, mode: 3 })).toEqual({
+			ok: false,
+			error: 'compression mode (3) is not GENERIC, TEXT or FONT'
+		});
+		expect(brotliHostCall({ op: 'compress', b64, level: 5, mode: 2 }).ok).toBe(true);
+		expect(brotliHostCall({ op: 'squash', b64 })).toEqual({
+			ok: false,
+			error: "unknown brotli op 'squash'"
+		});
+		expect(brotliHostCall({ op: 'uncompress', b64 }).ok).toBe(false);
+	});
+
+	it('answers an error reply for a bad zstd level, op or frame', () => {
+		const b64 = bytesToBase64(PLAIN);
+		expect(zstdHostCall({ op: 'compress', b64, level: 23 })).toEqual({
+			ok: false,
+			error: 'compression level (23) must be within 1..22 or smaller then 0'
+		});
+		expect(zstdHostCall({ op: 'squash', b64 })).toEqual({
+			ok: false,
+			error: "unknown zstd op 'squash'"
+		});
+		expect(zstdHostCall({ op: 'uncompress', b64 }).ok).toBe(false);
+	});
+
+	it.each([
+		['brotli', 'cfwBrotli', installBrotli, 'compress'],
+		['zstd', 'cfwZstd', installZstd, 'compress']
+	] as const)(
+		'hangs the %s bridge on its key and runs each call inside the mask',
+		(_n, key, install, op) => {
+			let masked = 0;
+			const binary: Record<string, unknown> = {};
+			install(binary, (fn) => {
+				masked++;
+				return fn();
+			});
+			const run = binary[key] as (json: string) => string;
+			const frame = JSON.parse(
+				run(JSON.stringify({ op, b64: bytesToBase64(PLAIN), level: 3 }))
+			);
+			expect(frame.ok).toBe(true);
+			const back = JSON.parse(run(JSON.stringify({ op: 'uncompress', b64: frame.b64 })));
+			expect(base64ToBytes(back.b64)).toEqual(PLAIN);
+			const bad = JSON.parse(run('not json'));
+			expect(bad.ok).toBe(false);
+			expect(String(bad.error)).toContain('unparseable request');
+			expect(masked).toBe(3);
+		}
+	);
 
 	it('keeps brotli and zstd out of extension_loaded, which needs the whole API', () => {
 		expect(EXTENSION_TABLE).not.toHaveProperty('brotli');

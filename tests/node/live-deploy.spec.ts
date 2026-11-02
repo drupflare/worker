@@ -130,6 +130,9 @@ describe('the free quota', () => {
 		expect(
 			quotaExhausted('Error: Exceeded allowed rows written in Durable Objects free tier.')
 		).toBe(true);
+		expect(
+			quotaExhausted('Error: Exceeded allowed rows read in Durable Objects free tier.')
+		).toBe(true);
 		expect(quotaExhausted('GET / answered 500, expected 200: Internal Server Error')).toBe(
 			false
 		);
@@ -140,7 +143,7 @@ describe('the free quota', () => {
 		expect(text).toContain('95,000 of 100,000');
 		expect(text).toContain(`needs ${ROWS_PER_RUN.toLocaleString('en-US')}`);
 		expect(text).toContain('2026-09-29T00:00:00.000Z');
-		expect(quotaNotice(null, 1)).toContain('the platform refused a write');
+		expect(quotaNotice(null, 1)).toContain('the platform refused a row read or write');
 	});
 
 	it('leaves room for at least one run a day', () => {

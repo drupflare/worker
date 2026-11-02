@@ -529,7 +529,7 @@ export const ROWS_PER_RUN = 12_000;
 
 /** the text the platform answers once the account has spent its daily rows */
 const QUOTA_TEXT =
-	/Exceeded allowed rows written in Durable Objects free tier|daily request limit/i;
+	/Exceeded allowed rows (written|read) in Durable Objects free tier|daily request limit/i;
 
 /** whether an answer says the account's free quota for today is spent */
 export function quotaExhausted(text: string): boolean {
@@ -551,7 +551,7 @@ export function quotaNotice(used: number | null, needed: number, now = new Date(
 	const limit = FREE_DAILY_ROWS.toLocaleString('en-US');
 	const state =
 		used === null
-			? `the platform refused a write because the free account's ${limit} daily Durable Object rows are spent`
+			? `the platform refused a row read or write because the free account's daily Durable Object rows are spent (${limit} written)`
 			: `the free account has written ${used.toLocaleString('en-US')} of ${limit} Durable Object rows today`;
 	return `skipped: ${state}, and a run needs ${needed.toLocaleString('en-US')}; the quota resets at ${reset.toISOString()}`;
 }

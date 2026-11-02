@@ -506,7 +506,7 @@ describe('the route refuses what it cannot verify', () => {
 	 *
 	 * That order is the right one and costs nothing to accept: both are O(1) header reads, refusing
 	 * first is strictly less work, and what an anonymous caller learns is `MAX_BODY_BYTES` -- a
-	 * deployment constant that `docs/configuration.md` publishes.
+	 * deployment constant that `docs/configuration/index.md` publishes.
 	 */
 	it('refuses an oversized batch before anything else, naming the limit', async () => {
 		const { env } = await import('cloudflare:test');

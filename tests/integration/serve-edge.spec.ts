@@ -30,37 +30,11 @@ import {
 	type ServeProbe
 } from '../helpers/serve-do';
 
-/**
- * Ported from the `the edge tier`, `the never-Drupal edge filter` and generation-pointer parts of
- * `scripts/test-serve-chain.mjs`. This is the Worker in front of the object -- `src/site.js` --
- * rather than the object itself.
- *
- * What changed from the original:
- *
- *   - **The page is seeded as a row rather than rendered.** The edge tier does not care how the
- *     HTML was produced, so no interpreter is involved in most of this file; `cfw_page` is data.
- *   - **`PW_DIAGNOSTICS=0` and `WINDOW_SITES` are now testable.** Both are wrangler vars, so the
- *     original could only reach them by restarting `wrangler dev` with different `--var` flags,
- *     which it never did. Here the handler is called directly with a modified env.
- *   - **The pointer-clobbering regression is asserted for the first time.** `asGeneration()`
- *     carries a comment saying a route that reports no generation once overwrote the pointer with
- *     `Number(null) === 0` and made every later lookup build a key nothing was stored under. The
- *     original found it and then only asserted the symptom; here the sequence that caused it -- a
- *     `/serve-stats` call between two serves -- is a test.
- *
- * `caches.default` is the real Cache API, isolated per test file by the pool's `isolatedStorage`.
- *
- * The window the generation pointer is discovered once per, from wrangler.jsonc.
- */
+// the worker in front of the object (src/site.ts); most cases seed a cfw_page row, so no interpreter runs
+// caches.default is the real cache api, isolated per test file by the pool
 const GEN_BUCKET_MS = 5000;
 
-/**
- * Retries until the edge answers.
- *
- * Carried across from the original's `edgeHit()`, for the reason it gives: the pointer is
- * discovered once per time window, so a request that lands in a window with no pointer yet
- * cannot use the edge and goes to the object instead. That is correct behaviour, not a failure.
- */
+// retries until the edge answers; the pointer is discovered once per window, so an early request goes to the object
 async function untilEdge(site: string, path: string, tries = 6): Promise<ServeProbe | null> {
 	return untilTier(site, path, (hit) => hit.cache === 'EDGE', tries);
 }
@@ -82,18 +56,8 @@ async function untilTier(
 const serveRequestsOf = (site: string) =>
 	inObject(namedSite(site), (obj) => obj.storedMeters().serveTotal);
 
-/**
- * An oversized body is refused at the edge, before any Durable Object hop.
- *
- * The threat is not bandwidth. A form body is `parse_str()`d inside a 128 MB isolate, and
- * `foo[][][][][]=bar` repeated turns a modest number of wire bytes into orders of magnitude more
- * heap -- and this runtime has no separate process to lose, so an OOM takes the site's object with
- * it. Refusing here costs no DO request and no interpreter.
- *
- * `multipart/form-data` has its own, larger ceiling: that is the upload shape, where size is
- * expected, and it is not parsed into a nested array. A 2 MiB cap on uploads would be a
- * regression wearing a guard's clothes. A chunked body declares no length and is counted as read.
- */
+// an oversized form body is parsed into a nested array inside a 128 MB isolate, so refuse it before any object hop
+// multipart uploads get a larger ceiling, since size is what an upload is for; a chunked body is counted as read
 describe('an oversized request body never reaches the interpreter', () => {
 	const post = (body: string, headers: Record<string, string>) =>
 		SELF.fetch('https://cfw.local/serve?site=guarded&path=%2Fuser%2Flogin', {
@@ -174,8 +138,7 @@ describe('an oversized request body never reaches the interpreter', () => {
 		expect(bodyTooLarge(big, { MAX_BODY_BYTES: 4096 })?.limit).toBe(4096);
 		expect(bodyTooLarge(big, { MAX_BODY_BYTES: 0 })).toBeUndefined();
 
-		// a nonsense value falls back to the default rather than disabling the guard by accident,
-		// which needs a body over the DEFAULT to be visible at all
+		// a nonsense value falls back to the default rather than disabling the guard; the body must exceed the default
 		const huge = new Request('https://cfw.local/x', {
 			method: 'POST',
 			body: 'a=1',
@@ -289,17 +252,8 @@ describe('the generation header reader', () => {
 	});
 });
 
-/**
- * The setup page an unclaimed site serves must never reach the edge cache.
- *
- * It is a 200, which is the one status `putPage()` stores, and it is keyed by path like any other
- * page -- so a stored copy would keep telling visitors to claim a site that has already been
- * claimed, for the whole edge TTL, with no way to tell it apart from the real front page. What
- * actually refuses it is structural rather than a status check: the response carries no
- * `x-cfw-cache`, and `putPage()` stores only `HIT` and `RENDER`. Asserted because that is a
- * property of a header this module does not set, which is exactly the kind of guarantee that
- * disappears silently.
- */
+// the claim page must never reach the edge cache: it is a 200 keyed by path, so a stored copy would outlive the claim
+// it is refused structurally, since the response carries no x-cfw-cache and putPage() stores only HIT and RENDER
 describe('the setup page is never stored at the edge', () => {
 	it('answers the claim page and puts nothing in the cache', async () => {
 		const site = 'unclaimed';
@@ -321,9 +275,7 @@ describe('the setup page is never stored at the edge', () => {
 describe('the three tiers are distinguishable, and only one of them costs a DO request', () => {
 	it('walks MISS to DO HIT to EDGE, and the edge copy never reaches the object', async () => {
 		const site = 'tiers';
-		// provisioned first, and it is the only test here that needs saying so: this is the one
-		// that serves BEFORE seeding a page, so without a database the first request is the
-		// first-run placeholder rather than the MISS the walk starts from
+		// provisioned first: without a database the first request is the first-run placeholder, not the miss
 		await provisionedNamedSite(site);
 		const miss = await serveThroughWorker(site, '/');
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>tiers</title>'));
@@ -344,9 +296,7 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		expect(doHit.edgePut).toBe('deferred');
 		expect(warmed?.edge).toBe('HIT');
 		expect(edge).not.toBeNull();
-		// the FOURTH tier: `untilEdge` above already paid the `caches.default` read, so this
-		// isolate holds the page and answers with no I/O at all. Both are edge tiers and neither
-		// touches the object; they are separate values so a measurement can tell them apart
+		// the fourth tier: the isolate memo answers with no I/O; both are edge tiers and neither touches the object
 		expect(edge?.cache).toBe('MEM');
 		expect(edge?.edge).toBe('MEM');
 		// the tier's claim: no DO request at all, asserted on the object's own
@@ -359,30 +309,14 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		expect(new Set([miss.cache, doHit.cache, warmed?.cache, edge?.cache]).size).toBe(4);
 	});
 
-	/**
-	 * THE STALE-GENERATION SERVE, which no lane could reach until the test pool bound `PAGE_KV`.
-	 *
-	 * `pageKvEnabled()` returns false on a missing binding and `readStalePage()` returns null at its
-	 * first line, so both the KV page tier and the previous-generation serve on top of it were
-	 * unreachable in every lane and on the shipping config at once. `wrangler.jsonc` declares the
-	 * namespace now and `vitest.config.ts` gives the pool a local one.
-	 *
-	 * IT IS A DIFFERENT TIER FROM `AGED`, and conflating the two cost a measurement. `AGED` is the
-	 * OBJECT answering a page that is stale by TIME out of its own SQLite, reported with
-	 * `x-cfw-aged-ms`. This is the FRONT WORKER answering a page from a PREVIOUS GENERATION out of
-	 * KV after a content change, reported with `x-cfw-edge: STALE` and `x-cfw-stale-behind`. Both
-	 * can answer `x-cfw-cache: KV`, which is why a run that read only that header could not tell
-	 * them apart.
-	 */
+	// the front worker answers a previous generation from kv after a content change (x-cfw-edge: STALE)
+	// the object's aged serve is a different tier; both can answer x-cfw-cache KV, so x-cfw-edge tells them apart
 	it('answers from the previous generation after a bump, rather than waiting for a re-render', async () => {
 		const site = 'stalegen';
 		await provisionedNamedSite(site);
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>gen one</title>'));
 
-		// THE TIER IS PAID-ONLY BY DEFAULT, which the binding does not change: `pageKvEnabled()`
-		// ends in `isPaid(env)`, and the shipping config is `PLAN: free`. So a free site stores
-		// nothing in KV and has nothing to fall back to, and this spec has to say which
-		// configuration it is asserting
+		// the tier is paid-only by default (pageKvEnabled ends in isPaid, and PLAN ships free), so state the configuration
 		const paid = { ...env, PAGE_KV_ENABLED: '1' } as unknown as typeof env;
 		const serve = async (query = '') => {
 			const ctx = createExecutionContext();
@@ -404,12 +338,8 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 
 		await namedSite(site).fetch(new Request('https://do.local/__bump', { method: 'POST' }));
 
-		// ONE `edge=0` REQUEST FIRST, and it is load-bearing in a way worth stating. The generation
-		// pointer is discovered once per 5 s window, so straight after a bump the worker still
-		// believes the old generation and the isolate memo answers the pre-bump body -- the tier
-		// never runs. `edge=0` declines the memo and the per-colo cache, reaches the object, and the
-		// response teaches the pointer forward. It cannot be the assertion itself, because the KV
-		// tier and the stale read both sit INSIDE the same `edgeWanted` guard it just turned off.
+		// one edge=0 request first: the pointer is discovered once per 5 s window, so a bump is invisible until a request reaches the object
+		// edge=0 teaches the pointer forward; it cannot be the assertion, because the KV read sits inside the guard it turns off
 		const taught = await serve('&edge=0');
 		expect(taught.headers.get('x-cfw-generation')).not.toBe('1');
 
@@ -422,9 +352,7 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 			}
 		}
 		expect(stale, 'the previous generation was never served').not.toBeNull();
-		// BOTH STALE TIERS ANSWER `x-cfw-cache: KV`, so this is the header that separates them from
-		// the object's own time-stale `AGED` serve. A measurement that reads only `x-cfw-cache`
-		// cannot tell which mechanism answered, and one of mine did not
+		// both stale tiers answer x-cfw-cache KV; x-cfw-edge separates them from the object's aged serve
 		expect(stale?.headers.get('x-cfw-cache')).toBe('KV');
 		// how many generations back it came from, so a caller can bound the staleness it accepted
 		expect(Number(stale?.headers.get('x-cfw-stale-behind'))).toBeGreaterThanOrEqual(1);
@@ -463,13 +391,8 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		expect(edge?.cacheControl).toBe('public, max-age=0, must-revalidate');
 	});
 
-	/**
-	 * The page key carries no request header, so every tier hands one stored page to every visitor.
-	 * Measured through the front worker: `Accept`, `User-Agent` and `Origin` change neither the
-	 * body nor the tier that answered. Whether the RENDER varies by them is measured on the real
-	 * pack in `forwarded-headers.spec.ts` (it does not), and a render that says it does, through
-	 * `Vary`, is not stored (`serve-chain.spec.ts`).
-	 */
+	// the page key carries no request header, so one stored page answers every visitor
+	// whether the render varies is measured in forwarded-headers.spec.ts; a render that declares Vary is not stored
 	it('answers the same stored page whatever Accept, User-Agent or Origin the visitor sent', async () => {
 		const site = 'keyvariance';
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>one page</title>'));
@@ -517,14 +440,8 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		expect(bypass.edgePut).toBe('deferred');
 	});
 
-	/**
-	 * The three writes a serve makes are issued and not awaited.
-	 *
-	 * MEASURED ON A DEPLOYED WORKER, which is why this is worth a test: an awaited
-	 * `caches.default.put` costs 9 ms for a small body and 12.5 ms for a 97 KB one before the
-	 * response leaves, and the same put through `waitUntil` costs 0. The refusals stay synchronous,
-	 * so a page that must not be stored is still refused by name rather than deferred.
-	 */
+	// the three serve writes are deferred through waitUntil: an awaited caches.default.put costs 9 to 12.5 ms
+	// refusals stay synchronous, so a page that must not be stored is refused by name
 	it('defers the edge write and still refuses by name', async () => {
 		const site = 'deferred';
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>d</title>'));
@@ -571,9 +488,7 @@ describe('the generation pointer survives a response that carries no generation'
 		const edge = await untilEdge(site, '/');
 		expect(edge?.cache).toBe('EDGE');
 
-		// /serve-stats reports no x-cfw-generation at all. Reading a missing header straight into
-		// Number() gives 0, not NaN, which once overwrote the pointer and made every later lookup
-		// build a key nothing had been stored under
+		// a missing header read through Number() is 0, not NaN, which once overwrote the generation pointer
 		const stats = await SELF.fetch(`https://cfw.local/serve-stats?site=${site}`);
 		expect(stats.headers.get('x-cfw-generation')).toBeNull();
 
@@ -616,8 +531,7 @@ describe('a scanner probe is refused before the object is reached', () => {
 			await serveThroughWorker(site, path);
 		}
 		const after = await serveRequestsOf(site);
-		// PageCache writes a PERMANENT cache_data row per distinct URL and expire-based GC never
-		// removes it, so this is a storage fix rather than a latency one
+		// pagecache writes a permanent cache_data row per distinct url and expiry gc never removes it: a storage fix
 		expect(after).toBe(before);
 	});
 
@@ -657,13 +571,8 @@ describe('a scanner probe is refused before the object is reached', () => {
 		expect(isNeverDrupal(path)).toBe(expected);
 	});
 
-	/**
-	 * A REGRESSION. The only caller passes `?path=`, which the catch-all builds as
-	 * `url.pathname + url.search`, and four of the six patterns are `$`-anchored -- so appending any
-	 * parameter walked a scanner straight past the deny list into a DO hop and the permanent
-	 * `cache_data` row the list exists to prevent. Every anchored pattern is covered, since one
-	 * fixed in isolation would leave the other three open.
-	 */
+	// the catch-all passes ?path= as pathname plus search, and four of six patterns are $-anchored
+	// so a query walked a scanner past the deny list; every anchored pattern is covered
 	it.each([
 		['/.env?x=1', true],
 		['/x.sql?v=2', true],
@@ -680,19 +589,8 @@ describe('a scanner probe is refused before the object is reached', () => {
 });
 
 describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
-	/**
-	 * This block asserted the defect.
-	 *
-	 * It previously required `/serve` to 404 without `PW_DIAGNOSTICS`, which was a faithful
-	 * test of the code as written -- every route was behind that one flag. What it could not
-	 * see is that `wrangler.jsonc` set the flag to `"1"`, so the only deployable state that
-	 * served a page also exposed `/php` (arbitrary PHP) and `/sql` (arbitrary SQL) to the
-	 * internet. The test passing was compatible with shipping a remote shell.
-	 *
-	 * The contract now: public routes serve unconditionally, diagnostics fail closed. The
-	 * safety property the old assertion stood for is kept and strengthened below -- it is
-	 * now asserted per dangerous route rather than once for the whole table.
-	 */
+	// diagnostic routes fail closed while public routes serve unconditionally
+	// the old assertion passed while wrangler.jsonc shipped PW_DIAGNOSTICS on, exposing /php and /sql
 
 	it('serves the serving path even with diagnostics off', async () => {
 		const res = await worker.fetch(new Request('https://cfw.local/serve?site=x&path=%2F'), {
@@ -717,17 +615,8 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		}
 	);
 
-	/**
-	 * A route that is diagnostic AND owner refuses with 401 rather than 404, and still refuses.
-	 *
-	 * `/migrate` moved into `OWNER_ROUTES` on 2026-09-08 with `/armfill`, `/invalidate` and `/bump`,
-	 * because clearing a cache on your own site should not require a deployment-wide flag that also
-	 * exposes `/sql` and `/restore`. So the refusal changed shape: 404 hid the route entirely, and an
-	 * owner route answers 401 the way `/export` and `/git` already did.
-	 *
-	 * What has to stay true is that an UNCREDENTIALED caller gets neither the route's work nor a 200,
-	 * which is what is asserted here. The 404 cases above are the routes with no owner path at all.
-	 */
+	// owner routes answer 401, not 404: the route's existence is documented, and the token is the secret
+	// an uncredentialed caller must get neither the route's work nor a 200
 	it.each(['/migrate', '/armfill', '/invalidate', '/bump'])(
 		'refuses %s without a credential, with diagnostics off',
 		async (route) => {
@@ -751,17 +640,8 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		expect(res.status).not.toBe(404);
 	});
 
-	/**
-	 * `/export` is an OWNER route, not a diagnostic.
-	 *
-	 * It used to sit in the diagnostic set beside `/sql` (arbitrary SQL) and `/restore` (a
-	 * whole-database overwrite) behind one boolean, so taking your own data out required exposing a
-	 * remote shell to the internet first. It now answers a per-site bearer token instead.
-	 *
-	 * 401 rather than 404 because the route's EXISTENCE is not the secret -- it is documented -- and
-	 * a 404 tells a legitimate owner their export is missing when it is their credential that is.
-	 * The token is the secret, and `tokenMatches()` compares it in constant time.
-	 */
+	// /export is an owner route, not a diagnostic: it answers a per-site bearer token
+	// 401 rather than 404, since a 404 would tell a legitimate owner the export is missing
 	it('401s /export with a challenge rather than hiding it, when diagnostics are off', async () => {
 		const res = await worker.fetch(new Request('https://cfw.local/export?site=x'), {
 			...env,
@@ -771,15 +651,8 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		expect(res.headers.get('www-authenticate')).toContain('Bearer');
 	});
 
-	/**
-	 * AN OWNER ROUTE HAS TO BE IN `ROUTES` TO BE ONE.
-	 *
-	 * `ROUTES` was `PUBLIC ∪ DIAGNOSTIC`, and `/setup/cf` and `/setup/mail` are in neither -- so the
-	 * catch-all rewrote them into `/serve?path=/setup/cf?...` and rendered them as Drupal pages. Both
-	 * are documented as live in the README, `docs/configuration.md` and the admin UI, and the request
-	 * that tried carried `?client_id=` into the fill queue, `cfw_page` and the edge key as part of
-	 * the path.
-	 */
+	// an owner route must be listed in ROUTES; missing, the catch-all rendered /setup/cf as a drupal page
+	// and copied its query string into the fill queue, cfw_page and the edge key
 	it.each(['/setup/cf', '/setup/mail'])('%s is an owner route, not a page', async (route) => {
 		const res = await worker.fetch(new Request(`https://cfw.local${route}`), {
 			...env,
@@ -801,13 +674,8 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		expect(res.status).toBe(401);
 	});
 
-	/**
-	 * The positive half, which the two 401s above cannot supply.
-	 *
-	 * `ownerAuthorised()` returning false unconditionally passes every assertion in this block --
-	 * a gate that refuses everyone looks exactly like a gate that works. So this mints the site's
-	 * own token, presents it, and requires the dump to come back.
-	 */
+	// the positive half: a gate that refuses everyone also passes every 401 assertion
+	// so this presents the site's own token and requires the dump to come back
 	it('LETS THE OWNER THROUGH with the site token, and returns a real dump', async () => {
 		const site = 'owner-token-ok';
 		const token = await inObject(namedSite(site), (obj) =>
@@ -851,18 +719,8 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 	});
 
 	it('renders an unclaimed path as a page rather than 404ing it', async () => {
-		// DRUPAL OWNS THE URL SPACE. This asserted 404 until the front end gained a catch-all, and
-		// the old expectation was the bug: `/` answered 404 on a deployed site too, so the only way
-		// to reach the product was `/serve?site=X&path=Y`. What must NOT happen is the request being
-		// refused by the WORKER -- whether Drupal then answers 200 or its own 404 is Drupal's call.
-		//
-		// **IT ASSERTED `status !== 404` AND ITS OWN COMMENT SAYS THAT IS THE WRONG TEST.** It
-		// passed only because the object was still migrating by the time this ran, so the render
-		// tier answered 503 and Drupal never got to reply. Raising the migration batch from one
-		// chunk per invocation to forty finished the replay in time, Drupal rendered its own 404
-		// page, and the assertion failed on the behaviour it exists to allow. The Worker's own
-		// refusal is the string `not found\n`; a Drupal 404 is a rendered document, and that is
-		// the difference the assertion has to name.
+		// drupal owns the url space: the worker must not refuse the path, and drupal's own 404 is a valid answer
+		// the assertion checks for the worker's refusal string (not found) rather than a status, since drupal can 404 too
 		const res = await SELF.fetch('https://cfw.local/definitely-not-a-route');
 		const body = await res.text();
 		expect(body, 'the Worker refused a path that belongs to Drupal').not.toBe('not found\n');
@@ -874,16 +732,8 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 	});
 });
 
-/**
- * What the catch-all rewrites an unclaimed path INTO.
- *
- * The test above only asserts the request was not refused, which was enough to catch the 404 and is
- * not enough to keep the rewrite honest -- a rewrite that dropped the query string, or picked the
- * site out of the visitor's own parameters, passes it just as well.
- *
- * Driven through a STAND-IN namespace rather than the real one, because what is under test is the
- * URL the object is asked for, and that is invisible from the far side of a real DO hop.
- */
+// the rewrite is asserted through a stand-in namespace: the url the object is asked for is invisible past a real hop
+// a status alone would pass a rewrite that dropped the query string or took the site from the visitor's parameters
 describe('the catch-all rewrite', () => {
 	/** records the inner URL each hop was made with, and answers without a real object */
 	function spySite() {
@@ -929,13 +779,11 @@ describe('the catch-all rewrite', () => {
 	});
 
 	it('refuses to let a visitor choose which site answers', async () => {
-		// THE REASON THE REWRITE IS BUILT FROM THE ORIGIN. Copying the incoming URL would carry
-		// `?site=` straight into /serve's own parameters, and one link would serve another
-		// customer's database from this hostname
+		// the rewrite is built from the origin: copying the incoming url would carry ?site= into /serve's parameters
 		const { inner, res } = await hop('/about-guard?site=someone-elses-site');
 		expect(inner?.searchParams.get('site')).toBe('cfw.local');
 		expect(res.headers.get('x-cfw-spy-site')).toBe('cfw.local');
-		// not discarded either -- Drupal still sees the parameter it was sent
+		// not discarded either: drupal still sees the parameter it was sent
 		expect(inner?.searchParams.get('path')).toBe('/about-guard?site=someone-elses-site');
 	});
 
@@ -959,15 +807,8 @@ describe('the catch-all rewrite', () => {
 		expect(inner?.searchParams.get('path')).toBe('/node');
 	});
 
-	/**
-	 * `/serve` IS IN `PUBLIC_ROUTES`, so it skips the rewrite above and used to read `?site=` raw.
-	 *
-	 * The rewrite's guard was the only one, and it only covers paths the Worker does not own -- so
-	 * the one route reachable by anybody was the one route with no protection. Measured on a dev
-	 * server before the fix: `GET /serve?path=/&site=<a name nobody had used>` provisioned an entire
-	 * Drupal database from one unauthenticated request, and a name belonging to another tenant
-	 * served their pages from this hostname.
-	 */
+	// /serve is public, so it skipped the rewrite guard and read ?site= raw
+	// an unauthenticated request could provision a database, or serve another tenant's pages from this hostname
 	it('refuses ?site= on /serve itself once diagnostics are off', async () => {
 		const { inner, res } = await hop('/serve?site=someone-elses-site&path=%2Fnode', {
 			PW_DIAGNOSTICS: '0'
@@ -975,7 +816,7 @@ describe('the catch-all rewrite', () => {
 		// the object that answered is derived from the HOST, not from the parameter
 		expect(res.headers.get('x-cfw-spy-site')).toBe('cfw.local');
 		// and the object is handed the RESOLVED name, so the value it pins as its own identity --
-		// and keys its R2 mirror on -- is never the one the caller asked for
+		// and keys its r2 mirror on: is never the one the caller asked for
 		expect(inner?.searchParams.get('site')).toBe('cfw.local');
 	});
 
@@ -1007,10 +848,7 @@ describe('the cron entry point opens a window per configured site', () => {
 		noRetry: () => {}
 	});
 
-	/**
-	 * Whether the warm window ever reached this object. NOT `queueDepth()`, which reads 0 both for
-	 * a warmed site and for one never created -- so every assertion here used to pass either way.
-	 */
+	// whether the warm window reached this object; queueDepth() reads 0 for a warmed site and for one never created
 	const wasWarmed = (name: string) =>
 		inObject(namedSite(name), (obj) =>
 			obj.sql
@@ -1069,9 +907,8 @@ describe('the cron entry point opens a window per configured site', () => {
 	});
 
 	it('creates no object when nothing has reported and nothing is configured', async () => {
-		// the defect: `WINDOW_SITES` defaulted to `default`, and `idFromName()` creates what it
-		// names -- so this warmed a phantom every five minutes and reported success. Asserted on
-		// the object's own existence, because a queue depth of 0 is what a phantom reports too.
+		// WINDOW_SITES must not default to 'default': idFromName() creates what it names, warming a phantom
+		// asserted on the object's own existence, since a queue depth of 0 is what a phantom reports too
 		const ctx = createExecutionContext();
 		await worker.scheduled(cronController(), { ...env, WINDOW_SITES: undefined }, ctx);
 		await waitOnExecutionContext(ctx);
@@ -1117,15 +954,8 @@ describe('the cron entry point opens a window per configured site', () => {
 	});
 });
 
-/**
- * The inventory `scripts/security-update.mjs --fleet=<url>` reads.
- *
- * Every function behind it had a unit test and the ROUTE had none, so the endpoint answered 404 to
- * every caller while `fleet.spec.ts` stayed green: `/fleet` does not start with `/admin`, so it never
- * reached `renderAdmin()`, and it has no `DO_ROUTE` entry either, so it fell through to a proxy hop
- * with an undefined inner pathname. A rollout denominator nothing can read is the same defect the
- * endpoint was built to fix.
- */
+// the inventory scripts/security-update.mjs --fleet reads; every function behind it had a unit test and the route had none
+// /fleet fell through to a proxy hop with an undefined inner pathname, so every caller got a 404
 describe('the fleet inventory a security rollout scores against', () => {
 	/** puts the database back to "never reported into", which is the state that used to throw */
 	const dropFleetTable = () =>
@@ -1145,10 +975,7 @@ describe('the fleet inventory a security rollout scores against', () => {
 	});
 
 	it('reports an EMPTY fleet before any site has written a row', async () => {
-		// D1 is not rolled back between tests in this pool, so the state is staged rather than
-		// assumed. The table is created by the OBJECT's write path, so a bound database nobody has
-		// reported into threw `no such table: cfw_fleet` -- a 500 that reads as "the fleet read
-		// failed" on the endpoint whose whole answer is "how many sites are there"
+		// d1 is not rolled back between tests, so the state is staged; the object creates the table, so an unreported database threw a 500
 		await dropFleetTable();
 		const res = await worker.fetch(new Request('https://cfw.local/fleet'), {
 			...env,
@@ -1222,14 +1049,8 @@ __afterAll(() => {
 });
 // #endregion
 
-/**
- * A FORM SUBMISSION REACHES DRUPAL THROUGH THE CATCH-ALL, or the site cannot be used.
- *
- * Reported from a `drangler dev` session: creating a page answered "not found" and the node was
- * created anyway. `POST /user/login` reproduces it -- the same shape, on the route every visitor
- * uses first. A GET of the same path works, and `POST /serve?path=...` works, so the failure is
- * specific to a non-GET taking the rewrite.
- */
+// a form submission must survive the catch-all rewrite: POST /user/login reproduces the failure
+// a GET of the same path and POST /serve both work, so the failure is specific to a non-GET taking the rewrite
 describe('a submission survives the catch-all rewrite', () => {
 	function spy() {
 		const seen: URL[] = [];
@@ -1275,17 +1096,8 @@ describe('a submission survives the catch-all rewrite', () => {
 		expect(s.bodies[0]).toBe('name=admin&pass=hunter2');
 	});
 
-	/**
-	 * A SUBREQUEST FOLLOWS A 3xx BY DEFAULT, and that ate every submission.
-	 *
-	 * Drupal answers a successful login with `303 -> /user/1?check_logged_in=1` and a successful
-	 * node save with `303 -> /node/N`. The runtime followed it against the OBJECT, which has no
-	 * route by that name, so its base class answered `not found` -- measured on a dev server, with
-	 * `Session opened for admin.` in the log immediately before the 404. The write had landed; the
-	 * visitor was told it had not.
-	 *
-	 * The 3xx belongs to the browser, which re-enters through the catch-all and gets the page.
-	 */
+	// a subrequest follows a 3xx by default, and the object has no route for the redirect target
+	// the 3xx belongs to the browser, which re-enters through the catch-all and gets the page
 	it('hands a redirect back to the browser instead of chasing it into the object', async () => {
 		const seen: URL[] = [];
 		const modes: string[] = [];
@@ -1316,12 +1128,8 @@ describe('a submission survives the catch-all rewrite', () => {
 		);
 		expect(res.status).toBe(303);
 		expect(res.headers.get('location')).toBe('https://cfw.local/user/1?check_logged_in=1');
-		// ONE hop. A second means the runtime chased the redirect, which is the defect.
-		//
-		// AND THE MODE, which is the half this lane can actually fail on: miniflare's stub does not
-		// follow a 3xx, so the hop count alone passes with the fix removed. Deployed workerd does
-		// follow it -- that is how this was found -- so what a spec here can pin is the request the
-		// worker BUILDS, not what the runtime then does with it.
+		// one hop: a second means the runtime followed the redirect, which is the defect
+		// the mode is what this lane can fail on: miniflare's stub does not follow a 3xx, so pin the request the worker builds
 		expect(modes[0]).toBe('manual');
 		expect(seen).toHaveLength(1);
 	});
@@ -1337,17 +1145,8 @@ describe('a submission survives the catch-all rewrite', () => {
 	});
 });
 
-/**
- * The compiled-plan tier in front of the Durable Object.
- *
- * The observable is the HOP COUNT: this tier exists because a hop costs 12 ms of payload-independent
- * round trip on a deployed paid worker against 0 for isolate memory, so a spec that only checked the
- * bytes would pass against a tier that answered correctly and still went to the object.
- *
- * The namespace is a stand-in rather than a real object, because what is under test is which
- * requests the front worker SENDS. A real render would put the interpreter and the pack in the way
- * of an assertion about the worker.
- */
+// the observable is the hop count: a plan hit must not reach the object, even when the bytes are right
+// the namespace is a stand-in because the assertion is about which requests the worker sends
 describe('the compiled plan tier', () => {
 	const COOKIE_A = `${SESSION_COOKIE}=session-alpha`;
 	const COOKIE_B = `${SESSION_COOKIE}=session-bravo`;
@@ -1445,7 +1244,7 @@ describe('the compiled plan tier', () => {
 		expect(served.body).toBe(STEADY);
 		// per-user output: nothing between here and the browser may store it
 		expect(served.cacheControl).toBe('private, no-store');
-		// THE POINT OF THE TIER. A correct body that still cost a hop is the failure this catches
+		// the point of the tier: a correct body that still cost a hop is the failure this catches
 		expect(spy.seen).toHaveLength(hops);
 		expect(isCacheTier('PLAN')).toBe(true);
 	});
@@ -1456,7 +1255,7 @@ describe('the compiled plan tier', () => {
 		await compileFor(spy.namespace, path);
 		const served = await visit(spy.namespace, path, COOKIE_A);
 		// the first render's stylesheet list is absent, which it would not be from a plan compiled
-		// against it -- that compile finds an unnamed varying region and refuses instead
+		// against it: that compile finds an unnamed varying region and refuses instead
 		expect(served.tier).toBe('PLAN');
 		expect(served.body).toBe(STEADY);
 		expect(served.body).not.toContain('stylesheet');
@@ -1521,13 +1320,8 @@ describe('the compiled plan tier', () => {
 		});
 	});
 
-	/**
-	 * A session of ANOTHER role set can never reach this plan, and one of the SAME role set has to
-	 * agree with it first.
-	 *
-	 * The first half is the key; the second is `lookupEdgePlan()`'s per-session proof, which exists
-	 * because two sessions agreeing says nothing about a third whose shared region differs.
-	 */
+	// a session of another role set never reaches this plan; one of the same set must agree with it first
+	// two sessions agreeing says nothing about a third whose shared region differs
 	it('refuses a third session until its own render has agreed', async () => {
 		const spy = objectSpy();
 		const path = '/plan-tier-sessions';
@@ -1560,13 +1354,8 @@ describe('the compiled plan tier', () => {
 		expect(lesser.seen).toHaveLength(hopsBefore + 1);
 	});
 
-	/**
-	 * The slot that made the shared tier reachable at all.
-	 *
-	 * Two sessions of one role set differ in exactly one value on an authenticated page -- the session
-	 * CSRF token in the logout link -- and with no slot kind for it the compiler named an unnameable
-	 * region and refused. It is substituted rather than generated, so each visitor gets their own.
-	 */
+	// two sessions of one role set differ in the csrf token on an authenticated page
+	// the slot substitutes it per visitor instead of generating it
 	it('serves each session its own csrf token from one shared plan', async () => {
 		const path = '/plan-tier-csrf';
 		const token = (cookie: string) => `tok-${cookie.slice(-5)}`.padEnd(43, 'Z');
@@ -1602,20 +1391,14 @@ describe('the compiled plan tier', () => {
 		const a = await visit(namespace, path, COOKIE_A);
 		const b = await visit(namespace, path, COOKIE_B);
 		expect([a.plan, b.plan]).toEqual(['mem', 'mem']);
-		// ONE entry answered both, and each carries its OWN token rather than the compiler's sample
+		// one entry answered both; each carries its own token rather than the compiler's sample
 		expect(a.body).toBe(body(COOKIE_A));
 		expect(b.body).toBe(body(COOKIE_B));
 		expect(a.body).not.toContain(token(COOKIE_B));
 		expect(seen).toHaveLength(hops);
 	});
 
-	/**
-	 * The fallback that reaches a site with one editor.
-	 *
-	 * The shared tier needs two sessions of a role set to agree, so the site least able to amortise an
-	 * object hop is the one the tier never reached. A key naming the session cannot serve anybody else,
-	 * which is what the two-witness rule was there to stop.
-	 */
+	// a site with one editor never gets a second witness; a key naming the session cannot serve anybody else
 	it('serves one session from a plan of its own, with no second witness anywhere', async () => {
 		const spy = objectSpy();
 		const path = '/plan-tier-solo';
@@ -1644,13 +1427,7 @@ describe('the compiled plan tier', () => {
 		expect(spy.seen).toHaveLength(hopsBefore + 1);
 	});
 
-	/**
-	 * The shared plan still compiles once a second session arrives.
-	 *
-	 * Consulted FIRST, the private plan answers the session that compiled it with no hop, so the shared
-	 * key never sees another sample and a 200-user site ends up holding 200 entries where one would
-	 * do. The second session has no private plan of its own, so it hops and supplies the witness.
-	 */
+	// the private plan must not answer its own session first, or the shared key never sees a second sample
 	it('lets a second session promote the page to a shared plan', async () => {
 		const spy = objectSpy();
 		const path = '/plan-tier-solo-promote';
@@ -1665,11 +1442,7 @@ describe('the compiled plan tier', () => {
 		expect(spy.seen).toHaveLength(hops);
 	});
 
-	/**
-	 * A save queues a Drupal message for the next page, and a plan compiled from renders that carried
-	 * none would serve that page without it. The shared tier has the same exposure and rarely reaches a
-	 * post-save page; a single editor reaches one every time they save.
-	 */
+	// a plan compiled from renders without a queued message would drop it after a save
 	it('renders again after a write, so a queued message is not dropped', async () => {
 		const spy = objectSpy();
 		const path = '/plan-tier-solo-message';
@@ -1693,13 +1466,8 @@ describe('the compiled plan tier', () => {
 		expect(spy.seen).toHaveLength(hopsBefore + 1);
 	});
 
-	/**
-	 * A save is the invalidation, and it is what teaches this isolate the new generation.
-	 *
-	 * There is no cheaper way for it to find out: a bump made anywhere reaches this isolate on its
-	 * next Durable Object response, and until then {@link GENERATION_TRUST_MS} bounds how long it
-	 * keeps serving the old one -- the same two-window lag the shared generation pointer already has.
-	 */
+	// a save is the invalidation; this isolate learns the new generation on its next object response
+	// GENERATION_TRUST_MS bounds how long it serves the old one until then
 	it('drops every plan when a write moves the generation', async () => {
 		let generation = 42;
 		const spy = objectSpy(() => generation);
@@ -1870,11 +1638,7 @@ describe("a reset object is not the visitor's 1101", () => {
 		expect(s.attempts).toEqual([null, null]);
 	});
 
-	/**
-	 * The shape a memory reset really arrives in, read off a deployed probe (2026-09-30, n=8, both
-	 * for the request that grew the isolate and for one waiting beside it): `overloaded` and
-	 * `durableObjectReset` set, `retryable` absent. A fresh stub then answered in 54 ms
-	 */
+	// the shape a memory reset arrives in: overloaded and durableObjectReset set, retryable absent
 	const MEMORY_RESET = { overloaded: true, remote: true, durableObjectReset: true };
 
 	it('sends a GET once more after a memory reset, which the platform marks overloaded', async () => {

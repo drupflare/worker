@@ -4,7 +4,7 @@ import { freshSite, inObject } from '../helpers/serve-do';
 import { closedProblems, runAttempts } from '../helpers/vrzno-bridge';
 
 /**
- * What the PHP2Shell analysis in `docs/security-incidents.md` rests on, read off the shipping interpreter.
+ * What the PHP2Shell analysis in `docs/security/incidents.md` rests on, read off the shipping interpreter.
  *
  * Both advisories need a per-request startup and shutdown cycle and an allocator that bails out
  * on `memory_limit`. If a rebuild changes either, these fail and the analysis has to be redone.

@@ -288,8 +288,10 @@ describe.skipIf(FROM_SOURCE)(
 		 * And the same classes at the SHIPPING DEFAULT, which is a different configuration.
 		 *
 		 * `dynamic_page_cache` is an in-memory bin by default, so the rows above describe a site
-		 * that turned that off. The gap is not a regression and not a saving to quote yet: taking
-		 * `realRender` from 9 to 3 moves the published ceiling 9,685 -> 27,845/day, and it inverts
+		 * that turned that off. The gap is not a regression and not a saving to quote yet. An
+		 * earlier pass priced `realRender` at 9 and then 3 (both figures predate the pinned
+		 * constants; 8 and 1 are what this spec measures on 2026-11-02). Taking the class from 8
+		 * to 1 moves the published ceiling (9,685 -> 27,845/day at the earlier figures), and it inverts
 		 * the safety property the headline rests on -- a realistic warmth mix prices 3.20 against
 		 * this class's 3.00, where it used to sit below, so quoting the class would make the ceiling
 		 * optimistic. Re-deriving the model against the default is its own measurement pass. This

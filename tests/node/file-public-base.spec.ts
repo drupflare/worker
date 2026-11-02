@@ -52,7 +52,7 @@ describe('the binding the whole R2 tier was gated on', () => {
 	});
 
 	it('is documented as an opt-in addition rather than dropped in silence', () => {
-		const docs = readFileSync(resolve(ROOT, 'docs', 'configuration.md'), 'utf8');
+		const docs = readFileSync(resolve(ROOT, 'docs', 'configuration', 'index.md'), 'utf8');
 		expect(docs).toContain('r2_buckets');
 		expect(docs).toContain('10042');
 	});

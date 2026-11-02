@@ -28,7 +28,7 @@ import { sourceOf } from '../helpers/source';
  * the wrangler feature, which no key of ours can reach.
  */
 
-const CONFIGS = ['wrangler.jsonc', 'wrangler.bench.jsonc'] as const;
+const CONFIGS = ['wrangler.jsonc', 'wrangler.managed.jsonc'] as const;
 
 /** jsonc with line comments stripped; the same reader `deploy-build.spec.ts` uses */
 function config(path: string): Record<string, unknown> {

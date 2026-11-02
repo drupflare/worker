@@ -1531,3 +1531,52 @@ describe('the local task memo, which answered one page with the tabs of another'
 		REQUEST_TIMEOUT
 	);
 });
+
+describe('the navigation top bar, which is stored permanently with no tag naming the node', () => {
+	/**
+	 * `PageContext::build()` renders the entity label under the `route` context and nothing else,
+	 * and the bar is kept under `navigation:top_bar:[route]=...` with no expiry. A title edit
+	 * invalidates `node:1`, which that row does not carry, so the label kept the first title
+	 * while `<title>` and `<h1>` showed the new one. `scripts/patch-drupal.mjs` adds the tags.
+	 */
+	it(
+		'shows the title a node has now, not the one it had when the bar was first built',
+		async () => {
+			const labels = (source: string) =>
+				[...source.matchAll(/toolbar-title__label">\s*([^<]*?)\s*</g)].map((m) => m[1]);
+			const out = await inObject(freshSite(), async (site) => {
+				await provision(site);
+				const { jar, fields } = await adminWithForm(site);
+				await render(
+					site,
+					'/node/add/page',
+					formPost(
+						encodeForm({ ...fields, ...NODE_BODY, 'title[0][value]': 'Bar Before' }),
+						jar
+					)
+				);
+				// the render before the edit is what a stale label hides behind
+				const before = html(await render(site, '/node/1', { cookie: jar }));
+				const editForm = hiddenFields(
+					html(await render(site, '/node/1/edit', { cookie: jar }))
+				);
+				await render(
+					site,
+					'/node/1/edit',
+					formPost(
+						encodeForm({ ...editForm, ...NODE_BODY, 'title[0][value]': 'Bar After' }),
+						jar
+					)
+				);
+				const after = html(await render(site, '/node/1', { cookie: jar }));
+				return { before: labels(before), after: labels(after), heading: after };
+			});
+			// the control: the first render did carry the label, or there is nothing to have gone stale
+			expect(out.before).toEqual(['Bar Before']);
+			expect(out.heading).toContain('<h1');
+			expect(out.heading).toContain('Bar After');
+			expect(out.after).toEqual(['Bar After']);
+		},
+		REQUEST_TIMEOUT
+	);
+});

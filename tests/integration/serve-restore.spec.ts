@@ -10,12 +10,15 @@ import { getFile, putFile } from '../../src/db/file-store';
 import { storeImport, storedImportLoader } from '../../src/db/import-sql';
 import type { SqlLike, StorageLike } from '../../src/db/migrate-sql';
 import { SqlMigrator, readMigrateCursor } from '../../src/db/migrate-sql';
+import { pendingMatches as oidcPendingMatches, ticketRedeemable } from '../../src/ops/oidc';
+import { spendProof } from '../../src/ops/owner-recovery';
 import {
 	mintOwnerToken,
 	ownerTokenIsSet,
 	ownerTokenMatches,
 	sealedExportRows
 } from '../../src/ops/site-secrets';
+import type { SitePhpDurableObject } from '../../src/site-do';
 import {
 	type ServeDo,
 	freshSite,
@@ -900,6 +903,286 @@ describe('credentials held outside SQL across an export and a restore', () => {
 			await site.adoptSecrets();
 			expect(await ownerTokenIsSet(site.secretStore())).toBe(false);
 			expect(metaKeys(site)).not.toContain('owner_token_hash');
+		});
+	});
+});
+
+describe('authority keys held outside cfw_meta', () => {
+	const AUTHORITY: Record<string, string> = {
+		git_remotes: '[{"id":"github:o/r@main","provider":"github","repo":"o/r","branch":"main"}]',
+		recover_spent: '[{"h":"abc","exp":9999999999999}]',
+		first_run_at: '1700000000000',
+		first_run_keys: 'adminName,siteName',
+		oidc_issuer: 'https://idp.example.com',
+		oidc_client_id: 'client-1',
+		oidc_pending: '{"state":"s","verifier":"v"}',
+		oidc_ticket: '{"ticket":"t"}'
+	};
+	// the keys a dump with secrets=1 carries; a login in flight is not worth restoring
+	const CARRIED = Object.keys(AUTHORITY).filter(
+		(k) => !k.startsWith('oidc_p') && k !== 'oidc_ticket'
+	);
+
+	const metaKeys = (site: ServeDo) =>
+		(site.sql.exec('SELECT k FROM cfw_meta').toArray() as { k: string }[]).map((r) => r.k);
+	const plant = (site: ServeDo, key: string, value: string) => {
+		site.ensureServeTables();
+		site.sql.exec('INSERT INTO cfw_meta (k, v) VALUES (?, ?)', key, value);
+	};
+
+	it.each(Object.entries(AUTHORITY))(
+		'%s: a write reads back and never reaches SQL',
+		async (key, value) => {
+			await inObject(freshSite(), async (site) => {
+				site.ensureServeTables();
+				site.metaSet(key, value);
+				expect(site.metaGet(key)).toBe(value);
+				expect(metaKeys(site)).not.toContain(key);
+				expect(site.secretStore().sealed.get(key)).toBe(value);
+			});
+		}
+	);
+
+	it.each(Object.entries(AUTHORITY))(
+		'%s: a row from before the move is adopted on first read',
+		async (key, value) => {
+			await inObject(freshSite(), async (site) => {
+				plant(site, key, value);
+				expect(site.metaGet(key)).toBe(value);
+				expect(metaKeys(site)).not.toContain(key);
+				expect(site.secretStore().sealed.get(key)).toBe(value);
+			});
+		}
+	);
+
+	it.each(Object.entries(AUTHORITY))(
+		'%s: a row SQL plants later does not displace the stored value',
+		async (key, value) => {
+			await inObject(freshSite(), async (site) => {
+				site.ensureServeTables();
+				site.metaSet(key, value);
+				plant(site, key, 'planted-by-sql');
+				expect(site.metaGet(key)).toBe(value);
+				await site.adoptSecrets();
+				expect(metaKeys(site)).not.toContain(key);
+				expect(site.metaGet(key)).toBe(value);
+			});
+		}
+	);
+
+	it('moves a whole set of old rows at wake, leaving none for SELECT * to find', async () => {
+		await inObject(freshSite(), async (site) => {
+			for (const [key, value] of Object.entries(AUTHORITY)) plant(site, key, value);
+			await site.adoptSecrets();
+			for (const key of Object.keys(AUTHORITY)) expect(metaKeys(site)).not.toContain(key);
+			for (const [key, value] of Object.entries(AUTHORITY))
+				expect(site.metaGet(key)).toBe(value);
+		});
+	});
+
+	it('keeps the remote list behind its own accessors', async () => {
+		await inObject(freshSite(), async (site) => {
+			const remote = {
+				id: 'github:o/r@main',
+				provider: 'github',
+				repo: 'o/r',
+				branch: 'main'
+			};
+			(site as unknown as SitePhpDurableObject).gitSaveRemotes([remote as never]);
+			expect(site.gitRemotes()).toEqual([remote]);
+			expect(metaKeys(site)).not.toContain('git_remotes');
+		});
+	});
+
+	it('carries them on a dump with secrets=1 and restores them without leaving SQL rows', async () => {
+		const dump = await inObject(freshSite(), async (site) => {
+			site.ensureServeTables();
+			for (const key of CARRIED) site.metaSet(key, AUTHORITY[key]!);
+			site.metaSet('oidc_pending', AUTHORITY.oidc_pending!);
+			const sql = site.sql as unknown as SqlLike;
+			const sealedRows = sealedExportRows(site.secretStore());
+			return {
+				withSecrets: dumpDatabase(sql, { secrets: true, sealedRows }).sql,
+				plain: dumpDatabase(sql, { sealedRows }).sql
+			};
+		});
+		for (const key of CARRIED) expect(dump.withSecrets, key).toContain(`'${key}'`);
+		expect(dump.withSecrets).not.toContain("'oidc_pending'");
+		for (const key of CARRIED) expect(dump.plain, key).not.toContain(`'${key}'`);
+
+		await inObject(freshSite(), async (site) => {
+			const { sql, storage } = seams(site);
+			const id = storeImport(sql, dump.withSecrets, {
+				storage,
+				generation: 'authority',
+				source: 'test',
+				nowMs: 1
+			}).id;
+			await new SqlMigrator({
+				sql,
+				storage,
+				now: () => Date.now(),
+				...storedImportLoader(sql, id)
+			}).step({ maxChunks: Infinity });
+			await site.adoptSecrets();
+			for (const key of CARRIED) {
+				expect(site.metaGet(key), key).toBe(AUTHORITY[key]);
+				expect(metaKeys(site)).not.toContain(key);
+			}
+		});
+	});
+
+	it('is what the export route emits, and only with secrets=1', async () => {
+		await inObject(freshSite(), async (site) => {
+			site.ensureServeTables();
+			site.metaSet('git_remotes', AUTHORITY.git_remotes!);
+			const read = async (query: string) =>
+				JSON.stringify(
+					await (
+						await site.fetch(new Request(`https://do.local/__export${query}`))
+					).json()
+				);
+			expect(await read('?body=1&secrets=1')).toContain('o/r@main');
+			expect(await read('?body=1')).not.toContain('o/r@main');
+		});
+	});
+});
+
+describe('a site that holds the rows the shipped build wrote', () => {
+	const NOW = 1_760_000_000_000;
+	// the shapes HEAD writes: `JSON.stringify` of a Remote, a PendingLogin, a ClaimsTicket and the
+	// spent list, `String(site.nowMs())` for the claim stamp and the sorted key list for the rest
+	const REMOTE = { id: 'github:o/r@main', provider: 'github', repo: 'o/r', branch: 'main' };
+	const PENDING = {
+		state: 'st',
+		verifier: 'vf',
+		nonce: 'nn',
+		createdAt: NOW,
+		returnTo: '/admin'
+	};
+	const TICKET = {
+		ticket: 'tk',
+		sub: 'u1',
+		issuer: 'https://idp.example.com',
+		email: 'a@b.test',
+		name: 'A',
+		expiresAt: NOW + 60_000
+	};
+	const LEGACY: Record<string, string> = {
+		git_remotes: JSON.stringify([REMOTE]),
+		recover_spent: JSON.stringify([{ h: 'proof-1', exp: NOW + 600_000 }]),
+		first_run_at: String(NOW - 5_000),
+		first_run_keys: 'adminMail,adminName,siteName',
+		oidc_issuer: 'https://idp.example.com',
+		oidc_client_id: 'client-1',
+		oidc_pending: JSON.stringify(PENDING),
+		oidc_ticket: JSON.stringify(TICKET)
+	};
+
+	const rows = (site: ServeDo) =>
+		(site.sql.exec('SELECT k, v FROM cfw_meta').toArray() as { k: string; v: string }[]).filter(
+			(r) => r.k in LEGACY
+		);
+	const legacySite = async (fn: (site: ServeDo) => Promise<void>) =>
+		inObject(freshSite(), async (site) => {
+			site.ensureServeTables();
+			for (const [k, v] of Object.entries(LEGACY)) {
+				site.sql.exec('INSERT INTO cfw_meta (k, v) VALUES (?, ?)', k, v);
+			}
+			await fn(site);
+		});
+
+	it('lists the remotes, as the shipped build did, and leaves no row', async () => {
+		await legacySite(async (site) => {
+			expect(site.gitRemotes()).toEqual([REMOTE]);
+			const listed = (await (
+				await site.handleGit(new URL('https://do.local/__git?action=list'))
+			).json()) as { remotes: { repo: string }[] };
+			expect(listed.remotes.map((r) => r.repo)).toEqual(['o/r']);
+			expect(rows(site).map((r) => r.k)).not.toContain('git_remotes');
+		});
+	});
+
+	it('still refuses a proof that was spent before the update', async () => {
+		await legacySite(async (site) => {
+			expect(spendProof(site.secretStore(), 'proof-1', NOW + 600_000, NOW)).toBe(false);
+			expect(spendProof(site.secretStore(), 'proof-2', NOW + 600_000, NOW)).toBe(true);
+			expect(rows(site).map((r) => r.k)).not.toContain('recover_spent');
+		});
+	});
+
+	it('is still claimed, with the same stamp and the same key list', async () => {
+		await legacySite(async (site) => {
+			expect(site.metaGet('first_run_at')).toBe(LEGACY.first_run_at);
+			expect(site.metaGet('first_run_keys')).toBe(LEGACY.first_run_keys);
+			const body = (await (
+				await site.fetch(new Request('https://do.local/__deployment'))
+			).json()) as {
+				claimedAt: number | null;
+			};
+			expect(body.claimedAt).toBe(NOW - 5_000);
+			expect(rows(site).map((r) => r.k)).not.toContain('first_run_at');
+		});
+	});
+
+	it('still has its provider configured and its login in flight', async () => {
+		await legacySite(async (site) => {
+			const config = (site as unknown as SitePhpDurableObject).oidcConfig(
+				'https://site.example'
+			);
+			expect(config).toMatchObject({
+				config: { issuer: 'https://idp.example.com', clientId: 'client-1' }
+			});
+			const pending = JSON.parse(site.metaGet('oidc_pending') ?? 'null');
+			expect(oidcPendingMatches(pending, 'st', NOW + 1000)).not.toHaveProperty('refusal');
+			const ticket = JSON.parse(site.metaGet('oidc_ticket') ?? 'null');
+			expect(ticketRedeemable(ticket, 'tk', NOW + 1000)).not.toHaveProperty('refusal');
+			expect(rows(site).map((r) => r.k)).not.toContain('oidc_issuer');
+		});
+	});
+
+	it('moves every row at wake and matches the sealed copy to the row it replaced', async () => {
+		await legacySite(async (site) => {
+			await site.adoptSecrets();
+			expect(rows(site)).toEqual([]);
+			for (const [k, v] of Object.entries(LEGACY)) {
+				expect(site.secretStore().sealed.get(k), k).toBe(v);
+			}
+		});
+	});
+
+	it('repeats a move that was cut off after the copy, with no loss and no second value', async () => {
+		await legacySite(async (site) => {
+			// the state a crash between the copy and the delete leaves: both exist
+			for (const [k, v] of Object.entries(LEGACY)) site.secretStore().sealed.put(k, v);
+			expect(rows(site)).toHaveLength(Object.keys(LEGACY).length);
+			await site.adoptSecrets();
+			await site.adoptSecrets();
+			expect(rows(site)).toEqual([]);
+			for (const [k, v] of Object.entries(LEGACY)) expect(site.metaGet(k), k).toBe(v);
+			const kept = site.secretStore().sealed.list('');
+			for (const k of Object.keys(LEGACY)) {
+				expect(
+					kept.filter(([key]) => key === k),
+					k
+				).toHaveLength(1);
+			}
+		});
+	});
+
+	it('writes nothing on a site that holds none of them', async () => {
+		await inObject(freshSite(), async (site) => {
+			site.ensureServeTables();
+			const state = () =>
+				JSON.stringify([
+					site.sql.exec('SELECT k, v FROM cfw_meta ORDER BY k').toArray(),
+					site.secretStore().sealed.list('')
+				]);
+			const before = state();
+			await site.adoptSecrets();
+			for (const k of Object.keys(LEGACY)) expect(site.metaGet(k), k).toBeNull();
+			await site.adoptSecrets();
+			expect(state()).toBe(before);
 		});
 	});
 });

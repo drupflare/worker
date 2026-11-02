@@ -23,49 +23,8 @@ import {
 	tick
 } from '../helpers/serve-do';
 
-/**
- * Ported from the cold-object, alarm-chain, inline-render, over-budget and unrenderable-path
- * regions of `scripts/test-serve-chain.mjs`.
- *
- * The original needed `bunx wrangler dev` running on port 8798 and a human to start it; the whole
- * suite failed with "cannot reach" otherwise, which is why it was never in the gate. Everything
- * here runs against a real Durable Object inside workerd via `runInDurableObject`, so it is a
- * gate test now.
- *
- * What changed from the original:
- *
- *   - **The interpreter is stubbed; nothing else is.** `ctx.storage.sql`, `setAlarm`/`getAlarm`,
- *     the real `alarm()` handler and the FIFO gate are the platform's. `runJson()` is a function
- *     of the path, decoded back out of the PHP fragment the module emitted, so the assertion
- *     "this render was asked for THIS path with THESE bins" is still real. What is gone is
- *     everything whose failure mode lives inside Drupal: the original asserted a real `<title>`
- *     and that `/user/login` differed from `/`, which caught `PageCache` memoizing its cid across
- *     paths. A stub keyed on the path cannot catch that, and it stays with the deployed lane.
- *   - **The alarm is driven rather than waited on.** `waitForHit()` polled `/serve` 40 times at
- *     500 ms; `driveAlarms()` invokes the handler. Same invariant, milliseconds instead of
- *     seconds, and no timing dependence.
- *   - **`renderMs > 10` is gone.** It asserted that a real Drupal render costs more than the
- *     10 ms a user-facing invocation gets, which is a measurement of PHP and cannot be made
- *     here. Its other half survives: the SERVE fits, `x-cfw-hit-ms < 10`, on the real engine.
- *   - **The estimate is now asserted both ways.** The original could only ever see the
- *     measurable-clock path locally. Here a synchronous stub reproduces the edge's frozen wall
- *     clock (`x-cfw-render-clock: unmeasurable`), and a stub that awaits a real tick reproduces
- *     the measurable one, so `estimateRenderMs()` is pinned in both states.
- *   - **The 4,000 ms cold estimate and the destruct tri-state are new.** Both are JS branches the
- *     original could only reach by restarting wrangler with different `--var` flags.
- *
- * Timing assertions are kept only where the number IS the claim: a MISS and a HIT must fit the
- * free plan's 10 ms invocation, and both are pure `ctx.storage.sql` here.
- *
- * EVERY SUBJECT IS `provisionedSite()`, never `freshSite()`. Cold here means a cold INTERPRETER and
- * an empty page cache, which is a different state from a site that has no database yet -- and the
- * two were conflated for as long as an unprovisioned object answered `warming` on every request.
- * Once it started answering `migrating` instead, 16 assertions in this file were reading the
- * first-run placeholder while claiming to measure a MISS. First-run behaviour is
- * `serve-provision.spec.ts`.
- *
- * The wrangler.jsonc default: what a MISS may spend rendering for the visitor.
- */
+// every subject is provisionedSite(): cold means a cold interpreter and an empty page cache
+// the wrangler.jsonc default: what a miss may spend rendering for the visitor
 const BUDGET_MS = 10000;
 
 /** what `estimateRenderMs()` returns with no interpreter, and with one but no measured render */
@@ -140,16 +99,10 @@ describe('a cold MISS costs no interpreter and no render', () => {
 	it('keeps the counter across an eviction, so an edge-tier assertion can rely on it', async () => {
 		const stub = await provisionedSite();
 		await inObject(stub, (site) => serveDirect(site, '/'));
-		// THE ALARM IS WHAT MAKES IT DURABLE, and a serve arms one at +1 ms precisely so this
-		// window is a millisecond wide. Evicting without letting it fire measures the accumulator
-		// rather than the counter, and would have read as the count being lost
-		// 120 tries rather than the default 25. The alarm is armed at +1 ms, but under a loaded
-		// suite the runtime does not always get to it inside ~125 ms of ticking, and then the
-		// eviction below measures the accumulator instead of the counter and reads 0
+		// the +1 ms alarm flushes the accumulator; evicting first would measure the accumulator and read 0
+		// 120 tries, not 25: under a loaded suite the alarm can miss the ~125 ms window
 		await driveAlarms(stub, (site) => site.storedMeters().serveTotal > 0, 120);
-		// driveAlarms gives up SILENTLY at its budget and returns a firing count nobody checks, so
-		// assert the precondition it was driving toward; without this the failure names the counter
-		// when the cause is the flush never having happened
+		// driveAlarms gives up silently at its budget; assert the precondition so the failure names the flush
 		const flushed = await inObject(stub, (site) => site.storedMeters().serveTotal);
 		expect(
 			flushed,
@@ -263,22 +216,8 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 		expect(out.login.body).toContain('<title>/user/login</title>');
 	});
 
-	/**
-	 * Both branches, because the idle interval is what decides whether the object stays resident.
-	 *
-	 * With `SITE_WARM` on -- the default -- an empty queue re-arms UNDER the 10 s hibernation
-	 * threshold, which is the whole mechanism: the firing resets the idle clock. With it off the
-	 * chain drops back to `KEEP_WARM_MS`, and a later MISS is what pulls it back in.
-	 *
-	 * This asserted `> 60000` unconditionally and was written before warming existed, so it failed
-	 * on the shipped default reading 7,995 ms. The number was right and the assertion was old.
-	 *
-	 * AND `SITE_WARM` IS NOW STATED RATHER THAN LEFT UNSET. Unset means "let the predictor decide",
-	 * and on a site with one render in the window it correctly decides not to warm -- one render in
-	 * fifteen minutes extrapolates to 96/day against a measured crossing of 505. The operator's own
-	 * choice still wins in both directions, which is what this drives; the predictor's refusal has
-	 * its own case below.
-	 */
+	// both branches: the idle interval decides whether the object stays resident
+	// SITE_WARM is stated rather than left to the predictor, so the operator's choice is what this drives
 	async function idleRearmMs(warm: boolean): Promise<number> {
 		const stub = await provisionedSite();
 		await inObject(stub, (site) => {
@@ -306,9 +245,7 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 	});
 
 	it('refuses to warm a site whose traffic does not pay for it', async () => {
-		// SITE_WARM unset is the predictor's to decide, and one render in the window is 96/day
-		// against a measured crossing of 505 -- the bottom of the band, where the firings cost more
-		// than the boots they save
+		// unset SITE_WARM is the predictor's call; 96 renders a day is below the measured crossing of 505
 		const stub = await provisionedSite();
 		await inObject(stub, (site) => {
 			delete (site.env as Record<string, unknown>).SITE_WARM;
@@ -326,32 +263,15 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 	});
 });
 
-/**
- * A REDIRECT IS NOT A PAGE, and storing one shipped a dead end.
- *
- * `cfw_page` is `(path, status, content_type, html, rendered_at, render_ms)` -- there is no column
- * for a `Location`, and `pageResponse()` cannot set a header it has no value for. So a 3xx that
- * took the cacheable branch was written to the table, answered as a bodyless redirect pointing
- * nowhere, and then replayed as a HIT to every later visitor until the next invalidation.
- *
- * It is reachable through Drupal's own code rather than through anything exotic:
- * `AssetControllerBase::deliver()` answers 301 whenever an aggregate URL's hash does not match the
- * one it recomputes, which is every aggregate URL in the prefilled HTML.
- */
+// cfw_page has no column for a Location, so a stored 3xx replays as a bodyless redirect to nowhere
+// drupal answers aggregate urls with 301 on a hash mismatch, which is how this is reached
 describe('cron yields to a fill backlog', () => {
-	/**
-	 * The quota ladder is a DAILY meter, so it cannot say whether a visitor is waiting right now: a
-	 * warming site is well inside quota and still has an empty page for every path. Cron used to be
-	 * gated on the ladder alone while its comment claimed it stopped "before anything a visitor can
-	 * see". With the outbound-HTTPS hooks back a round is 11 units rather than 7, several entering
-	 * the interpreter, and a site took several firings to warm instead of one.
-	 */
+	// the quota ladder is daily and cannot see a visitor waiting; a warming site has an empty page per path
 	it('does not run cron while a fill batch left work behind', async () => {
 		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			stubRender(site, ({ path }) => pageFor(path));
-			// more than one batch drains, so the loop ends with the queue still non-empty. One
-			// firing that empties its own queue is NOT the case here -- cron rightly runs then
+			// more than one batch drains, so the queue is still non-empty when the firing ends
 			await site.storage.put('cronLastRunMs', 0);
 			for (let i = 0; i < 20; i++) await serveDirect(site, `/p${i}`, '&inline=0');
 			const queuedBefore = site.queueDepth();
@@ -398,8 +318,7 @@ describe('a redirect is answered, not stored', () => {
 			const first = await serveDirect(site, '/sites/default/files/css/css_stale.css');
 			return {
 				first,
-				// the SECOND request is the one that proves nothing was stored: a stored 301
-				// answers x-cfw-cache HIT with no location at all
+				// the second request proves nothing was stored: a stored 301 answers HIT with no location
 				second: await serveDirect(site, '/sites/default/files/css/css_stale.css'),
 				rows: site.sql
 					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE status >= 300 AND status < 400')
@@ -467,11 +386,8 @@ describe('a MISS on a warm object renders inline for the visitor', () => {
 		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			stubRender(site, ({ path }) => pageFor(path));
-			// FREEZE the clock rather than relying on a synchronous render being fast enough to
-			// leave it unmoved. This assertion used to pass by accident and failed under a loaded
-			// full-suite run: `Date.now()` crossed a millisecond boundary, `observedMs` came back
-			// 1 instead of 0, and the branch under test was simply not taken. The edge really does
-			// report 0 here, so pinning it to 0 is the right way to exercise that branch
+			// freeze the clock: under load a fast render can cross a millisecond and skip the zero branch
+			// the edge really reports 0 here, so pinning it to 0 exercises that branch
 			const realNow = Date.now;
 			const frozen = realNow();
 			globalThis.Date.now = () => frozen;
@@ -496,20 +412,15 @@ describe('a MISS on a warm object renders inline for the visitor', () => {
 	});
 
 	it('discards a measurement from a fill that ALSO booted, because it measures the wrong thing', async () => {
-		// Measured on a DEPLOYED worker: a cold alarm fill reported an estimate of 117 ms for work
-		// that cost 1,398 ms of cpuTime. The wall clock only advances during I/O, so that 117 ms was
-		// asset-fetch time and the synchronous boot and render contributed nothing. Non-zero, so
-		// renderClockUnmeasurable did not trip, so the over-budget guard would wave a 1.4 s boot
-		// through -- the exact opposite of what it exists for.
+		// a fill that also booted measured asset-fetch wall time (117 ms against 1,398 ms cpu)
+		// a non-zero reading would skip renderClockUnmeasurable and let a 1.4 s boot through the budget guard
 		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			stubRender(site, async ({ path }) => {
 				await tick(3);
 				return pageFor(path);
 			});
-			// fillOne directly, not serveDirect: with no interpreter the SERVE path refuses to
-			// render inline at all (see the test above), so the boot-inclusive shape only happens
-			// on the alarm path, which is exactly where it was measured
+			// fillOne directly: serveDirect refuses to render inline without an interpreter, so only the alarm path boots inside the measurement
 			site.php = undefined;
 			const filled = await site.fillOne('/');
 			return {
@@ -525,9 +436,7 @@ describe('a MISS on a warm object renders inline for the visitor', () => {
 		// but it must not become the warm estimate
 		expect(out.learned).toBeUndefined();
 		expect(out.unmeasurable).toBe(true);
-		// so the guard stays CONSERVATIVE rather than trusting a 117-ms-shaped reading. The exact
-		// constant depends on whether an interpreter exists by then (4000 with none, 1800 with one);
-		// what must hold either way is that it never drops to the boot-inclusive wall time
+		// the constant is 4000 with no interpreter and 1800 with one; either way it must never fall to the boot-inclusive wall time
 		expect(out.second.estimateMs).toBeGreaterThanOrEqual(FIRST_RENDER_ESTIMATE_MS);
 		expect(out.second.estimateMs).toBeGreaterThan(out.bootInclusive as number);
 	});
@@ -641,10 +550,8 @@ describe('a path that can never render is retried and then dropped', () => {
 		expect(String(queued[0]?.last_error)).toContain('no route matched');
 	});
 
-	// INVERTED, and the old expectation was the bug. A render that THREW answered 503 with
-	// `Retry-After: 1`, the retry re-entered the same failing render, and the route never
-	// converged -- so it read as a boot loop rather than as an error, with nothing in any log.
-	// A `warming` 503 is right for a page that is queued and wrong for one that cannot render
+	// a render that threw answers 500; a warming 503 would retry the same failing render forever
+	// a warming 503 is right for a queued page and wrong for one that cannot render
 	it('answers 500 with the exception when the inline render threw', async () => {
 		const stub = await provisionedSite();
 		const failed = await inObject(stub, (site) => {
@@ -670,11 +577,8 @@ describe('a path that can never render is retried and then dropped', () => {
 	});
 
 	it('a render that THROWS is struck too, so the chain cannot re-arm forever', async () => {
-		// MEASURED AS A SPIN on a deployed worker: a render that threw
-		// `TypeError: target is not a function` left the queue row untouched, so `remaining`
-		// stayed 1, so the re-arm picked +1 ms -- 196 firings in 14 s, every one `outcome: ok`
-		// and every one a Durable Object invocation. fillOne()'s three strikes only run when the
-		// render REPORTS a failure; this covers the case where it never got that far.
+		// fillOne's three strikes only run on a reported failure; a render that throws never reports one
+		// on a deployed worker this re-armed at +1 ms: 196 firings in 14 s
 		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			stubRender(site, () => {
@@ -695,7 +599,7 @@ describe('a path that can never render is retried and then dropped', () => {
 			return { rows, alarms, nextAlarm: await site.ctx.storage.getAlarm(), now: Date.now() };
 		});
 
-		// struck on every firing, then dropped -- the same three strikes a reported failure gets
+		// struck on every firing, then dropped: the same three strikes a reported failure gets
 		expect(out.rows).toEqual([1, 2, undefined]);
 		// and the chain has gone back to the keep-warm interval rather than +1 ms
 		expect((out.nextAlarm ?? 0) - out.now).toBeGreaterThan(1000);
@@ -833,8 +737,7 @@ describe('/__assemble decodes destruct as a tri-state, and re-renders rather tha
 });
 
 describe('the fragment decoder used above is not vacuous', () => {
-	// CONTROL: without this, a decoder that silently returned '' for every field would make the
-	// bins and destruct assertions pass by accident
+	// control: without this, a decoder returning '' for every field would pass the bins and destruct assertions
 	it('reads nothing out of a fragment that carries nothing', () => {
 		const empty = decodeRenderCall('<?php echo 1;');
 		expect(empty.path).toBe('');
@@ -844,14 +747,8 @@ describe('the fragment decoder used above is not vacuous', () => {
 	});
 });
 
-/**
- * An unclaimed site shows its owner the way in.
- *
- * The pack ships an INSTALLED database, so `install.php` never runs and uid 1 carries an empty hash
- * that no password can match. A freshly deployed site therefore looked finished, served its front
- * page, and had no way in -- and because the claim window IS the unprovisioned state, it was also
- * claimable by anyone who found the URL. The only thing that said so was a README caveat.
- */
+// the pack ships an installed database, so uid 1 has a hash no password matches
+// the claim window is the unprovisioned state, so anyone who finds the url can claim it; the setup page must say so
 describe('a site nobody has claimed serves a setup page', () => {
 	const browser = (path: string) =>
 		new Request(`https://real.example/__serve?path=${encodeURIComponent(path)}`, {
@@ -918,10 +815,7 @@ describe('a site nobody has claimed serves a setup page', () => {
 		expect(out.body).toContain('<title>/</title>');
 	});
 
-	/**
-	 * ORDER MATTERS. A site still replaying its migration is not an unclaimed site, and telling its
-	 * owner to claim it while the database is a quarter loaded would invite exactly the wrong action.
-	 */
+	// order matters: a site still replaying its migration must not be told to claim itself
 	it('yields to the migration placeholder on a site that is still replaying', async () => {
 		const res = await inObject(freshSite(), (site) => site.fetch(browser('/')));
 		expect(res.status).toBe(503);
@@ -930,19 +824,8 @@ describe('a site nobody has claimed serves a setup page', () => {
 	});
 });
 
-/**
- * Which host Drupal renders absolute URLs against.
- *
- * Every canonical tag, form action, `Location:` and password-reset link is built from it, and the
- * fragments hardcoded `localhost` -- so a deployed site advertised `http://localhost` to every
- * visitor and every crawler. The origin the object serves is now a property of the SITE: pinned on
- * first use and read back afterwards, never re-read from the request.
- *
- * Asserted off the emitted fragment rather than off rendered HTML, for the reason
- * `decodeRenderCall`'s docblock gives -- this lane has no interpreter, and what is being tested is
- * that the object put the right value into the PHP. `tests/integration/render-origin.spec.ts`
- * carries the other half, where a real interpreter turns it into real markup.
- */
+// drupal builds canonical links, forms and reset links from the origin, so the origin is pinned on first use
+// asserted off the emitted fragment; render-origin.spec.ts checks the markup with a real interpreter
 describe('the render origin is pinned, not believed', () => {
 	it('pins the first real origin it serves and hands it to the render', async () => {
 		const stub = await provisionedSite();
@@ -971,16 +854,8 @@ describe('the render origin is pinned, not believed', () => {
 		]);
 	});
 
-	/**
-	 * WHO THE RENDER WAS FOR, which is a different question from what the request carried.
-	 *
-	 * Every other clause in the `cacheable` predicate reasons about the REQUEST. `uid` is Drupal's
-	 * own conclusion, and the fragment computing it already said why it exists -- a render that
-	 * comes back as the wrong user is not distinguishable from a correct one by its bytes. It was
-	 * transported to JavaScript and read by nobody, so the failure this project actually shipped,
-	 * uid 1 surviving inside the persistent interpreter with no cookie anywhere, was invisible to a
-	 * guard made on the cookie.
-	 */
+	// uid is drupal's verdict on who the render was for; a render as the wrong user looks correct by its bytes
+	// so the guard reads uid, not the cookie
 	it('refuses to store a render that came back as somebody', async () => {
 		const stub = await provisionedSite();
 		const rows = await inObject(stub, async (site) => {
@@ -993,13 +868,7 @@ describe('the render origin is pinned, not believed', () => {
 		expect(Number(rows?.c ?? -1)).toBe(0);
 	});
 
-	/**
-	 * `page_cache_kill_switch` SAYS SO IN `Cache-Control`, and nothing read it.
-	 *
-	 * A module with a reason to opt one page out of caching has exactly this header to say it with.
-	 * The render captured `x-drupal-cache` and `x-drupal-dynamic-cache` and neither is the refusal;
-	 * the page was stored, promoted to KV, to the edge and to R2 regardless.
-	 */
+	// page_cache_kill_switch says so in Cache-Control; a module opting a page out has no other way to say it
 	it.each(['no-store', 'private, no-store', 'private'])(
 		'refuses to store a render Drupal marked %s',
 		async (header) => {
@@ -1015,14 +884,8 @@ describe('the render origin is pinned, not believed', () => {
 		}
 	);
 
-	/**
-	 * A RESPONSE THAT SAYS IT VARIES BY A HEADER THE KEY LEAVES OUT IS NOT STORED.
-	 *
-	 * `cfw_page` is keyed by path alone, so the first visitor's variant would be everyone's.
-	 * Measured on the shipped pack (`forwarded-headers.spec.ts`): the front page and the login page
-	 * are byte identical across `Accept`, `User-Agent` and `Origin`, and Drupal's `Vary` is
-	 * `Cookie`. A module that does vary says so in `Vary`, which is the signal read here.
-	 */
+	// cfw_page is keyed by path alone, so a response varying by a header the key omits must not be stored
+	// the shipped pack varies only on Cookie (forwarded-headers.spec.ts); a module that varies says so in Vary
 	it.each(['Accept', 'Origin', 'User-Agent', 'Cookie, Accept', '*', 'accept-language'])(
 		'refuses to store a render whose Vary is %s, and renders the next visitor afresh',
 		async (vary) => {
@@ -1098,15 +961,8 @@ describe('the render origin is pinned, not believed', () => {
 		expect(Number(rows?.c ?? -1)).toBe(1);
 	});
 
-	/**
-	 * DRUPAL'S FLOOD CONTROL IDENTIFIES BY `getClientIp()`, and every render reported `127.0.0.1`.
-	 *
-	 * `user.flood.yml` ships `ip_limit: 50`, `ip_window: 3600`, and `UserLoginForm` checks
-	 * `user.failed_login_ip` -- so with one address for the whole site, fifty bad passwords locked
-	 * EVERY visitor out of `/user/login` for an hour, and per-IP throttling of contact forms and
-	 * password resets did nothing. `CF-Connecting-IP` is overwritten by Cloudflare at the edge, so
-	 * the object may read it directly.
-	 */
+	// drupal's flood control keys on getClientIp(); one address for the site locks every visitor out of login
+	// cf-connecting-ip is overwritten at the edge, so the object can read it directly
 	it('hands the visitor address to the render, so flood control is per-visitor', async () => {
 		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
@@ -1121,17 +977,8 @@ describe('the render origin is pinned, not believed', () => {
 		expect(out[0]?.clientIp).toBe('203.0.113.7');
 	});
 
-	/**
-	 * THE ACCEPT HEADER DECIDES THE SHAPE OF EVERY AJAX RESPONSE, and it never reached Symfony.
-	 *
-	 * `AjaxResponseSubscriber::onResponse()` wraps the JSON in a `<textarea>` and relabels it
-	 * `text/html` when `Accept` contains `text/html`, which is an IE9 iframe-upload workaround.
-	 * `Request::create()` supplies its own default of `text/html,application/xhtml+xml,...` when the
-	 * server bag carries none, so the wrap fired on EVERY AJAX request no matter what the browser
-	 * asked for, and `ajax.js` raised `Drupal.AjaxError` on all of them. Measured in a browser on
-	 * Add field, where choosing a field type is an AJAX POST: the admin got "Oops, something went
-	 * wrong" and no field could be created on any site.
-	 */
+	// the accept header decides the shape of an ajax response; ajax.js needs the json unwrapped
+	// request::create() supplies its own text/html default, so the inbound accept must be passed through
 	it('hands the inbound Accept to the render, so an AJAX response is not wrapped for an iframe', async () => {
 		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
@@ -1146,13 +993,8 @@ describe('the render origin is pinned, not believed', () => {
 		expect(out[0]?.accept).toBe('application/json, text/javascript, */*; q=0.01');
 	});
 
-	/**
-	 * A HEADLESS SITE AUTHENTICATES ON `Authorization`, and the render used to receive none.
-	 *
-	 * The serve path handed Drupal the cookie, Accept, the content type and the client address and
-	 * nothing else, so every bearer-token route answered as anonymous (measured on mantle2: signup
-	 * returned a token, and the very next call with that token was "Authentication required").
-	 */
+	// a headless site authenticates on Authorization, which the render must receive
+	// the serve path used to drop it, so every bearer-token route answered as anonymous
 	it('hands the inbound Authorization and other headers to the render', async () => {
 		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
@@ -1235,14 +1077,8 @@ describe('the render origin is pinned, not believed', () => {
 		expect(out[0]?.clientIp).toBe('');
 	});
 
-	/**
-	 * A LOCAL ORIGIN IS USED BUT NEVER PINNED.
-	 *
-	 * Used, because `wrangler dev` on `localhost:8787` should render links to `localhost:8787` and
-	 * not to port 80. Not pinned, because every spec in this file reaches the object over
-	 * `do.local` -- so a pin would mean the first suite run against a persisted object fixed a real
-	 * site's canonical URL to a developer's laptop, permanently and invisibly.
-	 */
+	// a local origin is used for links but never pinned
+	// pinning from do.local would fix a real site's canonical url to a developer's laptop
 	it('uses a local origin without pinning it', async () => {
 		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
@@ -1312,18 +1148,8 @@ describe('a heap restore in flight is not a strike against the queued page', () 
 	});
 });
 
-/**
- * A SUBMISSION IS NEVER ANSWERED FROM `cfw_page`.
- *
- * Found by the e2e mail lane on 2026-08-21, not by any unit test. The cache read ran before the
- * method was considered, so a POST to a path with a stored page got the stored ANONYMOUS GET back
- * with a 200 and Drupal never ran: no validation, no mail, no content, and a success-looking
- * response. `/user/password` ships in `prefill.json`, so it is pre-cached on every site from its
- * first boot -- every password reset was swallowed.
- *
- * Confirmed live before the fix (`x-cfw-cache: HIT` on the POST) and after (`x-cfw-cache: RENDER`,
- * `x-cfw-method: POST`, 303).
- */
+// a submission is never answered from cfw_page: the cache read ran before the method check
+// /user/password is prefilled, so a stored anonymous GET swallowed every password reset; only a GET may read the page table
 describe('the page cache and non-GET methods', () => {
 	it('serves a GET from the cache', async () => {
 		const site = freshSite();
@@ -1357,15 +1183,8 @@ describe('the page cache and non-GET methods', () => {
 	}
 });
 
-/**
- * THE HERD, collapsed at the object.
- *
- * Measured deployed: 16 concurrent authenticated readers on a path whose plan had not compiled read
- * p50 9,709 ms with `RENDER=16` -- each paid its own render and they serialised on the one object.
- * The same coalescing in the FRONT WORKER was refuted, because its map is per-isolate and Cloudflare
- * spreads concurrent requests across isolates; 16 requests still produced 17 object hops. There is
- * exactly one object per site, so this is the level at which duplicates actually meet.
- */
+// concurrent identical readers each paid a render on one object (p50 9,709 ms at 16 readers); coalesce at the object
+// the front worker's map is per isolate, and there is exactly one object per site, so duplicates meet here
 describe('concurrent identical requests collapse to one render', () => {
 	it('renders once for N waiters and answers them all', async () => {
 		const out = await inObject(freshSite(), async (site: ServeDo) => {
@@ -1384,7 +1203,7 @@ describe('concurrent identical requests collapse to one render', () => {
 			);
 			return { renders, statuses: all.map((r) => r.status), bodies: all.map((r) => r.body) };
 		});
-		// every waiter is answered, and with the same bytes -- a shared answer that differed would
+		// every waiter is answered with the same bytes; a shared answer that differed would
 		// mean they were not the same request after all
 		expect(out.statuses.every((s) => s === out.statuses[0])).toBe(true);
 		expect(new Set(out.bodies).size).toBe(1);
@@ -1397,9 +1216,8 @@ describe('concurrent identical requests collapse to one render', () => {
 			markProvisioned(site);
 			let n = 0;
 			stubRender(site, ({ path }) => pageFor(`${path}|render-${++n}`));
-			// SEQUENTIAL, which is the case the first version of the coalescer got wrong: it
-			// published the flight and returned before the shared copy finished buffering, so the
-			// entry outlived the render and this second request joined a settled flight
+			// sequential: the first coalescer returned before the shared copy finished buffering
+			// so the entry outlived the render and a later request joined a settled flight
 			const first = await serveDirect(site, '/seq', '&inline=1', {
 				headers: { cookie: SESSION_COOKIE }
 			});
@@ -1416,9 +1234,7 @@ describe('concurrent identical requests collapse to one render', () => {
 	it('never shares across sessions, which is the whole hazard', async () => {
 		const out = await inObject(freshSite(), async (site: ServeDo) => {
 			markProvisioned(site);
-			// a UNIQUE body per render, because `RenderCall` carries no cookie: a stub keyed on one
-			// returns identical bytes for both sessions and the test passes whether or not they were
-			// shared. With a counter, sharing is the only way the two can match
+			// a unique body per render: RenderCall carries no cookie, so a constant body passes either way
 			let n = 0;
 			stubRender(site, ({ path }) => pageFor(`${path}|render-${++n}`));
 			const a = `SESS${'a'.repeat(32)}`;
@@ -1434,12 +1250,8 @@ describe('concurrent identical requests collapse to one render', () => {
 	});
 });
 
-/**
- * A header a Drupal module sets (Security Kit, a subscriber) is part of the page, so the object
- * stores it in the same INSERT and replays it from every answer it gives: the render, the stored
- * HIT, and the AGED answer after a bump. The boundary is `passThroughHeaders()` on the way in and
- * `decodeModuleHeaders()` on the way out, so a row written by SQL is held to it too.
- */
+// a header a drupal module sets is part of the page: stored in the same insert and replayed on every answer
+// the boundary is passThroughHeaders() on the way in and decodeModuleHeaders() on the way out
 describe('module-set headers are stored with the page and replayed by the object', () => {
 	const POLICY = {
 		'content-security-policy': "frame-ancestors 'none'",

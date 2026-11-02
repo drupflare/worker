@@ -4,7 +4,7 @@
  *
  * The same shape `mb-parity.ts` uses and for the same reason: a shim over an extension is only
  * worth anything if it agrees with the extension, and the way to know that is to run both. What is
- * measured here is the SHIPPING host call -- `blake2bHostCall()` out of `src/drupal/sodium-fix.ts`,
+ * measured here is the SHIPPING host call -- `sodiumHostCall()` out of `src/site/shims/sodium-lib.ts`,
  * the function the Durable Object installs -- rather than a re-implementation of it.
  *
  * TWO ORACLES, and the script says which one it used. Native `ext-sodium` is preferred because it
@@ -14,7 +14,7 @@
  * usage: bun scripts/measure/blake2b-parity.ts [--json]
  */
 import { spawnSync } from 'node:child_process';
-import { blake2bHostCall, emptyStates } from '../../src/drupal/sodium-fix';
+import { sodiumHostCall } from '../../src/site/shims/sodium-lib';
 
 const asJson = process.argv.slice(2).includes('--json');
 
@@ -101,24 +101,42 @@ function cases(): Case[] {
 	return out;
 }
 
+/** one sodium call by name; strings travel as base64, and a failure comes back as `ERR` */
+function call(
+	f: string,
+	a: unknown[]
+): { ok: true; s: string; state?: string } | { ok: false; error: string } {
+	const r = sodiumHostCall({ f, a });
+	if (!r.ok) return { ok: false, error: r.m };
+	const refs = r.refs?.[0];
+	return {
+		ok: true,
+		s: 's' in r.r ? r.r.s : '',
+		...(typeof refs === 'string' ? { state: refs } : {})
+	};
+}
+
 /** the shim's answer, through the same entry point the Durable Object installs */
 function throughBridge(c: Case): string {
-	const states = emptyStates();
+	const len = String(c.len);
 	if (c.chunk === undefined) {
-		const r = blake2bHostCall({ op: 'hash', b64: c.msg64, key64: c.key64, len: c.len }, states);
-		return r.ok ? hex(Buffer.from(r.b64 ?? '', 'base64')) : `ERR ${r.error}`;
+		const r = call('sodium_crypto_generichash', [c.msg64, c.key64, len]);
+		return r.ok ? hex(Buffer.from(r.s, 'base64')) : `ERR ${r.error}`;
 	}
-	const init = blake2bHostCall({ op: 'init', key64: c.key64, len: c.len }, states);
+	const init = call('sodium_crypto_generichash_init', [c.key64, len]);
 	if (!init.ok) return `ERR ${init.error}`;
-	const state = init.state;
+	let state = init.s;
 	const msg = Buffer.from(c.msg64, 'base64');
 	for (let i = 0; i < msg.length; i += c.chunk) {
-		const slice = msg.subarray(i, i + c.chunk);
-		const up = blake2bHostCall({ op: 'update', state, b64: slice.toString('base64') }, states);
+		const up = call('sodium_crypto_generichash_update', [
+			state,
+			b64(msg.subarray(i, i + c.chunk))
+		]);
 		if (!up.ok) return `ERR ${up.error}`;
+		state = up.state ?? state;
 	}
-	const fin = blake2bHostCall({ op: 'final', state, len: c.len }, states);
-	return fin.ok ? hex(Buffer.from(fin.b64 ?? '', 'base64')) : `ERR ${fin.error}`;
+	const fin = call('sodium_crypto_generichash_final', [state, len]);
+	return fin.ok ? hex(Buffer.from(fin.s, 'base64')) : `ERR ${fin.error}`;
 }
 
 /**
@@ -177,16 +195,12 @@ const compared = native ? rows : [];
 const diverged = compared.filter((r) => r.shim !== r.oracle);
 
 const publishedRows = PUBLISHED.map((v) => {
-	const r = blake2bHostCall(
-		{
-			op: 'hash',
-			b64: Buffer.from(v.msg, 'utf8').toString('base64'),
-			key64: '',
-			len: v.outlen
-		},
-		emptyStates()
-	);
-	const shim = r.ok ? hex(Buffer.from(r.b64 ?? '', 'base64')) : `ERR ${r.error}`;
+	const r = call('sodium_crypto_generichash', [
+		Buffer.from(v.msg, 'utf8').toString('base64'),
+		'',
+		String(v.outlen)
+	]);
+	const shim = r.ok ? hex(Buffer.from(r.s, 'base64')) : `ERR ${r.error}`;
 	return { label: v.label, shim, oracle: v.hex };
 });
 const publishedDiverged = publishedRows.filter((r) => r.shim !== r.oracle);

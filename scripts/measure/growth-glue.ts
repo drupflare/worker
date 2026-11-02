@@ -43,7 +43,12 @@ export type Abi =
 	| 'impmem'
 	| 'zendalloc'
 	| 'vmtailcall'
-	| 'spimport';
+	| 'spimport'
+	| 'shipping'
+	| 's12base'
+	| 's12ssp'
+	| 's12so2'
+	| 's12so1';
 
 /** the pristine glue for an ABI, as `phasm` publishes it */
 export function glueFor(abi: Abi): string {

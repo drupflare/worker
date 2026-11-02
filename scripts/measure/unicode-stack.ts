@@ -13,10 +13,10 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { ICONV_STRRPOS } from '../../src/drupal/iconv-fix';
-import { MB_ASCII, MB_FIX } from '../../src/drupal/mb-fix';
-import { UNICODE_TABLES } from '../../src/drupal/unicode-tables';
 import { MB_FIX_PHP, MB_SANITIZE_PHP } from '../../src/site/generated/assets';
+import { ICONV_STRRPOS } from '../../src/site/shims/iconv-fix';
+import { MB_ASCII, MB_FIX } from '../../src/site/shims/mb-fix';
+import { UNICODE_TABLES } from '../../src/site/shims/unicode-tables';
 import { hoistUses } from '../../src/util/php';
 
 /**

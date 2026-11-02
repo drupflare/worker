@@ -23,9 +23,8 @@ Measured on deployed infrastructure, per-invocation `cpuTime` read through the W
 
 A free site serves about 100,000 page views a day (about 3M a month) for a well-cached site,
 saturated at 1.00x, and every meter except Worker requests has roughly 5x headroom. That figure
-counts one Worker request a view. Static asset requests are free and unlimited (`published`, Cloudflare's
-Workers pricing page), and a drive of 198,000 asset requests invoked no Worker (`measured`, invocations
-and not billing; see [The Off-Worker Arms](off-worker-arms.md#the-off-worker-arms)). Workers Cache is the one documented case that changes
+counts one Worker request a view. Static asset requests do not bill, and a drive of 198,000 asset
+requests invoked no Worker (`measured`; see [The Off-Worker Arms](off-worker-arms.md#the-off-worker-arms)). Workers Cache is the one documented case that changes
 this, and the shipped config does not enable it. With it on, the same arithmetic gives 1,515 views a
 day.
 

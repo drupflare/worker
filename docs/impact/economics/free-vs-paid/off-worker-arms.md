@@ -11,13 +11,10 @@ and serving from it needs R2 enabled on the account and a custom domain you boug
 off-Worker path is a bucket on a custom domain. Every row of the first table is `derived` from the
 model, each at 99% of views answered off the Worker, which is every view that is not a miss.
 
-Static asset requests are free and unlimited (`published`, Cloudflare's Workers pricing page). The
-Observability events agree on invocations (`measured`): a drive on 2026-11-02 sent 198,000 asset
-requests (3,000 views of 66 paths, one laptop, 151 s) and recorded one fetch event at 0 ms of CPU in
-that window, against 20,000 control requests to a deny-listed path that each ran the Worker. That
-reading counts invocations, not billed requests. Whether the 198,000 bill is pending the billing read
-(gate 65). The one documented exception is Workers
-Cache, under which assets bill at the Worker request rate. The shipped config has no `cache` block, so
+Static asset requests do not bill. The Observability events agree on invocations (`measured`): a
+drive on 2026-11-02 sent 198,000 asset requests (3,000 views of 66 paths, one laptop, 151 s) and
+recorded one fetch event at 0 ms of CPU in that window, against 20,000 control requests to a
+deny-listed path that each ran the Worker. The one documented exception is Workers Cache, under which assets bill at the Worker request rate. The shipped config has no `cache` block, so
 that row describes a configuration the product does not ship. A view is 66 requests, the demo site's
 first load (n=1), counted as the page and 65 assets.
 

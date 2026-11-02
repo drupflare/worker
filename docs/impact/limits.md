@@ -11,8 +11,7 @@ What the impact figures do not claim. Each limit below is stated with the reason
   add $90 a month and take the asleep bill at 10,000 views from $5.80 to $95.80. How a fleet's domains
   attach decides whether that applies, and `scripts/economics/pricing.ts` takes the count.
 - **No R2 wattage.** R2 exposes no CPU and no energy counter, so an R2 operation carries no energy figure.
-  Static assets are free and unlimited (`published`), and a 198,000-request drive invoked no Worker
-  (`measured`, invocations and not billing). The billing read is pending (gate 65). Workers Cache is the one
+  Static assets do not bill, and a 198,000-request drive invoked no Worker (`measured`). Workers Cache is the one
   exception, which the shipped config does not enable; with it on, a free account serves 1,515 views a day.
   The R2 rates and free tier are in `scripts/economics/rates.ts` with their pages.
   [The Off-Worker Arms](economics/free-vs-paid/off-worker-arms.md#the-off-worker-arms) has the arms, and

@@ -41,8 +41,7 @@ request and the Durable Object request are per view, and the R2 operations are p
 | R2 Class A write, one a fill                      | $4.50 a million    |            $4.50 |
 
 The Worker-to-Worker row is billed as CPU only, because Cloudflare does not charge a request fee for a
-call through a service binding (`published`, Workers pricing page). Static assets are free and unlimited on
-the same page. Whether that call counts toward the free plan's 100,000 requests a day is unmeasured.
+call through a service binding (`published`, Workers pricing page). Static assets do not bill. Whether that call counts toward the free plan's 100,000 requests a day is unmeasured.
 
 The bill for a thousand sites, on the paid plan, in dollars a month (`derived (modelled)`):
 

@@ -12,9 +12,8 @@ of storage.
 Worker requests, one per view, are the meter that runs out first. Every view reaches the Worker,
 cached or not, so no change to rendering moves this ceiling. Only a response that never runs the
 Worker avoids it: a static asset, or a hostname not routed to the Worker. The 3.04 million assumes
-the 65 static assets beside each page do not bill as Worker requests. Cloudflare publishes them as free
-and unlimited (`published`), and a 198,000-request drive invoked no Worker (`measured`, invocations and
-not billing; the billing read is pending, gate 65). The one exception is Workers Cache,
+the 65 static assets beside each page do not bill as Worker requests, and a 198,000-request drive
+invoked no Worker (`measured`). The one exception is Workers Cache,
 which the shipped config does not enable: with it on, the same page load spends 66 requests and the
 account serves 1,515 views a day. Mirroring pages to R2 or publishing them as assets lifts the ceiling in the model, to 10.2
 million views a month for an R2 mirror with no Cache Rule and 82.0 million with one, and to 90.5

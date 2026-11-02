@@ -142,6 +142,46 @@ describe('a migrated site brings an image toolkit that cannot run here', () => {
 	);
 });
 
+describe('a site holding the navigation top bar row that no save can invalidate', () => {
+	const topBar = (route: string) =>
+		`navigation:top_bar:[languages:language_interface]=en:[route]=${route}:[theme]=olivero`;
+
+	it(
+		'flushes the tagless row and keeps rows that name an entity',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request(`${ORIGIN}/__migrate?all=1&prefill=0`));
+				const put = (cid: string, tags: string) =>
+					site.sql.exec(
+						`INSERT INTO cache_render (cid, data, expire, created, serialized, tags, checksum)
+						 VALUES (?, ?, -1, 1, 1, ?, 0)`,
+						cid,
+						'a:0:{}',
+						tags
+					);
+				const cids = () =>
+					rows(site, "SELECT cid FROM cache_render WHERE cid LIKE 'navigation:%'")
+						.map((r) => String(r.cid))
+						.sort();
+				// the pre-patch shape: permanent, tags naming no node
+				put(topBar('entity.node.canonical'), 'rendered');
+				put(topBar('entity.node.canonical') + ':[user]=1', 'node:1 rendered');
+				put('navigation:other', 'rendered');
+				site.sql.exec('DELETE FROM cfw_meta WHERE k = ?', 'reconcile_state');
+				const before = cids();
+				await reconcileToDone(site);
+				return { before, after: cids() };
+			});
+			expect(out.before, 'the site was not regressed').toHaveLength(3);
+			expect(out.after).toEqual([
+				'navigation:other',
+				topBar('entity.node.canonical') + ':[user]=1'
+			]);
+		},
+		TIMEOUT
+	);
+});
+
 describe('bringing an already-provisioned site up to the shipping pack', () => {
 	it(
 		'converges both copies of the config object, not only the row a SQL fix would touch',

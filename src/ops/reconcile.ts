@@ -94,6 +94,10 @@ export interface ReconcileStep {
  */
 const BAKE_WATCHDOG = `SELECT COUNT(*) AS n FROM watchdog WHERE timestamp < ?`;
 
+/** the pre-patch top bar row: permanent, and its only tag is `rendered` */
+const TAGLESS_TOP_BAR_WHERE = `cid LIKE 'navigation:top_bar:%' AND tags = 'rendered'`;
+const TAGLESS_TOP_BAR = `SELECT COUNT(*) AS n FROM cache_render WHERE ${TAGLESS_TOP_BAR_WHERE}`;
+
 /** the first column of the first row as a number, or undefined when the table is missing */
 function count(sql: ReconcileSql, query: string, ...bindings: unknown[]): number | undefined {
 	try {
@@ -490,6 +494,21 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 				: { state: 'owed', detail: `toolkit is ${toolkit}` };
 		},
 		php: (host) => reconcileToolkitPhp(host.origin())
+	},
+	{
+		id: 'navigation-top-bar-tags',
+		since: 7,
+		describe:
+			'a stored navigation top bar that names no entity, so a save never replaces its title',
+		verdict(sql) {
+			const stale = count(sql, TAGLESS_TOP_BAR);
+			if (!stale) return { state: 'satisfied' };
+			return { state: 'owed', detail: `${stale} permanent top bar rows with no entity tag` };
+		},
+		// sql, not php: a cache_render row has no other copy and the next render rebuilds it
+		sql(sql) {
+			sql.exec(`DELETE FROM cache_render WHERE ${TAGLESS_TOP_BAR_WHERE}`);
+		}
 	}
 ];
 

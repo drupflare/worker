@@ -1,0 +1,6 @@
+{
+	"name": "cfw-e2e-g66",
+	"main": "index.js",
+	"compatibility_date": "2026-09-01",
+	"compatibility_flags": ["enable_ctx_exports"]
+}

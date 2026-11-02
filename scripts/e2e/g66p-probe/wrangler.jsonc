@@ -1,0 +1,8 @@
+{
+	"name": "cfw-e2e-g66p",
+	"main": "index.js",
+	"compatibility_date": "2026-09-01",
+	"compatibility_flags": ["enable_ctx_exports"],
+	"worker_loaders": [{ "binding": "LOADER" }],
+	"vars": { "HOST_SECRET": "canary-host-secret-9f3a" }
+}

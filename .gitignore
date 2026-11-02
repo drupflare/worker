@@ -83,3 +83,5 @@ dist/
 .vps-context/
 # corpus clones scripts/e2e/corpus-lane.ts loads
 /.corpus/
+# the s5 probe copies the interpreter glue and a tuned wasm here on every run
+/scripts/e2e/s5-probe/build/

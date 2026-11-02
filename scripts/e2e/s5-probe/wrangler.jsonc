@@ -1,0 +1,14 @@
+{
+	"name": "cfw-s5-probe",
+	"main": "index.js",
+	"compatibility_date": "2026-09-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "PROBE", "class_name": "Probe" },
+			{ "name": "SINK", "class_name": "Sink" }
+		]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Probe", "Sink"] }]
+}

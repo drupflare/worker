@@ -1,5 +1,5 @@
 /**
- * Reduces the spool rig's `.jsonl` files to the rows `docs/energy-views.md` quotes.
+ * Reduces the spool rig's `.jsonl` files to the rows `docs/impact/energy/views.md` quotes.
  *
  *   bun scripts/measure/spool-report.ts results/repeat.jsonl results/cold-media.jsonl
  *

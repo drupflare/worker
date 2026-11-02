@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { account } from '../../scripts/economics/bill';
+import {
+	DO_HIT_MS,
+	EDGE_HIT_P50_MS,
+	EXTRA_MS,
+	FILE_INVOCATION_MS,
+	FRONT_CACHED_MS,
+	PATHS,
+	edgeRebaseMjPerView,
+	extraMjPerView,
+	headlineWithExtra,
+	renderFrontKwhYear
+} from '../../scripts/economics/bindings';
 import { deviceKwhYear, freshNavs } from '../../scripts/economics/device';
 import {
 	CORES,
@@ -8,6 +20,7 @@ import {
 	IDLE_W,
 	PEAK_W,
 	PRODUCTION_SHAPES,
+	PUE_HYPER,
 	THREADS_PER_HOST,
 	W_PER_CORE,
 	linearUnderstatement,
@@ -38,6 +51,7 @@ import {
 } from '../../scripts/economics/fmt';
 import {
 	BOOTED_FOOTPRINT_MIB,
+	CACHED_SERVE_TOTAL_MS,
 	REPEAT_NAV,
 	REPEAT_NAV_DEPLOYED,
 	WARM_FIRING_WALL_MS
@@ -57,7 +71,13 @@ import {
 	renderRate,
 	savingPct
 } from '../../scripts/economics/perview';
-import { DURABLE_OBJECTS } from '../../scripts/economics/rates';
+import {
+	DURABLE_OBJECTS,
+	R2,
+	SERVICE_BINDINGS,
+	STATIC_ASSETS,
+	WORKERS_PAID
+} from '../../scripts/economics/rates';
 import {
 	COLD_ENCOUNTER_MS,
 	COMPOUND_EXTRA_WH_YEAR,
@@ -74,6 +94,7 @@ import {
 	states,
 	warmAlarmWhYear
 } from '../../scripts/economics/states';
+import { TRAFFIC_MIX } from '../../scripts/measure/verdict-math';
 
 describe('energy units', () => {
 	it('picks the SI prefix that makes the number read naturally', () => {
@@ -510,5 +531,121 @@ describe('visitor device energy', () => {
 	it('converts joules a navigation into kWh a year', () => {
 		expect(freshNavs(1, 1)).toBe(12);
 		expect(deviceKwhYear(1, 1)).toBeCloseTo((12 * REPEAT_NAV.joules) / 3.6e6, 12);
+	});
+});
+
+describe('service bindings and R2', () => {
+	const VIEWS_CHECK = [10_000, 100_000, 1_000_000, 10_000_000, 30_000_000];
+
+	it('sources the R2 card to its Cloudflare page, with a quote and a retrieval date', () => {
+		expect(R2.source).toMatch(/^https:\/\/developers\.cloudflare\.com\/r2\/pricing\//);
+		expect(R2.quote.length).toBeGreaterThan(0);
+		expect(R2.retrieved).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+	});
+
+	it('prices R2 at the published rates and the published free tier', () => {
+		expect(R2.usdPerGbMonth).toBe(0.015);
+		expect(R2.usdPerMillionClassA).toBe(4.5);
+		expect(R2.usdPerMillionClassB).toBe(0.36);
+		expect(R2.free).toEqual({ gbMonth: 10, classAPerMonth: 1e6, classBPerMonth: 10e6 });
+	});
+
+	it('sources the service-binding and static-asset rules', () => {
+		expect(SERVICE_BINDINGS.source).toMatch(
+			/^https:\/\/developers\.cloudflare\.com\/workers\//
+		);
+		expect(SERVICE_BINDINGS.requestFeeUsd).toBe(0);
+		expect(STATIC_ASSETS.source).toMatch(/^https:\/\/developers\.cloudflare\.com\/workers\//);
+	});
+
+	it('gives a public-bucket read and a static asset no Worker invocation', () => {
+		expect(PATHS.r2PublicBucket.workerInvocations).toBe(0);
+		expect(PATHS.staticAsset.workerInvocations).toBe(0);
+		expect(PATHS.objectHit.workerInvocations).toBe(1);
+		expect(PATHS.serviceBindingHop.workerInvocations).toBe(2);
+	});
+
+	it('separates the edge-cache hit, which never reaches the object, from the object hit', () => {
+		expect(PATHS.edgeHit.durableObjectInvocations).toBe(0);
+		expect(PATHS.objectHit.durableObjectInvocations).toBe(1);
+	});
+
+	it('leaves the shipped headline unchanged when no extra invocation is added', () => {
+		for (const v of VIEWS_CHECK)
+			expect(headlineWithExtra(v, 0).drupflareKwh).toBe(drupflareKwhYearOnMix(v));
+	});
+
+	it('composes the 1.8 ms cached serve from the two 2026-09-14 readings', () => {
+		expect(FRONT_CACHED_MS + DO_HIT_MS).toBeCloseTo(CACHED_SERVE_TOTAL_MS, 9);
+	});
+
+	it('charges one millisecond of CPU at the model watts and PUE, 1 mJ per W for 1 ms', () => {
+		expect(extraMjPerView(1)).toBeCloseTo(W_PER_CORE * PUE_HYPER, 12);
+		expect(extraMjPerView(EXTRA_MS.upper)).toBeCloseTo(
+			FRONT_CACHED_MS * W_PER_CORE * PUE_HYPER,
+			12
+		);
+	});
+
+	it('adds the extra energy to the 1M headline and nothing else', () => {
+		const base = drupflareKwhYearOnMix(1_000_000);
+		const extra = (1_000_000 * 12 * extraMjPerView(EXTRA_MS.upper)) / 1000 / 3.6e6;
+		expect(headlineWithExtra(1_000_000, EXTRA_MS.upper).drupflareKwh).toBeCloseTo(
+			base + extra,
+			9
+		);
+	});
+
+	it('moves the multiple by the drupflare ratio, and the percentage by far less', () => {
+		const a = headlineWithExtra(1_000_000, 0);
+		const b = headlineWithExtra(1_000_000, EXTRA_MS.upper);
+		expect(a.multiple / b.multiple).toBeCloseTo(b.drupflareKwh / a.drupflareKwh, 9);
+		expect(Math.abs(b.saving - a.saving)).toBeLessThan(0.01);
+	});
+
+	it('moves a thousand-site bill at 10,000 views by the extra CPU, since the renders already pass the CPU allowance', () => {
+		const base = account(1000, 10_000, 'thermal').total;
+		const extra = account(1000, 10_000, 'thermal', { cpuMs: EXTRA_MS.upper }).total;
+		expect(base).toBeCloseTo(5.8, 2);
+		expect(extra - base).toBeGreaterThan(0);
+		expect(extra - base).toBeCloseTo(
+			(1000 * 10_000 * EXTRA_MS.upper * WORKERS_PAID.usdPerMillionCpuMs) / 1e6,
+			9
+		);
+	});
+
+	it('charges the extra CPU above the included allowance at the published rate', () => {
+		const base = account(1000, 100_000, 'thermal').total;
+		const extra = account(1000, 100_000, 'thermal', { cpuMs: EXTRA_MS.upper }).total;
+		expect(extra - base).toBeCloseTo(2.2, 2);
+	});
+
+	it('bills a hop as a request only if the no-fee rule did not hold', () => {
+		const base = account(1000, 10_000, 'always').total;
+		expect(account(1000, 10_000, 'always', { requests: 1 }).total - base).toBeCloseTo(3, 6);
+	});
+
+	it('reports the edge-tier gap as a sensitivity, weighted by the edge share of the mix', () => {
+		const gap = edgeRebaseMjPerView();
+		expect(gap).toBeCloseTo(
+			TRAFFIC_MIX['anon-cached']!.weight *
+				(CACHED_SERVE_TOTAL_MS - EDGE_HIT_P50_MS) *
+				W_PER_CORE *
+				PUE_HYPER,
+			9
+		);
+		expect(gap).toBeGreaterThan(0);
+	});
+
+	it('prices the front worker on a render below a tenth of a percent of the 1M headline', () => {
+		const share = renderFrontKwhYear(1_000_000) / drupflareKwhYearOnMix(1_000_000);
+		expect(share).toBeGreaterThan(0);
+		expect(share).toBeLessThan(0.001);
+	});
+
+	it('reads the file-serving invocation as its measured distribution, not a single sample', () => {
+		expect(FILE_INVOCATION_MS.n).toBe(185);
+		expect(FILE_INVOCATION_MS.median).toBeLessThanOrEqual(FILE_INVOCATION_MS.p90);
+		expect(FILE_INVOCATION_MS.p90).toBeLessThanOrEqual(FILE_INVOCATION_MS.max);
 	});
 });

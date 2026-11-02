@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { DO_REQ_RATE, WFP_BASE } from '../../scripts/economics/pricing';
 import { DURABLE_OBJECTS, WORKERS_FOR_PLATFORMS } from '../../scripts/economics/rates';
 import {
+	ASSET_PAGE_HEADROOM,
+	ASSET_PUBLISH,
+	assetPublishBudget,
 	billedGbS,
 	coldUrlCost,
 	COST_PER_VIEW,
@@ -22,10 +25,14 @@ import {
 	INSTALL_CPU_MS,
 	KEEP_WARM_MS,
 	keepWarmFleetCost,
+	METER_FLUSH_SECONDS,
+	METER_FLUSH_SECONDS_UNDER_LOAD,
+	offWorkerArm,
 	optimalOffWorker,
 	PAID_DURATION,
 	paidDurationCost,
 	queueArm,
+	REQUESTS_PER_PAGE_LOAD,
 	ROWS_PER_FILL,
 	ROWS_PER_FILL_NO_DBLOG,
 	ROWS_PER_WRITE,
@@ -36,17 +43,13 @@ import {
 	SECONDS_PER,
 	SECONDS_PER_DAY,
 	SEED_CACHE_TRIM,
+	SHIPPING_ROWS_PER_FILL,
 	SITE_STORAGE_BYTES,
 	STEADY_STATE_WARMTH,
 	storageCeiling,
+	WARM_INTERVAL_MS,
 	WORKFLOW_STEP_CPU_MS
 } from '../../scripts/measure/free-envelope';
-
-/**
- * The free-tier product envelope, as arithmetic that can score a proposal. The assertions catch
- * the two ways it goes wrong: cache hits treated as free (they cost a Worker request), and
- * decomposition treated as free (slicing spends the DO quota, which counts alarm invocations).
- */
 
 describe('the SERVING ceiling, where a cache hit is not free', () => {
 	it('is bound by Worker requests, not by CPU or DO', () => {
@@ -55,8 +58,7 @@ describe('the SERVING ceiling, where a cache hit is not free', () => {
 	});
 
 	it('caps free at ~100,000 views/day even when 85% never touch PHP', () => {
-		// the point a "99% of traffic is cached" argument misses: every one of those hits is still a
-		// counted Worker request, so caching rescues CPU and does nothing for this ceiling
+		// a cached view is still a counted worker request, so caching rescues cpu and not this ceiling
 		const env = envelope();
 		expect(env.servingViewsPerDay).toBe(100_000);
 	});
@@ -76,19 +78,15 @@ describe('the SERVING ceiling, where a cache hit is not free', () => {
 
 describe('the REGENERATION ceiling, which is the one that decides the product', () => {
 	it('is ROWS-bound on the alarm chain, which is the path a default deploy takes', () => {
-		// READ 2,477 AND DO-BOUND UNTIL 2026-09-23, and that was an artifact of
-		// `DO_INVOCATIONS_PER_COLD_FILL = 180` -- a boot sliced across alarms at 8 ms, which no code
-		// under `src/` performs and which a deployed FREE worker refutes directly: every batch
-		// drains exactly k in ONE invocation, verified to k=20. See that constant for the full
-		// refutation. `SITE_WARM` is still subtracted, and still spends 10,800 DO requests
+		// a boot sliced at 8 ms per alarm is not real; a free worker drains a batch in one invocation (k=20)
+		// SITE_WARM is still subtracted, and still spends 10,800 DO requests
 		const env = envelope(DEFAULT_MIX, { windowed: false });
 		expect(env.regenerationsPerDay).toBe(10_866);
 		expect(env.regenerationBoundBy).toBe('rows');
 	});
 
 	it('gives the fill window the SAME ceiling, because the gap was the slicing artifact', () => {
-		// the window used to divide invocations by a further 25, which is how two paths over one
-		// mechanism came to report ceilings 4x apart. A firing is one invocation either way
+		// a firing is one invocation on both paths; an extra divide by 25 gave ceilings 4x apart
 		const env = envelope(DEFAULT_MIX, { windowed: true });
 		expect(env.regenerationsPerDay).toBe(10_866);
 		expect(env.regenerationBoundBy).toBe('rows');
@@ -105,9 +103,7 @@ describe('the REGENERATION ceiling, which is the one that decides the product', 
 			envelope(DEFAULT_MIX, { windowed: true, warmth }).regenerationsPerDay;
 		expect(perDay('warmReassemble')).toBeGreaterThan(perDay('realRender'));
 		expect(perDay('realRender')).toBeGreaterThan(perDay('firstEverForPath'));
-		// the retired flat 17 used to sit INSIDE the range while describing none of its cases. Since
-		// the cache bins became WITHOUT ROWID it sits ABOVE every per-path class and only the
-		// once-per-object fill exceeds it, so it now overstates rather than merely mis-describes
+		// the flat 17 overstates every per-path class now; only the once-per-object fill exceeds it
 		expect(ROWS_PER_FILL.realRender).toBeLessThan(17);
 		expect(ROWS_PER_FILL.firstEverForPath).toBeLessThan(17);
 		expect(ROWS_PER_FILL.firstFillOnFreshObject).toBeGreaterThan(17);
@@ -116,8 +112,7 @@ describe('the REGENERATION ceiling, which is the one that decides the product', 
 
 describe('scoring the target workload, which is what the roadmap should be graded against', () => {
 	it('3M visits/month serves with EXACTLY zero headroom', () => {
-		// 3,000,000 / 30 = 100,000/day, which is precisely the Worker request quota. Not comfortable --
-		// saturated. Any additional counted request, from any source, puts the day over.
+		// 3,000,000 / 30 is exactly the worker request quota; any further counted request breaks the day
 		const v = scoreWorkload(3_000_000, 0.01, { windowed: true });
 		expect(v.targetVisitsPerDay).toBe(100_000);
 		expect(v.servingFits).toBe(true);
@@ -125,12 +120,11 @@ describe('scoring the target workload, which is what the roadmap should be grade
 	});
 
 	it('at 1% dynamic the alarm chain covers it 2.5x over', () => {
-		// corrected three times: 4.8x FAIL, 1.05x once batching was modelled, 2.78x once the cold
-		// boot was, and 2.48x once warming stopped being left out of the budget it spends
+		// 2.48x once warming is in the budget; earlier models read 4.8x, 1.05x and 2.78x
 		const v = scoreWorkload(3_000_000, 0.01, { windowed: false });
 		expect(v.fillsNeededPerDay).toBe(1_000);
 		expect(v.regenerationFits).toBe(true);
-		// 2.48x -> 10.87x when the 180-slice model was replaced by the measured one invocation
+		// the measured one-invocation firing takes this to 10.87x
 		expect(v.headroom.regenerationRatio).toBeGreaterThan(10.5);
 		expect(v.headroom.regenerationRatio).toBeLessThan(11.2);
 	});
@@ -138,8 +132,7 @@ describe('scoring the target workload, which is what the roadmap should be grade
 	it('PASSES at 1% dynamic with the fill window, with ~7x headroom', () => {
 		const v = scoreWorkload(3_000_000, 0.01, { windowed: true });
 		expect(v.verdict).toBe('fits');
-		// 5x before the row correction; the complete instrument and the right warmth class both
-		// moved it up, so the headroom is real rather than an artefact
+		// 5x before the row and warmth-class corrections; the headroom is real, not an artefact
 		expect(v.headroom.regenerationRatio).toBeGreaterThan(7);
 	});
 
@@ -160,11 +153,8 @@ describe('scoring the target workload, which is what the roadmap should be grade
 	});
 
 	it('requires BOTH ceilings, so a servable-but-unregenerable site is not a pass', () => {
-		// a site serving 3M cached visits it cannot refresh is a static site with a stale cache.
-		// THE CASE HAS MOVED THREE TIMES and each move is the ceiling rising under it: 2%, then 3%
-		// once 2,777 fills/day covered 2%, and now 20% because the measured one-invocation firing
-		// took the alarm chain to 10,866/day. The ASSERTION is unchanged and that is the point --
-		// serving fits and the verdict still refuses, so the two-ceiling rule holds at any ceiling
+		// a site that serves 3M cached visits but cannot refresh them is stale; the verdict must refuse
+		// the case moved with the ceiling (2%, then 3% at 2,777 fills a day, then 20%); the assertion did not
 		const v = scoreWorkload(3_000_000, 0.2, { windowed: false });
 		expect(v.servingFits).toBe(true);
 		expect(v.verdict).not.toBe('fits');
@@ -181,22 +171,18 @@ describe('the constants are the measured ones', () => {
 	});
 
 	it('bills duration against the 128 MB an object is ALLOCATED, not what it uses', () => {
-		// 0.128, the DECIMAL reading, and this asserted 0.125 until 2026-08-23. Cloudflare's own
-		// worked example fixes it: "1,000,000 seconds * 128 MB / 1 GB = 128,000 GB-s". The binary
-		// reading was 2.4% low everywhere it appeared
+		// 0.128 is the decimal reading; cloudflare's worked example gives 128,000 GB-s per 1,000,000 s
+		// the binary reading (0.125) was 2.4% low everywhere it appeared
 		expect(DO_GB_ALLOCATED).toBe(0.128);
 		expect(SECONDS_PER_DAY).toBe(86_400);
 		expect(IDLE_GB_S_PER_DAY).toBe(SECONDS_PER_DAY * DO_GB_ALLOCATED);
 		expect(IDLE_GB_S_PER_DAY).toBeCloseTo(11_059.2, 4);
-		// 85.1% of the daily allowance for an object doing nothing, not the 83.1% the binary
-		// reading implied
+		// an idle object uses 85.1% of the daily duration allowance; the binary reading gave 83.1%
 		expect(IDLE_GB_S_PER_DAY / FREE_QUOTAS.durationGbSPerDay).toBeCloseTo(0.851, 3);
 	});
 
 	it('carries the read meter, which is 50x the write meter and was never modelled', () => {
-		// nothing was wrong -- there was simply no read meter -- but the omission made it easy to
-		// assume reads and writes shared the 100,000. A workload has to read 50 rows per row
-		// written before reads bind, which a render does not approach
+		// reads have their own 5,000,000 a day meter; a workload must read 50 rows per row written before reads bind
 		expect(FREE_QUOTAS.rowsReadPerDay).toBe(5_000_000);
 		expect(FREE_QUOTAS.rowsReadPerDay / FREE_QUOTAS.rowsWrittenPerDay).toBe(50);
 	});
@@ -213,41 +199,31 @@ describe('the constants are the measured ones', () => {
 	});
 
 	it('an edge hit costs one Worker request and nothing else', () => {
-		expect(COST_PER_VIEW.edgeHit).toEqual({ worker: 1, do: 0, rows: 0 });
+		expect(COST_PER_VIEW.edgeHit).toEqual({ worker: 1, do: 0 });
 	});
 
 	it('charges ONE invocation per firing, because that is what a deployed free worker does', () => {
 		expect(DO_INVOCATIONS_PER_COLD_FILL).toBe(1);
-		// still exported, and no longer divides the invocation term: it has no docblock and no
-		// measurement behind it, so neutralising it was preferred to deleting someone's reasoning
+		// still exported and not divided into the invocation term; no measurement backs it
 		expect(FILL_WINDOW_AMORTISATION).toBe(25);
 	});
 });
 
-/**
- * THE FIFTH METER: Durable Object DURATION.
- *
- * Billed on WALL CLOCK against the 128 MB an object is allocated regardless of use, and the model
- * had never carried it. It does NOT bind -- which is why it is reported as slack rather than left
- * out, because a meter nobody looks at is exactly how the first four were each missed in turn.
- *
- * Every figure feeding it is `cpuTime`, and cpuTime excludes time spent awaiting, so each ceiling
- * below is an UPPER BOUND on what the meter allows.
- */
+// duration is billed on wall clock against the 128 MB an object is allocated; it does not bind
+// it is reported anyway; cpuTime excludes awaits, so every ceiling computed from it is an upper bound
 describe('the DURATION meter, which is reported whether or not it binds', () => {
 	it('does not bind at the serving ceiling, and says how much slack is left', () => {
 		const e = envelope(DEFAULT_MIX, { windowed: true });
 		expect(e.servingBoundBy).toBe('worker');
 		expect(e.duration.availableGbS).toBe(FREE_QUOTAS.durationGbSPerDay);
-		// ~271 of 13,000. It is asserted so that a later change which made a
-		// render hold the object 50x longer would move this and nothing else in the model
+		// ~271 of 13,000 GB-s; a render holding the object 50x longer would move this and nothing else
 		expect(e.duration.servingUseGbS).toBeGreaterThan(0);
 		expect(e.duration.servingUseGbS).toBeLessThan(FREE_QUOTAS.durationGbSPerDay * 0.1);
 	});
 
 	it('does not bind regeneration, by more than 10x on the conservative arm', () => {
-		// it read 4-6x while a fill was priced at the 2,127 ms cold-bins mixture. The steady-state
-		// fill measured 308 ms at worst, deployed, so duration sits far above the rows ceiling
+		// the steady-state fill measured 308 ms at worst, deployed, so duration sits far above rows
+		// it read 4-6x while a fill was priced at 2,127 ms (the cold-bins mixture)
 		const e = envelope(DEFAULT_MIX, { windowed: true });
 		const byDuration = Math.floor(e.duration.availableGbS / e.duration.perFillGbS);
 		expect(e.regenerationBoundBy).toBe('rows');
@@ -266,12 +242,8 @@ describe('the DURATION meter, which is reported whether or not it binds', () => 
 	});
 });
 
-/**
- * Prices ALWAYS-WARM replicas only, which is one of three architectures and not the interesting one.
- *
- * An object idle and ELIGIBLE to hibernate accrues nothing, so a hibernating replica is unscored
- * here and unmeasured anywhere. A replica buys throughput, never quota: rows are account-wide.
- */
+// prices always-warm replicas only; a hibernating replica is unscored here and unmeasured anywhere
+// a replica buys throughput, never quota, because rows are account-wide
 describe('always-warm objects, which is only ONE of the replica architectures', () => {
 	it('fits exactly ONE on free, at 83% of the allowance', () => {
 		expect(FREE_QUOTAS.durationGbSPerDay / IDLE_GB_S_PER_DAY).toBeLessThan(2);
@@ -282,10 +254,7 @@ describe('always-warm objects, which is only ONE of the replica architectures', 
 		// serving still holds, because a cached view barely touches the meter
 		expect(one.servingViewsPerDay).toBe(100_000);
 
-		// and so does regeneration. This asserted that ONE replica made duration bind, which held
-		// only while a fill was priced at 2,127 ms. At the measured 308 ms the 1,940.8 GB-s left
-		// funds far more fills than rows allow, so the replica costs duration headroom and no
-		// regenerations
+		// and so does regeneration; at the measured 308 ms a fill, 1,940.8 GB-s funds more than rows allow
 		const none = envelope(DEFAULT_MIX, { windowed: true });
 		expect(one.regenerationBoundBy).toBe('rows');
 		expect(one.regenerationsPerDay).toBe(none.regenerationsPerDay);
@@ -333,20 +302,15 @@ describe('HIBERNATING replicas, which the always-warm arithmetic does not touch'
 	});
 
 	it('does NOT price the wake, and the model says so rather than implying zero', () => {
-		// an honest hole: a hibernating replica pays a wake, and on this runtime a wake means
-		// restoring or re-booting a 96 MiB interpreter. `envelope()` prices per-view work and
-		// knows nothing about a wake, so a 0 here is "not modelled", never "free"
+		// a hibernating replica pays a wake this model does not price; 0 here means not modelled
+		// a wake restores or re-boots a 96 MiB interpreter on this runtime
 		expect(fleetIdleGbS(4, 'hibernating')).toBe(0);
 		expect(fleetIdleGbS(4, 'alwaysWarm')).toBe(4 * IDLE_GB_S_PER_DAY);
 	});
 });
 
-/**
- * The PAID plan, where the free-tier conclusion inverts at small replica counts.
- *
- * Figures supplied 2026-08-23 and NOT verified by this project, which is why `paidDurationCost()`
- * returns `verified: false`: 400,000 GB-s/month included, then $12.50 per million.
- */
+// the paid plan, where the free-tier conclusion inverts at small replica counts
+// rates are not verified by this project, so paidDurationCost() returns verified: false
 describe('paid-plan duration, where "expensive" turns out to be wrong', () => {
 	it('carries the unverified flag with the number, not in a comment', () => {
 		expect(paidDurationCost(1).verified).toBe(false);
@@ -376,23 +340,14 @@ describe('paid-plan duration, where "expensive" turns out to be wrong', () => {
 	});
 
 	it('so the paid objection is throughput and consistency, never the duration bill', () => {
-		// four always-warm objects is $11.20/month. That is a line item, not a wall, which is why
-		// "replicas are expensive" was the wrong reason to refuse them on paid -- the real
-		// questions are whether they improve user-visible throughput, whether rows still bind, and
-		// how a replica stays consistent with the object that owns the data
+		// on paid, always-warm duration is a line item, not a wall; ask about throughput, rows and consistency
 		expect(paidDurationCost(4).usd).toBeCloseTo(11.59, 2);
 		expect(paidDurationCost(4).usd).toBeLessThan(20);
 	});
 });
 
-/**
- * P37: what rejecting bad traffic is worth, per meter.
- *
- * The number a WAF reports is "requests blocked" and it is the one number that does not decide
- * anything here. These cases pin the distinction that does: an in-Worker refusal still spends a
- * Worker request, so it cannot move the meter that binds serving, and only a rule evaluated before
- * the Worker runs can.
- */
+// an in-worker refusal still spends a worker request; only a rule evaluated before the worker saves one
+// a waf's "requests blocked" count decides nothing here, since serving is the meter that binds
 describe('rejecting bad traffic, scored against the meters rather than counted', () => {
 	it('saves NOTHING on the serving meter when the Worker does the rejecting', () => {
 		const saving = scoreRejection(10_000, 'worker');
@@ -417,9 +372,8 @@ describe('rejecting bad traffic, scored against the meters rather than counted',
 	});
 
 	it('shows the ROWS meter is where a scanner actually hurts', () => {
-		// a scanner asks for paths that are never cached, so every request is a MISS and a fill.
-		// 1,000 of them is 9,000 rows -- 9% of the day -- against 1% of the Worker meter. It was
-		// 13% until the serve tables became WITHOUT ROWID and a fill stopped paying an index row
+		// a scanner's misses are fills: 1,000 of them is 9,000 rows (9% of the day) against 1% of the worker meter
+		// it was 13% before the serve tables became WITHOUT ROWID
 		const saving = scoreRejection(1_000, 'edge');
 		expect(saving.savedShare.rows).toBeGreaterThan(saving.savedShare.worker * 5);
 		expect(saving.savedShare.rows).toBeCloseTo(0.08, 5);
@@ -432,41 +386,25 @@ describe('rejecting bad traffic, scored against the meters rather than counted',
 });
 
 describe('the off-Worker path, the ONLY lever on the serving ceiling', () => {
-	/**
-	 * Documented, not inferred. Cloudflare Workers pricing: **"Requests to static assets are free and
-	 * unlimited"** -- an asset request is answered without invoking the Worker at all. An R2 public
-	 * bucket on a CUSTOM domain is likewise served through Cloudflare Cache with no Worker invocation.
-	 *
-	 * Everything else in this model leaves the serving ceiling at exactly 100,000/day. This is the one
-	 * input that moves it, which is why it is the highest-value architectural question in the project.
-	 */
+	// static assets are free but cannot hold a runtime-rendered page; an r2 public bucket on a custom domain can
+	// it is the one input that moves the serving ceiling off exactly 100,000 a day
 	it('raises the ceiling 5.9x AND MOVES THE BINDING METER off Worker requests', () => {
-		// >600,000 was the expectation (100,000/0.15), and it is wrong: once serving leaves the
-		// Worker, Worker requests stop being the bottleneck. WHICH meter takes over moved with the
-		// rows correction -- ROWS at 17.2/fill, DO REQUESTS at a measured 13.2 -- so past this point
-		// the lever is the remaining DO hits, not rows per fill
+		// once serving leaves the worker, worker requests stop binding; past here the lever is the do hits
+		// after the rows correction the binding pair was rows at 17.2 per fill and do requests at 13.2
 		const base = envelope({ edgeHit: 0.85, doHit: 0.14, miss: 0.01 });
 		const off = envelope({ edgeHit: 0.85, doHit: 0.14, miss: 0.01, offWorker: 0.85 });
-		//
-		// CORRECTED AGAIN on 2026-08-14, and this time the meter itself was missing. An off-Worker
-		// visit was modelled as costing NOTHING, on the strength of "requests to static assets are
-		// free and unlimited" -- a sentence about Workers Static Assets, which are uploaded at deploy
-		// time and cannot hold a runtime-rendered page. The mechanism is R2, metered at 10M Class B
-		// reads/month, so R2 binds first and the DO ceiling below is what would take over after it.
+		// an off-worker visit is priced as r2 class b reads (10M a month), so r2 binds before the do ceiling
 		expect(base.servingBoundBy).toBe('worker');
 		expect(off.servingBoundBy).toBe('r2ClassB');
 		expect(off.perMeterViewCeiling.worker).toBe(666_666);
-		// moves with the warming subtraction, which the DO figure beside it does not: sparse meter
-		// checkpointing returned 1,344 rows a day and spends no DO request either way
+		// the rows figure moves with the warming subtraction and the do figure does not (1,344 rows a day)
 		expect(off.perMeterViewCeiling.rows).toBe(1_086_634);
 		expect(off.perMeterViewCeiling.do).toBe(524_705);
 	});
 
 	it('but trimming rows STOPS paying on the serving ceiling once DO binds', () => {
-		// this spec used to say "once rows bind, dropping dblog becomes the next lever". The rows
-		// correction falsified it in the most useful way: at 13.2 rows per fill the serving ceiling
-		// is DO-bound, so cutting rows per fill to 8 moves the rows meter and does not move the
-		// ceiling AT ALL. A lever that the binding meter does not respond to is not a lever.
+		// at 13.2 rows per fill the serving ceiling is do-bound, so cutting rows to 8 does not move it
+		// a lever the binding meter does not respond to is not a lever
 		const withDblog = envelope({ edgeHit: 0.85, doHit: 0.14, miss: 0.01, offWorker: 0.85 });
 		const without = envelope(
 			{ edgeHit: 0.85, doHit: 0.14, miss: 0.01, offWorker: 0.85 },
@@ -480,10 +418,8 @@ describe('the off-Worker path, the ONLY lever on the serving ceiling', () => {
 	});
 
 	it('serving every cached page off the Worker is R2-bound at 3.37x, not the 12.5x once claimed', () => {
-		// the full R2 architecture, priced against R2's own meter. 10M Class B reads/month is
-		// 333,333/day, so with no CDN absorption in front of the bucket this is ~3.37x the 100,000/day
-		// Worker ceiling -- NOT the 12.5x / 37.5M this project quoted for months from a sentence about
-		// a different product.
+		// 10M class b reads a month is 333,333 a day; with no cdn in front, ~3.37x the 100,000 worker ceiling
+		// the earlier 12.5x (37.5M) figure came from a sentence about a different product
 		const all = envelope(
 			{ edgeHit: 0.85, doHit: 0.14, miss: 0.01, offWorker: 0.99 },
 			{ rowsPerFill: ROWS_PER_FILL_NO_DBLOG }
@@ -494,9 +430,8 @@ describe('the off-Worker path, the ONLY lever on the serving ceiling', () => {
 	});
 
 	it('CDN absorption is the only thing that lifts it past 3.37x, and it is an assumption', () => {
-		// absorption defaults to 0 BECAUSE it has never been measured here. A caller that passes a
-		// value is stating an assumption, and the ceiling scales as 3.37x / (1 - absorption) until
-		// some other meter takes over -- which at 0.9 is rows.
+		// absorption defaults to 0 because it has never been measured; a caller passing one states an assumption
+		// the ceiling scales as 3.37x / (1 - absorption) until another meter binds, which at 0.9 is rows
 		const mix = { edgeHit: 0.85, doHit: 0.14, miss: 0.01, offWorker: 0.99 };
 		const none = envelope(mix, { rowsPerFill: ROWS_PER_FILL_NO_DBLOG });
 		const half = envelope(mix, { rowsPerFill: ROWS_PER_FILL_NO_DBLOG, cdnAbsorption: 0.5 });
@@ -529,15 +464,12 @@ describe('the off-Worker path, the ONLY lever on the serving ceiling', () => {
 	});
 
 	it('cannot move more off the Worker than there are cached views to move', () => {
-		// over-claiming off-Worker traffic would overstate the ceiling. An earlier version compared
-		// 0.99 against 0.85 and passed for the wrong reason -- 0.99 is not over-claiming when
-		// edgeHit + doHit is exactly 0.99, so the clamp never ran. 1.5 is the case that does
+		// 1.5 is the over-claim case; 0.99 equals edgeHit + doHit, so it never reaches the clamp
 		const overClaimed = envelope({ edgeHit: 0.85, doHit: 0.14, miss: 0.01, offWorker: 1.5 });
 		const everything = envelope({ edgeHit: 0.85, doHit: 0.14, miss: 0.01, offWorker: 0.99 });
 		expect(overClaimed.servingViewsPerDay).toBe(everything.servingViewsPerDay);
-		// AND PAST THE OPTIMUM IT HURTS: once R2's read meter binds, moving more off the Worker
-		// spends a 333,333/day meter to save a 100,000/day one. 0.77 peaks at 432,900 views/day and
-		// 0.99 falls back to 336,700, so the mirror should target the optimum rather than everything
+		// past the optimum it hurts: more mirroring spends a 333,333/day r2 meter to save a 100,000/day one
+		// 0.77 peaks at 432,900 views a day and 0.99 falls back to 336,700
 		const edgeOnly = envelope({ edgeHit: 0.85, doHit: 0.14, miss: 0.01, offWorker: 0.85 });
 		expect(everything.servingViewsPerDay).toBeLessThan(edgeOnly.servingViewsPerDay);
 
@@ -561,18 +493,11 @@ describe('the off-Worker path, the ONLY lever on the serving ceiling', () => {
 });
 
 describe('the fill BATCH, which the model shipped without and the code already had', () => {
-	/**
-	 * `src/site-do.ts:412` defaults `FILL_BATCH_SIZE` to 5, so one alarm firing fills five pages and
-	 * amortises both per-firing costs across them: the sliced boot, and the single row `setAlarm()`
-	 * writes. The first version of this model had neither, so it understated a ceiling the shipped code
-	 * already beat -- the same stale-metric failure the model was written to prevent, pointing the other
-	 * way. An external review caught it, not these tests, which is why they exist now.
-	 */
+	// src/site-do.ts defaults FILL_BATCH_SIZE to 5; the batch amortises the alarm re-arm row
+	// the first version of this model lacked it and understated a ceiling the shipped code already beat
 	it('barely moves the ceiling now, because rows bind at either batch size', () => {
-		// WAS 5x (495 -> 2,477) AND THAT WAS THE SLICING MODEL SPEAKING. With a firing costing one
-		// invocation the batch only amortises the alarm RE-ARM row, so it is worth 1.1x on the
-		// ceiling. It remains a latency and isolate-memory lever -- a batch is N workloads in ONE
-		// invocation, which is what reset four sites at 25 -- and those are the bounds that size it
+		// with one invocation per firing the batch only amortises the re-arm row: about 1.1x on the ceiling
+		// it still sizes latency and isolate memory: a batch is N workloads in one invocation, which reset four sites at 25
 		expect(envelope(DEFAULT_MIX, { windowed: false, fillBatch: 1 }).regenerationsPerDay).toBe(
 			9_900
 		);
@@ -580,11 +505,8 @@ describe('the fill BATCH, which the model shipped without and the code already h
 	});
 
 	it('moves the windowed path from DO-bound to ROWS-bound', () => {
-		// the finding that reorders the roadmap: boot is not the constraint on the windowed path.
-		// It survived the rows-per-fill correction (5,813 -> 7,575, rows still binding by 3.5x) and
-		// the 2026-08-26 boot correction STRENGTHENED it -- at 180 invocations per cold fill rather
-		// than 475, rows bind even UNBATCHED, so the batch no longer changes which meter binds at all.
-		// It still raises the ceiling; it no longer rescues it from a DO budget.
+		// boot is not the windowed constraint: rows bind even unbatched (5,813 to 7,575 rows per fill)
+		// the batch still raises the ceiling, but it no longer changes which meter binds
 		const unbatched = envelope(DEFAULT_MIX, { windowed: true, fillBatch: 1 });
 		const shipped = envelope(DEFAULT_MIX, { windowed: true });
 		expect(unbatched.regenerationBoundBy).toBe('rows');
@@ -608,12 +530,10 @@ describe('the fill BATCH, which the model shipped without and the code already h
 			(rows) =>
 				envelope(DEFAULT_MIX, { windowed: true, rowsPerFill: rows }).regenerationsPerDay
 		);
-		// the third meter has been DO requests, then R2 Class A, and is now duration: the first was
-		// the 180-slice model and the second charged an R2 write to a config with no bucket
+		// the binding third meter is now duration; the r2 class a term applies only when a mirror exists
 		expect(ladder[1]! / ladder[0]!).toBeGreaterThan(2);
 		expect(ladder[2]! / ladder[0]!).toBeGreaterThan(4);
-		// 2 -> 1 no longer flattens: it still gains, just less, because DURATION takes over rather
-		// than the R2 Class A term, which no longer applies to a config that writes nothing to R2
+		// 2 to 1 still gains, because the r2 class a term no longer applies to a config that writes nothing to r2
 		expect(ladder[4]!).toBeGreaterThan(ladder[3]!);
 		// duration takes over only below ~0.27 rows/fill now; it was ~1.9 at the cold-bins figure
 		expect(envelope(DEFAULT_MIX, { windowed: true, rowsPerFill: 1 }).regenerationBoundBy).toBe(
@@ -637,10 +557,8 @@ describe('the fill BATCH, which the model shipped without and the code already h
 
 describe('the THIRD meter, which neither ceiling can see', () => {
 	it('records the Cloudflare Images monthly cap', () => {
-		// 5,000 unique transformations/month on free, and it fails as a HARD CAP rather than as a bill.
-		// `CfwImageToolkit` defers every manipulation to a /cdn-cgi/image/ URL, so an image style IS a
-		// transformation: 10 styles over 2,000 images is 20,000 uniques, 4x over, and nothing else in
-		// this model would say so.
+		// free allows 5,000 unique transforms a month and fails as a hard cap, not a bill
+		// each image style is a unique transform on /cdn-cgi/image/: 10 styles over 2,000 images is 4x the cap
 		expect(FREE_QUOTAS.imageTransformsPerMonth).toBe(5_000);
 	});
 
@@ -651,15 +569,8 @@ describe('the THIRD meter, which neither ceiling can see', () => {
 });
 
 describe('Workflows on free, where the figure quoted for it was a PAID one', () => {
-	/**
-	 * Workflows IS available on the Workers Free plan, so functional equivalence holds -- free can install
-	 * a module. But the checklist's "25,000 separately-budgeted steps" is the PAID per-instance ceiling.
-	 * Free is **1,024 steps per instance** with **3,000 steps/day** across all of them, and a free
-	 * Workflow step still gets the same 10 ms of CPU as any other invocation.
-	 *
-	 * The step buys DIVISIBILITY, not CPU. That is exactly what an install needs and exactly not what
-	 * "Workflows give you five minutes" would imply.
-	 */
+	// free allows 1,024 steps per instance and 3,000 a day; 25,000 is the paid per-instance ceiling
+	// a step buys divisibility, not cpu: each still gets the same 10 ms as any invocation
 	it('does not pretend a step buys more CPU', () => {
 		expect(WORKFLOW_STEP_CPU_MS).toBe(10);
 	});
@@ -670,7 +581,7 @@ describe('Workflows on free, where the figure quoted for it was a PAID one', () 
 	});
 
 	it('an install FITS one free instance, which is what makes free equivalent here', () => {
-		// 6,810 ms of EDGE cpuTime (n=3) at 10 ms a step; read 163 from a native total, see C177
+		// 6,810 ms of edge cpuTime (n=3) at 10 ms a step
 		const v = scoreInstall();
 		expect(v.stepsPerInstall).toBe(681);
 		expect(v.fitsOneInstance).toBe(true);
@@ -683,8 +594,7 @@ describe('Workflows on free, where the figure quoted for it was a PAID one', () 
 	});
 
 	it('REFUSES to claim an install fits when it does not', () => {
-		// a hypothetical module 10x heavier: the verdict must name the per-instance limit rather than
-		// silently planning something that dies at step 1,025
+		// a module 10x heavier must be named against the per-instance limit, not planned past step 1,024
 		const heavy = scoreInstall(INSTALL_CPU_MS * 10);
 		expect(heavy.fitsOneInstance).toBe(false);
 		expect(heavy.problems.join(' ')).toContain('1024');
@@ -692,20 +602,13 @@ describe('Workflows on free, where the figure quoted for it was a PAID one', () 
 	});
 
 	it('flags that a Workflow invocation spends the SERVING quota', () => {
-		// "shared with Workers requests" -- same trap as the cron trigger, against a ceiling that is
-		// already saturated at 3M/month
+		// it shares the serving quota, the same trap as the cron trigger; serving is saturated at 3M a month
 		expect(scoreInstall().sharesServingQuota).toBe(true);
 	});
 });
 
-/**
- * The rows-per-fill default, settled rather than left open.
- *
- * The question the roadmap carried was "worst case or `realRender`?", and both answers were bad:
- * `firstEverForPath` charges every regeneration a one-time-per-path cost and understates the ceiling
- * 5x, while a bare `realRender` was defended by an argument rather than by evidence. Pricing a
- * DISTRIBUTION settles it, and the result is that the default was already right.
- */
+// the rows-per-fill default is settled by pricing a distribution of warmth classes, not one
+// firstEverForPath understates the ceiling 5x; a bare realRender rested on argument until priced
 describe('pricing a spread of warmth classes instead of picking one', () => {
 	it('weights each class by its share, using the weights AS GIVEN', () => {
 		expect(rowsForWarmthMix({ realRender: 1 })).toBe(ROWS_PER_FILL.realRender);
@@ -741,21 +644,13 @@ describe('pricing a spread of warmth classes instead of picking one', () => {
 });
 
 describe('THE ANSWER: the realRender default is CONSERVATIVE once the classes are re-measured', () => {
-	/**
-	 * It used to land within 1% of the mix, and that was an artifact of a stale constant.
-	 *
-	 * `firstEverForPath` stood at 62 and re-measures at 24 (n=3, zero spread,
-	 * `tests/integration/rows-per-fill-audit.spec.ts`). With the real figure the expensive tail is
-	 * far cheaper than modelled, so the cheap reassembles no longer cancel it: the mix is 10.10
-	 * against a 12 default. The default still ships, because charging MORE than reality is the safe
-	 * direction for a ceiling, but it is a conservative choice now rather than a neutral one.
-	 */
+	// the mix prices below the single-class default because the cold tail got cheaper
+	// firstEverForPath stood at 62 and re-measures at 24 (n=3); the mix is 10.10 against a 12 default
 	it('prices the mix BELOW the single-class default, because the cold tail got cheaper', () => {
 		const mixed = rowsForWarmthMix(STEADY_STATE_WARMTH);
 		const single = ROWS_PER_FILL.realRender;
 		expect(mixed).toBeLessThan(single);
-		// the direction is the claim; the band is wide enough to survive a pack that moves the
-		// tail again, and narrow enough that a return to the 62-era reading fails here
+		// the direction is the claim; the band survives a pack that moves the tail, and fails on a return to 62
 		expect((single - mixed) / single).toBeGreaterThan(0.05);
 		expect((single - mixed) / single).toBeLessThan(0.35);
 	});
@@ -767,22 +662,19 @@ describe('THE ANSWER: the realRender default is CONSERVATIVE once the classes ar
 			warmthMix: STEADY_STATE_WARMTH
 		}).regenerationsPerDay;
 		expect(base).toBe(10_866);
-		// the real steady state regenerates MORE than the quoted figure, so the number in the docs
-		// is a floor. A ceiling that is too high is the dangerous direction
+		// the steady state regenerates more than the quoted figure, so the docs number is a floor
 		expect(mixed).toBeGreaterThan(base);
 	});
 
 	it('shows the WORST case still understates the ceiling, now by about 1.9x', () => {
 		const real = envelope(DEFAULT_MIX, { windowed: true, warmth: 'realRender' });
 		const worst = envelope(DEFAULT_MIX, { windowed: true, warmth: 'firstEverForPath' });
-		// it was 4x when `firstEverForPath` was 62; charging every regeneration a once-per-path
-		// cost is still wrong, just less wrong than the stale constant made it look
+		// charging every regeneration a once-per-path cost still understates the ceiling, by about 1.9x
 		expect(real.regenerationsPerDay / worst.regenerationsPerDay).toBeGreaterThan(1.5);
 	});
 
 	it('keeps the once-per-object fill out of any per-day mix', () => {
-		// `firstFillOnFreshObject` is 157 rows paid once in an object's life. It is a class so the
-		// fleet model can charge it per SITE, and it must never enter a per-day rate
+		// firstFillOnFreshObject is 157 rows, paid once per object; the fleet model charges it per site, never per day
 		expect(ROWS_PER_FILL.firstFillOnFreshObject).toBeGreaterThan(
 			ROWS_PER_FILL.firstEverForPath
 		);
@@ -812,15 +704,8 @@ describe('THE ANSWER: the realRender default is CONSERVATIVE once the classes ar
 	});
 });
 
-/**
- * The mirror share, computed rather than quoted.
- *
- * RULE 0b says the off-Worker lever has a MAXIMUM and not a limit: past the crossing point, moving a
- * view off the Worker spends R2's 333,333/day read meter to save the 100,000/day Worker meter, so
- * mirroring more makes the site smaller. Two figures were carried as constants in the report and in
- * `page-mirror.ts` for months; `optimalOffWorker()` now derives them from the same `envelope()` every
- * other caller uses, which is what stops the two drifting apart.
- */
+// the off-worker lever has a maximum: past the crossing, mirroring more spends r2 reads to save worker requests
+// optimalOffWorker() derives the share from envelope(), so the report and page-mirror.ts cannot drift apart
 describe('the optimal mirror share', () => {
 	it('reproduces the 77% / 432,900 the report quotes, from the model rather than a constant', () => {
 		const o = optimalOffWorker();
@@ -850,13 +735,8 @@ describe('the optimal mirror share', () => {
 		expect(o.share).toBeLessThanOrEqual(DEFAULT_MIX.edgeHit + DEFAULT_MIX.doHit);
 	});
 
-	/**
-	 * CDN absorption raises the peak and does NOT walk the answer to "mirror everything".
-	 *
-	 * At absorption 1 the R2 read meter cannot bind at all, and the ceiling still lands on another
-	 * meter -- rows -- so past that share mirroring buys nothing and still costs writes. Anyone
-	 * reasoning "if R2 reads were free we would mirror the lot" is wrong, and this is why.
-	 */
+	// cdn absorption raises the peak but does not make mirroring everything the answer
+	// at absorption 1 the ceiling lands on rows, so past that share mirroring buys nothing
 	it('moves with cdnAbsorption, and the ceiling lands on another meter rather than vanishing', () => {
 		const none = optimalOffWorker();
 		const half = optimalOffWorker(undefined, { cdnAbsorption: 0.5 });
@@ -882,16 +762,11 @@ describe('the optimal mirror share', () => {
 });
 
 describe('the keep-warm chain, priced across a FLEET rather than one site', () => {
-	/**
-	 * A firing charges one row for its `setAlarm` and the daily meters charge one more whenever
-	 * their checkpoint is due. The checkpoint is no longer a flat 60 s, so at 240 s the arms
-	 * outnumber the flushes rather than matching them one for one.
-	 */
+	// a firing writes one setAlarm row; the meter flush has its own clock, so at 240 s arms outnumber flushes
 	it('costs 360 arms a day per site and one flush per 96 of them', () => {
 		const one = keepWarmFleetCost(1);
 		expect(one.armsPerSitePerDay).toBe(360);
-		// 360 setAlarm rows + 96 packed meter rows. It was 720 while the checkpoint fired every
-		// 60 s, and 1,080 before the four daily counters stopped taking a `cfw_meta` key each
+		// 360 setAlarm rows + 96 packed meter rows (720 at a 60 s checkpoint; 1,080 before that)
 		expect(one.rowsPerDay).toBe(456);
 		expect(one.rowShare).toBeCloseTo(0.00456, 6);
 	});
@@ -899,8 +774,7 @@ describe('the keep-warm chain, priced across a FLEET rather than one site', () =
 	it('spends TWO account-wide meters, not one', () => {
 		const fleet = keepWarmFleetCost(100);
 		expect(fleet.rowsPerDay).toBe(45_600);
-		// the DO request quota "includes alarm invocations", so the same 360 arms are charged
-		// twice over -- the model had a line for neither
+		// the do request quota includes alarm invocations, so the same 360 arms are charged twice
 		expect(fleet.doRequestsPerDay).toBe(36_000);
 		expect(fleet.rowShare).toBeCloseTo(0.456, 6);
 		expect(fleet.doRequestShare).toBeCloseTo(0.36, 6);
@@ -908,36 +782,25 @@ describe('the keep-warm chain, priced across a FLEET rather than one site', () =
 
 	/** rows bind before requests, which is what makes the meter flush worth its own term */
 	it('saturates a free account at 219 sites with ZERO visitors', () => {
-		// 92 while the flush cost two rows, 138 once it cost one, 219 once it stopped firing every
-		// minute. Still rows rather than requests, which is what makes the flush worth its own term
+		// 219 sites saturate a free account with zero visitors; earlier flush costs gave 92 and 138
 		expect(keepWarmFleetCost(1).saturatingSites).toBe(219);
 		const saturated = keepWarmFleetCost(219);
 		expect(saturated.rowShare).toBeLessThanOrEqual(1);
 		expect(keepWarmFleetCost(220).rowsPerDay).toBeGreaterThan(FREE_QUOTAS.rowsWrittenPerDay);
 	});
 
-	/**
-	 * The interval that keeps an object resident, which is the one that ships when `SITE_WARM` is
-	 * on. The flush is amortised here rather than charged per firing, which is the whole saving.
-	 */
+	// the 8 s interval that ships under SITE_WARM; the flush is amortised here, not charged per firing
 	it('amortises the meter flush at the 8 s warming interval', () => {
 		const warm = keepWarmFleetCost(1, 8_000);
 		expect(warm.armsPerSitePerDay).toBe(10_800);
-		// 10,800 setAlarm rows + 96 flushes x 1, and this is the figure `envelope()` subtracts
-		// before dividing. It was 12,240 at 1,440 flushes and 13,680 while a flush cost two rows
+		// 10,800 setAlarm rows + 96 flushes; envelope() subtracts this before dividing (12,240 and 13,680 before)
 		expect(warm.rowsPerDay).toBe(10_896);
 		expect(warm.rowShare).toBeCloseTo(0.10896, 4);
 		expect(warm.doRequestShare).toBeCloseTo(0.108, 4);
 	});
 
-	/**
-	 * The published ceiling was the ceiling of a site that does not keep itself resident.
-	 *
-	 * `warmForced()` warms an unset paid site, so warming is the paid default and spends 10,896 rows and 10,800 DO requests a day before a visitor arrives -- and `envelope()`
-	 * divided the whole 100,000 as though none of that had been spent. `thermal.ts` declines to warm
-	 * a site below ~505 renders/day, but a site AT the regeneration ceiling is far above that
-	 * crossing by construction, which is what makes the subtraction right here specifically.
-	 */
+	// the published ceiling assumed a site that does not stay resident; an unset paid site warms at 8 s
+	// it spends 10,896 rows and 10,800 do requests a day first; a site at the ceiling is far above the ~505 crossing
 	it('is subtracted from the budget the regeneration ceiling divides', () => {
 		const warmed = envelope(DEFAULT_MIX, { windowed: true });
 		const unwarmed = envelope(DEFAULT_MIX, { windowed: true, warmed: false });
@@ -961,16 +824,8 @@ describe('the keep-warm chain, priced across a FLEET rather than one site', () =
 		expect(slower.regenerationsPerDay).toBeGreaterThan(shipped.regenerationsPerDay);
 	});
 
-	/**
-	 * THE ARM TERM SCALES WITH THE INTERVAL AND THE METER TERM DOES NOT, which is the whole reason
-	 * the two are modelled separately.
-	 *
-	 * This asserted `halved.rowsPerDay === shipping.rowsPerDay / 2` and passed, because at 240 s and
-	 * 480 s the checkpoint was capped by the FIRINGS -- 360 arms could not flush 1,440 times, so
-	 * both terms halved together and the model's own docblock about two clocks was unobservable.
-	 * With the checkpoint on a 900 s interval it is capped by its own clock at both intervals, so
-	 * halving the arms leaves the meter term untouched and the total falls by less than half.
-	 */
+	// the arm term scales with the interval and the meter term does not, so the two are modelled separately
+	// the checkpoint has its own 900 s clock, so halving the arms leaves the meter term untouched
 	it('halves only the arm term, because the checkpoint is on its own clock', () => {
 		const shipping = keepWarmFleetCost(100, KEEP_WARM_MS);
 		const halved = keepWarmFleetCost(100, KEEP_WARM_MS * 2);
@@ -1012,17 +867,13 @@ describe('the duration meter, calibrated on a deployed object', () => {
 });
 
 describe('a queue-backed fill, which is the lever Queues going free reopened', () => {
-	/**
-	 * Cloudflare bills a message THREE times -- one write, one read, one delete -- so the 10,000
-	 * daily operations are 3,333 deliverable messages and not 10,000.
-	 */
+	// cloudflare bills a message three times (write, read, delete), so 10,000 operations are 3,333 messages
 	it('divides the operation quota by the three operations a message costs', () => {
 		expect(FREE_QUOTAS.queueOperationsPerMessage).toBe(3);
 		expect(queueArm().messagesPerDay).toBe(3_333);
 	});
 
-	// priced under ONE batching assumption. Billing a message per PAGE while crediting the alarm
-	// arm a batch of five is what made queue ops look binding; symmetrically they never are
+	// priced under one batching assumption; per-page billing against a batched alarm arm made queue ops look binding
 	it('carries a batch per message, so the message quota is not the binding meter', () => {
 		const arm = queueArm(undefined, { windowed: true });
 		expect(arm.pathsPerMessage).toBe(5);
@@ -1031,8 +882,7 @@ describe('a queue-backed fill, which is the lever Queues going free reopened', (
 		expect(arm.queueBoundBy).not.toBe('queueOps');
 	});
 
-	// what a queue removes is the alarm RE-ARM row, amortised as `1/batch` and not a whole one, so
-	// the refutation survives on a new mechanism: close to free, and close to worthless
+	// a queue removes the amortised alarm re-arm row (1/batch of a row): close to free, close to worthless
 	it('moves the windowed ceiling by about 1.5%, not by 2.27x in either direction', () => {
 		const arm = queueArm(undefined, { windowed: true });
 		expect(arm.alarmRegenerationsPerDay).toBe(10_866);
@@ -1042,23 +892,15 @@ describe('a queue-backed fill, which is the lever Queues going free reopened', (
 
 	// and the cold arm now behaves like the windowed one, for the reason the two converged
 	it('buys the same ~2.5% on the cold arm, because both paths are rows-bound now', () => {
-		// IT USED TO BUY EXACTLY NOTHING HERE, and that was DO requests binding under the
-		// 180-slice model. With a firing costing one invocation both paths are rows-bound, so the
-		// queue's only effect either way is dropping the amortised alarm re-arm row. The refutation
-		// is unchanged and is now uniform: a queue ADDS a meter and replaces none
+		// both paths are rows-bound, so a queue only drops the amortised re-arm row; it adds a meter and replaces none
 		const arm = queueArm();
 		expect(arm.queueRegenerationsPerDay).toBeGreaterThan(arm.alarmRegenerationsPerDay);
 		expect(arm.ratio).toBeGreaterThan(1);
 		expect(arm.ratio).toBeLessThan(1.05);
 	});
 
-	/**
-	 * A queue ADDS a meter and replaces none, which is RULE 0b's decomposition trap.
-	 *
-	 * Every fill still needs its DO invocations; the consumer is Worker requests on top, taken off
-	 * the serving ceiling. Batching cuts that from one per fill to one per MESSAGE, which is the
-	 * half of the old refutation that the symmetric pricing improves rather than inverts.
-	 */
+	// a queue adds worker requests on top of the do requests a fill still needs
+	// batching cuts those from one per fill to one per message
 	it('spends Worker requests on top of the DO requests the fill still needs', () => {
 		const arm = queueArm(undefined, { windowed: true });
 		expect(arm.workerRequestsPerDay).toBe(Math.ceil(arm.queueRegenerationsPerDay / 5));
@@ -1070,22 +912,17 @@ describe('a queue-backed fill, which is the lever Queues going free reopened', (
 // the sixth meter, and the only one that is not a daily rate: it answers "how many sites"
 describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', () => {
 	it('is bound by the snapshot rather than by the database', () => {
-		// over 5x the seed before the packed `cache_container` row was fixed and 2.26x after: the
-		// image fell 36,569,088 -> 10,420,224 once the first boot stopped rebuilding a 482 KB
-		// container. The snapshot still dominates, by a fraction of the margin it used to
+		// over 5x the seed before the packed cache_container row was fixed, 2.26x after (36,569,088 to 10,420,224 bytes)
+		// the snapshot still dominates, by less than it did
 		expect(SITE_STORAGE_BYTES.heapSnapshot).toBeGreaterThan(SITE_STORAGE_BYTES.seed * 2);
 	});
 
-	// the arms differ by ~1.7x once the image is packed, so HEAP_SNAPSHOT is still a fleet-size
-	// decision and no longer a 3.3x one. THE DEFAULT IS PACKED, because packed is what ships
+	// the arms differ ~1.7x once the image is packed (was 3.3x); the default is packed because packed ships
 	it('charges the packed image by default, since that is what a site stores', () => {
 		const on = storageCeiling(true);
 		const off = storageCeiling(false);
 		expect(on.packed).toBe(true);
-		// NOT PINNED TO A COUNT. Both numbers are 5 GB / (seed + heap), so asserting them restates
-		// the arithmetic and breaks whenever the packed module grows a page -- which it did,
-		// 122 -> 121, for five kilobytes of PHP that changed nothing about the model. The formula
-		// is what this guards
+		// the formula is pinned, not the count: a page of packed PHP moves the count (122 to 121 pages)
 		const expected = (heap: number) =>
 			Math.floor(FREE_QUOTAS.storageBytes / (SITE_STORAGE_BYTES.seed + heap));
 		expect(on.sitesPerAccount).toBe(expected(SITE_STORAGE_BYTES.packedHeapSnapshot));
@@ -1095,9 +932,8 @@ describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', ()
 		expect(off.sitesPerAccount).toBeGreaterThan(on.sitesPerAccount);
 	});
 
-	// the codec bounds an OPT-IN cost. `HEAP_IMAGE` is off by default because a deployed A/B read
-	// the restore at 1,912 ms of cpuTime (n=5) against 1,264 booting from the pack (n=4), so the
-	// image costs storage and CPU and buys neither. This asserts the direction and no magnitude
+	// HEAP_IMAGE is off by default: a deployed A/B read the restore at 1,912 ms cpu against 1,264 booting
+	// the test asserts the direction only, not the magnitude
 	it('holds more tenants when a stored image is packed than when it is not', () => {
 		const raw = storageCeiling(true, 0, false);
 		const packed = storageCeiling(true, 0, true);
@@ -1107,17 +943,8 @@ describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', ()
 		expect(packed.sitesPerAccount / raw.sitesPerAccount).toBeLessThan(HEAP_PACK_RATIO);
 	});
 
-	/**
-	 * The trim, and it carries TWO readings because it was measured on two different packs.
-	 *
-	 * On the traced-list pack the bins ship populated from a traced run, the render rebuilds them
-	 * larger than the copy that was dropped, and the saving goes negative -- a sign change rather
-	 * than a size, which is what refuted it. On the 11.4.6 from-source pack the bins are built by
-	 * `install-site-db.php`, so what a trim removes is smaller and the sign does not change.
-	 *
-	 * Both stay on the record. Asserting only the live verdict would erase the measurement that
-	 * closed the mechanism, and asserting only the old one would pin a reading this pack contradicts.
-	 */
+	// the seed cache trim was measured on two packs: a sign flip on the traced-list pack, a saving on the from-source one
+	// both readings stay on record, since asserting one alone would erase the refuting measurement
 	it('records both packs the seed cache trim was measured on', () => {
 		// the traced-list pack: saves at provisioning, gives more than all of it back on the render
 		expect(SEED_CACHE_TRIM.savedAtProvisioning).toBeGreaterThan(0);
@@ -1148,8 +975,8 @@ describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', ()
 		});
 
 		it('holds more sites without an image than with one', () => {
-			// DERIVED from the imaged ceiling rather than a chosen count: one site past it must not
-			// fit with an image and must fit without, whatever the pack currently measures
+			// derived from the imaged ceiling, not a chosen count: one site past it must not fit with an image
+			// and must fit without, whatever the pack measures
 			const past = storageCeiling(true).sitesPerAccount + 1;
 			expect(fleetStorage(past, { heapSnapshot: true }).fits).toBe(false);
 			expect(fleetStorage(past, { heapSnapshot: false }).fits).toBe(true);
@@ -1161,10 +988,8 @@ describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', ()
 		});
 	});
 
-	// a CONTROL against the figure this was mis-derived from: 23,724,032 came off an object that
-	// had never migrated. IT USED TO BE 1.53x LOW AND IS NOW HIGH, because the container fix
-	// inverted which arm is bigger -- a bare object has no database to read the packed container
-	// from, so it is the one that builds one. Quoting it would now understate the fleet.
+	// 23,724,032 came from an unmigrated object, which now builds a container and reads high
+	// quoting it would understate the fleet; the bare-object figure is not a site's storage
 	it('uses the provisioned snapshot size, not the bare-object one', () => {
 		expect(SITE_STORAGE_BYTES.heapSnapshot).not.toBe(23_724_032);
 		expect(storageCeiling(true).sitesPerAccount).toBeGreaterThan(
@@ -1178,7 +1003,7 @@ describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', ()
 		expect(withContent.sitesPerAccount).toBeLessThan(bare.sitesPerAccount);
 	});
 
-	// reported beside the verdict rather than folded into it: the rate ceilings score ONE site
+	// reported beside the verdict rather than folded into it; the rate ceilings score one site
 	it('rides on the verdict without changing it', () => {
 		const v = scoreWorkload(3_000_000, 0.01);
 		expect(v.storage.withSnapshot.sitesPerAccount).toBe(storageCeiling(true).sitesPerAccount);
@@ -1223,13 +1048,8 @@ describe('what a cold url costs its first visitor', () => {
 	});
 });
 
-/**
- * The row quota is a WRITE budget, and the model priced only one of the three claimants on it.
- *
- * `regenerationsPerDay` was quoted as "distinct pages per day on the free plan" while dividing a
- * budget that an editor also spends. A node revision is 218 charged rows, so 50 a day is more than
- * the whole warming chain -- and nothing in the model knew.
- */
+// the row quota is a write budget that an editor also spends; a node revision is 218 charged rows
+// so 50 revisions a day outweighed the whole warming chain, and the model did not know it
 describe('the daily row quota, split by what spends it', () => {
 	it('adds up, so the split is a decomposition rather than four separate figures', () => {
 		const w = envelope(DEFAULT_MIX, { windowed: true }).writeBudget;
@@ -1237,12 +1057,8 @@ describe('the daily row quota, split by what spends it', () => {
 		expect(w.quotaRows).toBe(FREE_QUOTAS.rowsWrittenPerDay);
 	});
 
-	/**
-	 * DEFAULTS TO NOTHING, which is the one thing that keeps this honest.
-	 *
-	 * No real site's editorial rate has been measured here, so a default would be a plausible
-	 * number attached to a real model. A caller who knows their rate passes it.
-	 */
+	// no real site's editorial rate is measured here, so the default is zero
+	// a caller who knows the rate passes it
 	it('prices no editing until a caller states a rate', () => {
 		expect(envelope(DEFAULT_MIX, { windowed: true }).writeBudget.editorialRows).toBe(0);
 		expect(editorialRowsPerDay()).toBe(0);
@@ -1259,13 +1075,8 @@ describe('the daily row quota, split by what spends it', () => {
 		expect(ROWS_PER_WRITE.nodeRevision).toBeGreaterThan(2 * ROWS_PER_WRITE.userCreate);
 	});
 
-	/**
-	 * An editorial day is priced against the same meter as the fills.
-	 *
-	 * At 218 rows a revision, fifty a day outweighed the warming chain. The narrowed replay took a
-	 * revision to 53 and dropping three unread indexes to 47, so fifty is 2,350 rows, under a
-	 * quarter of the chain.
-	 */
+	// editorial writes spend the same row budget as fills
+	// the narrowed replay took a revision to 53 rows, so fifty is 2,350 rows, under a quarter of the chain
 	it('takes a busy editorial day off the regeneration ceiling', () => {
 		const quiet = envelope(DEFAULT_MIX, { windowed: true });
 		const busy = envelope(DEFAULT_MIX, { windowed: true, editorial: { nodeRevision: 50 } });
@@ -1281,5 +1092,125 @@ describe('the daily row quota, split by what spends it', () => {
 
 	it('ignores a negative rate rather than crediting rows back', () => {
 		expect(editorialRowsPerDay({ nodeCreate: -5 })).toBe(0);
+	});
+});
+
+// the assets arm and the R2 arm, under the observed no-billing case and the Workers Cache exception
+describe('the off-Worker arms', () => {
+	const mirrorable = DEFAULT_MIX.edgeHit + DEFAULT_MIX.doHit;
+	const warmingDo = keepWarmFleetCost(1, WARM_INTERVAL_MS).doRequestsPerDay;
+
+	it('lifts the Worker meter off the assets arm and lands on DO requests when assets are not billed', () => {
+		const a = offWorkerArm('assets', 'notBilled');
+		expect(a.todayViewsPerDay).toBe(FREE_QUOTAS.workerRequestsPerDay);
+		expect(a.boundBy).toBe('do');
+		const doPerView = DEFAULT_MIX.miss * COST_PER_VIEW.missAndFill.do;
+		expect(a.viewsPerDay).toBe(
+			Math.floor((FREE_QUOTAS.doRequestsPerDay - warmingDo) / doPerView)
+		);
+		expect(a.viewsPerDay).toBeGreaterThan(20 * a.todayViewsPerDay);
+	});
+
+	it('leaves regeneration at the shipping default, because a published page reads no R2 object', () => {
+		const a = offWorkerArm('assets', 'notBilled');
+		const shipping = envelope(DEFAULT_MIX, { rowsPerFill: SHIPPING_ROWS_PER_FILL });
+		expect(a.regenerationsPerDay).toBe(shipping.regenerationsPerDay);
+		expect(a.regenerationBoundBy).toBe('rows');
+	});
+
+	it('moves with the share it is given and never past the cacheable share', () => {
+		const half = offWorkerArm('assets', 'notBilled', { share: 0.5 });
+		expect(half.viewsPerDay).toBe(2 * FREE_QUOTAS.workerRequestsPerDay);
+		expect(half.boundBy).toBe('worker');
+		expect(offWorkerArm('assets', 'notBilled', { share: 5 }).share).toBe(mirrorable);
+	});
+
+	it('caps the R2 arm on Class B reads, and regeneration on Class A writes', () => {
+		const r = offWorkerArm('r2', 'notBilled');
+		const perDay = (perMonth: number) => Math.floor(perMonth / 30);
+		expect(r.boundBy).toBe('r2ClassB');
+		expect(r.viewsPerDay).toBe(Math.floor(FREE_QUOTAS.r2ClassBPerMonth / 30 / mirrorable));
+		expect(r.viewsPerDay).toBe(optimalOffWorker().atFullMirror.viewsPerDay);
+		expect(r.regenerationBoundBy).toBe('r2ClassA');
+		expect(r.regenerationsPerDay).toBe(perDay(FREE_QUOTAS.r2ClassAPerMonth));
+		// mirroring costs regeneration: the same site with no mirror regenerates more
+		expect(r.regenerationsPerDay).toBeLessThan(
+			envelope(DEFAULT_MIX, { rowsPerFill: SHIPPING_ROWS_PER_FILL }).regenerationsPerDay
+		);
+	});
+
+	it('is worth about eight times the reads when a Cache Rule absorbs seven in eight', () => {
+		const plain = offWorkerArm('r2', 'notBilled');
+		const ruled = offWorkerArm('r2', 'notBilled', { cdnAbsorption: 7 / 8 });
+		expect(ruled.viewsPerDay / plain.viewsPerDay).toBeCloseTo(8, 0);
+		expect(ruled.boundBy).toBe('r2ClassB');
+	});
+
+	it('gives neither arm relief under the Workers Cache exception', () => {
+		const assets = offWorkerArm('assets', 'billedAsWorker');
+		const r2 = offWorkerArm('r2', 'billedAsWorker');
+		const ceiling = Math.floor(FREE_QUOTAS.workerRequestsPerDay / REQUESTS_PER_PAGE_LOAD);
+		expect(assets.todayViewsPerDay).toBe(ceiling);
+		expect(assets.viewsPerDay).toBe(ceiling);
+		expect(assets.workerPerView).toBe(REQUESTS_PER_PAGE_LOAD);
+		// an R2 page is the one request that never reaches the Worker, so it saves one of 66
+		expect(r2.workerPerView).toBeCloseTo(REQUESTS_PER_PAGE_LOAD - mirrorable, 10);
+		expect(r2.viewsPerDay).toBeLessThan(ceiling * 1.02);
+		expect(r2.boundBy).toBe('worker');
+	});
+
+	it('prices the same pages as today under notBilled, so the baseline is the shipping ceiling', () => {
+		for (const via of ['assets', 'r2'] as const) {
+			expect(offWorkerArm(via, 'notBilled').todayViewsPerDay).toBe(
+				envelope(DEFAULT_MIX, { rowsPerFill: SHIPPING_ROWS_PER_FILL }).servingViewsPerDay
+			);
+		}
+	});
+
+	it('keeps the publish budget to the slowest measured deploy and the debounce', () => {
+		const fast = assetPublishBudget(Infinity, 1);
+		expect(fast.serialCap).toBe(Math.floor(SECONDS_PER_DAY / ASSET_PUBLISH.deploySeconds.max));
+		expect(fast.publishesPerDay).toBe(fast.serialCap);
+		const slow = assetPublishBudget(Infinity, 60);
+		expect(slow.byDebounce).toBe(1_440);
+		expect(slow.publishesPerDay).toBe(1_440);
+		expect(assetPublishBudget(5, 60).publishesPerDay).toBe(5);
+		expect(assetPublishBudget(-3, 60).publishesPerDay).toBe(0);
+	});
+
+	it('shows a save the debounce plus the measured time to visibility', () => {
+		const w = assetPublishBudget(5, 60).staleSeconds;
+		expect(w.min).toBe(60 + ASSET_PUBLISH.visibleSeconds.min);
+		expect(w.max).toBe(60 + ASSET_PUBLISH.visibleSeconds.max);
+	});
+
+	it('leaves room for pages beside the pack in one Worker version, and no DO storage', () => {
+		expect(ASSET_PAGE_HEADROOM.free).toBe(
+			ASSET_PUBLISH.filesPerVersion.free - ASSET_PUBLISH.packFiles
+		);
+		expect(ASSET_PAGE_HEADROOM.paid).toBeGreaterThan(ASSET_PAGE_HEADROOM.free);
+		// the republish evidence is small and the model says so by carrying n
+		expect(ASSET_PUBLISH.completed).toBe(4);
+		expect(ASSET_PUBLISH.resets).toBe(0);
+	});
+});
+
+// the meter flush runs on a clock that depends on how much of the day's budget is left
+describe('the meter flush interval', () => {
+	it('is 900 s on an idle day and 60 s once the budget is spent', () => {
+		expect(METER_FLUSH_SECONDS).toBe(900);
+		expect(METER_FLUSH_SECONDS_UNDER_LOAD).toBe(60);
+	});
+
+	it('moves warming from 10,896 rows a site-day to 12,240 at the heavy-use interval', () => {
+		const idle = keepWarmFleetCost(1, WARM_INTERVAL_MS);
+		const loaded = keepWarmFleetCost(1, WARM_INTERVAL_MS, METER_FLUSH_SECONDS_UNDER_LOAD);
+		expect(idle.rowsPerDay).toBe(10_896);
+		expect(loaded.rowsPerDay).toBe(12_240);
+		expect(loaded.rowsPerDay - idle.rowsPerDay).toBe(
+			(SECONDS_PER_DAY / METER_FLUSH_SECONDS_UNDER_LOAD -
+				SECONDS_PER_DAY / METER_FLUSH_SECONDS) *
+				FREE_QUOTAS.rowsPerMeterFlush
+		);
 	});
 });

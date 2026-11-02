@@ -173,6 +173,18 @@ export function pairedRatios(control: number[], treatment: number[]): number[] {
 	});
 }
 
+/** Blocks present on both sides, in block order, as two arrays for {@link pairedRatios}. */
+export function pairByBlock(
+	control: Map<number, number>,
+	treatment: Map<number, number>
+): { control: number[]; treatment: number[] } {
+	const blocks = [...control.keys()].filter((b) => treatment.has(b)).sort((a, b) => a - b);
+	return {
+		control: blocks.map((b) => control.get(b) as number),
+		treatment: blocks.map((b) => treatment.get(b) as number)
+	};
+}
+
 /** Median of the ratios with a percentile bootstrap interval on it. */
 export function bootstrapMedianRatio(
 	ratios: number[],
@@ -236,6 +248,157 @@ export function floorBound(
 	if (!(nullResponderMj >= 0)) throw new Error(`null responder energy is ${nullResponderMj}`);
 	const minRatio = nullResponderMj / controlMj;
 	return { share: minRatio, minRatio, canShow: (threshold) => minRatio < threshold };
+}
+
+/** null workerd over null nginx at or under this opens a cached-tier lever; 130 mJ is 0.75 x 176 */
+export const FLOOR_OPEN = 0.75;
+
+/** at or over this the cached tier cannot go below the nginx hit; 170-180 mJ is 0.97-1.02 x 176 */
+export const FLOOR_CLOSED = 0.97;
+
+export type FloorVerdict = 'open' | 'between' | 'closed' | 'insufficient';
+
+/**
+ * The floor ladder's verdict on one rung, from per-block ratios of null workerd over null nginx.
+ *
+ * Open needs the upper bound under {@link FLOOR_OPEN}, closed needs the lower bound over
+ * {@link FLOOR_CLOSED}, so a median alone never decides either. Under `minBlocks` is insufficient.
+ */
+export function floorVerdict(
+	ratios: number[],
+	opts: { minBlocks?: number; seed?: number } = {}
+): { verdict: FloorVerdict; median: number; lo: number; hi: number; n: number } {
+	const ci = bootstrapMedianRatio(ratios, { seed: opts.seed });
+	const verdict: FloorVerdict =
+		ci.n < (opts.minBlocks ?? 10)
+			? 'insufficient'
+			: ci.hi <= FLOOR_OPEN
+				? 'open'
+				: ci.lo >= FLOOR_CLOSED
+					? 'closed'
+					: 'between';
+	return { verdict, ...ci };
+}
+
+/** one verdict for the ladder: a verdict only when every rung gives it, insufficient if any rung is */
+export function floorOverall(verdicts: FloorVerdict[]): FloorVerdict {
+	if (verdicts.length === 0 || verdicts.includes('insufficient')) return 'insufficient';
+	const first = verdicts[0] as FloorVerdict;
+	return verdicts.every((v) => v === first) ? first : 'between';
+}
+
+export type FloorRow = {
+	round: number;
+	rate: number;
+	arm: string;
+	pkgJ: number;
+	elapsedMs: number;
+	views: number;
+};
+
+export type FloorRung = {
+	rate: number;
+	verdict: FloorVerdict;
+	median: number;
+	lo: number;
+	hi: number;
+	n: number;
+	/** blocks dropped because either side read at or under idle once idle was subtracted */
+	unreadable: number;
+	controlMj: number;
+	treatmentMj: number;
+};
+
+/**
+ * The floor ladder over windows already screened for discards: per rung, idle-subtracted J per
+ * request for each arm, paired by round, treatment over control.
+ *
+ * A block where either arm costs no more than idle has no ratio, so it is dropped and counted. At a
+ * low rate that is the meter's resolution speaking, and the rung then reads insufficient.
+ */
+export function floorLadder(
+	rows: FloorRow[],
+	idleW: number,
+	control = 'nginx-null',
+	treatment = 'wd-null',
+	planned: number[] = []
+): FloorRung[] {
+	const rates = [...new Set([...planned, ...rows.map((r) => r.rate)])].sort((a, b) => a - b);
+	const perBlock = (rate: number, arm: string) =>
+		new Map(
+			rows
+				.filter((r) => r.rate === rate && r.arm === arm)
+				.flatMap((r) => {
+					const j = jPerView({
+						windowJ: r.pkgJ,
+						elapsedS: r.elapsedMs / 1000,
+						idleW,
+						views: r.views
+					});
+					return j === null ? [] : [[r.round, j.subtracted] as const];
+				})
+		);
+	return rates.map((rate) => {
+		const c = perBlock(rate, control);
+		const t = perBlock(rate, treatment);
+		const both = pairByBlock(c, t);
+		const keep = both.control.map((x, i) => x > 0 && (both.treatment[i] as number) > 0);
+		const cs = both.control.filter((_, i) => keep[i]);
+		const ts = both.treatment.filter((_, i) => keep[i]);
+		const v =
+			cs.length === 0
+				? { verdict: 'insufficient' as const, median: 0, lo: 0, hi: 0, n: 0 }
+				: floorVerdict(pairedRatios(cs, ts));
+		return {
+			rate,
+			...v,
+			unreadable: keep.filter((k) => !k).length,
+			controlMj: median(cs) * 1000,
+			treatmentMj: median(ts) * 1000
+		};
+	});
+}
+
+/** one arm's reply to the same URL, reduced to what two floor arms must agree on */
+export type BodyReading = {
+	arm: string;
+	status: number;
+	type: string | null;
+	bytes: number;
+	sha: string;
+};
+
+/** whether every floor arm returned the same status, type, length and bytes, and the expected length */
+export function bodiesAgree(
+	rows: BodyReading[],
+	expectBytes?: number
+): { ok: boolean; problems: string[] } {
+	const problems: string[] = [];
+	const first = rows[0];
+	if (first === undefined) return { ok: false, problems: ['no readings'] };
+	for (const r of rows) {
+		if (r.status !== 200) problems.push(`${r.arm} answered ${r.status}`);
+		if (r.type !== first.type) problems.push(`${r.arm} type ${r.type} against ${first.type}`);
+		if (r.bytes !== first.bytes)
+			problems.push(`${r.arm} ${r.bytes} bytes against ${first.bytes}`);
+		else if (r.sha !== first.sha) problems.push(`${r.arm} same length, different bytes`);
+		if (expectBytes !== undefined && r.bytes !== expectBytes)
+			problems.push(`${r.arm} ${r.bytes} bytes, expected ${expectBytes}`);
+	}
+	return { ok: problems.length === 0, problems: [...new Set(problems)] };
+}
+
+/**
+ * Seconds to wait before opening a window so it does not overlap the box's hourly Wi-Fi drop.
+ *
+ * The drop is 10 to 20 s at about :23 (remote-machines.md); the guarded span is :22:50 to :23:40.
+ */
+export function waitOutWifiDrop(secondsIntoHour: number, windowS: number): number {
+	const start = 22 * 60 + 50;
+	const end = 23 * 60 + 40;
+	return secondsIntoHour + windowS + 3 > start && secondsIntoHour < end
+		? end - secondsIntoHour
+		: 0;
 }
 
 /** the inputs of the derived arm, each one named so the output can print them beside the result */

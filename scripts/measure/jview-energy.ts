@@ -8,15 +8,21 @@
  * bun scripts/measure/jview-energy.ts report   --out=<dir>
  * ```
  *
- * The question is the one `docs/energy-views.md` could not answer: its 13% parity is per RENDER, while a
+ * The floor ladder (G5 gate 2) takes the same `run` machinery over two non-Drupal arms, with no
+ * login: `floor-check` then `floor`, each with `--nginx-null=<url>
+ * --wd-null=<url>`, and `report` over the same `--out` prints its verdict.
+ *
+ * The question is the one `docs/impact/energy/views.md` could not answer: its 13% parity is per RENDER, while a
  * view that `caches.default`, `cfw_page` or a compiled plan answers runs no PHP at all. So the unit
  * here is a view drawn from `config/traffic.yml`, offered at a fixed rate and counted when answered.
  *
  * WHAT IS DECIDED BEFORE THE NUMBERS, so it cannot be fitted to them:
  * - the headline figure is the idle-subtracted weighted J/view of the MIX windows, taken directly;
  *   a weighted sum of per-class windows is reported beside it as a cross-check, never in its place;
- * - the 20% rule is `beatsByTwentyPercent` in `jview-math.ts`: at most 0.80 of the regular host at
- *   EVERY offered rate, on the shipped nginx-plus-php-fpm host;
+ * - the gate is `ratioGate` in `jview-math.ts`: the upper end of the 95% bootstrap interval on the
+ *   median paired ratio (arm over the regular host, paired by round) must be at or under 0.75
+ *   (`--threshold`) at EVERY offered rate, with ten paired blocks at least, on the shipped
+ *   nginx-plus-php-fpm host;
  * - a window is discarded when containers outside the rig used more than {@link UNRELATED_CPU_S_PER_S}
  *   CPU-seconds per second inside it, and every discard is printed.
  *
@@ -28,18 +34,28 @@
  * RAPL covers package and core only, so every figure is a floor on machine energy.
  */
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-	beatsByTwentyPercent,
+	type BodyReading,
+	FLOOR_CLOSED,
+	FLOOR_OPEN,
+	bodiesAgree,
 	counterDelta,
 	derivedJoulesPerView,
+	floorLadder,
+	floorOverall,
 	jPerView,
 	normalizeBody,
+	pairByBlock,
+	pairedRatios,
 	publishedHostJoulesPerView,
+	ratioGate,
 	scaleRates,
 	smoothPicker,
 	spread,
+	waitOutWifiDrop,
 	weightedMean
 } from './jview-math';
 import { TRAFFIC_MIX } from './verdict-math';
@@ -75,6 +91,8 @@ const CLASSES: Record<string, ClassSpec> = {
 	'auth-admin': { path: '/admin/content', auth: true, unique: false },
 	'auth-account': { path: '/user/1', auth: true, unique: false }
 };
+/** the floor ladder's one class, kept out of CLASSES so the class phase and capacity probe stay as they were */
+const FLOOR_CLASS: ClassSpec = { path: '/null', auth: false, unique: false };
 const WEIGHTS = Object.fromEntries(Object.entries(TRAFFIC_MIX).map(([k, v]) => [k, v.weight]));
 
 type Arm = {
@@ -130,6 +148,8 @@ let seq = 0;
 /** which tier answered, in the arm's own words */
 function tierOf(res: Response): string {
 	const h = res.headers;
+	const nul = h.get('x-null');
+	if (nul !== null) return `null:${nul}`;
 	const nginx = h.get('x-fastcgi-cache');
 	if (nginx !== null) {
 		const pc = h.get('x-drupal-cache');
@@ -148,7 +168,7 @@ function tierOf(res: Response): string {
 }
 
 async function issue(arm: Arm, cls: string, cookies: Record<string, string[]>): Promise<Outcome> {
-	const spec = CLASSES[cls] as ClassSpec;
+	const spec = cls === 'null' ? FLOOR_CLASS : (CLASSES[cls] as ClassSpec);
 	const i = seq++;
 	const url = `${arm.base}${spec.path}${spec.unique ? `?cfwe=${NONCE}${i}` : ''}`;
 	const jar = cookies[arm.name] ?? [];
@@ -365,6 +385,10 @@ function ssh(host: string, script: string): Promise<string> {
 
 let ENERGY_RANGE = 0;
 
+/** floor ladder only: bytes every reply must carry, and the load average above which a window is out */
+let EXPECT_BYTES = 0;
+let LOAD_MAX = 0;
+
 /** opens a window on the host; `opened` resolves once the first counter reading is taken there */
 function openWindow(host: string, seconds: number) {
 	const p = spawn('ssh', ['-o', 'ConnectTimeout=20', host, 'bash -s'], {
@@ -473,6 +497,8 @@ function attribute(
 }
 
 const ALL_RIG = new Set([
+	'jview-null-nginx',
+	'jview-null-wd',
 	'drupflare-vps-vps-php-1',
 	'drupflare-vps-vps-web-1',
 	'jview-vps-fpm-web',
@@ -528,6 +554,15 @@ async function oneWindow(
 	if (att.unrelatedCpuS > limit) {
 		s.discarded = `unrelated containers used ${att.unrelatedCpuS.toFixed(2)} CPU-s (limit ${limit.toFixed(2)})`;
 	} else if (w.pkgJ <= 0) s.discarded = 'no energy delta';
+	else if (LOAD_MAX > 0 && w.load0 > LOAD_MAX) {
+		s.discarded = `load average ${w.load0.toFixed(2)} at window open (limit ${LOAD_MAX})`;
+	} else if (
+		EXPECT_BYTES > 0 &&
+		arm !== null &&
+		(t.failed > 0 || t.bytes !== t.ok * EXPECT_BYTES)
+	) {
+		s.discarded = `${t.failed} failed, ${t.bytes} bytes for ${t.ok} replies (expected ${EXPECT_BYTES} each)`;
+	}
 	appendFileSync(join(out, 'samples.jsonl'), `${JSON.stringify(s)}\n`);
 	const states = Object.values(t.tiers)
 		.flatMap((x) => Object.entries(x))
@@ -698,6 +733,136 @@ async function capacity(args: Args) {
 
 // #endregion
 
+// #region floor ladder
+
+const FLOOR_RATES = [30, 60, 120, 240];
+
+/** paisley-park is on Wi-Fi and a 2.1 MB/s average once dropped it off Tailscale; this is a refusal */
+const FLOOR_MAX_MB_PER_S = 4.5;
+
+/** the front page body the shipped site returns (CLAUDE.md, VPS arm: 17,692 bytes) */
+const FLOOR_BODY_BYTES = 17_692;
+
+function floorArms(args: Args): Arm[] {
+	const headers = { 'accept-encoding': 'identity' };
+	const arms: Arm[] = [];
+	if (args['nginx-null']) {
+		arms.push({
+			name: 'nginx-null',
+			base: args['nginx-null'],
+			headers,
+			containers: ['jview-null-nginx']
+		});
+	}
+	if (args['wd-null']) {
+		arms.push({
+			name: 'wd-null',
+			base: args['wd-null'],
+			headers,
+			containers: ['jview-null-wd']
+		});
+	}
+	if (arms.length !== 2) throw new Error('pass --nginx-null=<url> and --wd-null=<url>');
+	return arms;
+}
+
+/** both arms must answer the same bytes before a joule is read; exits 1 when they do not */
+async function floorCheck(args: Args) {
+	const expect = Number(args['body-bytes'] ?? FLOOR_BODY_BYTES);
+	const rows: BodyReading[] = [];
+	for (const arm of floorArms(args)) {
+		for (let i = 0; i < 3; i += 1) {
+			const res = await fetch(`${arm.base}${FLOOR_CLASS.path}`, { headers: arm.headers });
+			const buf = new Uint8Array(await res.arrayBuffer());
+			const sha = createHash('sha256').update(buf).digest('hex');
+			rows.push({
+				arm: arm.name,
+				status: res.status,
+				type: res.headers.get('content-type'),
+				bytes: buf.byteLength,
+				sha
+			});
+			if (i === 0) {
+				const h = ['content-encoding', 'content-length', 'cache-control', 'x-null']
+					.map((k) => `${k}=${res.headers.get(k) ?? '-'}`)
+					.join(' ');
+				console.log(`  ${arm.name.padEnd(10)} ${buf.byteLength} bytes  ${h}`);
+			}
+		}
+	}
+	const r = bodiesAgree(rows, expect);
+	console.log(
+		r.ok ? `bodies agree, ${expect} bytes` : `BODIES DISAGREE: ${r.problems.join('; ')}`
+	);
+	if (!r.ok) process.exit(1);
+}
+
+async function floorRun(args: Args) {
+	const arms = floorArms(args);
+	const out = args.out as string;
+	mkdirSync(out, { recursive: true });
+	const secs = Number(args.window ?? 20);
+	const n = Number(args.n ?? 12);
+	const first = Number(args['round-start'] ?? 0);
+	const rates = args.rates ? args.rates.split(',').map(Number) : FLOOR_RATES;
+	EXPECT_BYTES = Number(args['body-bytes'] ?? FLOOR_BODY_BYTES);
+	LOAD_MAX = Number(args['load-max'] ?? 2);
+	const mbps = (Math.max(...rates) * EXPECT_BYTES) / 1e6;
+	if (mbps > FLOOR_MAX_MB_PER_S) {
+		throw new Error(
+			`top rate moves ${mbps.toFixed(1)} MB/s; the box's Wi-Fi limit is ${FLOOR_MAX_MB_PER_S}`
+		);
+	}
+	ENERGY_RANGE = Number(
+		(await ssh(args.ssh as string, `cat ${RAPL}/max_energy_range_uj`)).trim()
+	);
+	const names = await containerNames(args.ssh as string);
+	const rig = [...ALL_RIG].filter((x) => Object.values(names).includes(x));
+	console.log(`floor: ${arms.map((a) => a.name)} @ ${rates} req/s, ${secs} s, n=${n}`);
+	console.log(`rig containers: ${rig.join(', ')}`);
+	for (const arm of arms) await offer(arm, 100, 3, () => 'null', {});
+	const rotate = <T>(xs: T[], r: number): T[] => xs.map((_, i) => xs[(i + r) % xs.length] as T);
+	for (let round = first; round < first + n; round += 1) {
+		const win = async (arm: Arm | null, rate: number) => {
+			const now = new Date();
+			const wait = waitOutWifiDrop(now.getMinutes() * 60 + now.getSeconds(), secs);
+			if (wait > 0) await sleep(wait * 1000);
+			try {
+				await oneWindow(
+					args,
+					arm,
+					'floor',
+					round,
+					arm ? 'null' : 'idle',
+					rate,
+					secs,
+					{},
+					names,
+					out
+				);
+			} catch (e) {
+				console.log(`  LOST window r${round} ${arm?.name ?? 'idle'} @${rate}: ${e}`);
+			}
+		};
+		await win(null, 0);
+		for (const [k, rate] of rates.entries()) {
+			for (const arm of rotate(arms, round + k)) await win(arm, rate);
+			if (k + 1 === Math.floor(rates.length / 2)) await win(null, 0);
+		}
+		await win(null, 0);
+		writeFileSync(
+			join(out, `docker-stats-floor-r${round}.txt`),
+			await ssh(
+				args.ssh as string,
+				`docker stats --no-stream --format '{{.Name}} {{.CPUPerc}} {{.MemUsage}}'; df -h / | tail -1; free -m | sed -n 2p`
+			)
+		);
+	}
+	console.log('\ndone; run `report` over the same --out');
+}
+
+// #endregion
+
 // #region body check
 
 async function bodies(args: Args) {
@@ -828,6 +993,30 @@ function report(args: Args) {
 	if (idleW.mix) table('mix', 'mix');
 	for (const cls of Object.keys(CLASSES)) if (idleW.class) table('class', cls);
 
+	if (idleW.floor) {
+		table('floor', 'null');
+		const ladder = floorLadder(
+			used.filter((s) => s.phase === 'floor' && s.arm !== 'idle'),
+			idleW.floor.pkg.median,
+			'nginx-null',
+			'wd-null',
+			all.filter((s) => s.phase === 'floor' && s.arm !== 'idle').map((s) => s.rate)
+		);
+		say(
+			'\nfloor ladder: wd-null over nginx-null, paired by round, idle-subtracted J per request'
+		);
+		say(
+			`  open at upper bound <= ${FLOOR_OPEN} (130 mJ is 0.75 x 176), closed at lower bound >= ${FLOOR_CLOSED} (170-180 mJ is 0.97-1.02 x 176)`
+		);
+		for (const r of ladder) {
+			say(
+				`    @${r.rate} req/s: n=${r.n} unreadable ${r.unreadable} median ${r.median.toFixed(3)} lo ${r.lo.toFixed(3)} hi ${r.hi.toFixed(3)} -> ${r.verdict}` +
+					`  (nginx-null ${r.controlMj.toFixed(1)} mJ, wd-null ${r.treatmentMj.toFixed(1)} mJ)`
+			);
+		}
+		say(`  ladder verdict: ${floorOverall(ladder.map((r) => r.verdict))}`);
+	}
+
 	// the weighted figure from per-class cells, at the same rung index
 	if (idleW.class) {
 		say('\nweighted sum of the per-class cells at rung i (cross-check; rates differ by class)');
@@ -849,22 +1038,41 @@ function report(args: Args) {
 		}
 	}
 
-	// the rule
+	// the gate: paired by round, idle-subtracted, per offered rate
 	if (idleW.mix) {
+		const iw = idleW.mix.pkg.median;
 		const rates = cellsOf('mix', 'mix');
 		const host = arms.includes('vps') ? 'vps' : (arms[0] as string);
-		const hostJ = rates.map(
-			(r) => figures(groups.get(`mix|mix|${r}|${host}`) ?? [], 'mix').sub.median
+		const threshold = Number(args.threshold ?? 0.75);
+		const perBlock = (g: Sample[]) =>
+			new Map(
+				g.flatMap((s) => {
+					const j = jPerView({
+						windowJ: s.pkgJ,
+						elapsedS: s.elapsedMs / 1000,
+						idleW: iw,
+						views: s.views
+					});
+					return j === null ? [] : [[s.round, j.subtracted] as const];
+				})
+			);
+		say(
+			`\nratioGate against ${host}, paired by round, idle-subtracted weighted J/view of the mix windows, threshold ${threshold}`
 		);
-		say(`\n20% rule against ${host}, idle-subtracted weighted J/view of the mix windows`);
 		for (const a of arms.filter((x) => x !== host)) {
-			const armJ = rates.map(
-				(r) => figures(groups.get(`mix|mix|${r}|${a}`) ?? [], 'mix').sub.median
-			);
-			const v = beatsByTwentyPercent(armJ, hostJ);
-			say(
-				`  ${a}: ratios ${v.ratios.map((x) => x.toFixed(3)).join(' / ')} at ${rates.join('/')} views/s -> ${v.beats ? 'BEATS by 20%' : 'does not beat by 20%'}`
-			);
+			say(`  ${a}:`);
+			for (const r of rates) {
+				const pair = pairByBlock(
+					perBlock(groups.get(`mix|mix|${r}|${host}`) ?? []),
+					perBlock(groups.get(`mix|mix|${r}|${a}`) ?? [])
+				);
+				const ratios =
+					pair.control.length === 0 ? [] : pairedRatios(pair.control, pair.treatment);
+				const g = ratioGate(ratios, threshold);
+				say(
+					`    @${r} views/s: n=${g.n} median ${g.median.toFixed(3)} lo ${g.lo.toFixed(3)} hi ${g.hi.toFixed(3)} -> ${g.verdict}`
+				);
+			}
 		}
 	}
 	writeFileSync(join(out, 'report.txt'), lines.join('\n'));
@@ -886,9 +1094,9 @@ const DERIVED = {
 	scope2Facilities_tCO2e: 1611, // Cloudflare Emissions Inventory 2024, location-based, published
 	scope2Network_tCO2e: 61_171, // same table, published
 	gridGlobal_gPerKWh: 473, // Ember Global Electricity Review 2025, 2024 global average, published
-	gridUs_gPerKWh: 384, // Ember, US, as carried in docs/environment.md
+	gridUs_gPerKWh: 384, // Ember, US, as carried in docs/impact/carbon.md
 	httpRequestsPerSecond: 81e6, // Cloudflare Radar 2025 Year in Review: "over 81 million HTTP requests per second on average"
-	requestsPerView: [1, 3], // 3 is the figure docs/energy-views.md already charges; 1 is the floor
+	requestsPerView: [1, 3], // 3 is the figure docs/impact/energy/views.md already charges; 1 is the floor
 	// as carried in scripts/economics/energy.ts, not re-fetched for this run
 	hostIdleW: 135,
 	hostLoadedW: 460,
@@ -956,6 +1164,8 @@ const table: Record<string, (a: Args) => Promise<void> | void> = {
 	ceiling,
 	capacity,
 	bodies,
+	'floor-check': floorCheck,
+	floor: floorRun,
 	run,
 	report,
 	derived
@@ -965,7 +1175,7 @@ if (!fn) {
 	console.error(`unknown command ${cmd}; expected one of ${Object.keys(table).join(', ')}`);
 	process.exit(1);
 }
-if (!['ceiling', 'report', 'derived'].includes(cmd) && !args.ssh) {
+if (!['ceiling', 'report', 'derived', 'floor-check'].includes(cmd) && !args.ssh) {
 	console.error('--ssh=<host> is required');
 	process.exit(1);
 }

@@ -1,29 +1,4 @@
-/**
- * The VPS comparison arm, and the generator that drives both sides of it.
- *
- * WHY THIS EXISTS. Every performance figure this project owns compares drupflare against drupflare:
- * a cached read against a render, an edge plan against an `EDGE_PLAN=0` control, a warm object
- * against a cold one. The goal it is scored against is comparative, and until this script there was
- * no comparison arm. The one number that did exist -- 3.57x warm against native PHP -- is a
- * same-machine interpreter ratio, not a host.
- *
- * WHAT IS AND IS NOT COMPARABLE HERE, because reading this wrong produces a confident wrong answer:
- *
- * - Both arms are driven over LOCALHOST, so neither carries network latency. That is a BEST CASE for
- *   the VPS, which in production sits in one region while drupflare answers from the visitor's own
- *   colo. A localhost VPS number is therefore a floor no real visitor experiences, and the network
- *   term has to be added back before an end-to-end claim is made.
- * - The generator and both targets share one machine, so the generator's own ceiling is part of every
- *   reading. `--workload=ceiling` measures it against a no-work endpoint and every other run is
- *   meaningless above that. This project has already produced three confidently wrong scaling curves
- *   from generator errors, one of them completely flat.
- * - Service time is what this measures. Absolute edge CPU still comes only from `cpuTime` on a
- *   deployed worker.
- *
- * The clock here is fine: this runs under bun, not inside a Worker, so `Date.now()` advances. The
- * rule it must not break is measuring across a synchronous `php._run()`, which happens inside the
- * object and not here.
- */
+/** drives one comparison arm (drupflare or the VPS) and prints what it saw; `host-verdict.ts` decides */
 
 export interface Sample {
 	ms: number;
@@ -31,47 +6,13 @@ export interface Sample {
 	bytes: number;
 	/** which tier answered, when the arm reports one; empty on the VPS, which has no tiers */
 	tier: string;
-	/**
-	 * Which OBJECT answered, from `x-cfw-replica`; empty on the VPS and on an edge-cache hit.
-	 *
-	 * THE CONTROL FOR EVERY LANE CLAIM. A latency number from a run where one object answered
-	 * everything is a single-object number however many lanes were provisioned, and that is exactly
-	 * what every anonymous figure here has been. Captured so the reading can be believed rather
-	 * than assumed.
-	 */
+	/** which object answered, from `x-cfw-replica`; the control for every lane claim */
 	replica: string;
-	/**
-	 * The front worker's own round trip, from `x-worker-ms`; null on the VPS.
-	 *
-	 * `ms - workerMs` IS THE CLIENT'S CONTRIBUTION, and capturing it is what separates this rig from
-	 * the host it is measuring. A closed loop obeys X = C / mean(R), so every millisecond the
-	 * generator adds to R subtracts from measured throughput proportionally -- at any rate, not only
-	 * near the generator's ceiling. Comparing against a no-work ceiling cannot see that, which is why
-	 * the 1.00/2.05/3.16/5.72 curve could report a shortfall no server-side mechanism accounts for.
-	 */
+	/** the front worker's round trip from `x-worker-ms`; null on the VPS */
 	workerMs: number | null;
-	/**
-	 * Whether the EDGE refused this request before the worker ever ran.
-	 *
-	 * THE WORST INSTRUMENT FAILURE AVAILABLE HERE, and it has already happened. Cloudflare answers
-	 * 403 to any request carrying a client-set `cf-connecting-ip`, which this generator sent on
-	 * every anonymous request. A deployed sweep then read `/`, `/x.php` and `/robots.txt` at an
-	 * identical 25 ms p50 and 1,144-1,190 req/s -- three different paths agreeing to the
-	 * millisecond, because every sample was the same refusal page. Nothing in the summary could
-	 * say so: a 403 is an ordinary status and the cell looked fast.
-	 *
-	 * Recognised by the ABSENCE of `x-worker-ms` on a 4xx: the worker stamps that on every response
-	 * it produces, so a refusal carrying none never reached it.
-	 */
+	/** whether the edge refused the request before the worker ran; a 4xx with no `x-worker-ms` */
 	edgeRefused: boolean;
-	/**
-	 * How many requests the object was already handling when this one arrived, from
-	 * `x-cfw-gate-ahead`; null when the response never entered the gate.
-	 *
-	 * A COUNT TAKEN INSIDE THE OBJECT WITH NO CLOCK IN IT, which is the property that makes it
-	 * uncontaminated by the client. If queueing is on the server this rises with the pool; if it is
-	 * in the generator's event loop this stays flat while `ms` climbs.
-	 */
+	/** requests the object was already handling on arrival, from `x-cfw-gate-ahead`; null if none */
 	gateAhead: number | null;
 }
 
@@ -92,13 +33,7 @@ export interface Summary {
 	p50: number;
 	p95: number;
 	p99: number;
-	/**
-	 * The MEAN, and its absence is why a shortfall went unattributed for a session.
-	 *
-	 * A closed loop obeys X = C / mean(R), not C / p50. Re-deriving the 1/2/4/8 sweep with the mean
-	 * closes Little's Law at every point; the "gap at 4 and 8" was the substitution. p50 rose 15 ms
-	 * across that sweep while the mean rose 209, so the body was flat and the tail was everything.
-	 */
+	/** the mean latency; a closed loop obeys X = C / mean(R), not C / p50 */
 	mean: number;
 	/** which tiers answered and how often; empty on the VPS. Discarding this hid the anon question */
 	tiers: Record<string, number>;
@@ -119,19 +54,13 @@ export interface Summary {
 
 /** the six workloads, plus the generator's own control */
 export const WORKLOADS: Record<string, { path: string; auth: boolean; note: string }> = {
-	// `--ceiling-path` because the two arms do not share a no-work endpoint: the VPS serves Drupal's
-	// `/robots.txt` and drupflare answers it 404 through the deny list, which is not no-work and read
-	// 109 req/s against the same generator's real 2,368
+	// `--ceiling-path`: the arms share no no-work endpoint, and drupflare's `/robots.txt` is a deny-list 404.
 	ceiling: { path: '/robots.txt', auth: false, note: "the generator's own ceiling; no work" },
 	'anon-cached': { path: '/', auth: false, note: 'the dominant ordinary path' },
 	'anon-miss': { path: '/?cachebust=', auth: false, note: 'the regeneration boundary' },
 	'auth-front': { path: '/', auth: true, note: 'authenticated, role-shaped' },
 	'auth-admin': { path: '/admin/content', auth: true, note: 'authenticated, admin-shaped' },
-	// `/user/1`, NOT `/user`. `/user` is a 302 to `/user/<uid>` for a signed-in visitor and `one()`
-	// does not follow redirects, so this cell measured how fast each host emits a redirect -- a
-	// 358-byte body on the VPS arm over 1,732 samples, which the body-size guard caught. The weight
-	// on this slice is meant to buy a user-specific PAGE. Every `auth-account` figure taken before
-	// 2026-09-11 is a redirect timing and is not comparable with one taken after
+	// `/user/1`, not `/user`: that is a redirect, and `one()` does not follow it. Earlier `auth-account` figures measured redirects.
 	'auth-account': { path: '/user/1', auth: true, note: 'authenticated, user-specific' }
 };
 
@@ -144,28 +73,10 @@ export function percentile(sorted: number[], p: number): number {
 	return sorted[idx] as number;
 }
 
-/**
- * Logs in, THROUGH THE ARM'S OWN HEADERS.
- *
- * It sent none until 2026-09-09, and that was invisible for as long as the site header was
- * decorative: with `x-cfw-site` unread, a login without it reached the same object as a login with
- * it. Once site identity became the real `Host`, this function was logging into whatever site
- * `127.0.0.1` resolves to and then measuring a different one -- which surfaced as "could not log
- * in", not as a wrong number, only because the two sites had different passwords.
- */
+/** logs in through the arm's own headers; without them it reaches whichever site 127.0.0.1 resolves to */
 export async function login(base: string, user: string, pass: string): Promise<string | null> {
-	// THE FORM HAS TO BE SERVED BEFORE A LOGIN MEANS ANYTHING, and this took it once. A cold
-	// `/user/login` is a 503 carrying no `form_build_id`, and a busy local worker answers
-	// `ECONNRESET` -- both return null here, which the caller reports as "cannot log in" and which
-	// reads as a wrong password. It cost a run and then a wrong diagnosis: the second editor's
-	// login failed with three replica lanes and succeeded with none, so the lanes looked
-	// responsible. Isolated afterwards, a fresh account's FIRST login succeeds at three lanes and
-	// at zero, both answered by `x-cfw-replica: primary`. The pool was never involved.
-	// THE WHOLE EXCHANGE RETRIES, not the form fetch alone. Retrying only the GET fixed the case
-	// where a cold form carried no token and left the POST one-shot -- so a login whose form arrived
-	// fine and whose POST met a busy object still returned null, and the caller still reported it as
-	// a wrong password. It failed that way on two consecutive runs against a SECOND editor created
-	// moments earlier, which is exactly the window where one attempt is not enough.
+	// the form must be served before a login means anything: a cold form is a 503 with no form_build_id.
+	// retry the whole exchange, not the form fetch alone; one attempt is not enough.
 	for (let attempt = 0; attempt < 40; attempt++) {
 		const session = await loginOnce(base, user, pass);
 		if (session !== null) return session;
@@ -219,31 +130,15 @@ async function loginOnce(base: string, user: string, pass: string): Promise<stri
 	return session === '' ? null : session;
 }
 
-/**
- * Points the generator at a different arm.
- *
- * Module state rather than a parameter, and that is safe for exactly one reason: an orchestrator
- * must drive the arms SEQUENTIALLY. Both live on this machine, so running them at once makes each
- * one the other's noise and the ratio measures the laptop's scheduler.
- */
+/** points the generator at an arm; module state is safe only because arms run sequentially */
 export function setExtraHeaders(headers: Record<string, string>): void {
 	EXTRA = headers;
 }
 
-/**
- * The address a synthetic client presents.
- *
- * TEST-NET-3, which RFC 5737 reserves for documentation, so nothing here can be mistaken for a real
- * client and nothing routable is implied.
- */
+/** the address a synthetic client presents: TEST-NET-3 (RFC 5737), a documentation range */
 export const clientAddress = (index: number): string => `203.0.113.${(index % 254) + 1}`;
 
-/**
- * Whether a target is this machine, which decides whether the spread header may be sent.
- *
- * `URL.hostname` KEEPS THE BRACKETS on an IPv6 literal, so `http://[::1]:8787` answers `[::1]` and
- * a bare `::1` comparison misses it. `host-verdict.ts` carried that comparison and imports this now.
- */
+/** whether a target is this machine; `URL.hostname` keeps the brackets on an IPv6 literal */
 export function isLocalTarget(target: string): boolean {
 	const host = (URL.parse(target)?.hostname ?? '').replace(/^\[|\]$/g, '');
 	return (
@@ -251,19 +146,7 @@ export function isLocalTarget(target: string): boolean {
 	);
 }
 
-/**
- * The per-client headers, which are NOT the same on a local target and a deployed one.
- *
- * `cf-connecting-ip` is what `affinityKey()` spreads anonymous traffic by, and miniflare accepts
- * whatever a client sends -- so locally it is the only way a single-address generator reaches more
- * than one lane, and `anon-cached` is 82% of the traffic weight. Cloudflare owns that header on a
- * real deployment and answers **403 at the edge** to any request that presents one, before the
- * worker runs. Sending it to both kinds of target measured a refusal page and called it a host.
- *
- * Nothing replaces it remotely: Cloudflare sets the header to the true client address, so a
- * single-source benchmark reaches one lane whatever it does. That is a property of the routing and
- * of the rig, not something a header can paper over.
- */
+/** per-client headers for a local target only; Cloudflare owns `cf-connecting-ip` and answers 403 to it */
 export function spreadHeaders(base: string, index: number): Record<string, string> {
 	return isLocalTarget(base) ? { 'cf-connecting-ip': clientAddress(index) } : {};
 }
@@ -308,14 +191,7 @@ export async function one(
 	}
 }
 
-/**
- * A CLOSED-LOOP run at fixed concurrency for a fixed wall-clock duration.
- *
- * Fixed DURATION rather than a fixed request count, because a fixed count gives every arm a different
- * amount of time and a slow arm then reports a rate computed over a longer window. Each virtual
- * client loops until the deadline, which is what keeps offered load proportional to the arm's own
- * speed rather than to the generator's patience.
- */
+/** a closed-loop run at fixed concurrency for a fixed wall-clock duration */
 export async function run(
 	base: string,
 	workload: string,
@@ -329,18 +205,7 @@ export async function run(
 	const samples: Sample[] = [];
 	let counter = 0;
 
-	/**
-	 * ONE ADDRESS PER CLIENT ON A LOCAL TARGET, and none on a deployed one; see {@link spreadHeaders}.
-	 *
-	 * `affinityKey()` spreads an anonymous request by `cf-connecting-ip` and falls back to the path
-	 * only when there is none. This generator sent no address at all until 2026-09-10, so every
-	 * anonymous request in every run collapsed onto ONE affinity key and therefore one lane -- and
-	 * `anon-cached` is 82% of the traffic weight and the slice that decides the verdict.
-	 *
-	 * Sent to both arms of a LOCAL run so the two remain identical in what they transmit; nginx and
-	 * php-fpm have no use for it, and it cannot reach the edge cache key, which `cacheKey()` builds
-	 * from explicit parts and no headers.
-	 */
+	/** one address per client on a local target, since affinity keys on it; see {@link spreadHeaders} */
 	const client = async (index: number): Promise<void> => {
 		const extra = spreadHeaders(base, index);
 		while (Date.now() < deadline) {
@@ -363,10 +228,7 @@ export async function run(
 		concurrency,
 		n: samples.length,
 		errors: samples.length - ok.length,
-		// OVER SUCCESSFUL REQUESTS, and it used to be over every attempt. A dead server answers
-		// instantly with status 0, so `samples.length / elapsed` read 45,279 req/s on an arm whose
-		// worker had crashed -- a confident wrong number, and the one a reader would quote. Identical
-		// on any cell with no errors, which is every cell that means anything
+		// over successful requests: a dead server answers instantly with status 0 and inflates the rate.
 		rps: ok.length / elapsed,
 		p50: percentile(times, 50),
 		p95: percentile(times, 95),
@@ -410,37 +272,7 @@ export interface RenderSample {
 	dynamicCache: string;
 }
 
-/**
- * How long each arm takes to PRODUCE a page, rather than to serve a stored one.
- *
- * The two arms reach it differently, because each does what it does in production. The VPS renders
- * on the request, so a unique query string is a render -- verified rather than assumed, since it has
- * to miss nginx, Drupal's `page_cache` AND `dynamic_page_cache` to be one. drupflare refuses to
- * render on the request for an anonymous path it has never seen, so its render is driven through
- * `/assemble`, which deletes the stored row, empties the same two bins and fills SYNCHRONOUSLY.
- *
- * BOTH TIMES SPAN I/O, which is the `Date.now()` shape RULE 0 permits. Neither is taken across a
- * synchronous `php._run()`; the drupflare figure brackets an HTTP call to the object from outside it.
- *
- * **IT USED TO MEASURE NOTHING AT ALL, AND THAT IS WHERE THE PUBLISHED 1.28x CAME FROM.** The
- * drupflare arm was `/bump`, then `/fill?path=/` to enqueue, then a timed bare `/fill` to drain.
- * Three mechanisms defeat that and they compound:
- *
- * - `bumpGeneration()` re-queues up to `PREFILL_ON_SAVE` paths and arms the fill alarm, so the
- *   queue the timed call meant to drain holds a batch it never asked for.
- * - the alarm fires at +1 ms, which is before the caller's next round trip can arrive, and
- *   `/__fill`'s own docblock already says so.
- * - `fetch()` holds the object's gate, so the timed call then waits behind that whole batch.
- *
- * Measured against a live `wrangler dev` on 2026-09-19: 6 of 7 samples answered `{"filled":null}`
- * at 189-214 ms, having rendered NOTHING. The number was the caller's wait behind an alarm batch.
- * `/assemble` takes all three out -- no bump, no queue, no alarm -- and every sample is checked.
- *
- * WHICH BINS ARE WARM. Both arms leave Drupal's `render` bin alone and meet `dynamic_page_cache`
- * cold, which is the state a content save leaves behind on either host. It is NOT the 2,127 ms
- * "both bins emptied" figure in the report, which is a colder thing measured on the edge. Do not
- * subtract one from the other.
- */
+/** ms to produce a page, not serve a stored one; drupflare renders through `/assemble` */
 export async function renderArm(
 	base: string,
 	kind: 'vps' | 'drupflare',
@@ -453,8 +285,7 @@ export async function renderArm(
 			const res = await fetch(`${base}/?renderprobe=${Date.now()}-${i}`, { headers: EXTRA });
 			const body = await res.arrayBuffer();
 			const ms = Date.now() - t0;
-			// a cell answered by any of the three caches in front of the renderer is not a render,
-			// and it reads as a fast one
+			// a cell answered by any cache in front of the renderer is not a render, and reads as fast
 			for (const header of ['x-fastcgi-cache', 'x-drupal-cache', 'x-drupal-dynamic-cache']) {
 				const value = res.headers.get(header) ?? '';
 				if (value.toUpperCase() === 'HIT') {
@@ -500,36 +331,13 @@ export async function renderArm(
 	return samples;
 }
 
-/**
- * Whether two arms rendered the same page, which no earlier version of this rig asked.
- *
- * The VPS keeps its database in a docker volume that `vps:up` does NOT re-seed -- the entrypoint
- * copies the pack only when the file is absent -- so a benchmark that writes content leaves it
- * there for every later run. Found 2026-09-19: the VPS arm was rendering a front page carrying ten
- * node teasers at 23,284 bytes against drupflare's empty welcome page at 17,692, and the ratio
- * taken across them was published. `vps:down -v` then `vps:up` put both at ~17.7 KB.
- *
- * A percentage rather than a byte count, because the arms legitimately differ by the query string
- * the VPS carries in its canonical and shortlink tags -- 30 bytes on 17.7 KB when they agree.
- */
+/** whether two arms rendered the same page, to a percentage tolerance; byte counts differ by query string */
 export function bodiesAgree(a: number, b: number, tolerance = 0.02): boolean {
 	if (a <= 0 || b <= 0) return false;
 	return Math.abs(a - b) / Math.max(a, b) <= tolerance;
 }
 
-/**
- * One authenticated session, driven sequentially, reported per request rather than as a percentile.
- *
- * THE CLOSED-LOOP ARM CANNOT ANSWER THIS QUESTION. A p50 over a ten-second window is taken after the
- * session has already converged, so it neither shows the entry cost nor proves that convergence
- * happened -- and a mean over the same window hides which requests were which. The claim being tested
- * is that a normal session reaches an edge artifact and stays there, and that is a CURVE.
- *
- * The generation is bumped first on the drupflare arm, because the isolate outlives a run: a shared
- * plan compiled by an earlier session of the same role set would answer request 1 and the entry cost
- * this exists to measure would never appear. The VPS arm has nothing to bump and nothing to clear;
- * its opcache stays warm, which is its best case and is left that way on purpose.
- */
+/** one authenticated session, driven sequentially and reported per request, since the entry cost is the claim */
 export async function sessionArm(
 	base: string,
 	kind: 'vps' | 'drupflare',
@@ -540,9 +348,7 @@ export async function sessionArm(
 ): Promise<Sample[]> {
 	if (kind === 'drupflare') {
 		await fetch(`${base}/bump?reason=sessionprobe`, { headers: EXTRA });
-		// the bump empties the page store, and a local rig fires no alarm to refill it, so
-		// `/user/login` answers 503 `warming` and the login below cannot read a form build id.
-		// Driven synchronously here for the same reason `bench-site.ts` drives it
+		// the bump empties the page store and no alarm refills it locally, so drive `/user/login` synchronously.
 		for (const warm of ['/user/login', path]) {
 			await fetch(`${base}/fill?path=${encodeURIComponent(warm)}`, { headers: EXTRA });
 		}
@@ -554,12 +360,7 @@ export async function sessionArm(
 	return out;
 }
 
-/**
- * The CLI, guarded so the module can be IMPORTED.
- *
- * `host-verdict.ts` drives both arms through the functions above, and at module scope this block
- * would run a benchmark as a side effect of the import.
- */
+/** the CLI, guarded so `host-verdict.ts` can import the functions above without running a benchmark */
 if (import.meta.main) {
 	function arg(name: string, fallback: string): string {
 		const hit = process.argv.find((a: string) => a.startsWith(`--${name}=`));
@@ -695,8 +496,7 @@ if (import.meta.main) {
 					`p95=${String(summary.p95).padStart(5)}ms p99=${String(summary.p99).padStart(5)}ms ` +
 					`err=${summary.errors} bytes=${summary.bytes}`
 			);
-			// LOUD, because the alternative is a fast-looking cell. A run that measured the edge's
-			// refusal page reported three different paths at the same 25 ms and 1,150 req/s
+			// fail loudly: the alternative is a fast-looking cell that measured the edge's refusal page.
 			if (summary.edgeRefusals > 0) {
 				console.error(
 					`[${label}] ${summary.edgeRefusals} of ${summary.n} samples were refused AT THE ` +

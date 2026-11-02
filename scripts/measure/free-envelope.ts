@@ -1,197 +1,67 @@
 /**
- * The free-tier product envelope: two ceilings, not one.
- *
  *   bun scripts/measure/free-envelope.ts [--visits=3000000] [--dynamic=0.01] [--warmth=realRender]
- *
- * SERVING is how many visits/month can be answered at all, bound by Worker requests because a cache
- * hit still costs one. REGENERATION is how many distinct pages can be rendered per day, bound by DO
- * requests and rows written, and it is far smaller. A proposal has to clear both.
- *
- * `offWorkerFraction` is the only input that raises the serving ceiling, since an asset request
- * and an R2 custom domain both skip the Worker. Workers Caching removes that: it bills every one.
- * The measurements behind each figure are in `TECHNICAL_REPORT.md`.
  */
 
 import { meterFlushBudget } from '../../src/ops/day-meters';
 import { DURABLE_OBJECTS } from '../economics/rates';
 import { GENERATED_FREE_QUOTAS } from '../generated/quotas';
 
-/**
- * Documented free-plan daily quotas, declared in `config/quotas.yml`.
- *
- * Each entry carries its reason there rather than in a comment here, so a figure and the measurement
- * behind it move together. Sources are in the report's PLATFORM LIMITS table.
- */
+/** documented free-plan daily quotas, declared in `config/quotas.yml` */
 export const FREE_QUOTAS = GENERATED_FREE_QUOTAS;
 
-/**
- * What one site occupies, in bytes of Durable Object SQLite.
- *
- * BOTH FIGURES ARE FROM PROVISIONED SITES. An earlier pair came off objects that had never migrated
- * and read 23,724,032 -- 1.53x low, so everything derived from it was optimistic by that factor.
- */
+/** what one site occupies in Durable Object SQLite, measured on provisioned sites */
 export const SITE_STORAGE_BYTES = {
-	/**
-	 * The seeded database alone, `databaseSize` after `/migrate?all=1`.
-	 *
-	 * 4,616,192 on the traced-list pack; 5,550,080 on the 11.4.6 from-source one, which is what
-	 * ships. `seed-cache-cost.spec.ts` reads it as the untrimmed arm's `afterMigrate`, n=2 with zero
-	 * spread. The file on disk is SMALLER than before (5,349,376 against 7,585,792) and the migrated
-	 * database is larger, because a rebuild drops free pages the file carried and the bins it now
-	 * creates at build time land as real rows.
-	 */
+	/** the seeded database after `/migrate?all=1`; 5,550,080 on the 11.4.6 from-source pack */
 	seed: 5_550_080,
-	/**
-	 * On a MIGRATED but COLD object, 3.7x the warm case (1,247 ms / 552 pages against 33 ms / 148,
-	 * both `ok`). The model keeps the cold figure so a storage ceiling is not optimistic.
-	 *
-	 * IT MOVES WITH THE PACKED MODULE, in whole wasm pages. 36,241,408 before the container gained
-	 * a class, 36,175,872 after, and 36,569,088 once the module added the requirements alter and the
-	 * deferred-cron hook -- six pages for ~5 KB of PHP. Re-measure rather than adjust: the spec
-	 * compares this against a fresh run of the same build, so a wrong value here is a wrong ceiling.
-	 *
-	 * THEN IT FELL 3.5x, AND EVERY EARLIER VALUE WAS PRICING A DEFECT. The packed
-	 * `cache_container` row was keyed to a stale dependency hash, so the first `$kernel->boot()`
-	 * on every site rebuilt a 482 KB container into the heap. With the row readable the same
-	 * snapshot is 10,420,224, so the model had been charging every site 26 MB it never stored.
-	 *
-	 * 11,206,656 AS OF 2026-09-09, re-measured on the shipping build by
-	 * `tests/integration/heap-image-storage.spec.ts`: 171 kept pages, identical on both runs. It
-	 * stood at 10,420,224, which is 159 pages, so the image had grown 12 pages and nothing said so.
-	 * No spec pins this value -- it moves with the packed module in whole wasm pages, so a
-	 * threshold here is a threshold on the pack. The spec prints what it measured instead.
-	 */
+	/** heap snapshot kept on a migrated cold object; 11,206,656 on the 2026-09-09 build */
 	heapSnapshot: 11_206_656,
 	/** the same snapshot on a site that has been through `/firstrun` and served one page */
 	warmHeapSnapshot: 9_699_328,
-	/**
-	 * The same image with each stored chunk deflated, which is what {@link packChunk} writes.
-	 *
-	 * Measured on that image's own 57 chunks: 3,134,727 bytes, 3.575x. It bounds what an image
-	 * costs when one is stored, and an image is stored only when an operator asks for it.
-	 *
-	 * **THE IMAGE IS OFF BY DEFAULT, AND COMPRESSING IT WAS THE WRONG LAYER.** Deflation was built
-	 * to close the storage cap -- 315 tenants against 645 -- and then a deployed A/B on `cpuTime`
-	 * measured the restore costing MORE than the boot it replaces: median 1,912 ms over n=5 with
-	 * the image on against 1,264 ms over n=4 with it off, ranges not overlapping (imaged minimum
-	 * 1,561 above unimaged maximum 1,343). So the image costs storage AND CPU and buys neither.
-	 * Deflation cannot reach that: the likely term is `digestBytes()`, a per-byte JS loop over the
-	 * restored heap, and the digest is over HEAP bytes by design so it runs on inflated data.
-	 *
-	 * Kept rather than deleted because the codec is correct and cheap to carry. If a workload is
-	 * ever found where an image pays, this is what bounds its storage; nothing here argues that a
-	 * workload exists.
-	 */
+	/** the image with each chunk deflated, 3,134,727 bytes (3.575x); off by default */
 	packedHeapSnapshot: 3_134_727
 } as const;
 
-/**
- * What deflating the stored chunks buys, as a ratio, so a caller can price an image it has measured
- * rather than only the one recorded above.
- *
- * A ratio on ONE term of a site's storage. The seed does not compress and is charged in full, so
- * the tenant count moves by less than this.
- */
+/** storage ratio that deflating the stored chunks buys; the seed is charged in full */
 export const HEAP_PACK_RATIO =
 	SITE_STORAGE_BYTES.heapSnapshot / SITE_STORAGE_BYTES.packedHeapSnapshot;
 
-/**
- * GB a Durable Object is billed for while it is alive, whatever it actually uses.
- *
- * **0.128, THE DECIMAL READING, AND THIS WAS 0.125 UNTIL 2026-08-23.** Cloudflare's own worked
- * example fixes it: "1,000,000 seconds * 128 MB / 1 GB = 128,000 GB-s". 128 MB over 1 GB is 0.128
- * when both are decimal; the binary reading (0.125) is what this model used, 2.4% low everywhere.
- */
+/** GB a Durable Object is billed for while alive; 0.128 is the decimal reading of 128 MB / 1 GB */
 export const DO_GB_ALLOCATED = 0.128;
 
 /** seconds in a day, named because the idle-object arithmetic below is what uses it */
 export const SECONDS_PER_DAY = 86_400;
 
-/**
- * GB-s an object bills for existing continuously for a day while doing nothing.
- *
- * **83% of the entire free allowance.** An idle object ELIGIBLE to hibernate is not billed; one
- * idle and UNABLE to bills the whole time, and no request or row count would show it. The five
- * disqualifying conditions are transcribed in `src/ops/hibernation.ts` rather than paraphrased --
- * a paraphrase here once omitted the only one that fires in this codebase, an outbound socket.
- */
+/** GB-s per day an object that cannot hibernate bills while idle; see `src/ops/hibernation.ts` */
 export const IDLE_GB_S_PER_DAY = SECONDS_PER_DAY * DO_GB_ALLOCATED;
 
-/**
- * The replica architectures, which are NOT one item and were scored as one.
- *
- * The always-warm arithmetic closed ONE of them: an idle object eligible to hibernate accrues no
- * duration, so `hibernating` costs its wake and its work and nothing else. Nobody has measured one,
- * and on this runtime a wake means restoring or re-booting a 96 MiB interpreter.
- */
+/** the replica architectures, scored separately: an always-warm fleet and a hibernating one bill differently */
 export type ReplicaMode = 'alwaysWarm' | 'hibernating';
 
-/**
- * Duration a replica fleet spends per day, before serving anything.
- *
- * @param replicas how many objects the fleet holds.
- * @param mode `alwaysWarm` bills the whole day per object; `hibernating` bills only what it works,
- *   which this function reports as ZERO because the work is already priced per view by
- *   `envelope()`. That is the whole difference between the two, stated as arithmetic.
- */
+/** duration a replica fleet spends per day before serving; `hibernating` bills none of it here */
 export function fleetIdleGbS(replicas: number, mode: ReplicaMode): number {
 	return mode === 'alwaysWarm' ? Math.max(0, replicas) * IDLE_GB_S_PER_DAY : 0;
 }
 
-/**
- * The idle re-arm for a site that is not warming, whether an operator's `SITE_WARM=0` or the thermal
- * policy declined it: `KEEP_WARM_MS` in `src/ops/cron.ts`.
- */
+/** the idle re-arm for a site that is not warming; `KEEP_WARM_MS` in `src/ops/cron.ts` */
 export const KEEP_WARM_MS = 240_000;
 
-/**
- * The interval that actually keeps an object resident, and the one a warmed site pays.
- *
- * `KEEP_WARM_MS` above is 240,000, which is 24x the 10 s hibernation threshold -- it re-arms an idle
- * alarm and warms nothing. `warmIntervalMs()` in `src/ops/cron.ts` defaults to this, and it is the
- * number a warming cost has to be priced at.
- */
+/** the interval that keeps an object resident; `warmIntervalMs()` in `src/ops/cron.ts` */
 export const WARM_INTERVAL_MS = 8_000;
 
-/**
- * How often the daily meters pay for a row, read off the policy the object itself applies.
- *
- * IT WAS A CONSTANT 60 AND THE OBJECT NO LONGER USES ONE. `meterFlushBudget()` scales both flush
- * triggers with the remaining row budget, so the interval a warming chain pays is the loosest one:
- * the chain spends about 10,900 rows a day and the policy does not begin tightening until 62,500,
- * which no warmed-but-idle site reaches. Taking the figure from the function rather than restating
- * it is what stops this drifting the way the flat 60 did.
- */
+/** how often the daily meters flush on an idle day; read from `meterFlushBudget()` */
 export const METER_FLUSH_SECONDS =
 	meterFlushBudget(0, FREE_QUOTAS.rowsWrittenPerDay).intervalMs / 1000;
 
-/**
- * What the keep-warm chain costs a FLEET before a single visitor arrives.
- *
- * The per-site figure reads as noise -- 360 rows/day, 0.36% -- and the fleet figure does not: the
- * free DO quotas are ACCOUNT-WIDE, and the same 360 arms spend the DO request allowance too.
- *
- * **AND THE CHAIN AT 240 s BUYS NOTHING IT IS BELIEVED TO BUY.** An armed alarm is absent from
- * Cloudflare's hibernation-eligibility list, so ARMING one does not hold the object resident -- see
- * {@link ../../src/ops/hibernation.ts}. At the shipping interval it costs two meters and delivers no
- * warmth. This function exists so that trade is arithmetic rather than an assumption.
- *
- * **WHAT DOES BUY WARMTH IS THE FIRING, AND ONLY BELOW THE THRESHOLD.** This docblock used to stop
- * at the sentence above, which is a measurement of 240 s wearing the clothes of a general fact.
- * Measured on a deployed worker: an object re-armed every 8 s kept ONE incarnation across 71
- * consecutive alarms holding a 32 MB allocation, because each firing resets the idle clock before
- * the 10 s deadline; at 12, 20, 30 and 45 s the id changed on every probe. So the interval is the
- * whole variable, and `HIBERNATION_IDLE_MS` in `src/ops/cron.ts` is where it lives.
- *
- * Duration stays out of it either way: during the gap the object is idle and ELIGIBLE to hibernate,
- * and an idle-eligible object is not billed for duration. Warming spends requests and rows.
- *
- * @param sites how many sites share one account's daily allowance.
- * @param keepWarmMs the re-arm interval; the default is what ships.
- */
+/** the same interval once the budget is nearly spent, which is the heavy-use end of the range */
+export const METER_FLUSH_SECONDS_UNDER_LOAD =
+	meterFlushBudget(FREE_QUOTAS.rowsWrittenPerDay, FREE_QUOTAS.rowsWrittenPerDay).intervalMs /
+	1000;
+
+/** keep-warm chain cost per day across a fleet; warmth comes from `HIBERNATION_IDLE_MS` */
 export function keepWarmFleetCost(
 	sites: number,
-	keepWarmMs: number = KEEP_WARM_MS
+	keepWarmMs: number = KEEP_WARM_MS,
+	flushSeconds: number = METER_FLUSH_SECONDS
 ): {
 	armsPerSitePerDay: number;
 	rowsPerDay: number;
@@ -203,16 +73,10 @@ export function keepWarmFleetCost(
 } {
 	const armsPerSitePerDay = Math.floor((SECONDS_PER_DAY * 1000) / Math.max(1, keepWarmMs));
 	const perDay = Math.max(0, sites) * armsPerSitePerDay;
-	// two terms rather than one, because the meter flush is on its own clock: a tick charges the
-	// setAlarm, and the daily counters charge their two rows once per flush interval however often
-	// the object wakes. Folding them into a per-arm constant would make the figure wrong at every
-	// interval except the one it was derived at.
-	// capped by the FIRINGS, because a flush happens inside an alarm and an object that wakes every
-	// 240 s cannot flush every 60 s. Without the cap the model charged a 240 s chain for 1,440
-	// flushes it never performs.
+	// two terms: the meter flush runs on its own clock, and the firings cap how often it runs.
 	const flushesPerSitePerDay = Math.min(
 		armsPerSitePerDay,
-		Math.floor(SECONDS_PER_DAY / METER_FLUSH_SECONDS)
+		Math.floor(SECONDS_PER_DAY / flushSeconds)
 	);
 	const rowsPerDay =
 		perDay * FREE_QUOTAS.rowsPerAlarmArm +
@@ -224,9 +88,7 @@ export function keepWarmFleetCost(
 		doRequestsPerDay: perDay,
 		rowShare: rowsPerDay / FREE_QUOTAS.rowsWrittenPerDay,
 		doRequestShare: perDay / FREE_QUOTAS.doRequestsPerDay,
-		// against ROWS PER SITE rather than arms per site: the two are no longer the same number
-		// once the meter flush has its own term, and dividing by arms would report a fleet twice
-		// the size the row meter actually allows
+		// divide by rows per site, not arms; the flush term makes the two counts differ.
 		saturatingSites: Math.floor(
 			Math.min(
 				FREE_QUOTAS.rowsWrittenPerDay /
@@ -241,14 +103,7 @@ export function keepWarmFleetCost(
 	};
 }
 
-/**
- * Paid-plan duration, which inverts the free-plan conclusion at small replica counts.
- *
- * **SUPPLIED BY GREGORY 2026-08-23 FROM CLOUDFLARE'S PRICING PAGE, NOT VERIFIED BY THIS PROJECT.**
- * Marked because a pricing figure nobody re-read is exactly the class of number this repository has
- * had go stale three times. `paidDurationCost()` returns `verified: false` so the caveat travels
- * with the answer rather than staying in a comment.
- */
+/** paid-plan duration cost; figures are from Cloudflare's pricing page, unverified here */
 export const PAID_DURATION = {
 	includedGbSPerMonth: DURABLE_OBJECTS.gbSIncluded,
 	usdPerMillionGbS: DURABLE_OBJECTS.usdPerMillionGbS
@@ -270,15 +125,7 @@ export function paidDurationCost(
 	};
 }
 
-/**
- * The duration meter, calibrated on a deployed object rather than inferred.
- *
- * Ten 1,000 ms holds on `cfw-duration-probe`, 2026-08-23: `activeTime` 10,026,244 us, `cpuTime`
- * 3,838 us, `duration` 1.283359232 GB-s. `10.026244 * 0.128` is that exactly, so `activeTime` is
- * microseconds of WALL CLOCK and {@link DO_GB_ALLOCATED} is confirmed from billing.
- *
- * Its 2,612x ratio is a WORKLOAD property, not a constant -- a render reads ~1x.
- */
+/** `activeTime` is wall-clock microseconds, confirmed from billing on a deployed probe */
 export const DURATION_CALIBRATION = {
 	/** microseconds of wall clock the probe was held for */
 	activeTimeUs: 10_026_244,
@@ -289,7 +136,7 @@ export const DURATION_CALIBRATION = {
 	measured: true
 } as const;
 
-/** how far cpuTime understates billed duration, on a workload that spends its time awaiting */
+/** how far cpuTime understates billed duration: 2,612x on a waiting workload, about 1x on a render */
 export const CPU_UNDERSTATEMENT =
 	DURATION_CALIBRATION.activeTimeUs / DURATION_CALIBRATION.cpuTimeUs;
 
@@ -303,41 +150,19 @@ export const SECONDS_PER = {
 	edgeHit: 0,
 	/** one indexed read on the fast storage lane */
 	doHit: 0.003,
-	/**
-	 * The dearest STEADY-STATE fill measured, which is what a fill costs on an object busy enough to
-	 * reach the regeneration ceiling. Deployed 2026-09-24, `gbs-per-operation.ts`, wall clock from
-	 * `x-worker-ms` and cross-checked against billed `activeTime` (2-6% high, the hop):
-	 *
-	 * - three bins emptied (page, dynamic page cache, render): 209-308 ms, n=9 after the boot
-	 * - reassemble from a warm dynamic page cache, `/` and `/user/login`: 52-95 ms, n=18
-	 * - the first fill after an idle, which boots: 4,467-8,401 ms, and that is `coldRender`
-	 *
-	 * Priced at the 308 ms maximum, so every class is covered from above. It was 2,127 ms, the
-	 * cold-bins `RENDER_COLD_BINS_MS` mixture, which made duration read as binding at the default.
-	 */
+	/** dearest steady-state fill, 308 ms with three bins emptied, from `x-worker-ms` on a deployed object */
 	warmRender: 0.308,
 	/** a cold render, 6,140 ms measured: boot plus render in one invocation */
 	coldRender: 6.14
 } as const;
 
-/**
- * CPU per Workflow step on free, in ms.
- *
- * The step does NOT buy more CPU -- it buys a SEPARATELY BUDGETED one. Free Workflows still get the same
- * 10 ms per invocation, so a step is the divisibility primitive and nothing more. That is exactly what a
- * module install needs and exactly not what "Workflows give you 5 minutes" would imply.
- */
+/** CPU per Workflow step on free, in ms; a step is a separate budget, not more CPU */
 export const WORKFLOW_STEP_CPU_MS = 10;
 
-/**
- * CPU one module install costs, in ms, measured ON THE EDGE.
- *
- * 6,810 ms of edge cpuTime for a completing `/enable`, n=3 by `wrangler tail`. It was
- * `1_344.7 + 282.9`: a double-counted flush, its WALL column added into a CPU sum, and both native.
- */
+/** CPU one module install costs on the edge, in ms; measured n=3 with `wrangler tail` */
 export const INSTALL_CPU_MS = 6_810;
 
-/** the native figure, kept because the wasm-to-native ratio is the interesting part; NOT an edge cost */
+/** the native figure, kept for the wasm-to-native ratio; not an edge cost */
 export const INSTALL_CPU_MS_NATIVE = 1_344.7;
 
 export type InstallVerdict = {
@@ -345,18 +170,12 @@ export type InstallVerdict = {
 	stepsPerInstall: number;
 	fitsOneInstance: boolean;
 	installsPerDay: number;
-	/** a Workflow invocation is charged against the SAME 100k/day as a Worker request */
+	/** a Workflow invocation is charged against the same 100k/day as a Worker request */
 	sharesServingQuota: true;
 	problems: string[];
 };
 
-/**
- * Whether a module install fits free's Workflow budgets.
- *
- * The trap this closes: a Workflow invocation is billed against the **same** 100,000/day request quota as
- * a Worker request ("shared with Workers requests"), so an install spends the serving ceiling. Same shape
- * as the cron trigger, and the serving ceiling is saturated at 3M/month.
- */
+/** whether a module install fits free's Workflow budgets, which share the Worker request quota */
 export function scoreInstall(cpuMs: number = INSTALL_CPU_MS): InstallVerdict {
 	const stepsPerInstall = Math.ceil(cpuMs / WORKFLOW_STEP_CPU_MS);
 	const problems: string[] = [];
@@ -375,16 +194,11 @@ export function scoreInstall(cpuMs: number = INSTALL_CPU_MS): InstallVerdict {
 	};
 }
 
-/**
- * Per-page-view cost vectors, measured.
- *
- * An edge HIT costs a Worker request and nothing else -- and that one request is the whole serving
- * problem, because it is charged whether or not PHP ever runs.
- */
+/** per-page-view requests, measured; rows a fill writes live in `ROWS_PER_FILL`, not here */
 export const COST_PER_VIEW = {
-	edgeHit: { worker: 1, do: 0, rows: 0 },
-	doHit: { worker: 1, do: 1, rows: 0 },
-	missAndFill: { worker: 1, do: 3, rows: 18 }
+	edgeHit: { worker: 1, do: 0 },
+	doHit: { worker: 1, do: 1 },
+	missAndFill: { worker: 1, do: 3 }
 } as const;
 
 /** rows per fill once `dblog` is uninstalled; the report measures both */
@@ -411,17 +225,11 @@ export type ColdUrlCost = {
 	available: boolean;
 };
 
-/**
- * The three ways a cold URL could answer HTML, priced per visitor against both ceilings. A cold MISS
- * refuses at `!this.php` rather than on a budget, so an option that turns one 503 into three DO
- * requests has MOVED the cost rather than removed it.
- *
- * @param rowsPerFill rows the fill itself writes; the default is what a real regeneration pays.
- */
+/** priced per visitor for the three ways a cold URL could answer HTML */
 export function coldUrlCost(rowsPerFill: number = ROWS_PER_FILL.realRender): ColdUrlCost[] {
 	return [
 		{
-			// the boot is SLICED across alarm firings, so no single invocation carries it
+			// models a sliced boot, which does not exist; a boot is one invocation (see DO_INVOCATIONS_PER_FIRING)
 			mechanism: 'alarmRetry',
 			worker: 2,
 			do: 3,
@@ -453,192 +261,30 @@ export function coldUrlCost(rowsPerFill: number = ROWS_PER_FILL.realRender): Col
 	];
 }
 
-/**
- * DO invocations one alarm FIRING costs, which is one.
- *
- * **WAS 180, AND THAT MODELLED A MECHANISM THIS PROJECT DOES NOT HAVE.** The old figure divided a
- * 1,398 ms boot by an 8 ms slice, i.e. it assumed free's per-invocation CPU cap forces a cold fill
- * to be spread across ~180 alarms. Three things refute it, and all three were already in the tree:
- *
- * - **No slicing code exists.** There is no `bootSlice`, no cursor, nothing under `src/` that
- *   resumes a partial boot, and `TECHNICAL_REPORT.md`'s Boot section says why there cannot be:
- *   `_run()` enters wasm and the stack runs to completion, so a boot has no seam to resume from.
- * - **The cap does not fail an object invocation**, measured 2026-09-07 -- a 1,882 ms `cpuTime`
- *   invocation SUCCEEDED on a deployed free worker -- so the premise that forced the slicing is
- *   false. (A Worker handler running ~1.6 s burns back to back was cut to 10 ms; a fill runs in the
- *   object.)
- * - **A batch drains in ONE invocation, measured on a deployed FREE worker**, n=5 per k with every
- *   batch verified to drain exactly k: per-page wall 109 ms at k=1, 82 at k=5, 50 at k=10, 42.9 at
- *   k=20. That is the direct observation, and `src/ops/plan-profile.ts` carries it.
- *
- * The consequence is not small. At 180 the alarm chain read 2,477 regenerations/day and reported
- * itself DO-BOUND, which made every row saving look worthless on the shipping path. At the measured
- * 1 it is **rows-bound**, and rows are what the whole regeneration model is about again.
- */
+/** DO invocations one alarm firing costs, which is one; the old 180-slice model was refuted */
 export const DO_INVOCATIONS_PER_FIRING = 1;
 
 /** @deprecated the 180-slice model; kept so a reader who finds the old figure lands on the reason */
 export const DO_INVOCATIONS_PER_COLD_FILL = DO_INVOCATIONS_PER_FIRING;
 
-/**
- * The shipped `FILL_BATCH_SIZE` default.
- *
- * One firing fills N pages before re-arming, amortising the `setAlarm()` row across N. It used to be
- * credited with amortising a SLICED boot as well, and that was worth 5x on the ceiling; there is no
- * sliced boot -- see {@link DO_INVOCATIONS_PER_FIRING} -- so on the ceiling it is now worth 1.1x and
- * its real job is bounding HIT latency and isolate memory, which is what `plan-profile.ts` sizes.
- */
+/** the shipped fill batch; amortises the re-arm row and bounds HIT latency and isolate memory */
 export const DEFAULT_FILL_BATCH = 5;
 
-/**
- * Rows a fill writes, per warmth class, excluding the re-arm a batch amortises.
- *
- * REPLACES A FLAT 17, which was wrong twice: it was taken through an instrument hung off
- * `execSql()` that could not see the host's own `cfw_page` write, and the cost has a 20x spread
- * depending on what is warm. `realRender` is the default because the regeneration ceiling prices a
- * re-render after invalidation. Every figure is POST-`cache_page`.
- */
+/** rows a fill writes per warmth class, excluding the amortised re-arm; post `cache_page` */
 export const ROWS_PER_FILL = {
-	/**
-	 * page bin only, dynamic_page_cache left warm: a reassemble rather than a render.
-	 *
-	 * PRICED ON THE FRONT PAGE, which is the dearer path. `/user/login` reassembles in **1** row,
-	 * the upsert, once the audit harness stopped charging its own DELETE to it; `/` reassembles in
-	 * **2**, measured by `fill-bins.spec.ts`, whose harness reads `dailyRows()` only after its own
-	 * setup. Setting this to the login figure made the warmest priced class undercut a real fill,
-	 * which is the one thing a floor may not do -- so the class takes the dearer path. The old 2 was
-	 * right by coincidence: the login reading was inflated by exactly the row the paths differ by.
-	 */
+	/** page bin only, dynamic_page_cache warm; priced on the front page's 2 rows, the dearer path */
 	warmReassemble: 2,
-	/**
-	 * both bins empty -- a real render, and what a tag invalidation costs to undo.
-	 *
-	 * 12 -> 9 when the cache bins became `WITHOUT ROWID` in the pack. Every bin keys on a TEXT
-	 * `cid`, which a rowid table gives its own unique index, so one stored row was charged twice;
-	 * 13 of the 14 bins carry no secondary index, so that autoindex WAS their whole index cost.
-	 *
-	 * **THIS FIGURE DESCRIBES `MEMORY_CACHE_BINS=none` AND THE SHIPPING DEFAULT IS NOT THAT.**
-	 * Measured 2026-09-22 with `dynamic_page_cache` in memory, which is the default now: a real
-	 * re-render charges **3**, because four of the nine rows were that bin and it no longer reaches
-	 * SQL. The constant is deliberately left at the SQL figure, and the reason is a safety property
-	 * rather than inertia.
-	 *
-	 * At 3 the ceiling computed from this class is 27,845/day against a realistic warmth mix of
-	 * 26,207 -- so quoting it would make the headline 6.3% OPTIMISTIC, where today it is a floor.
-	 * `rowsForWarmthMix(STEADY_STATE_WARMTH)` sat below this class and now sits above it, because
-	 * the in-memory bin makes the common case much cheaper and barely moves the cold tail. Three
-	 * other findings invert with it: the windowed path goes DO-bound again, the queue arm's message
-	 * quota starts binding before regeneration does, and one replica scenario becomes
-	 * duration-bound.
-	 *
-	 * Re-deriving the published model against the new default is a piece of work with its own
-	 * measurement pass, and shipping a 2.87x ceiling increase on a hurried one is how a wrong
-	 * published figure ships. `rows-per-fill-audit.spec.ts` measures BOTH arms and prints the gap.
-	 */
-	// 9 -> 8 ON 2026-09-23, and the row removed was the HARNESS'S. The audit arm deleted the page
-	// row inside the tracked window before re-filling, and a DELETE is a charged write; a fill
-	// UPSERTS (`ON CONFLICT(path) DO UPDATE`), so production never paid it. Only classes whose page
-	// row already existed were affected -- this one and `warmReassemble` -- because a DELETE matching
-	// no row writes nothing, which is the control: both cold classes read identically either way
+	/** both bins empty on /user/login; the SQL-bins figure, the shipping default reads 1 */
 	realRender: 8,
-	/**
-	 * the front page on a freshly migrated object, which also writes cfw_meta and the queue.
-	 *
-	 * NOT re-measured against the `WITHOUT ROWID` pack -- the audit spec drives the other four and
-	 * this class has no arm. It is absent from {@link DEFAULT_MIX}, so no ceiling reads it; it is
-	 * left at its pre-conversion value rather than scaled by a guess.
-	 */
+	/** the front page on a freshly migrated object; not re-measured on the `WITHOUT ROWID` pack */
 	firstFillAfterMigrate: 19,
-	/**
-	 * a path never routed on this object, once the object has filled something else.
-	 *
-	 * RE-MEASURED 2026-08-28 at 24, n=3 and zero spread, by
-	 * `tests/integration/rows-per-fill-audit.spec.ts`. It stood at 62, which reproduces as neither
-	 * this class nor {@link firstFillOnFreshObject} either side of it -- 62 and the report's 67 were
-	 * the same fill before and after the `page` bin was nulled, and the pack has moved since.
-	 * 24 -> 14 with the `WITHOUT ROWID` bins.
-	 */
+	/** a path never routed on this object, once the object has filled something else */
 	firstEverForPath: 14,
-	/**
-	 * THE FIRST FILL ON A FRESH OBJECT, which pays the whole shared-bin warm-up once.
-	 *
-	 * A class of its own rather than the worst end of `firstEverForPath`: `cache_discovery`,
-	 * `cache_default` and `cache_routes` are populated once per OBJECT, not once per path, so the
-	 * second never-routed path costs 14 against this 103. Charging every new path 103 overstates a
-	 * fleet's cost by 7x; leaving it out understates each new site by one 103-row event.
-	 *
-	 * 156 -> 103 with the `WITHOUT ROWID` bins, which is where the conversion pays most: this class
-	 * is almost entirely shared-bin inserts.
-	 *
-	 * 103 before the commit sequence; the clock costs 2 rows on a fill that writes authoritative
-	 * state, and nothing on one that does not -- a read writes none by construction.
-	 * 105 -> 107 with the provisioning drop: this fill now pays the interpreter boot that
-	 * `/__migrate` and `/__firstrun` used to leave resident, and a boot writes 2. Paid once per
-	 * object, against an install whose whole heap it removes from the serving incarnation
-	 *
-	 * 107 -> 88 AT DRUPAL 11.4.6, and the saving is the pack rather than the release.
-	 * `install-site-db.php` now creates the six lazily-made cache bins and warms the RouteProvider
-	 * collection at BUILD time, so the first fill no longer writes what it used to discover. The
-	 * remaining charge attributes to `cache_data` (12) and `key_value` (4), measured by
-	 * `rows-per-fill-audit.spec.ts`, which reports every class beside its constant
-	 *
-	 * 88 -> 96 WITH THE MODULE SURFACE THIS REPOSITORY SHIPS. The packed driver went from 2 routes
-	 * to 4 and gained the health ledger's capability; the growth is `cache_discovery` 27,
-	 * `cache_default` 21 and `cache_render` 15, which is where a larger surface is discovered.
-	 * THE CONTROL IS THE OTHER THREE CLASSES: `firstEverForPath` 14, `realRender` 9 and
-	 * `warmReassemble` 2 are unchanged to the row, so nothing about steady-state rendering or
-	 * storing moved and the cost is confined to the once-per-object class. n=2, no spread.
-	 *
-	 * The A/B that would have named it directly is not constructible: packing the driver from the
-	 * pre-session sibling and leaving the host current reads 70, with 5 `watchdog` rows and
-	 * `warmReassemble` moving the WRONG way, because that pairing is a host and a module that no
-	 * longer fit. A control has to move both sides or neither
-	 *
-	 * 96 -> 94 on 2026-09-11, when `advanceCommit()` stopped writing `cfw_meta` per authoritative
-	 * statement. A fill advances the commit sequence a handful of times; batching them to one row
-	 * per invocation is what moved this, and it moved a content SAVE far more -- 188 -> 161.
-	 *
-	 * 94 -> 91 on 2026-09-14, when `firstRunConfig()` began minting `system.private_key`. Drupal
-	 * created it lazily on the first render needing a CSRF token, which on a fresh object IS this
-	 * fill, so the write moved from here to the claim. Attributed rather than assumed: reverting
-	 * the mint reads 94 and restoring it reads 91, n=1 each with the other three classes unchanged
-	 * to the row. Net-neutral per site, and it moves the cost OFF the metered regeneration path,
-	 * which is the tighter of the two ceilings by 12x.
-	 *
-	 * 91 -> 90 on 2026-09-25, when the claim began creating the owner role and assigning it to uid 1.
-	 * Same shape as the key: with `OwnerTier::establish()` disabled the first fill reads 91 and 87
-	 * at the default, restored it reads 90 and 86, n=1 each with the other classes unchanged.
-	 *
-	 * 90 -> 82 the same day, when the pack database was rebuilt so its router matches the driver.
-	 * A fresh install mints a new Twig prefix, the bake re-ran under it, and the pack now carries 34
-	 * compiled templates against 23: the first fill compiles fewer, so `cache_default` writes 12
-	 * rows rather than 20. Every other table matched to the row.
-	 *
-	 * 82 -> 83 on 2026-10-22, when the module integrity baseline began recording at the first mount
-	 * (`markAdopted()` writes `modsum:adopted` to sealed storage, once per object). Attributed by
-	 * logging every `storage.kv.put` in the window: the only one is that key, with `owner_token_sha256`
-	 * landing in the claim before it. The previous interpreter build reads 83 as well, so it is not
-	 * the interpreter. A one-off per object, so it moves neither steady-state class.
-	 */
+	/** the first fill on a fresh object, which pays the shared-bin warm-up once; not a per-path rate */
 	firstFillOnFreshObject: 83
 } as const;
 
-/**
- * The same four classes at the SHIPPING DEFAULT: `dynamic_page_cache` and `menu` in memory.
- *
- * MEASURED by `rows-per-fill-audit.spec.ts`, whose default arm drives the four classes in the SQL
- * arm's order. Order matters and cost a wrong reading: an arm that takes `realRender` straight after
- * a throwaway both-bins fill reads one row higher than the same class in the SQL arm's sequence.
- *
- * A real re-render is **1** row, the `cfw_page` upsert: {@link ROWS_PER_FILL}'s 8, minus the 6
- * `cache_dynamic_page_cache` rows and the 1 `cache_menu` row. The cold classes barely move, because
- * the in-memory bins are most of a re-render and almost none of a cold one: a first fill is 79 against
- * 83 and a never-routed path 11 against 14. That asymmetry is why the headline is priced on a MIX --
- * see {@link rowsForWarmthMix}. (With `render` in memory too they read 72 and 6; it is not default.)
- *
- * `warmReassemble` is the front page's 2, measured at this default in the same arm (login
- * reassembles in 1); the class is priced on its dearer path.
- */
+/** the four classes at the shipping default, with `dynamic_page_cache` and `menu` in memory */
 export const ROWS_PER_FILL_MEMORY_BINS = {
 	warmReassemble: 2,
 	realRender: 1,
@@ -652,32 +298,14 @@ export type FillWarmth = keyof typeof ROWS_PER_FILL;
 /** how a day's fills are spread across the warmth classes; fractions, not counts */
 export type WarmthMix = Partial<Record<FillWarmth, number>>;
 
-/**
- * A steady-state day's spread of fills, and **these weights are an assumption, not a measurement**.
- *
- * The four ROW figures above were each measured on a real object; these weights were not. They
- * exist so a caller can price a distribution rather than pick one class and pretend the rest do
- * not happen. `realRender` dominates because that is what a tag invalidation leaves behind;
- * `warmReassemble` is the surviving-`dynamic_page_cache` minority; `firstEverForPath` is a small
- * tail. `firstFillAfterMigrate` is ABSENT rather than zero-weighted -- it happens once per object
- * lifetime, so it is not a rate and belongs in no per-day mix.
- */
+/** a steady-state day's spread of fills; these weights are an assumption, not a measurement */
 export const STEADY_STATE_WARMTH: WarmthMix = {
 	warmReassemble: 0.25,
 	realRender: 0.7,
 	firstEverForPath: 0.05
 };
 
-/**
- * Weighted rows per fill for a spread of warmth classes.
- *
- * Weights are used AS GIVEN rather than normalised, matching `envelope()`'s treatment of
- * `TrafficMix`: a mix that does not sum to 1 is a mistake in the caller, and silently rescaling it
- * would hide the mistake behind a plausible number.
- *
- * @throws if a weight is negative, which cannot mean anything and would quietly cancel another
- *   class out.
- */
+/** weighted rows per fill for a spread of warmth classes; weights are used as given, not normalised */
 export function rowsForWarmthMix(
 	mix: WarmthMix,
 	table: Record<FillWarmth, number> = ROWS_PER_FILL
@@ -692,51 +320,21 @@ export function rowsForWarmthMix(
 	return rows;
 }
 
-/**
- * The fill window's multiplier, and it no longer changes any ceiling.
- *
- * Its stated basis was that each message resets the CPU budget inside one object lifetime, making
- * the window ~25x the alarm chain. That was only true against the 180-slice model: once a firing is
- * one invocation there is nothing left for it to divide, and `envelope()` no longer applies it.
- * Kept exported because nothing measured it either way; delete it with its last reader.
- */
+/** the fill window multiplier, now unused by any ceiling; kept until its last reader goes */
 export const FILL_WINDOW_AMORTISATION = 25;
 
 export type TrafficMix = {
 	edgeHit: number;
 	doHit: number;
 	miss: number;
-	/**
-	 * Fraction of visits served with NO Worker invocation, and the only lever on the serving ceiling.
-	 *
-	 * "Free and unlimited" applies to Workers Static Assets, which are uploaded at DEPLOY time and
-	 * cannot hold a rendered page. The runtime-writable candidate is an R2 public bucket, whose free
-	 * tier is 10 million Class B operations per month plus 1 million Class A.
-	 *
-	 * 10M Class B/month is 333,333/day against the 100,000/day Worker ceiling -- a floor of ~3.3x,
-	 * not the 12.5x once quoted. Above that floor depends on CDN absorption, unmeasured here, so any
-	 * figure past ~3.3x is an UPPER BOUND. Writes never bind: 1M Class A/month is 33,333/day.
-	 *
-	 * Drained from `edgeHit` first, then `doHit`, and it removes the DO cost too -- a page served
-	 * off an asset layer touches neither the Worker nor the object.
-	 */
+	/** fraction of visits served with no Worker invocation; the only lever on the serving ceiling */
 	offWorker?: number;
 };
 
 /** the report's realistic mix */
 export const DEFAULT_MIX: TrafficMix = { edgeHit: 0.85, doHit: 0.14, miss: 0.01 };
 
-/**
- * What an editorial write costs, measured on a deployed object.
- *
- * `TECHNICAL_REPORT.md`'s Writes table, deployed 2026-09-24, n=8 per class, medians. Every figure
- * is charged rows rather than statements, because the driver replays a speculative transaction and a
- * replayed row is billed like any other. They were 103 / 218 / 33 / 14 / 41 until the replay sent
- * only the statements that write a table the asked-about statement touches.
- *
- * The two node figures are DERIVED since 2026-09-25: the deployed 48 and 53, less the 6 rows the
- * three unread `node_field_data` indexes cost on both, measured as a pair on one local object.
- */
+/** rows an editorial write costs, from a deployed object (medians, n=8 per class); see the Writes table in `TECHNICAL_REPORT.md` */
 export const ROWS_PER_WRITE = {
 	nodeCreate: 42,
 	nodeRevision: 47,
@@ -747,18 +345,7 @@ export const ROWS_PER_WRITE = {
 
 export type EditorialDay = Partial<Record<keyof typeof ROWS_PER_WRITE, number>>;
 
-/**
- * The rows a day of editing spends before anything is regenerated.
- *
- * THE MODEL PRICED NONE OF THIS, which is what makes the published figure a renders/day number
- * rather than a budget. A daily row quota is spent by three things and regeneration is only one of
- * them: the warming chain, the editors, and the fills. Quoting the third as though it had the whole
- * 100,000 describes a site nobody edits.
- *
- * Defaults to nothing rather than to a guess. There is no measured editorial rate for any real
- * site, so an invented one would be a plausible number attached to a real model -- the shape this
- * project has been bitten by. A caller who knows their rate passes it.
- */
+/** rows a day of editing spends before regeneration; defaults to nothing, since no rate is measured */
 export function editorialRowsPerDay(perDay: EditorialDay = {}): number {
 	return (Object.keys(ROWS_PER_WRITE) as (keyof typeof ROWS_PER_WRITE)[]).reduce(
 		(total, kind) => total + Math.max(0, perDay[kind] ?? 0) * ROWS_PER_WRITE[kind],
@@ -779,22 +366,9 @@ export type Envelope = {
 	};
 	/** distinct pages that can be RENDERED per day, which is the real product question */
 	regenerationsPerDay: number;
-	/**
-	 * What keeping the object resident spends before any traffic arrives.
-	 *
-	 * Reported rather than folded in silently, because the figure this project published for a year
-	 * was the one with `rowsPerDay` at 0 -- and `SITE_WARM` is on by default, so that ceiling
-	 * described a site nobody runs.
-	 */
+	/** rows and duration the keep-warm chain spends before traffic; reported, not folded in */
 	warming: { rowsPerDay: number; doRequestsPerDay: number; rowShare: number };
-	/**
-	 * The daily row quota, split by what spends it.
-	 *
-	 * The free-plan headline is a WRITE budget and was being quoted as a renders/day number. Three
-	 * claimants share one meter -- the warming chain, the editors and the fills -- and reporting
-	 * only the third is what made a site with an editor on it read as though it had the whole
-	 * 100,000 to regenerate with.
-	 */
+	/** the daily row quota split by claimant: warming chain, editors and fills */
 	writeBudget: {
 		quotaRows: number;
 		warmingRows: number;
@@ -805,13 +379,7 @@ export type Envelope = {
 	};
 	regenerationBoundBy: 'do' | 'rows' | 'r2ClassA' | 'duration';
 	windowed: boolean;
-	/**
-	 * The duration meter, reported whether or not it binds.
-	 *
-	 * `alwaysWarmGbS` is spent BEFORE any traffic, so it is the number that prices always-warm
-	 * render replicas: two objects held alive for a day is 21,600 GB-s against an allowance of
-	 * 13,000, over on their own.
-	 */
+	/** the duration meter, reported whether or not it binds */
 	duration: {
 		allowanceGbS: number;
 		alwaysWarmGbS: number;
@@ -825,12 +393,7 @@ export type Envelope = {
 	};
 };
 
-/**
- * Computes both ceilings for a traffic mix.
- *
- * @param mix fractions; they are used as given rather than normalised, because a mix that does not sum
- *   to 1 is a mistake in the caller and silently rescaling it would hide the mistake.
- */
+/** computes both ceilings for a traffic mix; `mix` fractions are used as given, not normalised */
 export function envelope(
 	mix: TrafficMix = DEFAULT_MIX,
 	opts: {
@@ -839,76 +402,25 @@ export function envelope(
 		fillBatch?: number;
 		/** which warmth class to price; ignored when `rowsPerFill` is given outright */
 		warmth?: FillWarmth;
-		/**
-		 * a SPREAD of warmth classes, which is what a real day is. Overrides `warmth`, and is
-		 * itself overridden by `rowsPerFill`; the precedence runs most-specific-wins so a caller
-		 * that pins an exact figure always gets it.
-		 */
+		/** a spread of warmth classes; overridden by `rowsPerFill` when that is given */
 		warmthMix?: WarmthMix;
-		/**
-		 * Whether a fill writes an R2 object, which is what makes the Class A meter apply at all.
-		 * Implied by `offWorker > 0`; set it outright to price a mirror that stores pages without
-		 * serving them off-Worker yet.
-		 */
+		/** whether a fill writes an R2 object; implied by `offWorker > 0` unless `offWorkerVia` is assets */
 		mirror?: boolean;
-		/**
-		 * Fraction of off-Worker reads that Cloudflare's CDN answers in front of the bucket, so they
-		 * never become an R2 Class B operation.
-		 *
-		 * EXPLICIT AND DEFAULTED TO ZERO, and zero is a MEASUREMENT rather than the gap this used to
-		 * call it. `cdn-absorption.ts` drives the shipping drain and reads what it hands R2: `.html`
-		 * keys with no `cache-control`. Cloudflare's CDN caches by EXTENSION and does not cache HTML
-		 * by default, so a mirrored page answers `DYNAMIC` and reaches the bucket every time until a
-		 * Cache Rule makes the hostname eligible. At 0 the R2 ceiling is 333,333 views/day -- 3.33x
-		 * the Worker ceiling -- and the true figure is `3.33x / (1 - absorption)`.
-		 *
-		 * The RATIO on a site that has the rule still needs production traffic:
-		 * `1 - classB / hostnameRequests`, both counters from a deployed zone over one window.
-		 */
+		/** what answers an off-Worker visit; `assets` reads no R2 object and a fill writes none */
+		offWorkerVia?: 'r2' | 'assets';
+		/** off-Worker reads the CDN answers before R2; 0 until a Cache Rule makes the hostname eligible */
 		cdnAbsorption?: number;
-		/**
-		 * Objects held alive continuously, which is what a render replica IS.
-		 *
-		 * Charged against the duration allowance before a single request is served, because an
-		 * object that cannot hibernate bills for wall clock rather than for work. Defaults to 0:
-		 * the shipping design lets an idle object hibernate.
-		 */
+		/** objects held alive continuously; charged against the duration allowance before any request */
 		alwaysWarmObjects?: number;
-		/**
-		 * How the replica fleet behaves when idle.
-		 *
-		 * `alwaysWarm` is what `alwaysWarmObjects` used to mean unconditionally, and scoring every
-		 * replica design that way is what closed replicas too widely. `hibernating` spends no idle
-		 * duration at all -- it pays a WAKE instead, which this model does not price and which has
-		 * never been measured on this runtime.
-		 */
+		/** how the replica fleet behaves when idle; `hibernating` pays a wake, which is not priced */
 		replicaMode?: ReplicaMode;
 		/** which render a fill pays for; a cold object pays the boot again */
 		fillWarmth?: 'warm' | 'cold';
-		/**
-		 * Whether this site keeps itself resident, which SPENDS the budget being divided up.
-		 *
-		 * Defaults to true because `warmForced()` warms an unset paid site, so the paid default is a
-		 * warmed site -- and the published ceiling was computed as though it were not. At `WARM_INTERVAL_MS` that is 12,240 rows/day and 10,800 DO requests/day gone
-		 * before a visitor arrives, which is 12.2% of the row budget the regeneration ceiling
-		 * divides.
-		 *
-		 * `thermal.ts` declines to warm a site below ~505 renders/day, so this is not true of every
-		 * site -- but a site AT the regeneration ceiling is rendering far above that crossing by
-		 * construction, which is what makes the subtraction right for the ceiling specifically.
-		 *
-		 * A NUMBER rather than a boolean would be the interval, and `keepWarmMs` is that; this is
-		 * the switch, because `SITE_WARM=0` is a real configuration and it changes the answer.
-		 */
+		/** whether the site keeps itself resident; spends the budget being divided up */
 		warmed?: boolean;
 		/** the warming interval, when it is not the shipping `WARM_INTERVAL_MS` */
 		keepWarmMs?: number;
-		/**
-		 * What the editors do in a day, which the model used to price at nothing.
-		 *
-		 * A node revision is 53 charged rows, so 50 a day is 2,650, about a quarter of the warming
-		 * chain. Left empty by default because no real site's rate has been measured here.
-		 */
+		/** what editors do in a day; zero by default because no real site's rate is measured */
 		editorial?: EditorialDay;
 	} = {}
 ): Envelope {
@@ -921,9 +433,7 @@ export function envelope(
 			? rowsForWarmthMix(opts.warmthMix)
 			: ROWS_PER_FILL[opts.warmth ?? 'realRender']);
 	const rowsPerFill = opts.rowsPerFill !== undefined ? perPageRows : perPageRows + 1 / batch;
-	// an off-Worker visit costs ZERO Worker requests AND zero DO requests: the asset layer answers it
-	// without either. Drain edgeHit first, then doHit, because a cached page in R2 is served the same
-	// way regardless of which tier would otherwise have answered it.
+	// an off-Worker visit costs no Worker or DO request; the asset layer answers it. Drain edgeHit first.
 	const wanted = Math.max(0, Math.min(mix.offWorker ?? 0, mix.edgeHit + mix.doHit));
 	const offEdge = Math.min(wanted, mix.edgeHit);
 	const offDo = wanted - offEdge;
@@ -941,11 +451,11 @@ export function envelope(
 			mix.miss * COST_PER_VIEW.missAndFill.do,
 		rows: mix.miss * rowsPerFill,
 		// only the off-Worker share touches R2 at all, and only the part the CDN does not absorb
-		r2ClassB: wanted * (1 - absorption)
+		r2ClassB: opts.offWorkerVia === 'assets' ? 0 : wanted * (1 - absorption)
 	};
 
-	// DURATION, the meter nothing counted. An off-Worker read never wakes the object, a DO hit is
-	// one indexed read, and a miss holds the object for a whole render
+	// duration, the meter nothing counted: an off-Worker read never wakes the object, a DO hit is one read,
+	// and a miss holds the object for a whole render
 	const renderSeconds =
 		opts.fillWarmth === 'cold' ? SECONDS_PER.coldRender : SECONDS_PER.warmRender;
 	const perViewSeconds =
@@ -962,16 +472,12 @@ export function envelope(
 	);
 	const availableGbS = FREE_QUOTAS.durationGbSPerDay - alwaysWarmGbS;
 
-	// WARMING IS SPENT BEFORE ANY TRAFFIC, and nothing removed it until 2026-09-22. `SITE_WARM` is on
-	// by default, so the published 10,869 rows/day regeneration ceiling was the ceiling of a site
-	// that does not keep itself resident -- a configuration the product does not ship. One term,
-	// taken off the two meters warming actually spends.
+	// warming is spent before any traffic, so one term is taken off the two meters it spends.
 	const warming =
 		(opts.warmed ?? true)
 			? keepWarmFleetCost(1, opts.keepWarmMs ?? WARM_INTERVAL_MS)
 			: { rowsPerDay: 0, doRequestsPerDay: 0 };
-	// the editors' share, taken off the same meter and before the same division. Zero by default,
-	// so nothing moves for a caller who does not state a rate
+	// the editors' share, taken off the same meter; zero by default, so nothing moves unless a rate is given
 	const editorialRows = editorialRowsPerDay(opts.editorial);
 	const rowsAvailable = Math.max(
 		0,
@@ -1005,28 +511,14 @@ export function envelope(
 		'worker' as const
 	);
 
-	// REGENERATION is a separate budget: a fill's DO cost is the sliced boot, not the 3 of a warm hit.
-	//
-	// The boot is paid ONCE PER FIRING, and a firing fills `batch` pages, so it divides by the batch as
-	// well as by the window. Stated rather than assumed: the two amortise the same boot by different
-	// mechanisms -- the window keeps one object alive across messages, the batch does more work per
-	// wake -- so multiplying them is only valid while a windowed firing still fills a full batch.
-	// A FIRING IS ONE INVOCATION AND IT DRAINS `batch` PAGES, so the invocation term is 1/batch and
-	// nothing else. `windowed` used to divide this by a further 25, which is how the two paths came
-	// to report ceilings 4x apart; that multiplier has no measurement behind it and, now that a
-	// firing costs 1 rather than 180, it would be dividing a number that is already the floor. The
-	// window's real effect is on BOOTS, which is a duration cost, not a request count.
+	// a firing is one invocation that drains `batch` pages, so the invocation term is 1/batch alone.
 	const amortisation = batch;
 	const invocationsPerFill = DO_INVOCATIONS_PER_FIRING / amortisation;
 	const byDo = doAvailable / invocationsPerFill;
 	const byRows = rowsAvailable / rowsPerFill;
-	// ONLY IF A FILL ACTUALLY WRITES AN R2 OBJECT. This term was unconditional and it capped
-	// regeneration at 33,333/day on a configuration that writes nothing to R2: the shipping
-	// `wrangler.jsonc` declares no `r2_buckets`, so the mirror does not run on a default deploy, and
-	// `offWorker` defaults to 0 besides. Charging the meter anyway made an R2 ceiling bind a site
-	// with no bucket -- invisible while rows bind first, and the answer the moment the in-memory
-	// bins took rows/fill below 2.65
-	const mirrored = (mix.offWorker ?? 0) > 0 || opts.mirror === true;
+	// the R2 Class A term applies only when a fill writes an R2 object; a default deploy writes none.
+	const mirrored =
+		((mix.offWorker ?? 0) > 0 && opts.offWorkerVia !== 'assets') || opts.mirror === true;
 	const byR2ClassA = mirrored ? FREE_QUOTAS.r2ClassAPerMonth / DAYS_PER_MONTH : Infinity;
 	const byDuration = perFillGbS > 0 ? Math.max(0, availableGbS) / perFillGbS : Infinity;
 	const regenCeilings = { do: byDo, rows: byRows, r2ClassA: byR2ClassA, duration: byDuration };
@@ -1057,9 +549,7 @@ export function envelope(
 				) * perViewGbS,
 			slackFraction: availableGbS / FREE_QUOTAS.durationGbSPerDay
 		},
-		// Class A is a WRITE, so it prices regeneration rather than serving: one mirrored page per
-		// fill. 1M/month is 33,333/day against a rows-bound ceiling of ~10,869, so it is not close --
-		// but it is in the model now rather than assumed away
+		// class A is a write, so it prices regeneration: one mirrored page per fill, 33,333/day at 1M/month
 		regenerationsPerDay: Math.floor(Math.min(byDo, byRows, byR2ClassA, byDuration)),
 		warming: {
 			rowsPerDay: warming.rowsPerDay,
@@ -1081,12 +571,7 @@ export function envelope(
 	};
 }
 
-/**
- * What a queue-backed fill would cost, against the alarm chain it would replace.
- *
- * Executable rather than written down: a queue removes the `setAlarm()` row and the alarm's own
- * invocation, and adds a meter with a much lower ceiling, so all three have to be priced at once.
- */
+/** what a queue-backed fill would cost against the alarm chain it would replace */
 export type QueueArm = {
 	/** deliverable messages/day, which is the operation quota divided by the three each one costs */
 	messagesPerDay: number;
@@ -1113,23 +598,9 @@ export function queueArm(
 	const alarm = envelope(mix, opts);
 	const batch = Math.max(1, Math.floor(opts.fillBatch ?? DEFAULT_FILL_BATCH));
 
-	/**
-	 * ONE BATCH PER MESSAGE, the same batch the alarm arm is credited with.
-	 *
-	 * This used to bill one message per PAGE while the alarm arm amortised over five, which is
-	 * RULE 0c question (b) -- two arms priced under different workloads. Cloudflare bills a queue
-	 * message per 64 KB and five paths in one body is far under that, so the identical
-	 * amortisation is available to both and pricing it away was an assumption, not a measurement.
-	 *
-	 * WHETHER A MULTI-PATH BODY IS ACCEPTABLE IS A DESIGN CALL AND IT IS NOT SETTLED HERE. It
-	 * couples the retry granularity of five paths together: one poisoned path re-delivers the
-	 * other four. That is the actual question a queue proposal has to answer, and it is a
-	 * different one from "does it fit the meter".
-	 */
+	/** one batch per message, the same batch the alarm arm is credited with; a multi-path body couples retries */
 	const pathsPerMessage = batch;
-	// what the queue REMOVES is the alarm re-arm row, which the model already amortises as
-	// `+1/batch` -- so passing the per-page figure outright is the whole saving. Subtracting a
-	// WHOLE row, which this did, credited it five times the stated 1.5%
+	// the queue removes the re-arm row, already amortised as `+1/batch`; the per-page figure is the saving.
 	const perPageRows =
 		opts.rowsPerFill ??
 		(opts.warmthMix
@@ -1176,17 +647,7 @@ export type MirrorOptimum = {
 	step: number;
 };
 
-/**
- * The mirror share that maximises serving views, because this lever has a MAXIMUM and not a limit.
- *
- * Moving a view off the Worker spends R2's 333,333/day meter to save the 100,000/day one, so past
- * the crossing point mirroring more makes the site smaller: the peak is ~77% and mirroring
- * everything gives up about a fifth of the ceiling it exists to buy.
- *
- * Numeric rather than analytic because `envelope()` drains `edgeHit` before `doHit`, so the cost is
- * piecewise-linear and a closed form needs a case per piece. The optimum moves with the mix and
- * with `cdnAbsorption`, so call this rather than hardcoding a share.
- */
+/** the mirror share that maximises serving views; the lever has a maximum, not a limit */
 export function optimalOffWorker(
 	mix: TrafficMix = DEFAULT_MIX,
 	opts: Parameters<typeof envelope>[1] & { step?: number } = {}
@@ -1200,8 +661,7 @@ export function optimalOffWorker(
 	for (let share = step; share <= mirrorable + 1e-9; share += step) {
 		const capped = Math.min(share, mirrorable);
 		const env = at(capped);
-		// strict >, so the SMALLEST share achieving the peak wins: mirroring more for the same
-		// ceiling is pure R2 spend with nothing bought
+		// strict >, so the smallest share at the peak wins; more mirroring is pure R2 spend
 		if (env.servingViewsPerDay > best.env.servingViewsPerDay) best = { share: capped, env };
 	}
 
@@ -1218,17 +678,132 @@ export function optimalOffWorker(
 	};
 }
 
+/** rows a fill writes at the shipping default, priced on the steady-state warmth mix */
+export const SHIPPING_ROWS_PER_FILL = rowsForWarmthMix(
+	STEADY_STATE_WARMTH,
+	ROWS_PER_FILL_MEMORY_BINS
+);
+
+/** requests one first page load of the demo site makes, n=1: the page and 65 assets */
+export const REQUESTS_PER_PAGE_LOAD = 66;
+
+/** the platform side of republishing an asset, measured 2026-11-02 on a paid throwaway, small n */
+export const ASSET_PUBLISH = {
+	/** wall seconds of the deploy command over four completed republishes of the 17.6 MB script */
+	deploySeconds: { min: 13.0, max: 16.4 },
+	/** seconds from the deploy starting to the changed asset being served, same four republishes */
+	visibleSeconds: { min: 11.9, max: 13.7 },
+	/** completed republishes, and how many of them reset the warm object */
+	completed: 4,
+	resets: 0,
+	/** files wrangler read from the assets directory on the first deploy of the canonical config */
+	packFiles: 5_385,
+	/** documented static asset files per Worker version */
+	filesPerVersion: { free: 20_000, paid: 100_000 }
+} as const;
+
+/** page paths that fit beside the pack in one Worker version, per plan */
+export const ASSET_PAGE_HEADROOM = {
+	free: ASSET_PUBLISH.filesPerVersion.free - ASSET_PUBLISH.packFiles,
+	paid: ASSET_PUBLISH.filesPerVersion.paid - ASSET_PUBLISH.packFiles
+} as const;
+
 /**
- * What rejecting bad traffic saves, per meter.
- *
- * "Requests blocked" is the one number that does not matter; what matters is which meter the
- * blocked traffic was going to spend.
- *
- * **WHERE the rejection happens decides it.** An in-Worker refusal still costs ONE WORKER REQUEST,
- * because the Worker has to run to refuse -- it saves the DO hop, the rows and the duration, and
- * nothing on the meter that binds SERVING. Only a WAF or Turnstile rule evaluated before the Worker
- * moves that ceiling. Same shape as "a cache hit is not free".
+ * whether assets bill as Worker requests. 'billedAsWorker' is a scenario, not a billing reading: it
+ * prices the Workers Cache exception that docs/impact/economics/free-vs-paid/index.md calls not shipped. 'notBilled' is the
+ * shipped case and is also a model input, not a metered count.
  */
+export type AssetBilling = 'notBilled' | 'billedAsWorker';
+
+export type OffWorkerArm = {
+	via: 'assets' | 'r2';
+	billing: AssetBilling;
+	/** fraction of views the arm answers off the Worker */
+	share: number;
+	/** billed Worker requests one view spends with the arm, and with neither */
+	workerPerView: number;
+	todayWorkerPerView: number;
+	todayViewsPerDay: number;
+	viewsPerDay: number;
+	boundBy: Envelope['servingBoundBy'];
+	regenerationsPerDay: number;
+	regenerationBoundBy: Envelope['regenerationBoundBy'];
+};
+
+/**
+ * scores one off-Worker arm under one billing scenario at the shipping default; a published page is
+ * an asset and an R2 page never runs the Worker, and the 65 assets beside the page bill only if
+ * static assets do
+ */
+export function offWorkerArm(
+	via: 'assets' | 'r2',
+	billing: AssetBilling,
+	opts: Parameters<typeof envelope>[1] & { mix?: TrafficMix; share?: number } = {}
+): OffWorkerArm {
+	const mix = opts.mix ?? DEFAULT_MIX;
+	const mirrorable = mix.edgeHit + mix.doHit;
+	const share = Math.max(0, Math.min(opts.share ?? mirrorable, mirrorable));
+	const base = { rowsPerFill: SHIPPING_ROWS_PER_FILL, ...opts };
+	const env = envelope({ ...mix, offWorker: share }, { ...base, offWorkerVia: via });
+	const today = envelope(mix, base);
+
+	const subresources = billing === 'billedAsWorker' ? REQUESTS_PER_PAGE_LOAD - 1 : 0;
+	const pageWorker = via === 'assets' && billing === 'billedAsWorker' ? 1 : 1 - share;
+	const workerPerView = subresources + pageWorker;
+	const todayWorkerPerView = subresources + 1;
+	const ceilings = {
+		worker: FREE_QUOTAS.workerRequestsPerDay / workerPerView,
+		do: env.perMeterViewCeiling.do,
+		rows: env.perMeterViewCeiling.rows,
+		r2ClassB: env.perMeterViewCeiling.r2ClassB,
+		duration: env.perMeterViewCeiling.duration
+	};
+	const todayCeilings = {
+		worker: FREE_QUOTAS.workerRequestsPerDay / todayWorkerPerView,
+		do: today.perMeterViewCeiling.do,
+		rows: today.perMeterViewCeiling.rows,
+		duration: today.perMeterViewCeiling.duration
+	};
+	const meters = Object.keys(ceilings) as Array<keyof typeof ceilings>;
+	const boundBy = meters.reduce((best, m) => (ceilings[m] < ceilings[best] ? m : best), 'worker');
+	return {
+		via,
+		billing,
+		share,
+		workerPerView,
+		todayWorkerPerView,
+		todayViewsPerDay: Math.floor(Math.min(...Object.values(todayCeilings))),
+		viewsPerDay: Math.floor(Math.min(...Object.values(ceilings))),
+		boundBy,
+		regenerationsPerDay: env.regenerationsPerDay,
+		regenerationBoundBy: env.regenerationBoundBy
+	};
+}
+
+/** what a day of the assets arm's publishing allows; the serial cap is a measured throughput, not a quota */
+export function assetPublishBudget(
+	savesPerDay: number,
+	debounceSeconds: number
+): {
+	publishesPerDay: number;
+	serialCap: number;
+	byDebounce: number;
+	staleSeconds: { min: number; max: number };
+} {
+	const serialCap = Math.floor(SECONDS_PER_DAY / ASSET_PUBLISH.deploySeconds.max);
+	const byDebounce = Math.floor(SECONDS_PER_DAY / Math.max(1, debounceSeconds));
+	return {
+		publishesPerDay: Math.min(Math.max(0, Math.floor(savesPerDay)), byDebounce, serialCap),
+		serialCap,
+		byDebounce,
+		staleSeconds: {
+			min: debounceSeconds + ASSET_PUBLISH.visibleSeconds.min,
+			max: debounceSeconds + ASSET_PUBLISH.visibleSeconds.max
+		}
+	};
+}
+
+/** what rejecting bad traffic saves per meter; an in-Worker refusal still costs one Worker request */
 export type RejectionSaving = {
 	/** requests/day the rejection removes */
 	rejectedPerDay: number;
@@ -1239,18 +814,7 @@ export type RejectionSaving = {
 	savedShare: { worker: number; do: number; rows: number; duration: number };
 };
 
-/**
- * Scores a rejection rate against every meter.
- *
- * @param rejectedPerDay
- *   Requests/day the rule would refuse.
- * @param at
- *   `worker` for a refusal inside the Worker, `edge` for one evaluated before it is invoked.
- * @param wouldHaveCost
- *   What a refused request would have cost had it been served. Defaults to the miss-and-fill
- *   profile, which is the pessimistic and the interesting case: a scanner asks for paths that are
- *   never cached, so every one of them is a MISS.
- */
+/** scores a rejection rate against every meter; only `at: 'edge'` saves the Worker request */
 export function scoreRejection(
 	rejectedPerDay: number,
 	at: 'worker' | 'edge' = 'worker',
@@ -1262,7 +826,7 @@ export function scoreRejection(
 	}
 ): RejectionSaving {
 	const n = Math.max(0, rejectedPerDay);
-	// the Worker request is saved ONLY when the refusal happens before the Worker runs
+	// the Worker request is saved only when the refusal happens before the Worker runs
 	const savedWorker = at === 'edge' ? n * wouldHaveCost.worker : 0;
 	const saved = {
 		worker: savedWorker,
@@ -1294,17 +858,7 @@ export type StorageCeiling = {
 	packed: boolean;
 };
 
-/**
- * How many sites fit, which is the question no rate meter asks.
- *
- * The image is 71% of what a site occupies, so whether it is stored -- and whether it is packed --
- * decides how many customers an account holds rather than boot latency alone.
- *
- * @param heapSnapshot whether a stored heap is kept per site.
- * @param extraBytesPerSite content, uploads and rendered pages a real site accumulates.
- * @param packed whether the chunks are deflated; true is what ships, and the default so a caller
- *   asking the plain question gets the shipping answer.
- */
+/** how many sites fit the account-wide storage allowance; whether the snapshot is stored decides it */
 export function storageCeiling(
 	heapSnapshot: boolean,
 	extraBytesPerSite = 0,
@@ -1332,17 +886,7 @@ export type StorageVerdict = {
 	sitesPerAccount: number;
 };
 
-/**
- * Whether a FLEET of a given size fits, which is what a hard cap actually asks.
- *
- * `storageCeiling()` answers how many sites fit; this answers whether the ones an operator has
- * planned for do. The two rate ceilings score one site's traffic, so neither can see this, and a
- * fleet reaches the cap with every rate meter healthy.
- *
- * @param sites how many tenants the account holds.
- * @param opts `heapSnapshot` and `packed` as in {@link storageCeiling}; `extraBytesPerSite` is the
- *   content a real site accumulates on top of its seed.
- */
+/** whether a fleet of a given size fits the storage cap; the rate ceilings cannot see this */
 export function fleetStorage(
 	sites: number,
 	opts: { heapSnapshot?: boolean; packed?: boolean; extraBytesPerSite?: number } = {}
@@ -1364,60 +908,14 @@ export function fleetStorage(
 	};
 }
 
-/**
- * What the seed's rebuildable cache bins would save, and why they are not trimmed.
- *
- * REFUTED ON MEASUREMENT, `tests/integration/seed-cache-cost.spec.ts`, n=3 with zero spread. The
- * seven bins excluding `cache_container` are 1,273,856 bytes of a 4,730,880-byte provisioned
- * database, so dropping their INSERTs from the pack looks like a 27% saving. After ONE render the
- * trimmed site is 5,685,248 bytes against the untrimmed 5,509,120: the site rebuilds the bins on
- * its first render, larger than the copy it shipped, so the saving is transient and then negative.
- *
- * It also costs 227 charged rows on that render, 98 -> 325, on the meter that binds regeneration.
- *
- * Recorded so the mechanism is not re-proposed. The OBJECTIVE it was aimed at -- per-tenant storage
- * against a hard cap -- is served by {@link SITE_STORAGE_BYTES.packedHeapSnapshot} instead, which is
- * 6.3x the saving and does not expire on the first render.
- *
- * **THE REFUTATION IS REVERSED ON THE 11.4.6 FROM-SOURCE PACK, and the reading above is kept rather
- * than replaced.** Both are correct about different artifacts. The refuted measurement was taken on
- * the traced-list pack, whose bins ship POPULATED from a traced run; this pack's bins are built by
- * `install-site-db.php`, so what a trim removes is smaller and what the render rebuilds no longer
- * exceeds it.
- *
- * Measured on that pack, n=2 with zero spread between runs:
- *
- * | arm       | after migrate | after render | render rows |
- * | --------- | ------------: | -----------: | ----------: |
- * | untrimmed |     5,550,080 |    6,275,072 |         114 |
- * | trimmed   |     3,469,312 |    5,701,632 |         319 |
- *
- * So the trim RETAINS 573,440 bytes per site and costs 205 charged rows once, on the first render.
- *
- * **IT PAYS, AND THE TWO METERS ARE NOT COMPARABLE, WHICH IS WHY.** Storage is a hard cap: 5 GB
- * account-wide over 6,275,072 bytes is 796 tenants, and over 5,701,632 it is 876 -- 80 more sites
- * that otherwise cannot exist at all. Rows are a daily rate that resets, and 205 of them is 0.63% of
- * the 32,641-row setup session a site already spends being provisioned. A one-time 0.63% against a
- * permanent 10.1% more tenants is not a close call.
- *
- * `refuted` is FALSE for this pack. Enabling the trim is a separate build change with its own
- * rebuild; what is settled here is the measurement and the verdict, not the shipping default.
- */
+/** cache-bin trim: 573,440 bytes retained per site for 205 charged rows, paid on the first render */
 export const SEED_CACHE_TRIM = {
 	savedAtProvisioning: 1_273_856,
 	/** the traced-list pack, where the rebuild exceeded the shipped copy */
 	savedAfterOneRender: -176_128,
 	extraRowsOnFirstRender: 227,
 	refuted: false,
-	/**
-	 * The 11.4.6 from-source pack: bytes retained after one render.
-	 *
-	 * PAGE-QUANTISED, and recorded as such after "n=2 with zero spread" turned out to be two draws
-	 * from a step function. `databaseSize` counts whole SQLite pages, so this is a subtraction of
-	 * two rounded numbers and moves a full page whenever either arm crosses a boundary. Read
-	 * 573,440 five times in isolation and 569,344 inside a full suite run -- one page apart, which
-	 * is the meter's resolution rather than a change in what the trim retains.
-	 */
+	/** bytes retained after one render on the 11.4.6 pack; page-quantised, so +/- one page */
 	savedAfterOneRenderFromSourcePack: 573_440,
 	/** the quantum that figure is expressed in; SQLite's default page */
 	pageBytes: 4_096,
@@ -1438,21 +936,11 @@ export type Verdict = {
 	/** a workload passes only when BOTH ceilings hold */
 	verdict: 'fits' | 'serving-over' | 'regeneration-over' | 'both-over';
 	headroom: { servingRatio: number; regenerationRatio: number };
-	/**
-	 * Both storage arms, reported whether or not either binds.
-	 *
-	 * NOT folded into `verdict`: the two rate ceilings score ONE site's traffic and this scores a
-	 * FLEET, so a boolean that mixed them would answer neither question. Read it beside the verdict.
-	 */
+	/** both storage arms, reported beside the verdict but not folded into it, since they score a fleet */
 	storage: { withSnapshot: StorageCeiling; withoutSnapshot: StorageCeiling };
 };
 
-/**
- * Scores a target workload against the envelope.
- *
- * Both ceilings must hold. A workload that serves fine but cannot regenerate its pages is not a
- * working Drupal host; it is a static site with a stale cache.
- */
+/** scores a target workload; both ceilings must hold, since a stale cache is not a Drupal host */
 export function scoreWorkload(
 	targetVisitsPerMonth: number,
 	dynamicFraction: number,
@@ -1463,20 +951,7 @@ export function scoreWorkload(
 		fillBatch?: number;
 		warmth?: FillWarmth;
 		warmthMix?: WarmthMix;
-		/**
-		 * Fraction of off-Worker reads that Cloudflare's CDN answers in front of the bucket, so they
-		 * never become an R2 Class B operation.
-		 *
-		 * EXPLICIT AND DEFAULTED TO ZERO, and zero is a MEASUREMENT rather than the gap this used to
-		 * call it. `cdn-absorption.ts` drives the shipping drain and reads what it hands R2: `.html`
-		 * keys with no `cache-control`. Cloudflare's CDN caches by EXTENSION and does not cache HTML
-		 * by default, so a mirrored page answers `DYNAMIC` and reaches the bucket every time until a
-		 * Cache Rule makes the hostname eligible. At 0 the R2 ceiling is 333,333 views/day -- 3.33x
-		 * the Worker ceiling -- and the true figure is `3.33x / (1 - absorption)`.
-		 *
-		 * The RATIO on a site that has the rule still needs production traffic:
-		 * `1 - classB / hostnameRequests`, both counters from a deployed zone over one window.
-		 */
+		/** off-Worker reads the CDN answers before R2; 0 until a Cache Rule makes the hostname eligible */
 		cdnAbsorption?: number;
 		/** objects held alive continuously; see `envelope()` */
 		alwaysWarmObjects?: number;
@@ -1534,9 +1009,7 @@ if (import.meta.main) {
 	};
 	const visits = arg('visits', 3_000_000);
 	const dynamic = arg('dynamic', 0.01);
-	// `--warmth=<class>` prices one class, `--warmth=mix` prices STEADY_STATE_WARMTH. Neither is
-	// the default: `realRender` stays it, because the regeneration ceiling is about a page being
-	// re-rendered after an invalidation and that is exactly what one class describes.
+	// `--warmth=<class>` prices one class and `--warmth=mix` the steady-state spread; the default stays realRender.
 	const warmthArg = process.argv.find((a: string) => a.startsWith('--warmth='))?.slice(9);
 	const useMix = warmthArg === 'mix';
 	if (warmthArg && !useMix && !(warmthArg in ROWS_PER_FILL)) {
@@ -1567,13 +1040,12 @@ if (import.meta.main) {
 		console.log(
 			`regen ceiling     ${v.envelope.regenerationsPerDay.toLocaleString()}/day (bound by ${v.envelope.regenerationBoundBy}) -> ${v.regenerationFits ? 'FITS' : 'OVER'} (${v.headroom.regenerationRatio.toFixed(2)}x)`
 		);
-		// THE ROW QUOTA IS A WRITE BUDGET and the line above is only one claimant on it. Printed as
-		// the split so a reader can see what regeneration is actually being handed
+		// the row quota is a write budget, and the line above is one claimant on it
 		const w = v.envelope.writeBudget;
 		console.log(
 			`write budget      ${w.quotaRows.toLocaleString()} rows/day = ${w.warmingRows.toLocaleString()} warming + ${w.editorialRows.toLocaleString()} editorial + ${w.regenerationRows.toLocaleString()} regeneration, at ${w.rowsPerFill.toFixed(2)} rows/fill`
 		);
-		// reported whether or not it binds; a meter nobody looks at is how the first four were missed
+		// reported whether or not it binds
 		const d = v.envelope.duration;
 		console.log(
 			`duration          ${Math.round(d.servingUseGbS).toLocaleString()} of ${d.availableGbS.toLocaleString()} GB-s/day used at the serving ceiling (${(d.slackFraction * 100).toFixed(0)}% of the allowance available; cpuTime-derived, so an UNDERSTATEMENT)`
@@ -1581,17 +1053,37 @@ if (import.meta.main) {
 		console.log(`VERDICT           ${v.verdict.toUpperCase()}`);
 	}
 
-	// THE LINES ABOVE PRICE `MEMORY_CACHE_BINS=none`, the conservative arm. The shipping default holds
-	// `dynamic_page_cache` and `menu` in memory, and it has to be priced on the MIX: its `realRender`
-	// class sits BELOW the mix, so quoting the class alone would be the optimistic figure
-	const shippingRows = rowsForWarmthMix(STEADY_STATE_WARMTH, ROWS_PER_FILL_MEMORY_BINS);
-	const shipping = envelope(DEFAULT_MIX, { rowsPerFill: shippingRows });
+	// these lines price `MEMORY_CACHE_BINS=none`; the shipping default is priced on the mix
+	const shipping = envelope(DEFAULT_MIX, { rowsPerFill: SHIPPING_ROWS_PER_FILL });
 	console.log(
 		`\nshipping default  ${shipping.regenerationsPerDay.toLocaleString()}/day (bound by ${shipping.regenerationBoundBy}), ` +
-			`dynamic_page_cache and menu in memory, priced on the warmth mix at ${shippingRows.toFixed(2)} rows/fill`
+			`dynamic_page_cache and menu in memory, priced on the warmth mix at ${SHIPPING_ROWS_PER_FILL.toFixed(2)} rows/fill`
 	);
 
-	// a FLEET ceiling, not a traffic one, which is why it prints once and outside the loop
+	// the two off-Worker arms, each under the observed no-billing case and the Workers Cache exception
+	for (const billing of ['notBilled', 'billedAsWorker'] as const) {
+		for (const via of ['assets', 'r2'] as const) {
+			const a = offWorkerArm(via, billing);
+			console.log(
+				`${via.padEnd(6)} ${billing.padEnd(14)} ${a.todayViewsPerDay.toLocaleString()} -> ${a.viewsPerDay.toLocaleString()} views/day ` +
+					`(${a.todayWorkerPerView.toFixed(2)} -> ${a.workerPerView.toFixed(2)} Worker requests a view, bound by ${a.boundBy}), ` +
+					`regeneration ${a.regenerationsPerDay.toLocaleString()}/day (bound by ${a.regenerationBoundBy})`
+			);
+		}
+	}
+	const pagesFree = ASSET_PAGE_HEADROOM.free.toLocaleString();
+	const pagesPaid = ASSET_PAGE_HEADROOM.paid.toLocaleString();
+	console.log(
+		`asset pages       ${pagesFree} paths beside the pack on free, ${pagesPaid} on paid, per Worker version`
+	);
+	const pub = assetPublishBudget(Infinity, 60);
+	console.log(
+		`asset publishing  at most ${pub.serialCap.toLocaleString()} a day serial at ${ASSET_PUBLISH.deploySeconds.max} s, ` +
+			`${pub.byDebounce.toLocaleString()} at a 60 s debounce; a save is visible ` +
+			`${pub.staleSeconds.min.toFixed(1)} to ${pub.staleSeconds.max.toFixed(1)} s later (n=${ASSET_PUBLISH.completed})`
+	);
+
+	// a fleet ceiling, not a traffic one, so it prints once outside the loop
 	const s = scoreWorkload(visits, dynamic).storage;
 	console.log(
 		`\nstorage           ${s.withSnapshot.sitesPerAccount} sites with a stored heap ` +
@@ -1600,7 +1092,7 @@ if (import.meta.main) {
 			`(${(s.withoutSnapshot.perSiteBytes / 1e6).toFixed(1)} MB each), ` +
 			`against ${(FREE_QUOTAS.storageBytes / 1e9).toFixed(0)} GB account-wide`
 	);
-	// the no-image arm is the DEFAULT arm, so it leads. An image is opt-in and costs both meters
+	// the no-image arm is the default, so it leads; an image is opt-in and costs both meters
 	console.log(
 		`heap image        OFF by default: the restore measured 1,912 ms of cpuTime (n=5) against ` +
 			`1,264 ms (n=4) booting from the pack, so it costs storage AND CPU. When one IS stored ` +

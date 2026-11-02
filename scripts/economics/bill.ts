@@ -68,9 +68,21 @@ export type Bill = { total: number; free: boolean; binds: string };
  */
 export type Warming = 'thermal' | 'always';
 
+/** Per-view terms an arm adds to the shipped figures: CPU ms a view spends, and billed requests it makes. */
+export interface ExtraPerView {
+	cpuMs?: number;
+	requests?: number;
+}
+
 /** One bill for the whole account, whatever number of sites share it. */
-export function account(sites: number, viewsPerSite: number, warming: Warming = 'thermal'): Bill {
+export function account(
+	sites: number,
+	viewsPerSite: number,
+	warming: Warming = 'thermal',
+	extra: ExtraPerView = {}
+): Bill {
 	const v = sites * viewsPerSite;
+	const reqs = v * (1 + (extra.requests ?? 0));
 	const rf = renderFrac(viewsPerSite);
 	// thermal.ts keeps a site resident above its break-even render rate, and the chain spends rows
 	// and object requests before any visitor arrives
@@ -79,7 +91,7 @@ export function account(sites: number, viewsPerSite: number, warming: Warming = 
 	const warmSites = warmed ? sites : 0;
 	const warmFirings = warmSites * WARMING.doRequestsPerDay * DAYS_MONTH;
 	const rows = v * rf * ROWS_PER_FILL + warmSites * WARMING.rowsPerDay * DAYS_MONTH;
-	const cpuMs = v * ((1 - rf) * CPU_CACHED + rf * CPU_RENDER);
+	const cpuMs = v * ((1 - rf) * CPU_CACHED + rf * CPU_RENDER) + v * (extra.cpuMs ?? 0);
 	const doReq = v * DO_HIT_FRAC + warmFirings;
 	// a firing is billed for its wall time, and an object waiting on an armed alarm is not
 	const gbS =
@@ -90,7 +102,7 @@ export function account(sites: number, viewsPerSite: number, warming: Warming = 
 
 	const perDay = (x: number) => x / DAYS_MONTH;
 	const caps: [string, number][] = [
-		['requests', perDay(v) / FREE_REQ_DAY],
+		['requests', perDay(reqs) / FREE_REQ_DAY],
 		['rows written', perDay(rows) / FREE_ROWS_DAY],
 		['object requests', perDay(doReq) / FREE_DO_REQ_DAY],
 		['duration', perDay(gbS) / FREE_GBS_DAY],
@@ -105,7 +117,7 @@ export function account(sites: number, viewsPerSite: number, warming: Warming = 
 
 	const total =
 		PAID_BASE +
-		(Math.max(0, v - PAID_REQ_INC) / 1e6) * REQ_RATE +
+		(Math.max(0, reqs - PAID_REQ_INC) / 1e6) * REQ_RATE +
 		(Math.max(0, cpuMs - PAID_CPU_INC) / 1e6) * CPU_RATE +
 		(Math.max(0, rows - PAID_ROWW_INC) / 1e6) * ROWW_RATE +
 		Math.max(0, storeGb - PAID_STORE_INC) * STORE_RATE +

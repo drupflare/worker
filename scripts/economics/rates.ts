@@ -50,3 +50,33 @@ export const CLOUDFLARE_FOR_SAAS = {
 	hostnamesIncluded: 100,
 	usdPerHostnameMonth: 0.1
 } as const;
+
+/**
+ * R2 standard storage, retrieved 2026-11-02 from the R2 pricing page, last updated Oct 30, 2026.
+ * The free tier is the only included allowance the page prints; it does not say what a paid account
+ * keeps beyond it, so the paid bill is priced with no allowance.
+ */
+export const R2 = {
+	retrieved: '2026-11-02',
+	source: 'https://developers.cloudflare.com/r2/pricing/',
+	quote: 'Storage $0.015 / GB-month; Class A Operations $4.50 / million requests; Class B Operations $0.36 / million requests',
+	usdPerGbMonth: 0.015,
+	usdPerMillionClassA: 4.5,
+	usdPerMillionClassB: 0.36,
+	free: { gbMonth: 10, classAPerMonth: 1e6, classBPerMonth: 10e6 }
+} as const;
+
+/** Worker-to-Worker calls, retrieved 2026-11-02, page last updated Oct 2, 2026 */
+export const SERVICE_BINDINGS = {
+	retrieved: '2026-11-02',
+	source: 'https://developers.cloudflare.com/workers/platform/pricing/',
+	quote: 'Requests made from your Worker to another worker via a Service Binding do not incur additional request fees.',
+	requestFeeUsd: 0
+} as const;
+
+/** Static asset requests, retrieved 2026-11-02, same page as {@link SERVICE_BINDINGS} */
+export const STATIC_ASSETS = {
+	retrieved: '2026-11-02',
+	source: 'https://developers.cloudflare.com/workers/platform/pricing/',
+	quote: 'Requests to static assets are free and unlimited.'
+} as const;

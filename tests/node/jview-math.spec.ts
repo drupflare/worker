@@ -1,13 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
+	type BodyReading,
+	FLOOR_CLOSED,
+	FLOOR_OPEN,
+	type FloorRow,
 	beatsByTwentyPercent,
+	bodiesAgree,
 	bootstrapMedianRatio,
 	counterDelta,
 	derivedJoulesPerView,
 	floorBound,
+	floorLadder,
+	floorOverall,
+	floorVerdict,
 	jPerView,
 	median,
 	normalizeBody,
+	pairByBlock,
 	pairedRatios,
 	publishedHostJoulesPerView,
 	ratioGate,
@@ -15,6 +24,7 @@ import {
 	seededRandom,
 	smoothPicker,
 	spread,
+	waitOutWifiDrop,
 	weightedMean
 } from '../../scripts/measure/jview-math';
 import { TRAFFIC_MIX } from '../../scripts/measure/verdict-math';
@@ -132,6 +142,138 @@ describe('jview-math', () => {
 		const aa = pairedRatios(Array(10).fill(5), Array(10).fill(5));
 		expect(ratioGate(aa, 0.75).verdict).toBe('fail');
 		expect(ratioGate(aa, 0.75).threshold).toBe(0.75);
+	});
+
+	it('pairs an arm and a host by block and drops a block either side lacks', () => {
+		const host = new Map([
+			[0, 2],
+			[1, 4],
+			[2, 6],
+			[3, 8]
+		]);
+		const arm = new Map([
+			[0, 1],
+			[2, 3],
+			[3, 4],
+			[4, 9]
+		]);
+		expect(pairByBlock(host, arm)).toEqual({ control: [2, 6, 8], treatment: [1, 3, 4] });
+	});
+
+	it('is insufficient at nine aligned blocks and decides at ten', () => {
+		const blocks = (n: number, v: number) =>
+			new Map(Array.from({ length: n }, (_, i) => [i, v]));
+		const nine = pairByBlock(blocks(9, 1), blocks(9, 0.6));
+		expect(ratioGate(pairedRatios(nine.control, nine.treatment), 0.75).verdict).toBe(
+			'insufficient'
+		);
+		const near = [0.55, 0.6, 0.62, 0.58, 0.6, 0.63, 0.57, 0.61, 0.59, 0.6];
+		const ten = pairByBlock(blocks(10, 1), new Map(near.map((v, i) => [i, v])));
+		expect(ratioGate(pairedRatios(ten.control, ten.treatment), 0.75).verdict).toBe('pass');
+	});
+
+	it('decides a floor rung on the interval, not the median, and not on nine blocks', () => {
+		const spreadAround = (c: number) =>
+			[0, 0.01, -0.01, 0.02, -0.02, 0.01, 0, -0.01, 0.02, -0.02].map((d) => c + d);
+		expect(floorVerdict(spreadAround(0.6)).verdict).toBe('open');
+		expect(floorVerdict(spreadAround(1.0)).verdict).toBe('closed');
+		expect(floorVerdict(spreadAround(0.85)).verdict).toBe('between');
+		expect(floorVerdict(spreadAround(0.6).slice(0, 9)).verdict).toBe('insufficient');
+		const wide = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 0.3, 1.2];
+		expect(floorVerdict(wide).median).toBeLessThan(FLOOR_OPEN + 0.1);
+		expect(floorVerdict(wide).verdict).toBe('between');
+		expect(FLOOR_OPEN).toBeCloseTo(130 / 176, 1);
+		expect(FLOOR_CLOSED).toBeGreaterThanOrEqual(170 / 176);
+		expect(FLOOR_CLOSED).toBeLessThanOrEqual(180 / 176);
+	});
+
+	it('gives the ladder one verdict only when every rung agrees', () => {
+		expect(floorOverall(['open', 'open', 'open'])).toBe('open');
+		expect(floorOverall(['closed', 'closed'])).toBe('closed');
+		expect(floorOverall(['open', 'closed'])).toBe('between');
+		expect(floorOverall(['open', 'insufficient'])).toBe('insufficient');
+		expect(floorOverall([])).toBe('insufficient');
+	});
+
+	it('runs the floor ladder over rows, pairing by round and dropping an unreadable block', () => {
+		const idleW = 20;
+		const rows: FloorRow[] = [];
+		for (let round = 0; round < 10; round += 1) {
+			for (const [arm, mj] of [
+				['nginx-null', 100],
+				['wd-null', 60 + round]
+			] as const) {
+				rows.push({
+					round,
+					rate: 120,
+					arm,
+					pkgJ: idleW * 10 + (mj / 1000) * 1200,
+					elapsedMs: 10_000,
+					views: 1200
+				});
+			}
+		}
+		const [rung] = floorLadder(rows, idleW);
+		expect(rung?.n).toBe(10);
+		expect(rung?.unreadable).toBe(0);
+		expect(rung?.controlMj).toBeCloseTo(100, 6);
+		expect(rung?.treatmentMj).toBeCloseTo(64.5, 6);
+		expect(rung?.verdict).toBe('open');
+		const below = rows.map((r) =>
+			r.round === 3 && r.arm === 'nginx-null' ? { ...r, pkgJ: idleW * 10 - 1 } : r
+		);
+		const [short] = floorLadder(below, idleW);
+		expect(short?.n).toBe(9);
+		expect(short?.unreadable).toBe(1);
+		expect(short?.verdict).toBe('insufficient');
+		const drifted = rows.map((r) => (r.arm === 'wd-null' ? { ...r, pkgJ: r.pkgJ + 120 } : r));
+		expect(floorLadder(drifted, idleW)[0]?.verdict).toBe('closed');
+	});
+
+	it('reads a planned rung with no usable window as insufficient, so it cannot be skipped', () => {
+		const idleW = 20;
+		const rows: FloorRow[] = [];
+		for (let round = 0; round < 10; round += 1) {
+			for (const arm of ['nginx-null', 'wd-null'] as const) {
+				rows.push({
+					round,
+					rate: 60,
+					arm,
+					pkgJ: idleW * 10 + 0.1 * 600,
+					elapsedMs: 10_000,
+					views: 600
+				});
+			}
+		}
+		const ladder = floorLadder(rows, idleW, 'nginx-null', 'wd-null', [60, 240]);
+		expect(ladder.map((r) => r.rate)).toEqual([60, 240]);
+		expect(ladder[0]?.verdict).toBe('closed');
+		expect(ladder[1]?.verdict).toBe('insufficient');
+		expect(ladder[1]?.n).toBe(0);
+		expect(floorOverall(ladder.map((r) => r.verdict))).toBe('insufficient');
+	});
+
+	it('holds a window back from the hourly Wi-Fi drop and leaves the rest of the hour alone', () => {
+		const at = (m: number, s: number) => m * 60 + s;
+		expect(waitOutWifiDrop(at(10, 0), 20)).toBe(0);
+		expect(waitOutWifiDrop(at(22, 20), 20)).toBe(0);
+		expect(waitOutWifiDrop(at(22, 40), 20)).toBe(at(23, 40) - at(22, 40));
+		expect(waitOutWifiDrop(at(23, 10), 20)).toBe(30);
+		expect(waitOutWifiDrop(at(23, 40), 20)).toBe(0);
+		expect(waitOutWifiDrop(at(59, 59), 20)).toBe(0);
+	});
+
+	it('refuses to read joules when the floor arms answer different bytes', () => {
+		const ok: BodyReading = { arm: 'a', status: 200, type: 'text/html', bytes: 100, sha: 'x' };
+		expect(bodiesAgree([ok, { ...ok, arm: 'b' }], 100)).toEqual({ ok: true, problems: [] });
+		expect(bodiesAgree([ok, { ...ok, arm: 'b', sha: 'y' }]).problems).toEqual([
+			'b same length, different bytes'
+		]);
+		expect(bodiesAgree([ok, { ...ok, arm: 'b', bytes: 99 }]).ok).toBe(false);
+		expect(bodiesAgree([ok, { ...ok, arm: 'b', type: 'text/plain' }]).ok).toBe(false);
+		expect(bodiesAgree([ok, { ...ok, arm: 'b', status: 404 }]).ok).toBe(false);
+		expect(bodiesAgree([ok, { ...ok, arm: 'b' }], 101).ok).toBe(false);
+		expect(bodiesAgree([]).ok).toBe(false);
 	});
 
 	it('bounds the best ratio by what a null responder already costs', () => {

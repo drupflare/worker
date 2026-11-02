@@ -121,9 +121,11 @@ wall clock with three bins emptied (n=9) and 52-95 ms reassembling from a warm d
 2026-09-24 the model priced a fill at the 2,127 ms cold-bins figure, which made duration read as
 binding at 47,749.
 
-**Each class is priced on its dearer path.** `/user/login` realRenders in 8 and reassembles in 1; `/`
+**Each class is priced on its dearer path.** `/user/login` realRenders in 8 on SQL bins and in 1 at
+the shipping default, with `dynamic_page_cache` and `menu` in memory, and reassembles in 1; `/`
 realRenders in 3 and reassembles in 2, because the login form carries six `dynamic_page_cache`
-variants to the front page's one. So `realRender` comes from login and `warmReassemble` from `/`.
+variants to the front page's one. The audit spec drives `/user/login` for `realRender`, so the `/`
+figure of 3 is not pinned there. So `realRender` comes from login and `warmReassemble` from `/`.
 Setting the reassemble to the login figure made the warmest priced class undercut a real fill, and
 `fill-bins.spec.ts` failed on exactly that.
 
@@ -434,7 +436,7 @@ pays nothing; `WITH`, `PRAGMA` and non-SELECT are refused.
 **An external database is reachable from the object through Hyperdrive.** `DB_BACKEND=hyperdrive`
 routes the driver's statements to PostgreSQL or MySQL through the park. Verified 2026-09-25 on a paid
 throwaway: a Durable Object ran `SELECT 1` through a Hyperdrive configuration backed by a Workers VPC
-service and a Cloudflare Tunnel, in 6-9 ms of query time. `docs/external-database.md` has the TLS and
+service and a Cloudflare Tunnel, in 6-9 ms of query time. `docs/operating/external-database/index.md` has the TLS and
 permission requirements that surfaced.
 
 ### The PHP Filesystem
@@ -547,7 +549,7 @@ are persisted to `cfw_meta` because the alarm re-resolves the transport and neve
 **Host-side pre-exchange is not the only route.** The argument against the alternative
 was that `WITH_OPENSSL=0` leaves the interpreter unable to verify an RS256 `id_token` at all, so even
 a synchronous token fetch would hand PHP something it could not check -- and an unverified
-`id_token` is an unauthenticated login. Both halves have since moved. `src/drupal/openssl-fix.ts`
+`id_token` is an unauthenticated login. Both halves have since moved. `src/site/shims/openssl-fix.ts`
 bridges `openssl_sign` / `openssl_verify` / `openssl_pkey_get_public` over `node:crypto`, and the
 park carries the token POST and the userinfo GET, so **`drupal/openid_connect` completes a login
 through its OWN client**: `park-oidc.spec.ts` drives a real authorization code from the rig Keycloak
@@ -1318,7 +1320,7 @@ The two mechanisms that would add a seam are the two named above. JSPI compiles 
 points, and was researched and closed: zero of 62 surveyed modules needs one. **One of its two
 refusals has since expired and is recorded here so it is not cited again.** The closure also said
 `WITH_OPENSSL=0` meant JSPI could not have fixed the module that motivated it, because PHP could not
-verify an RS256 `id_token` even if handed one synchronously. `src/drupal/openssl-fix.ts` now bridges
+verify an RS256 `id_token` even if handed one synchronously. `src/site/shims/openssl-fix.ts` now bridges
 `openssl_sign()`, `openssl_verify()` and `openssl_pkey_get_public()` over `node:crypto`, all
 synchronous, so PHP can take a JWKS entry and check a token. What survives is the rest: billed
 duration is wall clock, a suspension trips two hibernation disqualifiers, and one object per site
@@ -2768,7 +2770,7 @@ edit, since a page cached before an invalidation is what a stale entry hides beh
 site; the share of real sites and real cold boots that match an image; the claimed image on a site
 with content, installed modules or a changed theme beyond the five edit classes above; and the memory
 charge of the larger boot memory on a fresh isolate (a deployed memory is charged in full, and folio
-measured the 1,322-page memory at 40 MiB less headroom than the 1,024-page one). The `docs/configuration.md` section carries the keys
+measured the 1,322-page memory at 40 MiB less headroom than the 1,024-page one). The `docs/configuration/index.md` section carries the keys
 and the refusals.
 
 ### The Warm Authenticated Render, Measured on a Deployed Worker
@@ -3495,7 +3497,7 @@ way a migration would (a native install, the database landed through `drangler m
 locked packages through `/install`, the custom code through `drangler modify`) and scores 13
 capabilities: install, container build, anonymous and authenticated render, entity CRUD, form submit,
 file read and write, queue and cron, outbound HTTP, update, cache rebuild, config import and module
-workflow. `docs/compatibility.md` is the rendered result and the website's fixtures page reads the same
+workflow. `docs/architecture/compatibility.md` is the rendered result and the website's fixtures page reads the same
 file.
 
 On 2026-09-29, 15 of the 27 passed all 13 rows on a local runtime, and farmOS, GovCMS and Thunder passed all 13 on
@@ -3968,8 +3970,8 @@ Four sibling repositories hold the rest: `drupflare` (the capability module), `r
 `cfw_do_sqlite` driver), `phasm` (the wasm build toolchain), and `cartridge` / `durabledb` /
 `stream-http` as packages.
 
-`docs/repository-layout.md` is the account of how every path arrives on a clean clone;
-`docs/building-from-source.md` is the release and build procedure; `docs/configuration.md` is every
+`docs/getting-started/repository-layout/index.md` is the account of how every path arrives on a clean clone;
+`docs/getting-started/building-from-source/index.md` is the release and build procedure; `docs/configuration/index.md` is every
 var and binding.
 
 `src/probes/**` are cited by figure in this document. Moving one does not change what it measures;
@@ -3988,7 +3990,7 @@ the PHP fragments are real files under `src/site/php/`, packed by `scripts/gen-a
 `src/site/generated/assets.ts`. `src/site-do.ts` was split by concern into `src/do/` and the front
 worker into `src/site/`. The build has no decoder step (`LOCAL_STEPS` in `scripts/build-local.ts` has 17 steps, none of them a decoder).
 `assets/drupal/site.sqlite` has a producer, `scripts/drupal/install-site-db.php` (`bun run
-build:site-db`, `docs/database.md`), and is 5,832,704 bytes. The rig in Verifying the Tree below is
+build:site-db`, `docs/architecture/database.md`), and is 5,832,704 bytes. The rig in Verifying the Tree below is
 nine services, not seven: GreenMail, Postgres, MySQL, Redis, syslog, Gitea, Forgejo, Keycloak and
 GitLab CE (`docker/compose.yml`).
 
@@ -5189,7 +5191,7 @@ boundary as arbitrary JSON whose shape depends on which fragment ran, several ca
 fields to one after the fact (`out.continuation`, `result.prefilled`), and `unknown` would turn
 roughly forty guarded reads into casts without making one of them safer.
 
-### `src/drupal/argon2-fix.ts`
+### `src/site/shims/argon2-fix.ts`
 
 #### Module overview and `ARGON2_BRIDGE`
 
@@ -5250,7 +5252,7 @@ The encoded form is PHP's own, `$argon2id$v=19$m=..,t=..,p=..$salt$tag` with unp
 hash written here verifies on any ordinary PHP with ext-argon2 and a site can migrate off this
 platform without every password becoming unverifiable.
 
-### `src/drupal/iconv-fix.ts`
+### `src/site/shims/iconv-fix.ts`
 
 #### `ICONV_STRRPOS`
 
@@ -5280,7 +5282,7 @@ It reaches this project because the wasm build has neither extension: polyfill-m
 non-test caller in the tree is `symfony/string`'s `CodePointString::indexOfLast()`, which core does
 not reach -- so this is a correctness fix for contrib rather than a live defect.
 
-### `src/drupal/mb-fix.ts`
+### `src/site/shims/mb-fix.ts`
 
 #### `MB_SANITIZE`
 
@@ -5331,7 +5333,7 @@ title produces a different search key, sort order and URL alias in wasm than on 
 rule is contextual rather than per-codepoint, which is why a table cannot express it: sigma is final
 when a letter precedes it and none follows.
 
-### `src/drupal/openssl-fix.ts`
+### `src/site/shims/openssl-fix.ts`
 
 #### Module overview and `SIGN_BRIDGE`
 
@@ -5361,6 +5363,12 @@ real sites needs them: `openssl_encrypt`/`openssl_decrypt` (AES CBC, CTR, ECB an
 defuse/php-encryption and xmlseclibs, `openssl_pkey_get_details` for league/oauth2-server and
 lcobucci/jwt, `openssl_x509_*` for php-saml, OAEP `openssl_public_encrypt` for XML encryption, and
 `openssl_pkey_derive` (ECDH) for web push. Each is one synchronous `node:crypto` call.
+
+Two values had to match PHP and did not. `workerd`'s OAEP digest defaults to SHA-256, while ext-openssl
+is SHA-1, so OAEP pins `oaepHash: 'sha1'` in both directions. The `OPENSSL_ALGO_*` numbers were shifted
+(SHA-256 is 7, not 6), and `openssl_sign()` and `openssl_verify()` default to SHA-1. The SAML path
+(`tests/e2e/saml.spec.ts`) runs signing and encryption against Keycloak; the differential spec
+`tests/node/openssl-conformance.spec.ts` checks the same primitives against native PHP.
 
 What is still not here. `openssl_csr_new` and the PKCS#7/CMS family. `node:crypto` has no
 certificate-request primitive at all, so that one is absent rather than unimplemented, and it stays
@@ -5474,100 +5482,123 @@ here, `Request::create()` fills in its own default of
 AJAX POST: the admin got "Oops, something went wrong" and no field could be created.
 A browser asking for JSON sends `application/json, text/javascript`, which does not match.
 
-### `src/drupal/sodium-fix.ts`
+### `src/site/shims/sodium-fix.ts`, `sodium-lib.ts`, `extension-table.ts`
 
-#### Module overview
+#### The rule for `extension_loaded()`
 
-Replaces the `sodium_crypto_generichash*` family, which no build here can provide.
+`extension_loaded(x)` may answer true when a shim covers the entire API of extension x and the
+covering is held by a gate. Partial shims stay false: `gd`, `curl`, `openssl`, `exif`, `fileinfo`,
+`zip` and `xmlwriter` are not in the table. A stub extension entry in the engine is not used; one
+crashed the isolate (exit 139) when tried for mbstring.
 
-BLAKE2b IS ABSENT FROM EVERY LAYER, MEASURED RATHER THAN ASSUMED. The shipping binary
-loads 25 extensions and `sodium` is not one of them, so `sodium_crypto_generichash()` is an
-undefined function. `ext-hash` IS loaded and offers 62 algorithms with no `blake*` among them --
-and that is a property of PHP rather than of this build, since native 8.5.7 with the full
-extension reports the same 0. workerd has none either: `node:crypto` answers "Digest method not
-supported" for `blake2b512` and `crypto.subtle` answers "Unrecognized or unimplemented digest
-algorithm". So there is nothing to fall back to and the digest has to be computed in JavaScript.
+The mechanism is `disable_functions`, which removes `extension_loaded`, `get_loaded_extensions` and
+`get_extension_funcs` at boot. `EXTENSIONS_FIX` runs before every other fragment and rebinds them in
+userland. A name in `EXTENSION_TABLE` answers true; any other name asks `ReflectionExtension`, so a
+real extension still answers natively. `get_loaded_extensions()` cannot enumerate once the built-in
+is gone, so it filters a catalog of names (the 27 the binary reports, measured 2026-11-02, plus
+common candidates).
 
-WHY IT BLOCKS AN INSTALL RATHER THAN A FEATURE. A content-addressed store writes the digest into
-every frame header, so it IS the address: substituting sha256 is a different store rather than a
-downgrade, and a module of that shape does not install at all without this.
+#### The gate
 
-`blakejs` is 12 KB of pure JavaScript with no dependencies, and synchronous -- the constraint
-`zlib-fix` names applies unchanged: the shipping build sets `ASYNCIFY=0`, so a host function
-that returned a Promise would hand PHP an object it can only stringify.
+`tests/node/sodium-conformance.spec.ts` runs the shim and native PHP 8.5.7 (libsodium 1.0.22) over
+the same cases: 7,253 generated and flow cases, 2,969 random-input cases, and the produce-on-one-side,
+consume-on-the-other crosses (10,180 in the run). Every one of the 110 functions agrees on return
+value, exception class and exception message, including TypeError text, "must be ... bytes long"
+messages and php-src's own quirks. Each of the 102 constants and `SodiumException` is checked too.
+`bun run gen:sodium-manifest` writes the passing names to `generated/sodium-manifest.ts`; the table
+is computed from it, so deleting any one name turns `extension_loaded('sodium')` false (tested for
+all 110 functions, one constant and the class). The inventory is `generated/sodium-api.ts`, dumped
+from native PHP by `bun run gen:sodium-api`.
 
-THE AEAD IS THE OTHER HALF AND IT IS HERE TOO, over a different library for a reason. It is a
-CIPHER rather than a digest, so it shares no mechanism with the above: `crypto.subtle` offers
-AES-GCM and no XChaCha20-Poly1305, and the extended 24-byte nonce is what such a store picks
-the construction for. `@noble/ciphers` is the library `edgeport` assembles SSH's
-chacha20-poly1305 from, and it is synchronous.
+#### Backing sources
 
-`extension_loaded('sodium')` stays FALSE either way, because the rest of the extension is not
-here and a stub extension entry is the shape that took the isolate down at exit 139.
+Synchronous only: the build has no Asyncify and `crypto.subtle` is Promise-based, so it would cost
+one Zend park per call. `@noble/ciphers` backs xsalsa20, secretbox, chacha20 (original and IETF),
+xchacha20, AES-256-GCM and Poly1305. `@noble/hashes` backs sha512, hmac, blake2b (kdf, kx, seal
+nonces), argon2i/id and scrypt. `blakejs` backs generichash. `@noble/curves` 2.4.0 backs Ed25519,
+X25519 and ristretto255 (`sodium-curve.ts`); only the 256-bit wrap in the ed25519 scalar add and
+subtract stays BigInt, over public values. Written here because no installed library has them:
+SipHash-2-4 and AEGIS-128L/256 (`sodium-aegis.ts`), and no constant-time claim is made for either.
+Randomness is `crypto.getRandomValues`.
 
-The Module key the PHP half resolves through `vrzno_env()`.
+#### Known differences
 
-#### `aeadHostCall()`
+- `ReflectionExtension('sodium')` throws and `phpinfo()` does not list it.
+- A generichash state is 384 bytes like native but carries the BLAKE2b context in its own layout,
+  so a state is not interchangeable with native's. Secretstream states are byte-identical.
+- Password hashing refuses memory above 64 MiB and work above 4 passes over 64 MiB (scrypt: N*r*p
+  above 2^21) with "internal error", the message libsodium gives for a failed allocation.
+  `crypto_pwhash_str_verify` returns false past the cap. This is the one exception to the stand-in
+  covering the whole API. The cap follows the Thunder budget, about 20 MiB spare on a large site, so
+  `SODIUM_CRYPTO_PWHASH_MEMLIMIT_MODERATE` (256 MiB), `MEMLIMIT_SENSITIVE` (1 GiB) and the
+  moderate and sensitive `OPSLIMIT` values are refused. The measured constants are in
+  `sodium-lib.ts` at lines 58 to 71.
+- XChaCha20 counters at or above 2^32 use a local ChaCha block function, because noble stops at 32 bits.
+- `crypto_aead_aes256gcm_is_available()` is always true; native depends on the CPU.
+- Ed25519, X25519 and ristretto255 are noble's. AEGIS and SipHash are written here, and no
+  constant-time claim is made for them or for the JavaScript AES in `@noble/ciphers`.
 
-One AEAD operation.
+#### Costs
 
-THE TWO FAILURE MODES ARE KEPT APART AND THAT IS THE WHOLE CONTRACT. ext-sodium's `_decrypt()`
-returns FALSE when the tag does not verify and THROWS `SodiumException` when an argument is the
-wrong size, and a caller reads the difference: a FALSE means the frame failed authentication and
-should be swept, while a throw is a programming error. Collapsing them would make
-a mis-sized key look like a tampered frame and sweep a healthy store.
+Measured 2026-11-02. Minified bundle for the sodium module: 34.7 KB before the stand-in, 105.1 KB
+with BigInt curves and 135.0 KB over `@noble/curves` (the inventory table is part of it); the
+main worker's `wrangler deploy --dry-run` moved from 17,683.55 KiB to 17,714.98 KiB (gzip 5,699.31
+to 5,711.14). Import heap in node with `--expose-gc`, five fresh processes per arm: 203,800 to
+204,128 bytes for the BigInt curves, 854,696 to 855,368 for noble (+0.62 MiB), 3,280 below to
+13,656 above zero for a control with no import. Noble's `ed25519.js` alone is about 768 KB, from an
+eager `Point.BASE.precompute(6)` at module evaluation. A deferred load is not possible: wrangler
+bundles one file, the PHP bridge is synchronous and cannot await `import()`, and
+`extension_loaded('sodium')` is true for every run, so any run can reach any `sodium_*` function.
+Measured on the platform, two deploys of the same probe worker at 64 MiB linear memory with the stock pack,
+per-isolate `max memoryUsageBytes` once a booted interpreter was idle: 101.1 MiB without the sodium module
+(two steady rows) and 102.1 and 102.3 with it, so +1.0 to +1.2 MiB, n=2 steady rows per arm and one deploy
+per arm; boot-minute rows read 121 to 139 MiB in both. The PHP fragment is 54 KB; running a renamed copy on a booted
+interpreter moved neither `linear` (89,653,248) nor `total` isolate bytes at page granularity.
+`extension_loaded` calls: 12 at boot, 1 on an anonymous `/` render, 1 on a cold `/user/login`, 0 on
+a warm one; the authenticated render is not traced. Native PHP: built-in 19 ns, userland cached
+54 ns, first miss 346 ns (relative only; the wasm clock is frozen). Boot `cpuTime` is not measured; the
+platform delta above is one pair of deploys, so repeat it with more isolates before quoting it as a spread.
 
-#### `MAX_OPEN_STATES`
+### `src/site/shims/brotli-fix.ts`, `zstd-fix.ts`
 
-How many incremental digests may be open at once.
+Strata gates its codecs on `function_exists('zstd_compress')` and `function_exists('brotli_compress')`,
+and neither extension is loaded here. Both host halves sit over `node:zlib`, which workerd provides
+synchronously with `brotliCompressSync`, `brotliDecompressSync`, `zstdCompressSync` and
+`zstdDecompressSync`, so no dependency was added. The PHP fragments define `brotli_compress`,
+`brotli_uncompress`, `zstd_compress`, `zstd_uncompress`, `zstd_decompress`, `zstd_compress_dict`,
+`zstd_uncompress_dict` and the constants; names and signatures were read by reflection from native PHP
+8.5.7 with ext-brotli 0.21.0 and ext-zstd 0.18.0.
 
-A state that is never finalised leaks its context for the life of the object, and a Durable
-Object outlives many requests. It refuses past the cap rather than evicting the oldest: an
-evicted context would make a later `final()` answer a digest computed over part of the message,
-and a wrong content address is worse than a failed one.
+`extension_loaded('brotli')` and `extension_loaded('zstd')` stay false, because the streaming API and
+the extension's classes are not shimmed (the rule in the sodium section). `function_exists` is true.
 
-#### `blake2bHostCall()`
+Measured 2026-11-02. A host differential against the `brotli` 1.2.1 and `zstd` 1.5.7 command line tools
+passes 30 cases, and the PHP half agrees with the native extensions with no mismatch. The main
+worker's dry-run upload grew 9.68 KiB (17,715.32 to 17,725.00). In a strata clone,
+`strata.engine->codecs()->available()` lists both, and a 310 KB, 19-frame corpus of plaintext
+configuration entities measured: zstd level 1 4.52, zstd 19 5.24, brotli 4 4.92, brotli 11 5.88 and
+gzip 9 4.99, every frame round-tripping. Strata seals encrypted frames, so these ratios are not the
+ratios on sealed bytes.
 
-One BLAKE2b operation, decoded.
+Known differences: `node:zlib` takes no brotli dictionary, so the shim refuses one. Native ext-brotli
+0.21.0 does take one (the fourth argument of `brotli_compress`, the second of `brotli_uncompress`), so
+this is a gap against native, and a strata brotli write with a dictionary fails here. Strata prefers
+zstd, so it is reached only when brotli is pinned.
 
-Four ops rather than one, because `Hash::ofStream()` digests a 256 MiB object a megabyte at a
-time and must never hold the whole thing: `hash` is the one-shot, and `init`/`update`/`final`
-are the streaming form. The context stays here behind an integer handle for the reason
-`CurlShim` keeps a handle at all -- there is nothing for PHP to hold. Unlike CurlShim's array,
-this one cannot usefully be a PHP value: a BLAKE2b context is eight 64-bit words plus a 128-byte
-buffer, and crossing it through the codec on every 1 MiB chunk would encode and decode ~192 bytes
-of state per chunk to gain nothing PHP can read.
+workerd's `node:zlib` zstd refuses incompressible input above 4 KiB with "Unexpected end of file", and
+Node 24 does not, which is why the node tests passed first. Measured in workerd: random input of 4,096
+and 16,384 bytes compresses, 65,536 and up is refused, text up to 2 MiB compresses, and neither
+`chunkSize` nor level 19 helps. Strata's seal then failed with "zstd compression failed" on a
+463,035-byte call at level 3. On a refusal `zstd-fix.ts` now emits a stored frame (a single-segment
+zstd frame of raw blocks, RFC 8878, no entropy coding), which native `zstd` and workerd both read. The
+native matrix (levels 0, -5, 1, 3, 19 and 22, empty input and dictionary calls, same PHP script on the
+shim and on ext-zstd 0.18.0) matches, and level 23 is refused by both. Brotli has no such refusal in
+workerd: random input at 0, 1, 4,096, 16,384, 65,536 bytes, 1 MiB and 4 MiB at qualities 0, 4 and 11 (11 up to
+64 KiB), text at 2 MiB, empty input, modes 0 to 2 and window bits 10, 16, 22 and 24 all round-trip, and
+the native CLI and ext-brotli decode every frame. The gzip path (fflate) round-trips 4 MiB of random
+input too. Not verified: a deployed run.
 
-A failure is a reply rather than a throw; the PHP half turns it into the `SodiumException`
-ext-sodium raises.
-
-##### inside blake2bHostCall(), the final-length comment
-
-libsodium fixes the digest length in the parameter block at init, so a different
-length here cannot produce that digest. ext-sodium answers 64 bytes anyway -- measured
-on 8.5.7, final($state, 64) on a state inited at 32 returns the 32-byte digest
-followed by 32 bytes of adjacent memory -- so this REFUSES where native leaks
-
-#### `SODIUM_FIX`
-
-The PHP half: the four functions, the six constants and `SodiumException`.
-
-Which functions: the `sodium_*` surface a content-addressed store reaches for. Six calls
-to `sodium_crypto_generichash()` and one each to `_init`, `_update` and `_final` -- so the
-one-shot and the streaming form are both reached, and `Hash::ofFile()` reaches the streaming one
-on every captured file.
-
-`extension_loaded('sodium')` STAYS FALSE. It is the guard this fragment is itself
-written under, and a stub extension entry is the exact shape that took the isolate down at exit
-139 when it was tried for mbstring. A caller testing for the extension gets an honest no; a
-caller calling the function gets a digest.
-
-NO `eval()`, following `zlib-fix` and `curl-fix`: a conditional declaration colliding with an
-internal function is deferred to runtime, so this compiles clean on a build that HAS ext-sodium
-and the branch never runs. That is what lets `tests/node/php-fragments.spec.ts` run `php -l` over
-the body rather than over a string literal.
-
-### `src/drupal/zlib-fix.ts`
+### `src/site/shims/zlib-fix.ts`
 
 #### `DICTIONARY_OPS`
 
@@ -7861,7 +7892,7 @@ non-zero residues however many exist. Nothing has to be told the count, which is
 lane cannot read the primary's `lanes_provisioned` at all, because `cfw_meta` is replica-local by
 design and is deliberately not copied.
 
-> **Superseded:** the ceiling is 256 in the code and in docs/configuration.md; the 33 and 1..32 figures are stale.
+> **Superseded:** the ceiling is 256 in the code and in docs/configuration/index.md; the 33 and 1..32 figures are stale.
 
 #### `originable()`
 

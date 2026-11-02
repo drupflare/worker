@@ -23,11 +23,11 @@ database. PHP 8.5 is what ships, with no extension dropped to fit.
 
 The interpreter ships as a raw WebAssembly module that the platform compiles ahead of time, so
 startup costs a few milliseconds. A paid site holds its interpreter warm between requests; a quiet
-free site pays a cold boot unless it opts into warming. See [Free vs Paid](docs/free-vs-paid.md).
+free site pays a cold boot unless it opts into warming. See [Free vs Paid](docs/impact/economics/free-vs-paid/index.md).
 
 A site is one Durable Object by default and does not have to be. `REPLICA_COUNT` gives it read
 replica lanes, each a separate object filled from the primary and kept current by a replication log,
-so an authenticated read workload scales past one thread. See [Replica Lanes](docs/replica-lanes.md).
+so an authenticated read workload scales past one thread. See [Replica Lanes](docs/operating/replica-lanes.md).
 
 ---
 
@@ -90,7 +90,7 @@ compiled plan or by the object.
 - **Divisibility.** First-run migration runs in JavaScript, in chunks that each finish inside one
   invocation.
 
-[Architecture](docs/architecture.md) covers static assets, self-repair and each layer in detail.
+[Architecture](docs/architecture/index.md) covers static assets, self-repair and each layer in detail.
 
 ---
 
@@ -98,13 +98,13 @@ compiled plan or by the object.
 
 - **Drupal core**, at the version `composer.lock` pins, with four contributed modules in the pack: `admin_toolbar`, `ctools`, `pathauto` and `token`.
 - **PHP 8.5** with 27 loaded extensions and stand-ins for curl, openssl, zip, exif, fileinfo and
-  xmlwriter; see [Limitations](docs/limitations.md). The interpreter starts at 64 MiB of linear
+  xmlwriter; see [Limitations](docs/architecture/limitations.md). The interpreter starts at 64 MiB of linear
   memory, and a boot after a dropped interpreter reuses its memory instead of allocating a second
   heap.
 - **A database** in the object's own SQLite, created at first boot by replaying the packed
   `assets/drupal/site.sqlite` through the `cfw_do_sqlite` driver.
 - **Real codebases.** 27 production Drupal codebases pinned in `config/corpus.yml` are scored on 13
-  capabilities; see [Compatibility](docs/compatibility.md).
+  capabilities; see [Compatibility](docs/architecture/compatibility.md).
 
 ---
 
@@ -134,8 +134,13 @@ curl -X POST "localhost:8787/firstrun" \
   -d '{"siteName":"My Site","adminMail":"you@example.com"}'
 ```
 
-[Getting Started](docs/getting-started.md) covers first boot, claiming, logging in, deploying and
+[Getting Started](docs/getting-started/index.md) covers first boot, claiming, logging in, deploying and
 updating a worker, and moving an existing site in with [`drangler`](https://github.com/drupflare/drangler).
+
+Two deploy configs ship. `wrangler.jsonc` is the open-source one: every binding in it is created on
+the first deploy, so the button needs no account setup. `wrangler.managed.jsonc` is the same file plus
+the R2 and `send_email` bindings, which need account state a button cannot create, and it is what a
+managed deployment uses. [Configuration](docs/configuration/index.md#bindings) has the table.
 
 ---
 
@@ -152,9 +157,9 @@ deployment, one small VPS, still saves 99.80% at that traffic and 94.24% at 30 m
 month. Per request the two runtimes are at parity, so the saving comes from idle nodes and not from
 PHP running faster.
 
-Every figure is derived and modelled, because no source sizes a production node. [Impact](docs/impact.md)
-labels each one; [Energy](docs/energy.md), [Economics](docs/economics.md) and
-[Environment](docs/environment.md) hold the detail.
+Every figure is derived and modelled, because no source sizes a production node. [Impact](docs/impact/index.md)
+labels each one; [Energy](docs/impact/energy/index.md), [Economics](docs/impact/economics/index.md) and
+[Carbon](docs/impact/carbon.md) hold the detail.
 
 ---
 
@@ -162,52 +167,52 @@ labels each one; [Energy](docs/energy.md), [Economics](docs/economics.md) and
 
 ### Start
 
-| page                                       | what it covers                                                          |
-| ------------------------------------------ | ----------------------------------------------------------------------- |
-| [Getting Started](docs/getting-started.md) | first boot, claiming a site, deploying, and moving an existing site in  |
-| [Architecture](docs/architecture.md)       | how a request is answered, static assets, and self-repair               |
-| [Free vs Paid](docs/free-vs-paid.md)       | what each Cloudflare plan allows a site, and which limit binds first    |
-| [VPS Comparison](docs/vps-comparison.md)   | latency, throughput and cost against nginx and PHP-FPM on the same tree |
-| [Limitations](docs/limitations.md)         | what does not run, what runs differently, and the limit behind each     |
+| page                                                        | what it covers                                                          |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------- |
+| [Getting Started](docs/getting-started/index.md)            | first boot, claiming a site, deploying, and moving an existing site in  |
+| [Architecture](docs/architecture/index.md)                  | how a request is answered, static assets, and self-repair               |
+| [Free vs Paid](docs/impact/economics/free-vs-paid/index.md) | what each Cloudflare plan allows a site, and which limit binds first    |
+| [VPS Comparison](docs/impact/economics/vps-comparison.md)   | latency, throughput and cost against nginx and PHP-FPM on the same tree |
+| [Limitations](docs/architecture/limitations.md)             | what does not run, what runs differently, and the limit behind each     |
 
 ### Operate
 
-| page                                           | what it covers                                                    |
-| ---------------------------------------------- | ----------------------------------------------------------------- |
-| [Administration](docs/administration.md)       | the surfaces an owner operates a site from                        |
-| [Configuration](docs/configuration.md)         | every variable and binding, and the page each one lives on        |
-| [Replica Lanes](docs/replica-lanes.md)         | read replicas: what a lane buys, how it scales, how it is built   |
-| [Git Remotes](docs/git-remotes.md)             | delivering modules and themes from a git host                     |
-| [Modules](docs/modules.md)                     | contributed modules, revisions, and which have run on a real site |
-| [Recovery](docs/recovery.md)                   | point-in-time recovery, export, restore                           |
-| [External Database](docs/external-database.md) | Hyperdrive and external databases                                 |
+| page                                                           | what it covers                                                    |
+| -------------------------------------------------------------- | ----------------------------------------------------------------- |
+| [Administration](docs/operating/administration.md)             | the surfaces an owner operates a site from                        |
+| [Configuration](docs/configuration/index.md)                   | every variable and binding, and the page each one lives on        |
+| [Replica Lanes](docs/operating/replica-lanes.md)               | read replicas: what a lane buys, how it scales, how it is built   |
+| [Git Remotes](docs/operating/git-remotes.md)                   | delivering modules and themes from a git host                     |
+| [Modules](docs/architecture/modules.md)                        | contributed modules, revisions, and which have run on a real site |
+| [Recovery](docs/operating/recovery.md)                         | point-in-time recovery, export, restore                           |
+| [External Database](docs/operating/external-database/index.md) | Hyperdrive and external databases                                 |
 
 ### Measure
 
-| page                                               | what it covers                                                    |
-| -------------------------------------------------- | ----------------------------------------------------------------- |
-| [Impact](docs/impact.md)                           | the labels, limits and references behind every figure             |
-| [Energy](docs/energy.md)                           | the saving against conventional hosting and the per-request model |
-| [Energy Per View](docs/energy-views.md)            | one view, the traffic mix, visitor devices and Spool              |
-| [Fleet Energy](docs/energy-fleet.md)               | many sites at once and institutional workloads                    |
-| [Economics](docs/economics.md)                     | what each host costs at each traffic level                        |
-| [Environment](docs/environment.md)                 | carbon, water and embodied carbon                                 |
-| [Measurement Classes](docs/measurement-classes.md) | which instrument may produce which class of number                |
+| page                                                            | what it covers                                                    |
+| --------------------------------------------------------------- | ----------------------------------------------------------------- |
+| [Impact](docs/impact/index.md)                                  | the labels, limits and references behind every figure             |
+| [Energy](docs/impact/energy/index.md)                           | the saving against conventional hosting and the per-request model |
+| [Energy Per View](docs/impact/energy/views.md)                  | one view, the traffic mix, visitor devices and Spool              |
+| [Fleet Energy](docs/impact/energy/fleet.md)                     | many sites at once and institutional workloads                    |
+| [Economics](docs/impact/economics/index.md)                     | what each host costs at each traffic level                        |
+| [Carbon](docs/impact/carbon.md)                                 | carbon, water and embodied carbon                                 |
+| [Measurement Classes](docs/architecture/measurement-classes.md) | which instrument may produce which class of number                |
 
 ### Reference
 
-| page                                                 | what it covers                                                |
-| ---------------------------------------------------- | ------------------------------------------------------------- |
-| [Security](docs/security.md)                         | what the architecture removes and what it leaves              |
-| [Security Controls](docs/security-controls.md)       | the controls in place today                                   |
-| [Security Incidents](docs/security-incidents.md)     | the CVE and incident map, PHP2Shell, planned work             |
-| [Government](docs/government.md)                     | what a US federal site owner owns and what the host owns      |
-| [Compatibility](docs/compatibility.md)               | per-codebase results for the 27 production codebases          |
-| [Building From Source](docs/building-from-source.md) | the payload and source routes, and upgrading Drupal core      |
-| [Repository Layout](docs/repository-layout.md)       | every path outside `src/` and how it arrives on a clean clone |
-| [Database](docs/database.md)                         | how `assets/drupal/site.sqlite` is built                      |
-| [PHP Update Delivery](docs/php-update-delivery.md)   | how a new PHP interpreter reaches this repository             |
-| [Testing](docs/testing.md)                           | the test lanes and how to add a test                          |
+| page                                                                       | what it covers                                                |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| [Security](docs/security/index.md)                                         | what the architecture removes and what it leaves              |
+| [Security Controls](docs/security/controls/index.md)                       | the controls in place today                                   |
+| [Security Incidents](docs/security/incidents.md)                           | the CVE and incident map, PHP2Shell, planned work             |
+| [Government](docs/audiences/government.md)                                 | what a US federal site owner owns and what the host owns      |
+| [Compatibility](docs/architecture/compatibility.md)                        | per-codebase results for the 27 production codebases          |
+| [Building From Source](docs/getting-started/building-from-source/index.md) | the payload and source routes, and upgrading Drupal core      |
+| [Repository Layout](docs/getting-started/repository-layout/index.md)       | every path outside `src/` and how it arrives on a clean clone |
+| [Database](docs/architecture/database.md)                                  | how `assets/drupal/site.sqlite` is built                      |
+| [PHP Update Delivery](docs/operating/php-update-delivery/index.md)         | how a new PHP interpreter reaches this repository             |
+| [Testing](docs/getting-started/testing.md)                                 | the test lanes and how to add a test                          |
 
 [`TECHNICAL_REPORT.md`](TECHNICAL_REPORT.md) is the engineering record: every measurement, the
 instrument behind it, and why each conclusion changed. It states the rule the project runs on: an

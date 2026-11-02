@@ -174,3 +174,20 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command:
+      - server
+      - -dir=/data
+      - -s3
+      - -s3.port=8333
+      - -volume.max=30
+      - -master.volumeSizeLimitMB=128
+    ports:
+      - '127.0.0.1:9000:8333'
+    healthcheck:
+      test: ['CMD-SHELL', 'nc -z 127.0.0.1 8333']
+      interval: 2s
+      timeout: 2s
+      retries: 40

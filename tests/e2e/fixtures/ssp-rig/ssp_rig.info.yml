@@ -1,0 +1,7 @@
+name: SimpleSAMLphp config
+type: module
+description: The SimpleSAMLphp configuration directory for the simplesamlphp_auth login test. Not shipped.
+package: Testing
+core_version_requirement: ^11
+dependencies:
+  - simplesamlphp_auth:simplesamlphp_auth

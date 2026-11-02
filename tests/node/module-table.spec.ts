@@ -47,61 +47,87 @@ describe('moduleTable', () => {
 	 */
 	it('pins exactly which modules have had their behaviour observed', () => {
 		expect(Object.keys(VERIFIED_BEHAVIOURS).sort()).toEqual([
+			'drupal/access_unpublished',
 			'drupal/address',
 			'drupal/admin_toolbar',
 			'drupal/backup_migrate',
 			'drupal/better_exposed_filters',
 			'drupal/captcha',
+			'drupal/cas',
 			'drupal/coffee',
 			'drupal/colorbox',
 			'drupal/config_ignore',
+			'drupal/config_update',
+			'drupal/contact_storage',
 			'drupal/crop',
 			'drupal/csv_serialization',
 			'drupal/ctools',
 			'drupal/devel',
+			'drupal/diff',
 			'drupal/easy_breadcrumb',
 			'drupal/editor_advanced_link',
+			'drupal/editoria11y',
+			'drupal/embed',
 			'drupal/entity',
 			'drupal/entity_browser',
+			'drupal/entity_clone',
+			'drupal/entity_embed',
 			'drupal/entity_reference_revisions',
 			'drupal/externalauth',
 			'drupal/facets',
+			'drupal/features',
 			'drupal/field_group',
 			'drupal/filefield_sources',
 			'drupal/focal_point',
+			'drupal/gin',
+			'drupal/gin_toolbar',
 			'drupal/google_analytics',
 			'drupal/google_tag',
 			'drupal/honeypot',
 			'drupal/imageapi_optimize',
 			'drupal/imageapi_optimize_binaries',
 			'drupal/imce',
+			'drupal/inline_entity_form',
 			'drupal/jquery_ui',
 			'drupal/jquery_ui_autocomplete',
 			'drupal/jquery_ui_datepicker',
 			'drupal/jquery_ui_menu',
+			'drupal/jquery_ui_slider',
+			'drupal/jquery_ui_touch_punch',
 			'drupal/json_field',
 			'drupal/key',
+			'drupal/layout_builder_restrictions',
 			'drupal/libraries',
+			'drupal/link_attributes',
 			'drupal/linkit',
 			'drupal/mailsystem',
+			'drupal/media_library_form_element',
 			'drupal/memcache',
 			'drupal/menu_block',
 			'drupal/metatag',
 			'drupal/metatag_search_gov',
 			'drupal/migrate_plus',
+			'drupal/migrate_source_csv',
+			'drupal/migrate_tools',
 			'drupal/module_filter',
 			'drupal/openid_connect',
 			'drupal/paragraphs',
+			'drupal/password_policy',
 			'drupal/pathauto',
 			'drupal/purge',
 			'drupal/queue_ui',
+			'drupal/rabbit_hole',
 			'drupal/recaptcha',
 			'drupal/redirect',
 			'drupal/redis',
+			'drupal/samlauth',
 			'drupal/scheduler',
+			'drupal/schema_metatag',
 			'drupal/search_api',
 			'drupal/search_api_solr',
+			'drupal/seckit',
 			'drupal/simple_sitemap',
+			'drupal/simplesamlphp_auth',
 			'drupal/smtp',
 			'drupal/stage_file_proxy',
 			'drupal/svg_image',
@@ -113,7 +139,8 @@ describe('moduleTable', () => {
 			'drupal/views_bulk_operations',
 			'drupal/views_data_export',
 			'drupal/webform',
-			'drupal/xmlsitemap'
+			'drupal/xmlsitemap',
+			'earth-app/strata'
 		]);
 		for (const [name, evidence] of Object.entries(VERIFIED_BEHAVIOURS)) {
 			// evidence must say what was exercised, not that it "works"
@@ -247,7 +274,12 @@ describe('every verified module has a run behind it, not just a sentence', () =>
 	function exercised(): Set<string> {
 		const fixture = readSpec('integration/contrib-verify.spec.ts');
 		const shipping = readSpec('integration/module-behaviour.spec.ts');
+		const generated = /const GENERATED_MODULES = \[([^\]]*)\]/.exec(
+			readSpec('helpers/contrib-pack.ts')
+		);
 		const names = new Set<string>();
+		for (const m of (generated?.[1] ?? '').matchAll(/'([a-z0-9_]+)'/g))
+			names.add(m[1] as string);
 		// a fixture case declares itself as `module: 'name'`
 		for (const m of fixture.matchAll(/module:\s*'([a-z0-9_]+)'/g)) names.add(m[1] as string);
 		// the shipping spec enables by name
@@ -278,8 +310,11 @@ describe('every verified module has a run behind it, not just a sentence', () =>
 		const verified = new Set(Object.keys(VERIFIED_BEHAVIOURS).map((n) => n.split('/')[1]));
 		const unclaimed = [...exercised()].filter((n) => !verified.has(n)).sort();
 		expect(unclaimed, 'a case runs for this module but the table makes no claim').toEqual([
+			'dropzonejs',
 			'search_gov_results_api'
 		]);
+		// `dropzonejs` passes everything it declares and fails its own runtime requirement: the
+		// Dropzone JavaScript library is a third-party file composer does not fetch
 		// `search_gov_results_api` is NOT refused: measured, the park carries its GET inside the
 		// render that asks, so what it lacks is a Search.gov API key rather than a capability
 		// AND `openid_connect` IS NO LONGER REFUSED, 2026-09-08: the park carries its own token
@@ -310,7 +345,7 @@ describe('every verified module has a run behind it, not just a sentence', () =>
 		// the transport tier. It reached `verified` on 2026-08-27 with the platform check still ON,
 		// which is the run the note said it was waiting for
 		expect(tierFor('drupal/search_api_solr').tier).not.toBe('refused');
-		expect(VERIFIED_BEHAVIOURS['drupal/search_api_solr']).toContain('platform check ON');
+		expect(VERIFIED_BEHAVIOURS['drupal/search_api_solr']).toMatch(/platform check on/i);
 	});
 });
 
@@ -326,7 +361,7 @@ describe('labelFor', () => {
  * The published table against the classifier, in both directions.
  *
  * **`module-table.ts` CLAIMED THIS EXISTED AND IT DID NOT.** Its docblock said the spec "renders
- * these rows and fails when docs/modules.md disagrees"; what the spec actually compared was
+ * these rows and fails when docs/architecture/modules.md disagrees"; what the spec actually compared was
  * `VERIFIED_BEHAVIOURS` against the spec FILES, so a claim needed a run behind it and the published
  * table needed nothing at all. Three rows were then edited by hand trusting the guard described
  * above -- which is the shape of every stale-claim defect in this repository, a rule cited as
@@ -335,8 +370,8 @@ describe('labelFor', () => {
  * Names rather than prose: the page's wording is a maintainer's to choose, and what has to agree
  * is WHICH module is in WHICH state.
  */
-describe('docs/modules.md agrees with the classifier about every module', () => {
-	const MODULES = readFileSync(join(here, '..', '..', 'docs/modules.md'), 'utf8');
+describe('docs/architecture/modules.md agrees with the classifier about every module', () => {
+	const MODULES = readFileSync(join(here, '..', '..', 'docs/architecture/modules.md'), 'utf8');
 
 	/** every machine name the classifier knows, so a backticked prose word is not read as one */
 	const known = new Set(moduleTable().map((r) => r.name.split('/')[1] as string));
@@ -351,7 +386,9 @@ describe('docs/modules.md agrees with the classifier about every module', () => 
 	 */
 	function named(heading: string): Set<string> {
 		const at = MODULES.indexOf(`### ${heading}`);
-		expect(at, `docs/modules.md has no "### ${heading}" section`).toBeGreaterThan(-1);
+		expect(at, `docs/architecture/modules.md has no "### ${heading}" section`).toBeGreaterThan(
+			-1
+		);
 		const rest = MODULES.slice(at + heading.length);
 		const end = rest.search(/\n#{2,3} /);
 		const body = end === -1 ? rest : rest.slice(0, end);
@@ -374,12 +411,15 @@ describe('docs/modules.md agrees with the classifier about every module', () => 
 		const published = named('Verified');
 		const actual = machine('verified');
 		const missing = [...actual].filter((n) => !published.has(n)).sort();
-		expect(missing, 'verified by the classifier and absent from docs/modules.md').toEqual([]);
+		expect(
+			missing,
+			'verified by the classifier and absent from docs/architecture/modules.md'
+		).toEqual([]);
 		// the other direction: a name the page still advertises after its row moved
 		const extra = [...published].filter((n) => !actual.has(n)).sort();
 		expect(
 			extra,
-			'listed as verified in docs/modules.md and not verified by the classifier'
+			'listed as verified in docs/architecture/modules.md and not verified by the classifier'
 		).toEqual([]);
 	});
 
@@ -396,7 +436,7 @@ describe('docs/modules.md agrees with the classifier about every module', () => 
 		for (const name of machine('blocked')) {
 			expect(
 				published.has(name),
-				`${name} is blocked and docs/modules.md does not say so`
+				`${name} is blocked and docs/architecture/modules.md does not say so`
 			).toBe(true);
 		}
 	});
@@ -406,7 +446,7 @@ describe('docs/modules.md agrees with the classifier about every module', () => 
 		for (const name of machine('untested')) {
 			expect(
 				published.has(name),
-				`${name} is untested and docs/modules.md does not say so`
+				`${name} is untested and docs/architecture/modules.md does not say so`
 			).toBe(true);
 		}
 	});

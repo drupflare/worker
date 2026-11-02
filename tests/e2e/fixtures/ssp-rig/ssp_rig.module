@@ -1,0 +1,5 @@
+<?php
+
+use SimpleSAML\Configuration;
+
+Configuration::setConfigDir(__DIR__ . '/ssp-config');

@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { GENERATED_COLLISIONS } from '../src/ops/generated/modules';
 import { SHIPPING_PACK_CONTRIB, moduleTable } from '../src/ops/module-table';
+import { requireNoConflicts, resolvePhases } from './contrib-phases';
 
 /**
  * Installs the contributed-module census into `drupal-src`, which had no producer.
@@ -64,6 +66,14 @@ export function censusPackages(): string[] {
 }
 
 /**
+ * What one lock can hold: the census without the modules that declare a collision. Those install
+ * in a phase of `contrib-fixture.ts`, after their colliders' own rows have run.
+ */
+export function basePackages(): string[] {
+	return resolvePhases(censusPackages(), GENERATED_COLLISIONS).base;
+}
+
+/**
  * The census packages a tree does not already have.
  *
  * Read from the tree's own `composer.json` rather than from `modules/contrib` on disk: a module
@@ -106,7 +116,8 @@ if (import.meta.main) {
 		process.exit(2);
 	}
 
-	const wanted = censusPackages();
+	const wanted = basePackages();
+	requireNoConflicts(wanted, GENERATED_COLLISIONS);
 	const missing = missingFrom(root, wanted);
 	const before = onDisk(root);
 	console.error(

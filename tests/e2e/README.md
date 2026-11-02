@@ -115,6 +115,23 @@ tail` silently omits every `durableObject` event, so it has to be read through t
   was developed against carries unrelated production workers, so a probe uses a `cfw-*` name
   and is deleted immediately.
 
+## The SAML lane
+
+`saml.spec.ts` drives `simplesamlphp_auth` through a real SAML login and logout against the rig
+Keycloak. It needs a worker whose pack carries the module, which only the contrib fixture does, so it
+skips with a printed reason on the shipping pack and when the container is down.
+
+```bash
+docker compose -f docker/compose.yml up -d keycloak
+bun scripts/contrib-fixture.ts --mount # the simplesamlphp phase; restore with --restore
+bunx wrangler dev --var PW_DIAGNOSTICS:1 --var SITE_ID:<site>
+CFW_E2E_SITE=<site> CFW_E2E_OWNER_TOKEN=<token> bunx vitest run --project=e2e tests/e2e/saml.spec.ts
+```
+
+It uploads `fixtures/ssp-rig` (only the SimpleSAMLphp config directory) through `/modify` and points the realm client's logout URL at the
+endpoint under test through Keycloak's admin API. The session store is drupflare's
+`DatabaseStore`, which the rig config names as `store.type`.
+
 ## The mail lane
 
 `mail.spec.ts` needs an SMTP server as well as a worker. It asserts the half no other mail test

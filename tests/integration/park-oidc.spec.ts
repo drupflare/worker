@@ -67,15 +67,25 @@ function jar(res: Response): string {
  * thing under test is the SERVER half and a browser would only add a dependency to it. The code that
  * comes back is single use and expires, so it is minted immediately before it is spent.
  */
-async function authorizationCode(state: string): Promise<{ code?: string; why?: string }> {
+async function authorizationCode(
+	state: string,
+	prompt?: string,
+	session = ''
+): Promise<{ code?: string; error?: string; cookies?: string; why?: string }> {
 	const auth = new URL(`${IDP}/realms/${REALM}/protocol/openid-connect/auth`);
 	auth.searchParams.set('client_id', CLIENT);
 	auth.searchParams.set('response_type', 'code');
 	auth.searchParams.set('scope', 'openid email profile');
 	auth.searchParams.set('redirect_uri', REDIRECT);
 	auth.searchParams.set('state', state);
+	if (prompt) auth.searchParams.set('prompt', prompt);
 
-	const page = await fetch(auth, { redirect: 'manual' });
+	const page = await fetch(auth, { redirect: 'manual', headers: { cookie: session } });
+	if (prompt === 'none') {
+		const back = page.headers.get('location');
+		const found = back ? new URL(back).searchParams : null;
+		return { code: found?.get('code') ?? undefined, error: found?.get('error') ?? undefined };
+	}
 	if (!page.ok) return { why: `the authorization endpoint answered ${page.status}` };
 	const cookies = jar(page);
 	const html = await page.text();
@@ -91,7 +101,8 @@ async function authorizationCode(state: string): Promise<{ code?: string; why?: 
 	const location = posted.headers.get('location');
 	if (!location) return { why: `the login POST answered ${posted.status} with no redirect` };
 	const code = new URL(location).searchParams.get('code');
-	return code ? { code } : { why: `the redirect carried no code: ${location}` };
+	const both = [cookies, jar(posted)].filter((c) => c !== '').join('; ');
+	return code ? { code, cookies: both } : { why: `the redirect carried no code: ${location}` };
 }
 
 /** the client entity, the registration override and the anti-forgery token the callback checks */
@@ -115,7 +126,7 @@ function arrange(state: string): string {
 		`      'client_id' => '${CLIENT}', 'client_secret' => '${SECRET}',`,
 		`      'issuer_url' => '', 'authorization_endpoint' => '${endpoint}/auth',`,
 		`      'token_endpoint' => '${endpoint}/token', 'userinfo_endpoint' => '${endpoint}/userinfo',`,
-		"      'end_session_endpoint' => '', 'scopes' => ['openid', 'email'],",
+		`      'end_session_endpoint' => '${endpoint}/logout', 'scopes' => ['openid', 'email'],`,
 		"      'provider_slug' => '', 'iss_allowed_domains' => '', 'prompt' => ['login'],",
 		'    ],',
 		'  ])->save();',
@@ -123,7 +134,7 @@ function arrange(state: string): string {
 		// core ships `register: admin_only`, which refuses the account the login has to create;
 		// the override is the module's own lever for exactly that
 		"\\Drupal::configFactory()->getEditable('openid_connect.settings')",
-		"  ->set('override_registration_settings', true)->save();",
+		"  ->set('override_registration_settings', true)->set('end_session_enabled', true)->save();",
 		`\\Drupal::service('session')->set('openid_connect_state', '${state}');`,
 		"\\Drupal::service('session')->set('openid_connect_op', 'login');"
 	].join('\n');
@@ -146,13 +157,53 @@ function callback(code: string, state: string): string {
 		"$mail = \\Drupal::database()->select('users_field_data', 'u')",
 		"  ->fields('u', ['uid', 'mail', 'name', 'status'])->condition('u.uid', 0, '>')",
 		'  ->execute()->fetchAll(\\PDO::FETCH_ASSOC);',
-		'echo json_encode([',
+		'$login = json_encode([',
 		"  'status' => $status, 'location' => $location, 'error' => $error,",
 		"  'authmap' => $map, 'users' => $mail,",
 		"  'refusal' => $GLOBALS['CFW_PARK_REFUSAL'] ?? null,",
 		'], JSON_PARTIAL_OUTPUT_ON_ERROR);'
 	].join('\n');
 }
+
+const LOGOUT_MARK = '@@LOGOUT@@';
+
+/**
+ * Logs the account out through Drupal's own logout route and reports what each side holds.
+ *
+ * The session is the one `callback()` just established. `$ask()` sends a request carrying it, the
+ * way a browser sends its cookie, so the same session answers before and after the logout.
+ */
+function logout(): string {
+	return [
+		"$sid = \\Drupal::service('session')->getId();",
+		`$probe = \\Symfony\\Component\\HttpFoundation\\Request::create('${ORIGIN}/');`,
+		"$name = \\Drupal::service('session_configuration')->getOptions($probe)['name'];",
+		'$ask = function (string $path) use ($name, $sid) {',
+		`  $r = \\Symfony\\Component\\HttpFoundation\\Request::create('${ORIGIN}' . $path);`,
+		'  $r->cookies->set($name, $sid);',
+		"  $resp = \\Drupal::service('http_kernel')->handle($r);",
+		"  return ['status' => $resp->getStatusCode(), 'location' => $resp->headers->get('location')];",
+		'};',
+		'$hash = \\Drupal\\Component\\Utility\\Crypt::hashBase64($sid);',
+		'$rows = function () use ($hash) {',
+		"  return (int) \\Drupal::database()->select('sessions', 's')->condition('s.sid', $hash)",
+		'    ->countQuery()->execute()->fetchField();',
+		'};',
+		"$before = ['uid' => (int) \\Drupal::currentUser()->id(), 'rows' => $rows(), 'user' => $ask('/user')];",
+		"$token = \\Drupal::csrfToken()->get('user/logout');",
+		"$out = $ask('/user/logout?token=' . $token);",
+		"$after = ['uid' => (int) \\Drupal::currentUser()->id(), 'rows' => $rows(), 'user' => $ask('/user')];",
+		`echo $login . "\\n${LOGOUT_MARK}" . json_encode(['sid' => $sid !== '', 'before' => $before, 'logout' => $out, 'after' => $after]);`
+	].join('\n');
+}
+
+type Probe = { uid: number; rows: number; user: { status: number; location: string | null } };
+type LoggedOut = {
+	sid: boolean;
+	before: Probe;
+	logout: { status: number; location: string | null };
+	after: Probe;
+};
 
 type Seen = {
 	status?: number;
@@ -219,7 +270,7 @@ describe('drupal/openid_connect, logging in through its own token exchange', () 
 				// the lever the rig exists for: Keycloak is on loopback and the SSRF guard refuses
 				// that by default, correctly, since PHP names the URL a parked fetch reaches
 				{ OUTBOUND_GUARD: '0' },
-				`<?php\n${arrange(state)}\n${callback(code, state)}`
+				`<?php\n${arrange(state)}\n${callback(code, state)}\n${logout()}`
 			);
 			await sockets.closeAll();
 			return { build: 'current' as const, enabled, armed, driven };
@@ -239,7 +290,8 @@ describe('drupal/openid_connect, logging in through its own token exchange', () 
 		expect(outcome.armed['armed']).toContain('stream_socket_client');
 		expect(driven.state, driven.why ?? '').toBe('done');
 
-		const seen = JSON.parse(driven.output.slice(driven.output.indexOf('{'))) as Seen;
+		const [login = '', ended = ''] = driven.output.split(LOGOUT_MARK);
+		const seen = JSON.parse(login.slice(login.indexOf('{'))) as Seen;
 		expect(seen.error ?? null).toBeNull();
 
 		// THE PARK CARRIED IT. Two outbound calls in one request -- the token POST and the userinfo
@@ -259,5 +311,39 @@ describe('drupal/openid_connect, logging in through its own token exchange', () 
 		expect((seen.users ?? []).map((u) => u.mail)).toContain(EMAIL);
 		// and the session was established, which is what `completeAuthorization` returning true means
 		expect(seen.status).toBe(302);
+
+		// LOGOUT, through Drupal's own route with the session the login opened. The control is the
+		// same session before the logout: it must authenticate, or the "no longer" below proves nothing
+		const out = JSON.parse(ended) as LoggedOut;
+		console.log(`[park-oidc] logout ${ended}`);
+		expect(out.sid, 'the login opened no session').toBe(true);
+		expect(out.before.uid).toBeGreaterThan(0);
+		expect(out.before.rows, 'no server-side session row before the logout').toBe(1);
+		expect(out.before.user.location ?? '').toMatch(new RegExp(`/user/${out.before.uid}$`));
+		// RP-initiated logout: the module sends the browser to the provider's end_session endpoint
+		// carrying the id_token it holds for this session
+		const leave = new URL(out.logout.location ?? 'http://none.invalid/');
+		expect(leave.origin + leave.pathname).toBe(
+			`${IDP}/realms/${REALM}/protocol/openid-connect/logout`
+		);
+		expect(leave.searchParams.get('id_token_hint') ?? '').toMatch(/^[\w-]+\.[\w-]+\.[\w-]+$/);
+		expect(out.after.uid, 'the account is still signed in after the logout').toBe(0);
+		expect(out.after.rows, 'the server-side session row survived the logout').toBe(0);
+		expect(out.after.user.location ?? '').toContain('/user/login');
+
+		// the provider's end, and the cookie the login left there is the control
+		const held = await authorizationCode('cfw-park-state-2', 'none', minted.cookies ?? '');
+		expect(
+			held.error,
+			'the provider session was already gone before the logout'
+		).toBeUndefined();
+		expect(held.code, 'prompt=none found no provider session to end').toBeTruthy();
+		const endResp = await fetch(leave, {
+			redirect: 'manual',
+			headers: { cookie: minted.cookies ?? '' }
+		});
+		expect(endResp.status).toBeLessThan(400);
+		const gone = await authorizationCode('cfw-park-state-3', 'none', minted.cookies ?? '');
+		expect(gone.error).toBe('login_required');
 	});
 });

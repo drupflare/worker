@@ -44,6 +44,65 @@
 				"http://localhost:8789/*"
 			],
 			"webOrigins": ["+", "http://127.0.0.1:8789", "http://localhost:8789"]
+		},
+		{
+			"clientId": "urn:drupflare:ssp-rig",
+			"name": "simplesamlphp_auth rig",
+			"enabled": true,
+			"protocol": "saml",
+			"frontchannelLogout": true,
+			"redirectUris": [
+				"http://127.0.0.1:8787/*",
+				"http://127.0.0.1:8789/*",
+				"http://127.0.0.1:8790/*"
+			],
+			"attributes": {
+				"saml.authnstatement": "true",
+				"saml.server.signature": "true",
+				"saml.assertion.signature": "true",
+				"saml.client.signature": "false",
+				"saml.signature.algorithm": "RSA_SHA256",
+				"saml.force.post.binding": "true",
+				"saml_force_name_id_format": "true",
+				"saml_name_id_format": "username",
+				"saml_single_logout_service_url_redirect": "http://127.0.0.1:8787/simplesaml/module.php/saml/sp/saml2-logout.php/default-sp",
+				"post.logout.redirect.uris": "+"
+			},
+			"protocolMappers": [
+				{
+					"name": "uid",
+					"protocol": "saml",
+					"protocolMapper": "saml-user-property-mapper",
+					"config": {
+						"user.attribute": "username",
+						"attribute.name": "uid",
+						"friendly.name": "uid",
+						"attribute.nameformat": "Basic"
+					}
+				},
+				{
+					"name": "mail",
+					"protocol": "saml",
+					"protocolMapper": "saml-user-property-mapper",
+					"config": {
+						"user.attribute": "email",
+						"attribute.name": "mail",
+						"friendly.name": "mail",
+						"attribute.nameformat": "Basic"
+					}
+				},
+				{
+					"name": "cn",
+					"protocol": "saml",
+					"protocolMapper": "saml-user-property-mapper",
+					"config": {
+						"user.attribute": "firstName",
+						"attribute.name": "cn",
+						"friendly.name": "cn",
+						"attribute.nameformat": "Basic"
+					}
+				}
+			]
 		}
 	],
 	"users": [
@@ -58,6 +117,21 @@
 				{
 					"type": "password",
 					"value": "drupflarepass",
+					"temporary": false
+				}
+			]
+		},
+		{
+			"username": "saml-rig",
+			"enabled": true,
+			"emailVerified": true,
+			"email": "saml-rig@example.test",
+			"firstName": "Sam",
+			"lastName": "Rig",
+			"credentials": [
+				{
+					"type": "password",
+					"value": "samlrigpass",
 					"temporary": false
 				}
 			]

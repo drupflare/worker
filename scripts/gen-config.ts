@@ -34,6 +34,10 @@ export type ModuleDecl = {
 	verified?: string;
 	capabilityEvidence?: string;
 	shipping?: boolean;
+	collides?: string[];
+	plugins?: string[];
+	sheds?: string[];
+	require?: string;
 };
 
 export type ModulesConfig = {
@@ -65,6 +69,7 @@ export function renderModules(config: ModulesConfig): string {
 	const verified: string[] = [];
 	const evidence: string[] = [];
 	const shipping: string[] = [];
+	const collisions: string[] = [];
 
 	for (const name of names) {
 		const m = config.modules[name] as ModuleDecl;
@@ -77,6 +82,13 @@ export function renderModules(config: ModulesConfig): string {
 		if (m.verified) verified.push(`\t${lit(name)}: ${lit(m.verified)}`);
 		if (m.capabilityEvidence) evidence.push(`\t${lit(name)}: ${lit(m.capabilityEvidence)}`);
 		if (m.shipping) shipping.push(`\t${lit(name)}`);
+		if (m.collides) {
+			const list = (xs: string[] = []) => `[${xs.map(lit).join(', ')}]`;
+			const pin = m.require ? `, require: ${lit(m.require)}` : '';
+			collisions.push(
+				`\t${lit(name)}: { collides: ${list(m.collides)}, plugins: ${list(m.plugins)}, sheds: ${list(m.sheds)}${pin} }`
+			);
+		}
 	}
 
 	const cron = Object.entries(config.cron.policy).map(([name, p]) => {
@@ -105,6 +117,20 @@ ${evidence.join(',\n')}
 export const GENERATED_SHIPPING_CONTRIB: readonly string[] = [
 ${shipping.join(',\n')}
 ];
+
+export const GENERATED_COLLISIONS: Readonly<
+	Record<
+		string,
+		{
+			collides: readonly string[];
+			plugins: readonly string[];
+			sheds: readonly string[];
+			require?: string;
+		}
+	>
+> = {
+${collisions.join(',\n')}
+};
 
 export const GENERATED_CRON_KNOWN: readonly string[] = [
 ${config.cron.known.map((n) => `\t${lit(n)}`).join(',\n')}

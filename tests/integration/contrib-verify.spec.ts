@@ -1,9 +1,26 @@
-import { env } from 'cloudflare:test';
 import { afterAll, describe, expect, it, type TestContext } from 'vitest';
-import { BOOT_KERNEL, renderPage } from '../../src/drupal/site-php';
+import { BOOT_KERNEL, drupalOp, renderPage } from '../../src/drupal/site-php';
 import { vectorFor } from '../../src/ops/capability-contract';
 import { SHIPPED_CAPABILITIES, tierFor } from '../../src/ops/catalog';
-import { SHIPPING_PACK_CONTRIB } from '../../src/ops/module-table';
+import {
+	GENERATED_MODULES,
+	PHASE_OWNERS,
+	REQUEST_TIMEOUT,
+	call,
+	enable,
+	migrate,
+	mustCarry,
+	packedContrib,
+	type Payload
+} from '../helpers/contrib-pack';
+import {
+	claimSite,
+	encodeForm,
+	formPost,
+	hiddenFields,
+	loginJar,
+	render
+} from '../helpers/drupal-forms';
 import { SUSPEND_PROBE } from '../helpers/drupal-probes';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
@@ -36,54 +53,16 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * of the case's and each row fails again, `svg_image` reporting core's `ImageFormatter` back.
  */
 
-type Payload = Record<string, unknown>;
-const REQUEST_TIMEOUT = 900_000;
-
-const call = (site: ServeDo, path: string) =>
-	site.fetch(new Request(`https://do.local${path}`)).then((r) => r.json() as Promise<Payload>);
-
-const migrate = (site: ServeDo) => call(site, '/__migrate?all=1&prefill=0');
-const enable = (site: ServeDo, module: string) =>
-	call(site, `/__enable?module=${encodeURIComponent(module)}`);
 const sql = (site: ServeDo, query: string) => call(site, `/__sql?q=${encodeURIComponent(query)}`);
 const rows = (reply: Payload): Record<string, unknown>[] =>
 	Array.isArray(reply['rows']) ? (reply['rows'] as Record<string, unknown>[]) : [];
 
 // #region what the mounted pack carries
 
-/**
- * The contrib machine names in the index the Durable Object mounts.
- *
- * Read through the real ASSETS binding, so it is the same bytes `mountDrupalLazy()` fetches. As text
- * plus a scan rather than `JSON.parse`, because the fixture index is 1.7 MB and every path in it is
- * a string this only has to match against.
- */
-let packedOnce: Promise<Set<string>> | null = null;
-function packedContrib(): Promise<Set<string>> {
-	packedOnce ??= (async () => {
-		const res = await env.ASSETS.fetch(new URL('https://a.local/drupal-pf/core.pf.json'));
-		if (!res.ok) throw new Error(`pack index not reachable: core.pf.json ${res.status}`);
-		const found = new Set<string>();
-		// BOTH prefixes: composer/installers puts a theme under `themes/contrib`, so scanning
-		// modules alone reported every contrib theme as absent from a pack that carries it
-		for (const m of (await res.text()).matchAll(/"(?:modules|themes)\/contrib\/([^/"]+)\//g)) {
-			found.add(m[1] as string);
-		}
-		return found;
-	})();
-	return packedOnce;
-}
-
-const shippingNames = SHIPPING_PACK_CONTRIB.map((n) => n.split('/')[1] as string);
-
-/** a pack carrying anything past the shipping four is a fixture build, and owes every case */
-const isFixturePack = (packed: Set<string>) =>
-	[...packed].some((name) => !shippingNames.includes(name));
-
 async function reachable(ctx: TestContext, module: string): Promise<boolean> {
 	const packed = await packedContrib();
 	if (packed.has(module)) return true;
-	if (isFixturePack(packed)) {
+	if (mustCarry(packed) && !PHASE_OWNERS.includes(module)) {
 		throw new Error(
 			`${module} is not in the mounted FIXTURE pack. The fixture build carries ` +
 				`modules/contrib wholesale, so this means composer never installed it: ` +
@@ -215,6 +194,12 @@ $out['encodings'] = $encodings;
 $out['control'] = $c->has('entity_type.manager');
 echo json_encode($out);`;
 
+/** the version the packaging script stamped into the mounted info.yml, which the extension list may not have scanned yet */
+const versionProbe = (module: string) => String.raw`<?php
+$file = \Drupal::root() . '/modules/contrib/${module}/${module}.info.yml';
+preg_match("/^version: *'?([^'\\s]+)/m", (string) @file_get_contents($file), $m);
+echo json_encode(['version' => $m[1] ?? '']);`;
+
 // #endregion
 
 // #region the cases
@@ -235,6 +220,8 @@ type Case = {
 	types?: readonly string[];
 	routes?: number;
 	ask?: AskSpec;
+	/** a prefix of the installed version; a row for another branch skips, so two rows can share a module */
+	branch?: string;
 	/**
 	 * A module the classifier REFUSES.
 	 *
@@ -613,6 +600,26 @@ const CASES: readonly Case[] = [
 		ask: { libraries: 'jquery_ui_menu' }
 	},
 	{
+		module: 'jquery_ui_slider',
+		observable: 'the slider library jquery_ui declares on its behalf',
+		ask: { libraries: 'jquery_ui_slider' }
+	},
+	{
+		module: 'migrate_source_csv',
+		observable: 'the csv migrate source plugin, owned by this module',
+		ask: { plugins: [['plugin.manager.migrate.source', 'csv']] }
+	},
+	{
+		module: 'jquery_ui_touch_punch',
+		observable: 'the touch-punch library the module declares on top of jquery_ui core',
+		ask: { libraries: 'jquery_ui_touch_punch' }
+	},
+	{
+		module: 'inline_entity_form',
+		observable: 'the migration helper service it registers, its only service',
+		ask: { services: ['inline_entity_form.migration_helper'] }
+	},
+	{
 		module: 'libraries',
 		observable: 'libraries.settings, which is where its external library definitions are read',
 		config: ['libraries.settings']
@@ -760,15 +767,39 @@ const CASES: readonly Case[] = [
 	 */
 	{
 		module: 'openid_connect',
+		branch: '8.x-1.',
 		observable:
-			'its client plugin manager, the generic client plugin and its client entity type',
+			'its client plugin manager, the generic client plugin and the settings object it installs for it (8.x-1)',
+		// 8.x-1.6 declares no client entity type; a client is a plugin with one settings object
+		config: ['openid_connect.settings', 'openid_connect.settings.generic'],
+		ask: {
+			services: [
+				'plugin.manager.openid_connect_client',
+				'openid_connect.claims',
+				'openid_connect.state_token'
+			],
+			plugins: [['plugin.manager.openid_connect_client', 'generic']]
+		},
+		routes: 3
+	},
+	/**
+	 * 3.0.x, which 28,700 of the module's 36,179 sites run. A client is a config entity here, so the
+	 * entity type and its admin routes are what the 8.x-1 row cannot see.
+	 */
+	{
+		module: 'openid_connect',
+		branch: '3.',
+		observable:
+			'its client config entity type, the client plugin manager and the generic client plugin (3.0.x)',
 		config: ['openid_connect.settings'],
 		types: ['openid_connect_client.entity_type'],
 		ask: {
 			services: [
 				'plugin.manager.openid_connect_client',
 				'openid_connect.claims',
-				'openid_connect.state_token'
+				'openid_connect.state_token',
+				'openid_connect.session',
+				'openid_connect.autodiscover'
 			],
 			plugins: [['plugin.manager.openid_connect_client', 'generic']]
 		},
@@ -876,11 +907,81 @@ const CASES: readonly Case[] = [
 	},
 	{
 		module: 'uswds_base',
-		// THE ONLY THEME IN THIS FILE. It installs through `theme_installer`, so its observable is
+		// A THEME. It installs through `theme_installer`, so its observable is
 		// `core.extension`'s THEME key rather than its module key, and the asset libraries are what
 		// a theme owns in place of services -- there are no PHP classes to resolve
 		observable: 'the theme installs and its own USWDS asset libraries resolve',
 		ask: { libraries: 'uswds_base' }
+	},
+	{
+		module: 'gin',
+		observable: 'the admin theme installs and the libraries it declares resolve',
+		ask: { libraries: 'gin' }
+	},
+	{
+		module: 'gin_toolbar',
+		observable: 'the active-trail service it registers, its only service',
+		ask: { services: ['gin_toolbar.active_trail'] }
+	},
+	{
+		module: 'strata',
+		observable:
+			'its key maker and engine services, its two settings configs and its seven settings routes',
+		ask: { services: ['strata.key_maker', 'strata.engine', 'strata.journal'] },
+		config: ['strata.settings', 'strata.webhooks'],
+		routes: 7
+	},
+	{
+		module: 'simplesamlphp_auth',
+		observable:
+			'its manager and Drupal-auth services, its settings config and its four admin and login routes',
+		ask: { services: ['simplesamlphp_auth.manager', 'simplesamlphp_auth.drupalauth'] },
+		config: ['simplesamlphp_auth.settings'],
+		routes: 4
+	},
+	{
+		module: 'seckit',
+		observable: 'its response subscriber, its settings config and its two routes',
+		ask: { services: ['seckit.subscriber'] },
+		config: ['seckit.settings'],
+		routes: 2
+	},
+	{
+		module: 'access_unpublished',
+		observable:
+			'its token table, its token manager and token getter services, its settings config and its two routes',
+		tables: ['access_token'],
+		ask: {
+			services: ['access_unpublished.access_token_manager', 'access_unpublished.token_getter']
+		},
+		config: ['access_unpublished.settings'],
+		routes: 2
+	},
+	{
+		module: 'contact_storage',
+		observable: 'its message table, its settings config and its four admin routes',
+		tables: ['contact_message'],
+		config: ['contact_storage.settings'],
+		routes: 4
+	},
+	{
+		module: 'editoria11y',
+		observable:
+			'its three result tables, its API and page-signer services, its settings config and its nine routes',
+		tables: ['ed11y_page', 'ed11y_result', 'ed11y_action'],
+		ask: { services: ['editoria11y.api', 'editoria11y.page_signer'] },
+		config: ['editoria11y.settings'],
+		routes: 9
+	},
+	{
+		module: 'password_policy',
+		observable:
+			'its validator and validation manager services, its settings config and its nine routes',
+		ask: {
+			services: ['password_policy.validator', 'password_policy.validation_manager']
+		},
+		config: ['password_policy.settings'],
+		routes: 9
 	}
 ];
 
@@ -895,7 +996,9 @@ const COVERED_ELSEWHERE: Readonly<Record<string, string>> = {
 	admin_toolbar: 'shipping pack; tests/integration/module-behaviour.spec.ts',
 	ctools: 'shipping pack; tests/integration/module-behaviour.spec.ts',
 	pathauto: 'shipping pack; tests/integration/module-behaviour.spec.ts',
-	token: 'shipping pack; tests/integration/module-behaviour.spec.ts'
+	token: 'shipping pack; tests/integration/module-behaviour.spec.ts',
+	js_cookie: 'a dependency of cas, which contrib-generic.spec.ts covers',
+	contact: 'a dependency of contact_storage, whose message round trip below needs it'
 };
 
 // #endregion
@@ -934,6 +1037,12 @@ describe('contrib modules, enabled against a real site', () => {
 
 				const out = await inObject(freshSite(), async (site) => {
 					await migrate(site);
+					if (one.branch) {
+						await site.runJson(BOOT_KERNEL);
+						const read = await site.runJson(versionProbe(one.module));
+						const version = String(read['version'] ?? '');
+						if (!version.startsWith(one.branch)) return { skipped: version };
+					}
 					const before = await snapshot(site);
 					let askBefore: Payload | null = null;
 					if (one.ask) {
@@ -958,6 +1067,12 @@ describe('contrib modules, enabled against a real site', () => {
 					return { enabled, before, after, askBefore, askAfter, suspend };
 				});
 
+				if ('skipped' in out) {
+					ctx.skip(
+						`${one.module} is ${out.skipped}, not the ${one.branch} this row is for`
+					);
+					return;
+				}
 				const charged = Number(out.enabled['rowsWritten'] ?? 0);
 				const row: Row = {
 					module: one.module,
@@ -1364,6 +1479,568 @@ echo json_encode([
 	);
 
 	/**
+	 * strata seals a frame through its own cipher, under a key it created itself.
+	 *
+	 * `extension_loaded('sodium')` is true here because the sodium stand-in covers the whole
+	 * ext-sodium API, so `strata_sodium` reads Available; `strata_storage` says not usable without a
+	 * store, and the claim is exactly that plus a working cipher.
+	 * The key comes from `KeyMaker::create()`, the way an operator gets one, and is never printed.
+	 * The known answer was sealed by native libsodium (PHP 8.5.7) with the same nonce
+	 * derivation, so the shim's BLAKE2b and AEAD are held to the real library and not to themselves.
+	 */
+	it(
+		'strata: seals and opens a frame under a key it made, refuses tampering, matches native libsodium',
+		async (ctx) => {
+			if (!(await reachable(ctx, 'strata'))) return;
+			const KAT_KEY = '1af5d3942a322f335523acceaa04a40bfd1123d637a597498af1b6377bd449f7';
+			const KAT_SEALED =
+				'7547dca24c9548919d80ef04a667f3ae4b56339241bc8d1dc66f72294d6cbd7aecf7a4b4b47ca84da9c0f430914071fc4049e6bff633e9fc762479183b98c9d8f39e497a3d1077167533d882cde044f9de5278bc8c89c8';
+			const PROBE = String.raw`<?php
+if (!defined('CSS_COMPONENT')) { require_once '/drupal/core/includes/common.inc'; }
+\Drupal::service('request_stack')->push(\Symfony\Component\HttpFoundation\Request::create('/', 'GET'));
+\Drupal::moduleHandler()->loadAll();
+require_once '/drupal/core/includes/install.inc';
+$c = \Drupal::getContainer();
+$out = ['maker' => $c->has('strata.key_maker'), 'engine' => $c->has('strata.engine')];
+$all = \Drupal::service('system.manager')->listRequirements();
+foreach (['strata_sodium', 'strata_storage'] as $k) {
+  $row = $all[$k] ?? null;
+  $out['req ' . $k] = $row === null ? null : [
+    'value' => (string) $row['value'],
+    'severity' => (int) ($row['severity']->value ?? $row['severity']),
+  ];
+}
+$out['extension_loaded'] = extension_loaded('sodium');
+if (!$out['maker'] || !$out['engine']) { echo json_encode($out); return; }
+$maker = \Drupal::service('strata.key_maker');
+$id = $maker->create();
+$second = $maker->create();
+$repo = \Drupal::service('key.repository');
+$a = $repo->getKey($id)->getKeyValue();
+$b = $repo->getKey($second)->getKeyValue();
+$out['key bytes'] = [strlen($a), strlen($b)];
+$out['keys differ'] = $a !== $b;
+\Drupal::configFactory()->getEditable('strata.settings')->set('key', $id)->save();
+$cipher = \Drupal::service('strata.engine')->cipher();
+$out['cipher'] = get_class($cipher);
+$out['available'] = $cipher->isAvailable();
+$plain = 'strata round trip ' . bin2hex(random_bytes(16)) . str_repeat("\0\xff", 40);
+$aad = hash('sha256', $plain);
+$sealed = $cipher->seal($plain, $aad);
+$out['sealed'] = [
+  'differs' => $sealed !== $plain,
+  'hides plaintext' => !str_contains($sealed, substr($plain, 0, 20)),
+  'length' => strlen($sealed) === 24 + strlen($plain) + 16,
+  'opens' => $cipher->open($sealed, $aad) === $plain,
+  'deterministic' => $cipher->seal($plain, $aad) === $sealed,
+];
+$flip = function (string $s, int $at): string { $s[$at] = chr(ord($s[$at]) ^ 1); return $s; };
+$other = new \Drupal\strata\Crypto\XChaCha20Poly1305Cipher(random_bytes(32));
+$cases = [
+  'last byte' => fn() => $cipher->open($flip($sealed, strlen($sealed) - 1), $aad),
+  'first byte' => fn() => $cipher->open($flip($sealed, 0), $aad),
+  'middle byte' => fn() => $cipher->open($flip($sealed, intdiv(strlen($sealed), 2)), $aad),
+  'associated data' => fn() => $cipher->open($sealed, hash('sha256', 'other')),
+  'another key' => fn() => $other->open($sealed, $aad),
+  'truncated' => fn() => $cipher->open(substr($sealed, 0, 20), $aad),
+];
+$tamper = [];
+foreach ($cases as $label => $fn) {
+  try { $fn(); $tamper[$label] = 'opened'; }
+  catch (\Drupal\strata\Crypto\AuthenticationFailure $e) { $tamper[$label] = 'auth'; }
+  catch (\Throwable $e) { $tamper[$label] = get_class($e); }
+}
+$out['tamper'] = $tamper;
+$kat = new \Drupal\strata\Crypto\XChaCha20Poly1305Cipher(hex2bin('${KAT_KEY}'));
+$known = 'strata known answer: sealed by native libsodium';
+$out['native'] = [
+  'seal equals' => bin2hex($kat->seal($known, 'frame-digest-0001')) === '${KAT_SEALED}',
+  'opens' => $kat->open(hex2bin('${KAT_SEALED}'), 'frame-digest-0001') === $known,
+];
+echo json_encode($out);`;
+
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				await site.runJson(BOOT_KERNEL);
+				const before = await site.runJson(PROBE);
+				const enabled = await enable(site, 'strata');
+				await site.runJson(BOOT_KERNEL);
+				const after = await site.runJson(PROBE);
+				return { before, enabled, after };
+			});
+			expect(out.enabled['ok'], JSON.stringify(out.enabled).slice(0, 300)).toBe(true);
+
+			// before: no service to ask and no status row, so what follows is this module's
+			expect(out.before['maker']).toBe(false);
+			expect(out.before['engine']).toBe(false);
+			expect(out.before['req strata_sodium']).toBeNull();
+
+			const after = out.after;
+			// the two status rows: the extension reads loaded, and no store is configured
+			expect(after['extension_loaded']).toBe(true);
+			expect(after['req strata_sodium']).toEqual({ value: 'Available', severity: 0 });
+			expect(after['req strata_storage']).toEqual({
+				value: 'Local, not usable',
+				severity: 2
+			});
+
+			expect(after['key bytes']).toEqual([32, 32]);
+			expect(after['keys differ']).toBe(true);
+			expect(after['cipher']).toBe('Drupal\\strata\\Crypto\\XChaCha20Poly1305Cipher');
+			expect(after['available']).toBe(true);
+			expect(after['sealed']).toEqual({
+				differs: true,
+				'hides plaintext': true,
+				length: true,
+				opens: true,
+				deterministic: true
+			});
+			expect(after['tamper']).toEqual({
+				'last byte': 'auth',
+				'first byte': 'auth',
+				'middle byte': 'auth',
+				'associated data': 'auth',
+				'another key': 'auth',
+				truncated: 'RuntimeException'
+			});
+			expect(after['native']).toEqual({ 'seal equals': true, opens: true });
+		},
+		REQUEST_TIMEOUT
+	);
+
+	/**
+	 * simplesamlphp_auth builds a SimpleSAMLphp service provider from its own settings.
+	 *
+	 * It installs in a phase after smtp is removed, because SimpleSAMLphp 2.5 needs phpmailer 7 and
+	 * smtp needs phpmailer 6. The library classes autoload before the enable too, since they come from
+	 * the lock, so only the module's own service, routes and settings are read as before and after.
+	 * No identity provider is involved: nothing here sends an AuthnRequest or checks an assertion.
+	 */
+	it(
+		'simplesamlphp_auth: its manager builds a SimpleSAMLphp config and service provider from its settings',
+		async (ctx) => {
+			if (!(await reachable(ctx, 'simplesamlphp_auth'))) return;
+			const PROBE = String.raw`<?php
+if (!defined('CSS_COMPONENT')) { require_once '/drupal/core/includes/common.inc'; }
+\Drupal::service('request_stack')->push(\Symfony\Component\HttpFoundation\Request::create('/', 'GET'));
+\Drupal::moduleHandler()->loadAll();
+$c = \Drupal::getContainer();
+$out = ['control' => $c->has('entity_type.manager')];
+$out['manager service'] = $c->has('simplesamlphp_auth.manager');
+$out['manager class'] = class_exists('Drupal\simplesamlphp_auth\Service\SimplesamlphpAuthManager');
+$have = array_flip(\Drupal::database()->query('SELECT name FROM {router}')->fetchCol());
+$out['routes'] = [
+  'admin' => isset($have['simplesamlphp_auth.admin_settings']),
+  'login' => isset($have['simplesamlphp_auth.saml_login']),
+];
+$out['settings'] = \Drupal::service('config.storage')->exists('simplesamlphp_auth.settings');
+$out['classes'] = [];
+foreach (['SimpleSAML\Configuration', 'SimpleSAML\Auth\Simple', 'SimpleSAML\Session', 'SimpleSAML\SAML2\XML\samlp\AuthnRequest', 'PHPMailer\PHPMailer\PHPMailer'] as $cls) {
+  $out['classes'][$cls] = class_exists($cls);
+}
+$out['phpmailer'] = class_exists('PHPMailer\PHPMailer\PHPMailer') ? \PHPMailer\PHPMailer\PHPMailer::VERSION : null;
+if (!$out['manager service']) { echo json_encode($out); return; }
+$settings = \Drupal::config('simplesamlphp_auth.settings');
+$out['auth_source'] = $settings->get('auth_source');
+$out['activate'] = $settings->get('activate');
+$dir = '/tmp/ssp-config';
+@mkdir($dir, 0777, true);
+file_put_contents($dir . '/config.php', "<?php\n\$config = ['baseurlpath' => 'simplesaml/', 'secretsalt' => 'rig-salt', 'store.type' => 'phpsession', 'technicalcontact_email' => 'na@example.test', 'technicalcontact_name' => 'rig', 'timezone' => 'UTC'];\n");
+file_put_contents($dir . '/authsources.php', "<?php\n\$config = [" . var_export($out['auth_source'], true) . " => ['saml:SP', 'entityID' => 'https://sp.example.test/']];\n");
+\SimpleSAML\Configuration::setConfigDir($dir);
+$m = \Drupal::service('simplesamlphp_auth.manager');
+$out['manager'] = get_class($m);
+$out['activated'] = $m->isActivated();
+$out['storage'] = $m->getStorage();
+$out['authenticated'] = $m->isAuthenticated();
+$sp = \SimpleSAML\Auth\Source::getById($out['auth_source']);
+$out['sp class'] = get_class($sp);
+$out['sp entity'] = $sp->getEntityId();
+$builder = new \SimpleSAML\Metadata\SAMLBuilder($sp->getEntityId());
+$builder->addMetadataSP20($sp->getHostedMetadata(), $sp->getSupportedProtocols());
+$dom = new \DOMDocument();
+$out['metadata parses'] = $dom->loadXML($builder->getEntityDescriptorText(false));
+$out['metadata root'] = $dom->documentElement->localName;
+$out['metadata entityID'] = $dom->documentElement->getAttribute('entityID');
+$out['metadata acs'] = $dom->getElementsByTagNameNS('urn:oasis:names:tc:SAML:2.0:metadata', 'AssertionConsumerService')->length;
+echo json_encode($out);`;
+
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				await site.runJson(BOOT_KERNEL);
+				const before = await site.runJson(PROBE);
+				const enabled = await enable(site, 'simplesamlphp_auth');
+				await site.runJson(BOOT_KERNEL);
+				const after = await site.runJson(PROBE);
+				return { before, enabled, after };
+			});
+			expect(out.enabled['ok'], JSON.stringify(out.enabled).slice(0, 300)).toBe(true);
+			expect(out.enabled['nowEnabled']).toBe(true);
+
+			const { before, after } = out;
+			expect(before['control']).toBe(true);
+			expect(after['control']).toBe(true);
+			expect(before['manager service']).toBe(false);
+			expect(before['manager class']).toBe(false);
+			expect(before['routes']).toEqual({ admin: false, login: false });
+			expect(before['settings']).toBe(false);
+
+			// the lock this phase builds: phpmailer 7 beside SimpleSAMLphp 2.5, no smtp
+			const libraries = {
+				'SimpleSAML\\Configuration': true,
+				'SimpleSAML\\Auth\\Simple': true,
+				'SimpleSAML\\Session': true,
+				'SimpleSAML\\SAML2\\XML\\samlp\\AuthnRequest': true,
+				'PHPMailer\\PHPMailer\\PHPMailer': true
+			};
+			expect(after['classes']).toEqual(libraries);
+			expect(String(after['phpmailer'])).toMatch(/^7\./);
+
+			expect(after['manager service']).toBe(true);
+			expect(after['manager class']).toBe(true);
+			expect(after['routes']).toEqual({ admin: true, login: true });
+			expect(after['settings']).toBe(true);
+			expect(after['auth_source']).toBe('default-sp');
+			expect(after['activate']).toBe(false);
+
+			expect(after['manager']).toBe(
+				'Drupal\\simplesamlphp_auth\\Service\\SimplesamlphpAuthManager'
+			);
+			expect(after['activated']).toBe(false);
+			expect(after['storage']).toBe('phpsession');
+			expect(after['authenticated']).toBe(false);
+			expect(after['sp class']).toBe('SimpleSAML\\Module\\saml\\Auth\\Source\\SP');
+			expect(after['sp entity']).toBe('https://sp.example.test/');
+			expect(after['metadata parses']).toBe(true);
+			expect(after['metadata root']).toBe('EntityDescriptor');
+			expect(after['metadata entityID']).toBe('https://sp.example.test/');
+			expect(Number(after['metadata acs'])).toBeGreaterThan(0);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	// #region headline behaviours, driven through the real serve path
+
+	const PRE = String.raw`
+$request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+\Drupal::service('request_stack')->push($request);
+\Drupal::service('router.request_context')->fromRequest($request);
+\Drupal::moduleHandler()->loadAll();
+`;
+	const ORIGIN = 'https://do.local';
+	const sqlRows = async (site: ServeDo, query: string) => rows(await sql(site, query));
+	// the first enable can drop the interpreter to free its heap and ask for a repeat
+	const enableOn = async (site: ServeDo, module: string) => {
+		let out = await enable(site, module);
+		if (out['retry']) out = await enable(site, module);
+		return out;
+	};
+
+	it(
+		'seckit: sends its CSP, HSTS and referrer headers, overrides X-Frame-Options, and refuses a foreign Origin on a POST',
+		async (ctx) => {
+			if (!(await reachable(ctx, 'seckit'))) return;
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				const before = await render(site, '/');
+				const enabled = await enableOn(site, 'seckit');
+				await site.runJson(BOOT_KERNEL);
+				await site.runJson(
+					drupalOp(`${PRE}
+					\\Drupal::configFactory()->getEditable('seckit.settings')
+						->set('seckit_xss.csp.checkbox', true)
+						->set('seckit_xss.csp.default-src', "'self'")
+						->set('seckit_ssl.hsts', true)
+						->set('seckit_ssl.hsts_max_age', 31536000)
+						->set('seckit_various.referrer_policy', true)
+						->set('seckit_various.referrer_policy_policy', 'no-referrer')
+						->set('seckit_clickjacking.x_frame', '2')
+						->set('seckit_csrf.origin', true)
+						->save();`)
+				);
+				const after = await render(site, '/');
+				const login = 'name=x&pass=y&form_id=user_login_form&op=Log+in';
+				const foreign = await render(site, '/user/login', {
+					...formPost(login),
+					origin: ORIGIN,
+					headers: { Origin: 'https://evil.example' }
+				});
+				const own = await render(site, '/user/login', {
+					...formPost(login),
+					origin: ORIGIN,
+					headers: { Origin: ORIGIN }
+				});
+				return { enabled, before, after, foreign, own };
+			});
+			expect(out.enabled['ok'], JSON.stringify(out.enabled).slice(0, 300)).toBe(true);
+			const was = out.before['passHeaders'] as Record<string, string>;
+			const now = out.after['passHeaders'] as Record<string, string>;
+			for (const name of [
+				'content-security-policy',
+				'strict-transport-security',
+				'referrer-policy'
+			]) {
+				expect(was[name], `${name} was sent before the enable`).toBeUndefined();
+			}
+			expect(was['x-frame-options']).toBe('SAMEORIGIN');
+			expect(now['content-security-policy']).toContain("default-src 'self'");
+			expect(now['strict-transport-security']).toBe('max-age=31536000');
+			expect(now['referrer-policy']).toBe('no-referrer');
+			expect(now['x-frame-options']).toBe('DENY');
+			expect(out.foreign['status']).toBe(403);
+			expect(String(out.foreign['html'])).toContain('Access denied');
+			expect(out.own['status']).toBe(200);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'access_unpublished: a token URL shows an unpublished node, and the next visitor with no token does not',
+		async (ctx) => {
+			if (!(await reachable(ctx, 'access_unpublished'))) return;
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				const enabled = await enableOn(site, 'access_unpublished');
+				await site.runJson(BOOT_KERNEL);
+				const made = await site.runJson(
+					drupalOp(`${PRE}
+					$node = \\Drupal\\node\\Entity\\Node::create(
+						['type' => 'page', 'title' => 'Embargoed Announcement', 'status' => 0]
+					);
+					$node->save();
+					\\Drupal\\user\\Entity\\Role::load('anonymous')
+						->grantPermission('access_unpublished node page')->save();
+					\\Drupal\\access_unpublished\\Entity\\AccessToken::create([
+						'entity_type' => 'node', 'entity_id' => $node->id(),
+						'value' => 'cfw108tok', 'expire' => time() + 3600,
+					])->save();
+					$out['nid'] = (int) $node->id();`)
+				);
+				const path = `/node/${made['nid']}`;
+				const seen = async (url: string) => {
+					const r = await render(site, url);
+					return [
+						r['status'],
+						String(r['html'] ?? '').includes('Embargoed Announcement')
+					];
+				};
+				return {
+					enabled,
+					made,
+					bare: await seen(path),
+					token: await seen(`${path}?auHash=cfw108tok`),
+					// the request after a tokened one is the leak: the token getter is a service
+					// that lives as long as the interpreter
+					afterToken: await seen(path),
+					wrong: await seen(`${path}?auHash=nope`)
+				};
+			});
+			expect(out.enabled['ok'], JSON.stringify(out.enabled).slice(0, 300)).toBe(true);
+			expect(out.made['error'], String(out.made['error'] ?? '')).toBeUndefined();
+			expect(out.bare, 'an anonymous visitor saw it with no token').toEqual([403, false]);
+			expect(out.token, 'the token URL did not show it').toEqual([200, true]);
+			expect(out.afterToken, 'the previous visitor token unlocked it').toEqual([403, false]);
+			expect(out.wrong).toEqual([403, false]);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'contact_storage: an anonymous contact form submission is stored as a contact_message row',
+		async (ctx) => {
+			if (!(await reachable(ctx, 'contact_storage'))) return;
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				const before = await sqlRows(
+					site,
+					"SELECT name FROM sqlite_master WHERE name = 'contact_message'"
+				);
+				const enabled = await enableOn(site, 'contact_storage');
+				await site.runJson(BOOT_KERNEL);
+				const made = await site.runJson(
+					drupalOp(`${PRE}
+					\\Drupal\\contact\\Entity\\ContactForm::create([
+						'id' => 'feedback', 'label' => 'Feedback',
+						'recipients' => ['office@example.test'], 'reply' => 'Thanks', 'weight' => 0,
+					])->save();
+					\\Drupal\\user\\Entity\\Role::load('anonymous')
+						->grantPermission('access site-wide contact form')->save();`)
+				);
+				const form = await render(site, '/contact/feedback');
+				const body = encodeForm({
+					...hiddenFields(String(form['html'] ?? '')),
+					name: 'Ada Applicant',
+					mail: 'ada@example.test',
+					'subject[0][value]': 'Campus visit',
+					'message[0][value]': 'Can I tour the labs?',
+					op: 'Send message'
+				});
+				const post = await render(site, '/contact/feedback', formPost(body));
+				const stored = await sqlRows(
+					site,
+					'SELECT contact_form, name, mail, subject, message FROM contact_message'
+				);
+				return { before, enabled, made, form, post, stored };
+			});
+			expect(out.before, 'the table existed before the enable').toEqual([]);
+			expect(out.enabled['ok'], JSON.stringify(out.enabled).slice(0, 300)).toBe(true);
+			expect(out.made['error'], String(out.made['error'] ?? '')).toBeUndefined();
+			expect(out.form['status']).toBe(200);
+			expect(out.post['status'], 'the submission did not redirect').toBe(303);
+			expect(out.stored).toEqual([
+				{
+					contact_form: 'feedback',
+					name: 'Ada Applicant',
+					mail: 'ada@example.test',
+					subject: 'Campus visit',
+					message: 'Can I tour the labs?'
+				}
+			]);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'password_policy: its length constraint rejects a short password with its own message and accepts a long one',
+		async (ctx) => {
+			if (!(await reachable(ctx, 'password_policy'))) return;
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				const enabled = await enableOn(site, 'password_policy_length');
+				await site.runJson(BOOT_KERNEL);
+				const checked = await site.runJson(
+					drupalOp(`${PRE}
+					\\Drupal\\password_policy\\Entity\\PasswordPolicy::create([
+						'id' => 'cfw108', 'label' => 'CFW 108', 'password_reset' => 0,
+						'send_reset_email' => false, 'send_pending_email' => [],
+						'show_policy_table' => true,
+						'policy_constraints' => [[
+							'id' => 'password_length', 'character_length' => 12,
+							'character_operation' => 'minimum',
+						]],
+						'roles' => ['authenticated' => 'authenticated'],
+					])->save();
+					$u = \\Drupal\\user\\Entity\\User::create(
+						['name' => 'pp108', 'mail' => 'pp108@example.test', 'status' => 1]
+					);
+					$u->save();
+					$v = \\Drupal::service('password_policy.validator');
+					$weak = $v->validatePassword('short1', $u);
+					$strong = $v->validatePassword('a-much-longer-passphrase', $u);
+					$out['weak'] = [$weak->isInvalid(), (string) $weak->getErrors()];
+					$out['strong'] = [$strong->isInvalid(), $strong->hasErrors()];`)
+				);
+				return { enabled, checked };
+			});
+			expect(out.enabled['ok'], JSON.stringify(out.enabled).slice(0, 300)).toBe(true);
+			expect(out.checked['error'], String(out.checked['error'] ?? '')).toBeUndefined();
+			expect(out.checked['weak']).toEqual([
+				true,
+				'Password length must be at least 12 characters.'
+			]);
+			expect(out.checked['strong']).toEqual([false, false]);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'editoria11y: attaches its checker and signed settings for an editor only, and stores a signed report',
+		async (ctx) => {
+			if (!(await reachable(ctx, 'editoria11y'))) return;
+			const PASS = 'cfw-108-ed11y-pass';
+			const out = await inObject(freshSite(), async (site) => {
+				await claimSite(site, PASS, 'Ed11y');
+				const anonBefore = await render(site, '/', { origin: ORIGIN });
+				const enabled = await enableOn(site, 'editoria11y');
+				await site.runJson(BOOT_KERNEL);
+				const jar = await loginJar(site, 'admin', PASS, ORIGIN);
+				const as = { cookie: jar, origin: ORIGIN };
+				const anon = await render(site, '/', { origin: ORIGIN });
+				const editor = await render(site, '/', as);
+				const json = /data-drupal-selector="drupal-settings-json">(.*?)<\/script>/s.exec(
+					String(editor['html'] ?? '')
+				)?.[1];
+				const s = JSON.parse(json ?? '{}').editoria11y ?? {};
+				const token = String((await render(site, '/session/token', as))['html']);
+				const payload = {
+					page_path: s.page_path,
+					entity_type: s.entity_type,
+					entity_id: s.entity_id,
+					route_name: s.route_name,
+					language: s.content_language,
+					signature: s.signature,
+					page_title: s.page_title,
+					results: {
+						'img-alt': {
+							result_name: 'Missing alt text',
+							content_count: 2,
+							dev_count: 0
+						}
+					},
+					oks: {},
+					content_total: 2,
+					dev_total: 0,
+					extensions: {}
+				};
+				const post = (body: object, jar?: string) =>
+					render(site, s.api_url, {
+						method: 'POST',
+						body: JSON.stringify(body),
+						contentType: 'application/json',
+						origin: ORIGIN,
+						...(jar ? { cookie: jar, headers: { 'X-CSRF-Token': token } } : {})
+					});
+				const forged = await post({ ...payload, signature: 'forged' }, jar);
+				const rejectedRows = await sqlRows(site, 'SELECT result_key FROM ed11y_result');
+				const reported = await post(payload, jar);
+				const anonReport = await post(payload);
+				const stored = await sqlRows(
+					site,
+					'SELECT result_key, content_count, dev_count, result_name FROM ed11y_result'
+				);
+				return {
+					anonBefore,
+					enabled,
+					anon,
+					editor,
+					s,
+					forged,
+					rejectedRows,
+					reported,
+					anonReport,
+					stored
+				};
+			});
+			expect(out.enabled['ok'], JSON.stringify(out.enabled).slice(0, 300)).toBe(true);
+			const html = (r: Payload) => String(r['html'] ?? '');
+			expect(html(out.anonBefore)).not.toContain('editoria11y');
+			expect(html(out.anon), 'an anonymous visitor got the checker').not.toContain(
+				'editoria11y'
+			);
+			expect(html(out.editor)).toContain(
+				'/modules/contrib/editoria11y/dist/editoria11y.min.js'
+			);
+			expect(out.s.signature, 'no page signature in drupalSettings').toBeTruthy();
+			expect(out.s.api_url).toBe('/editoria11y/api/results/report');
+			expect(out.forged['status']).toBe(400);
+			expect(out.rejectedRows, 'a forged report stored a row').toEqual([]);
+			expect(out.reported['status']).toBe(200);
+			expect(out.anonReport['status']).toBe(403);
+			expect(out.stored).toEqual([
+				{
+					result_key: 'img-alt',
+					content_count: 2,
+					dev_count: 0,
+					result_name: 'Missing alt text'
+				}
+			]);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	// #endregion
+
+	/**
 	 * The other direction, and it is the one that waves the next skipped row through.
 	 *
 	 * A module in the pack and in nobody's assertion is a support claim nothing establishes -- the
@@ -1372,7 +2049,12 @@ echo json_encode([
 	 */
 	it('covers every contrib module the mounted pack carries', async () => {
 		const packed = [...(await packedContrib())].sort();
-		const covered = new Set([...CASES.map((c) => c.module), ...Object.keys(COVERED_ELSEWHERE)]);
+		const covered = new Set([
+			...CASES.map((c) => c.module),
+			...GENERATED_MODULES,
+			...PHASE_OWNERS,
+			...Object.keys(COVERED_ELSEWHERE)
+		]);
 		const uncovered = packed.filter((name) => !covered.has(name));
 		expect(
 			uncovered,
@@ -1380,8 +2062,10 @@ echo json_encode([
 				'COVERED_ELSEWHERE with where it is covered'
 		).toEqual([]);
 		// and the reverse: a case for a module the fixture build does not carry
-		if (isFixturePack(new Set(packed))) {
-			const missing = CASES.map((c) => c.module).filter((m) => !packed.includes(m));
+		if (mustCarry(new Set(packed))) {
+			const missing = CASES.map((c) => c.module)
+				.filter((m) => !PHASE_OWNERS.includes(m))
+				.filter((m) => !packed.includes(m));
 			expect(missing, 'a case whose module the fixture pack does not carry').toEqual([]);
 		}
 	});

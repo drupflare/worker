@@ -24,6 +24,7 @@ export const ARTIFACT_SPECS = [
 	'tests/integration/autoincrement.spec.ts',
 	'tests/integration/cache-bin-rowid.spec.ts',
 	'tests/integration/capability-contract.spec.ts',
+	'tests/integration/contrib-generic.spec.ts',
 	'tests/integration/contrib-verify.spec.ts',
 	'tests/integration/cron-wire.spec.ts',
 	'tests/integration/crossings.spec.ts',
@@ -49,6 +50,7 @@ export const ARTIFACT_SPECS = [
 	'tests/integration/heap-image-storage.spec.ts',
 	'tests/integration/host-bridges.spec.ts',
 	'tests/integration/image-toolkit.spec.ts',
+	'tests/integration/sodium-standin.spec.ts',
 	// boots a kernel from the pack to drive the patched batch.inc and the module's stand-in classes
 	'tests/integration/standins.spec.ts',
 	// boots a kernel from the pack to check the `\Redis` alias and a key's life in key_value_expire
@@ -65,12 +67,17 @@ export const ARTIFACT_SPECS = [
 	'tests/integration/mb-native.spec.ts',
 	'tests/integration/modify-upload.spec.ts',
 	'tests/integration/park-dispatch.spec.ts',
+	// the create-node POST half needs a provisioned site from the pack
+	'tests/integration/park-double-run.spec.ts',
 	'tests/integration/park-interpreter.spec.ts',
 	'tests/integration/park-oidc.spec.ts',
 	// drives two real renders to prove the tally moves with them and only with them
 	'tests/integration/park-totals.spec.ts',
 	'tests/integration/seed-cache-cost.spec.ts',
 	'tests/integration/session-gc.spec.ts',
+	// both read the pack's index before they decide to skip for the rig
+	'tests/integration/strata-f3.spec.ts',
+	'tests/integration/strata-r2.spec.ts',
 	'tests/integration/interpreter-recycle.spec.ts',
 	'tests/integration/lazy-fs-budget.spec.ts',
 	'tests/integration/linear-memory.spec.ts',

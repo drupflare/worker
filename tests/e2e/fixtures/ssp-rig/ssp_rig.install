@@ -1,0 +1,17 @@
+<?php
+
+/**
+ * Implements hook_install().
+ */
+function ssp_rig_install(): void
+{
+	\Drupal::configFactory()
+		->getEditable('simplesamlphp_auth.settings')
+		->set('activate', true)
+		->set('unique_id', 'uid')
+		->set('user_name', 'cn')
+		->set('mail_attr', 'mail')
+		->set('register_users', true)
+		->set('allow.default_login', true)
+		->save();
+}

@@ -346,6 +346,26 @@ describe('the fetch descriptor parser', () => {
 		expect(one?.headers).toEqual({ good: 'yes' });
 	});
 
+	// Guzzle adds `Expect: 100-Continue` to a body of 1 MiB or more, and a fetch hands the interim
+	// 100 back as the answer, so the PUT read as status 100 with the real response as its body
+	it('sends no Expect header, whatever its spelling, and keeps the others', async () => {
+		let sent: Headers | undefined;
+		const doFetch = (async (_url: string, init: RequestInit) => {
+			sent = new Headers(init.headers);
+			return new Response('ok');
+		}) as unknown as typeof fetch;
+		await performFetch(
+			{
+				method: 'PUT',
+				url: 'https://e.test/o',
+				headers: { Expect: '100-Continue', authorization: 'x' }
+			},
+			doFetch
+		);
+		expect(sent?.get('expect')).toBeNull();
+		expect(sent?.get('authorization')).toBe('x');
+	});
+
 	it('takes manual redirect only at that exact spelling', () => {
 		expect(
 			parseParkFetch(packed({ url: 'https://e.test/', redirect: 'manual' }))?.redirect

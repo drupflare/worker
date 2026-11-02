@@ -8,6 +8,7 @@ import {
 	isServableStale,
 	ttlFor
 } from '../ops/deferred-post';
+import { parseJsonReply } from '../ops/json-reply';
 import { fetchGuarded } from '../ops/outbound-guard';
 import { installPark, type ParkClassName, parkEnabled, type ParkInstall } from '../ops/park';
 import { drivePark } from '../ops/park-drive';
@@ -180,8 +181,8 @@ export async function parkState(site: SitePhpDurableObject): Promise<ParkInstall
  * Renders through the park when the traps are armed, and plainly when they are not.
  *
  * A parked render costs an extra `_run` per blocking call, so a site with no armed traps takes the
- * plain path. A parked run that does not finish still answers (the chain is unwound in
- * `drivePark` and what it printed is parsed); only an unparseable answer re-renders unparked.
+ * plain path. A parked run that does not finish still answers (the chain is finished without the
+ * park in `drivePark` and what it printed is parsed); nothing here ever runs `code` a second time.
  *
  * Every shell-tier run goes through here: a bare `runJson` leaves a `cache_*` read inside
  * `renderPlaceholder()` unparked, it fails on the real socket, and a Redis site never assembles.
@@ -209,17 +210,18 @@ export async function runJsonMaybeParked(
 	const totals = (site.parkTotals ??= { runs: 0, trips: 0, refused: 0 });
 	totals.runs += 1;
 	totals.trips += driven.trips.length;
-	// a refused chain fell back to the real function, so it cost a run and bought nothing
+	// a refused chain was finished without the park, so it cost a trip and bought nothing
 	if (driven.state !== 'done') totals.refused += 1;
-	const start = driven.output.indexOf('{');
-	if (start >= 0) {
-		try {
-			return JSON.parse(driven.output.slice(start)) as Payload;
-		} catch {
-			// fall through to the unparked render below
-		}
+	// one request runs its PHP once: never re-run `code` when the answer is hard to read, because
+	// everything it did before that point is already committed
+	const reply = parseJsonReply(driven.output);
+	if (driven.state !== 'done' && 'raw' in reply) {
+		return {
+			...reply,
+			error: `the park ended ${driven.state}: ${driven.why ?? String(reply['error'])}`
+		};
 	}
-	return site.runJson(code);
+	return reply;
 }
 
 /**

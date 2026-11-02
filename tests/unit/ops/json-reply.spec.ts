@@ -12,6 +12,11 @@ describe('parseJsonReply', () => {
 		expect(parseJsonReply(raw)).toEqual({ ok: true, module: 'strawberryfield' });
 	});
 
+	it('reads past more log lines with a brace than there are candidates', () => {
+		const log = '%date{M j H:i:s} DEBUG getServerHTTPS()\n'.repeat(40);
+		expect(parseJsonReply(`${log}{"ok":true}`)).toEqual({ ok: true });
+	});
+
 	it('names the first failure and keeps the raw output when nothing parses', () => {
 		const got = parseJsonReply('Fatal {closure} {"ok":');
 		expect(String(got['error'])).toMatch(/^unparseable: /);

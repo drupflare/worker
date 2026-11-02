@@ -462,20 +462,22 @@ export async function drivePark(
 	// a chain left parked by an earlier refusal has to go before this one can start
 	await unwind(binary);
 
+	// the chain is finished, not abandoned: what it prints from here on is part of the answer
+	const stop = async (why: ParkRun['state'], reason: string): Promise<ParkRun> => {
+		printed.push(await unwind(binary));
+		return give(why, reason);
+	};
+
 	let state = stateOf(await collect(parkRun(code)));
 	if (state === null) return give('absent', 'cfw_park_run answered nothing');
 
 	while (state === 'PARKED') {
 		if (trips.length >= PARK_MAX_TRIPS) {
-			const out = give('capped', `stopped after ${PARK_MAX_TRIPS} trips`);
-			await unwind(binary);
-			return out;
+			return await stop('capped', `stopped after ${PARK_MAX_TRIPS} trips`);
 		}
 		const pending = parsePending(await binary.runText(PARK_PENDING));
 		if (pending === undefined) {
-			const out = give('refused', 'the chain is parked and reports no pending call');
-			await unwind(binary);
-			return out;
+			return await stop('refused', 'the chain is parked and reports no pending call');
 		}
 		const op = classifyParkOp(pending, sockets.minted, env);
 		trips.push({
@@ -483,18 +485,10 @@ export async function drivePark(
 			op: op.kind,
 			...(op.kind === 'refused' ? { why: op.why } : {})
 		});
-		if (op.kind === 'refused') {
-			const out = give('refused', op.why);
-			await unwind(binary);
-			return out;
-		}
+		if (op.kind === 'refused') return await stop('refused', op.why);
 
 		state = stateOf(await perform(collect, sockets, op, doFetch, budget));
-		if (state === null) {
-			const out = give('refused', 'a resume answered nothing');
-			await unwind(binary);
-			return out;
-		}
+		if (state === null) return await stop('refused', 'a resume answered nothing');
 	}
 
 	return give('done');
@@ -547,18 +541,21 @@ async function perform(
 /**
  * Resumes a chain nobody will answer with `false` (the failure value of every trapped call) until
  * nothing is parked, so it unwinds through its own error handling; the extension has no abort.
+ * Returns what the chain printed on the way out, because a request runs its PHP once and the
+ * answer is whatever that one run prints, however late it is reached.
  */
-async function unwind(binary: ParkBinary): Promise<number> {
-	let resumed = 0;
-	while (resumed < PARK_MAX_TRIPS) {
+async function unwind(binary: ParkBinary): Promise<string> {
+	const printed: string[] = [];
+	for (let resumed = 0; resumed < PARK_MAX_TRIPS; resumed++) {
 		const held = splitControl(await binary.runText(PARK_HELD)).control;
-		if (held !== true) return resumed;
-		resumed++;
-		const state = splitControl(await binary.runText(parkResumeValue(false))).control;
-		if (typeof state !== 'object' || state === null) return resumed;
-		if ((state as Record<string, unknown>)['state'] !== 'PARKED') return resumed;
+		if (held !== true) break;
+		const split = splitControl(await binary.runText(parkResumeValue(false)));
+		if (split.program !== '') printed.push(split.program);
+		const state = split.control;
+		if (typeof state !== 'object' || state === null) break;
+		if ((state as Record<string, unknown>)['state'] !== 'PARKED') break;
 	}
-	return resumed;
+	return printed.join('');
 }
 
 // #endregion
@@ -594,25 +591,30 @@ export async function performFetch(
 	const reply = async (value: Record<string, unknown>) =>
 		new TextEncoder().encode(JSON.stringify(value));
 	try {
+		// Guzzle adds `Expect: 100-Continue` from 1 MiB up, and a fetch hands the interim 100 back
+		// as the answer
+		const headers = Object.fromEntries(
+			Object.entries(request.headers).filter(([name]) => name.toLowerCase() !== 'expect')
+		);
 		const res = await fetchGuarded(
 			doFetch,
 			request.url,
 			{
 				method: request.method,
-				headers: request.headers,
+				headers,
 				...(request.body ? { body: bytes(request.body) } : {}),
 				redirect: request.redirect === 'manual' ? 'manual' : 'follow',
 				...(request.timeoutMs ? { signal: AbortSignal.timeout(request.timeoutMs) } : {})
 			},
 			guarded ? refuseOutbound : () => undefined
 		);
-		const headers: Record<string, string> = {};
+		const received: Record<string, string> = {};
 		res.headers.forEach((v, k) => {
-			headers[k] = v;
+			received[k] = v;
 		});
 		return await reply({
 			status: res.status,
-			headers,
+			headers: received,
 			body: b64Bytes(new Uint8Array(await res.arrayBuffer()))
 		});
 	} catch (e: unknown) {

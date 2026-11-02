@@ -355,7 +355,7 @@
 				<p class="crumbs"><a href="index.html">Security</a></p>
 <h1 id="security-incidents-and-planned-work">Security Incidents and Planned Work</h1>
 <p>How named vulnerabilities and incident classes map onto the architecture, what the current release addresses, the PHP2Shell analysis, and the work still planned. The claims and their labels are on <a href="index.html">Security</a>.</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-cve-and-incident-map">The CVE and Incident Map</a></li><li><a href="#classes-addressed-in-v104">Classes Addressed in v1.0.4</a></li><li><a href="#php2shell">PHP2Shell</a></li><li><a href="#a-request-that-ran-its-php-twice">A Request That Ran Its PHP Twice</a></li><li><a href="#cron-that-could-not-fetch">Cron That Could Not Fetch</a></li><li><a href="#planned-work">Planned Work</a></li></ol></nav><h2 id="the-cve-and-incident-map">The CVE and Incident Map</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-cve-and-incident-map">The CVE and Incident Map</a></li><li><a href="#classes-addressed-in-v104">Classes Addressed in v1.0.4</a></li><li><a href="#php2shell">PHP2Shell</a></li><li><a href="#visitor-state-that-outlived-the-request">Visitor State That Outlived the Request</a></li><li><a href="#a-request-that-ran-its-php-twice">A Request That Ran Its PHP Twice</a></li><li><a href="#cron-that-could-not-fetch">Cron That Could Not Fetch</a></li><li><a href="#planned-work">Planned Work</a></li></ol></nav><h2 id="the-cve-and-incident-map">The CVE and Incident Map</h2>
 <p>Each row maps a published vulnerability or incident to what an attacker needs on a conventional
 host and what changes inside a Drupflare site. The verdicts are Inferred from the architecture
 above. No exploit was run against a Drupflare site. The verdict words are defined under
@@ -817,6 +817,14 @@ documented in <a href="not-removed.html#state-that-survives-between-requests">St
 a use-after-free, because request memory is never freed between runs. What would reverse the
 decision is a working chain against this runtime. The public write-ups use standard SAPIs and
 report none.</p>
+<h2 id="visitor-state-that-outlived-the-request">Visitor State That Outlived the Request</h2>
+<p>Found and fixed on 2026-11-02 while driving <code>simplesamlphp_auth</code> and <code>access_unpublished</code> to Verified. The container and its services live across requests in the persistent interpreter, so a service that keeps per-request state in a static keeps the previous visitor&#39;s value. Three carriers turned up, and each is now reset by name in <code>RequestResetter</code> or <code>DrupflareServiceProvider</code> in the <code>drupflare</code> module.</p>
+<ul>
+<li><strong>SimpleSAMLphp.</strong> <code>SimpleSAML\Session</code> holds the current session in a static, <code>SessionHandler</code> caches the session id of the first cookie it read, and the <code>simplesamlphp_auth</code> manager keeps a <code>Simple</code> that captured that session. After one IdP login, a request that carried no cookie to <code>/saml_login</code> was logged in as the previous visitor (<code>measured</code>, on the rig). The fix is <code>RequestResetter::resetSimpleSaml()</code>. Its regression test fails 3 assertions with the call removed.</li>
+<li><strong>access_unpublished.</strong> <code>TokenGetter</code> keeps the token it read in a static, so one visitor&#39;s token unlocked an unpublished node for the next anonymous visitor. The fix is <code>clearAccessUnpublishedToken()</code>.</li>
+<li><strong>strata.</strong> <code>CaptureScope</code> cached its settings for the life of the container. The fix is the named seed <code>strata.capture_scope</code>.</li>
+</ul>
+<p>A site that uses none of these modules was not affected. Sites that do need the new driver, and it reaches a deployed site with the release. Nobody has checked whether either leak was ever exploited. Resetting by name does not cover a fourth carrier nobody has found, so a generic reset of resettable services stays open work (see the roadmap).</p>
 <h2 id="a-request-that-ran-its-php-twice">A Request That Ran Its PHP Twice</h2>
 <p>Found and fixed on 2026-11-02, in the host and not in the interpreter. The object&#39;s park driver
 parsed a request&#39;s printed output from its first <code>{</code>. When that brace belonged to a log line printed

@@ -1,5 +1,5 @@
-import { FIBER_SHIM_PHP } from '../site/generated/assets';
-import { phpWhen } from '../util/php';
+import { phpWhen } from '../../util/php';
+import { FIBER_SHIM_PHP } from '../generated/assets';
 
 /**
  * The synchronous stand-in for `\Fiber` that the patched tree expects. A real Fiber aborts the

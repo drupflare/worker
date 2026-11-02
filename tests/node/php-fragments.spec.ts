@@ -5,11 +5,6 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { settingsOverride } from '../../src/do/settings';
 import { cronHookList, runCronHook, runCronQueue } from '../../src/drupal/cron-php';
-import { CURL_FIX } from '../../src/drupal/curl-fix';
-import { FIBER_SHIM } from '../../src/drupal/fiber-shim';
-import { ICONV_FIX } from '../../src/drupal/iconv-fix';
-import { MB_ASCII, MB_FIX, MB_SANITIZE } from '../../src/drupal/mb-fix';
-import { OPENSSL_FIX } from '../../src/drupal/openssl-fix';
 import {
 	abandonTransaction,
 	BOOT_KERNEL,
@@ -36,19 +31,27 @@ import {
 	WRITE_WORKLOADS,
 	writeWorkload
 } from '../../src/drupal/site-php';
-import { SODIUM_FIX } from '../../src/drupal/sodium-fix';
 import { STANDIN_FIX } from '../../src/drupal/standin-fix';
 import { tcpLive } from '../../src/drupal/tcp-php';
-import { UNICODE_TABLES } from '../../src/drupal/unicode-tables';
 import { UPDB_VERIFY, updbPlan, updbUnit } from '../../src/drupal/updb-php';
-import { XMLWRITER_FIX } from '../../src/drupal/xmlwriter-fix';
-import { ZLIB_FIX } from '../../src/drupal/zlib-fix';
 import {
 	DIAG_BRIDGE_PHP,
 	DIAG_EXEC_COUNTERS_PHP,
 	DIAG_EXTENSIONS_PHP,
 	DIAG_NATIVE_FETCH_PHP
 } from '../../src/site/generated/assets';
+import { BROTLI_FIX } from '../../src/site/shims/brotli-fix';
+import { CURL_FIX } from '../../src/site/shims/curl-fix';
+import { EXTENSIONS_FIX } from '../../src/site/shims/extensions-fix';
+import { FIBER_SHIM } from '../../src/site/shims/fiber-shim';
+import { ICONV_FIX } from '../../src/site/shims/iconv-fix';
+import { MB_ASCII, MB_FIX, MB_SANITIZE } from '../../src/site/shims/mb-fix';
+import { OPENSSL_FIX } from '../../src/site/shims/openssl-fix';
+import { SODIUM_FIX } from '../../src/site/shims/sodium-fix';
+import { UNICODE_TABLES } from '../../src/site/shims/unicode-tables';
+import { XMLWRITER_FIX } from '../../src/site/shims/xmlwriter-fix';
+import { ZLIB_FIX } from '../../src/site/shims/zlib-fix';
+import { ZSTD_FIX } from '../../src/site/shims/zstd-fix';
 import { hoistUses, phpRender, phpScript, phpWhen } from '../../src/util/php';
 
 /** repo root, so the file guards below read the real sources rather than a copy */
@@ -154,6 +157,8 @@ const FRAGMENTS: Array<[string, string]> = [
 	['runCronQueue', runCronQueue('my_queue', 3)],
 	// prefixed with the tag the way `src/site-do.ts` runs it, since it is a bare fragment
 	['ZLIB_FIX', `<?php ${ZLIB_FIX}`],
+	['BROTLI_FIX', `<?php ${BROTLI_FIX}`],
+	['ZSTD_FIX', `<?php ${ZSTD_FIX}`],
 	['ICONV_FIX', `<?php ${ICONV_FIX}`],
 	// php -l reads the eight curl_* declarations and the ~17 constants. It is the fragment that
 	// made CurlShim reachable at all
@@ -164,6 +169,8 @@ const FRAGMENTS: Array<[string, string]> = [
 	// same shape again, and it is the only fragment declaring a CLASS conditionally
 	// (SodiumException), which php -l checks here and nothing else would
 	['SODIUM_FIX', `<?php ${SODIUM_FIX}`],
+	// the extension_loaded() family that replaces three disabled built-ins
+	['EXTENSIONS_FIX', `<?php ${EXTENSIONS_FIX}`],
 	// the biggest conditional class here; `xmlwriter-parity.spec.ts` proves it matches libxml and
 	// this proves it parses
 	['XMLWRITER_FIX', `<?php ${XMLWRITER_FIX}`],

@@ -1,12 +1,19 @@
-import { createPublicKey, generateKeyPairSync } from 'node:crypto';
+import {
+	constants,
+	createPublicKey,
+	generateKeyPairSync,
+	privateDecrypt,
+	publicEncrypt
+} from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
+	digestFor,
 	installSign,
 	OPENSSL_ALGOS,
 	OPENSSL_FIX,
 	SIGN_BRIDGE,
 	signHostCall
-} from '../../../src/drupal/openssl-fix';
+} from '../../../src/site/shims/openssl-fix';
 
 /**
  * RSA and ECDSA signing over `node:crypto`, which is SYNCHRONOUS in workerd.
@@ -42,7 +49,7 @@ describe('signing over the host bridge', () => {
 			op: 'sign',
 			b64: b64('the payload'),
 			key: rsa.privateKey,
-			algo: 6
+			algo: 7
 		});
 		expect(signed.ok).toBe(true);
 		if (!signed.ok || !('sigB64' in signed)) throw new Error('no signature');
@@ -54,21 +61,21 @@ describe('signing over the host bridge', () => {
 			b64: b64('the payload'),
 			sigB64: signed.sigB64,
 			key: rsa.publicKey,
-			algo: 6
+			algo: 7
 		});
 		expect(checked.ok).toBe(true);
 		if (checked.ok && 'valid' in checked) expect(checked.valid).toBe(true);
 	});
 
 	it('REFUSES a signature over different bytes', () => {
-		const signed = signHostCall({ op: 'sign', b64: b64('a'), key: rsa.privateKey, algo: 6 });
+		const signed = signHostCall({ op: 'sign', b64: b64('a'), key: rsa.privateKey, algo: 7 });
 		if (!signed.ok || !('sigB64' in signed)) throw new Error('no signature');
 		const checked = signHostCall({
 			op: 'verify',
 			b64: b64('b'),
 			sigB64: signed.sigB64,
 			key: rsa.publicKey,
-			algo: 6
+			algo: 7
 		});
 		// ok:true with valid:false -- the call SUCCEEDED and the answer is "no". A shim that
 		// reported this as an error would turn a forged token into a broken key
@@ -77,7 +84,7 @@ describe('signing over the host bridge', () => {
 	});
 
 	it('handles ECDSA too, whose signature is randomised', () => {
-		const signed = signHostCall({ op: 'sign', b64: b64('es256'), key: ec.privateKey, algo: 6 });
+		const signed = signHostCall({ op: 'sign', b64: b64('es256'), key: ec.privateKey, algo: 7 });
 		expect(signed.ok).toBe(true);
 		if (!signed.ok || !('sigB64' in signed)) throw new Error('no signature');
 		const checked = signHostCall({
@@ -85,9 +92,41 @@ describe('signing over the host bridge', () => {
 			b64: b64('es256'),
 			sigB64: signed.sigB64,
 			key: ec.publicKey,
-			algo: 6
+			algo: 7
 		});
 		if (checked.ok && 'valid' in checked) expect(checked.valid).toBe(true);
+	});
+
+	it('takes a digest name as well as an int, as ext-openssl does', () => {
+		const signed = signHostCall({
+			op: 'sign',
+			b64: b64('saml'),
+			key: rsa.privateKey,
+			algo: 'sha256'
+		});
+		if (!signed.ok || !('sigB64' in signed)) throw new Error('no signature');
+		const viaInt = signHostCall({ op: 'sign', b64: b64('saml'), key: rsa.privateKey, algo: 7 });
+		if (!viaInt.ok || !('sigB64' in viaInt)) throw new Error('no signature');
+		expect(signed.sigB64).toBe(viaInt.sigB64);
+		const checked = signHostCall({
+			op: 'verify',
+			b64: b64('saml'),
+			sigB64: signed.sigB64,
+			key: rsa.publicKey,
+			algo: 'SHA256'
+		});
+		if (!checked.ok || !('valid' in checked)) throw new Error('no verdict');
+		expect(checked.valid).toBe(true);
+		expect(digestFor('rsa-sha1')).toBe('sha1');
+		expect(digestFor('whirlpool')).toBeUndefined();
+	});
+
+	it('reads the OPENSSL_ALGO numbers PHP uses, where SHA-256 is 7 and the default is SHA-1', () => {
+		expect(digestFor(7)).toBe('sha256');
+		expect(digestFor(6)).toBe('sha224');
+		expect(digestFor(8)).toBe('sha384');
+		expect(digestFor(9)).toBe('sha512');
+		expect(digestFor(undefined)).toBe('sha1');
 	});
 
 	it('refuses an unknown algorithm rather than silently choosing one', () => {
@@ -97,12 +136,12 @@ describe('signing over the host bridge', () => {
 	});
 
 	it('reports a bad key as an error rather than as an invalid signature', () => {
-		const r = signHostCall({ op: 'sign', b64: b64('x'), key: 'not a pem', algo: 6 });
+		const r = signHostCall({ op: 'sign', b64: b64('x'), key: 'not a pem', algo: 7 });
 		expect(r.ok).toBe(false);
 	});
 
 	it('refuses an empty key instead of asking node to parse one', () => {
-		const r = signHostCall({ op: 'sign', b64: b64('x'), key: '', algo: 6 });
+		const r = signHostCall({ op: 'sign', b64: b64('x'), key: '', algo: 7 });
 		expect(r.ok).toBe(false);
 		if (!r.ok) expect(r.error).toContain('no key');
 	});
@@ -113,7 +152,7 @@ describe('signing over the host bridge', () => {
 			expect(typeof digest).toBe('string');
 			expect(digest.length).toBeGreaterThan(2);
 		}
-		expect(OPENSSL_ALGOS[6]).toBe('sha256');
+		expect(OPENSSL_ALGOS[7]).toBe('sha256');
 	});
 });
 
@@ -181,14 +220,14 @@ describe('key operations, which were refused on a premise about the wrong API', 
 		// USABLE, not merely well-shaped: the generated private key signs and the generated public
 		// key verifies it. A generator that produced a plausible PEM nothing could use would pass
 		// every assertion above
-		const signed = signHostCall({ op: 'sign', b64: 'aGVsbG8=', key: pair.privatePem, algo: 6 });
+		const signed = signHostCall({ op: 'sign', b64: 'aGVsbG8=', key: pair.privatePem, algo: 7 });
 		expect(signed.ok).toBe(true);
 		const checked = signHostCall({
 			op: 'verify',
 			b64: 'aGVsbG8=',
 			key: pair.publicPem,
 			sigB64: (signed as { sigB64: string }).sigB64,
-			algo: 6
+			algo: 7
 		});
 		expect(checked).toEqual({ ok: true, valid: true });
 	});
@@ -216,14 +255,14 @@ describe('key operations, which were refused on a premise about the wrong API', 
 		const jwk = createPublicKey(rsa.publicKey).export({ format: 'jwk' });
 		const pem = (signHostCall({ op: 'pkeyGetPublic', jwk: jwk as never }) as { pem: string })
 			.pem;
-		const signed = signHostCall({ op: 'sign', b64: 'dG9rZW4=', key: rsa.privateKey, algo: 6 });
+		const signed = signHostCall({ op: 'sign', b64: 'dG9rZW4=', key: rsa.privateKey, algo: 7 });
 		expect(
 			signHostCall({
 				op: 'verify',
 				b64: 'dG9rZW4=',
 				key: pem,
 				sigB64: (signed as { sigB64: string }).sigB64,
-				algo: 6
+				algo: 7
 			})
 		).toEqual({ ok: true, valid: true });
 	});
@@ -243,6 +282,38 @@ describe('key operations, which were refused on a premise about the wrong API', 
 			key: rsa.publicKey
 		});
 		expect((opened as { b64: string }).b64).toBe('c2VjcmV0');
+	});
+
+	it('uses SHA-1 for OAEP, as ext-openssl does, in both directions', () => {
+		// node's OAEP default is SHA-256 on workerd and SHA-1 on node and in PHP; the padding constant
+		// alone does not say which, so the digest has to be pinned here
+		const sha1 = { oaepHash: 'sha1' } as const;
+		const padding = constants.RSA_PKCS1_OAEP_PADDING;
+		const ciphertext = publicEncrypt(
+			{ key: rsa.publicKey, padding, ...sha1 },
+			Buffer.from('k')
+		);
+		const opened = signHostCall({
+			op: 'privateDecrypt',
+			b64: Buffer.from(ciphertext).toString('base64'),
+			key: rsa.privateKey,
+			pad: 4
+		});
+		expect(opened, 'decrypts what a SHA-1 OAEP sender produced').toEqual({
+			ok: true,
+			b64: Buffer.from('k').toString('base64')
+		});
+		const sealed = signHostCall({
+			op: 'publicEncrypt',
+			b64: Buffer.from('k').toString('base64'),
+			key: rsa.publicKey,
+			pad: 4
+		});
+		const back = privateDecrypt(
+			{ key: rsa.privateKey, padding, ...sha1 },
+			Buffer.from((sealed as { b64: string }).b64, 'base64')
+		);
+		expect(back.toString()).toBe('k');
 	});
 
 	it('reports an unreadable key as a failure rather than throwing', () => {

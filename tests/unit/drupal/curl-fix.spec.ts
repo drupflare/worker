@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CURL_FIX, CURL_INERT, CURL_OPTIONS } from '../../../src/drupal/curl-fix';
+import { CURL_FIX, CURL_INERT, CURL_OPTIONS } from '../../../src/site/shims/curl-fix';
 
 /**
  * The curl shim's PHP surface, and the drift that would make it silently wrong.

@@ -20,9 +20,10 @@ export type Side = 'host' | 'cms' | 'mixed';
  * matching prefix wins, and a `MODULE_SIDES` entry overrides it for one file.
  */
 export const DIRECTORY_SIDES: Readonly<Record<string, Side>> = {
-	// the PHP fragments and the shims Drupal needs
+	// Drupal's own TypeScript; the CMS-neutral interpreter shims are under src/site/shims
 	'src/drupal/': 'cms',
 	'src/runtime/': 'host',
+	'src/site/shims/': 'host',
 	'src/util/': 'host'
 };
 
@@ -90,6 +91,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/do/outbound.ts': 'mixed',
 	'src/do/module-files.ts': 'mixed',
 	'src/do/packages.ts': 'mixed',
+	'src/do/php-boot.ts': 'mixed',
 	'src/do/provision.ts': 'mixed',
 	'src/do/reconcile.ts': 'mixed',
 	'src/do/replication.ts': 'mixed',
@@ -134,6 +136,9 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	// the PHP fragments Drupal runs and the pages the host serves, packed from
 	// src/site/php and html
 	'src/site/generated/assets.ts': 'mixed',
+	// the ext-sodium inventory and the names its conformance gate passed
+	'src/site/generated/sodium-api.ts': 'host',
+	'src/site/generated/sodium-manifest.ts': 'host',
 	// the scanner deny list and the core entry point redirects
 	'src/site/guards.ts': 'mixed',
 	'src/site/hop.ts': 'host',

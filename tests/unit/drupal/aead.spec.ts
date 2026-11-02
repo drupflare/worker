@@ -1,163 +1,109 @@
 import { describe, expect, it } from 'vitest';
-import { base64ToBytes, bytesToBase64 } from '../../../src/db/file-store';
-import {
-	AEAD_ABYTES,
-	AEAD_KEYBYTES,
-	AEAD_NPUBBYTES,
-	aeadHostCall,
-	installAead,
-	type AeadReply
-} from '../../../src/drupal/sodium-fix';
+import { sodiumHostCall, type SodiumReply } from '../../../src/site/shims/sodium-lib';
 
 /**
- * XChaCha20-Poly1305, and the one property a caller actually depends on.
+ * The six AEAD constructions as the host answers them.
  *
- * ext-sodium's `_decrypt()` returns FALSE when the tag does not verify and THROWS when an argument
- * is the wrong size. `XChaCha20Poly1305Cipher::open()` turns the FALSE into `AuthenticationFailure`,
- * which trips the `frame.aead_fail` tripwire and sweeps the frame. Collapsing the two would make a
- * mis-sized key sweep a healthy store, so the split is asserted rather than assumed.
+ * What a caller reads is the split between a failed tag (FALSE) and a bad argument (a throw): a
+ * content-addressed store sweeps a frame on the first and must not on the second. Each is checked
+ * for all six, and the RFC 8439 vector gives the IETF one an oracle that needs no PHP.
  */
 
-const b64 = (bytes: Uint8Array) => bytesToBase64(bytes);
-const bytes = (n: number, fill = 7) => new Uint8Array(n).fill(fill);
-const KEY = b64(bytes(AEAD_KEYBYTES, 42));
-const NONCE = b64(bytes(AEAD_NPUBBYTES, 9));
+const enc = (b: Uint8Array | string) => Buffer.from(b).toString('base64');
+const bytes = (n: number, mul = 1, add = 0) =>
+	Uint8Array.from({ length: n }, (_, i) => (i * mul + add) & 255);
 
-const seal = (message: string, aad = '') =>
-	aeadHostCall({
-		op: 'encrypt',
-		b64: b64(new TextEncoder().encode(message)),
-		aad64: b64(new TextEncoder().encode(aad)),
-		nonce64: NONCE,
-		key64: KEY
+const FAMILIES = [
+	['aes256gcm', 32, 12, 16],
+	['aegis128l', 16, 16, 32],
+	['aegis256', 32, 32, 32],
+	['chacha20poly1305', 32, 8, 16],
+	['chacha20poly1305_ietf', 32, 12, 16],
+	['xchacha20poly1305_ietf', 32, 24, 16]
+] as const;
+
+function seal(name: string, m: string, ad: string, nonce: Uint8Array, key: Uint8Array) {
+	return sodiumHostCall({
+		f: `sodium_crypto_aead_${name}_encrypt`,
+		a: [enc(m), enc(ad), enc(nonce), enc(key)]
 	});
+}
 
-const open = (sealed: string, aad = '', key = KEY, nonce = NONCE) =>
-	aeadHostCall({
-		op: 'decrypt',
-		b64: sealed,
-		aad64: b64(new TextEncoder().encode(aad)),
-		nonce64: nonce,
-		key64: key
+function open(name: string, c: string, ad: string, nonce: Uint8Array, key: Uint8Array) {
+	return sodiumHostCall({
+		f: `sodium_crypto_aead_${name}_decrypt`,
+		a: [c, enc(ad), enc(nonce), enc(key)]
 	});
+}
 
-const okB64 = (r: AeadReply) => {
-	expect(r.ok, 'ok' in r && !r.ok ? r.error : '').toBe(true);
-	return (r as { b64: string }).b64;
+const text = (r: SodiumReply): string => {
+	if (!r.ok || !('s' in r.r)) throw new Error(JSON.stringify(r));
+	return r.r.s;
 };
 
-describe('the XChaCha20-Poly1305 bridge', () => {
-	it('round trips a message', () => {
-		const sealed = okB64(seal('the quick brown fox'));
-		const plain = okB64(open(sealed));
-		expect(new TextDecoder().decode(base64ToBytes(plain))).toBe('the quick brown fox');
+describe.each(FAMILIES)('%s', (name, keyLen, nonceLen, tagLen) => {
+	const key = bytes(keyLen, 3, 1);
+	const nonce = bytes(nonceLen, 5, 2);
+
+	it('round trips a frame with associated data and adds exactly the tag', () => {
+		const sealed = text(seal(name, 'a frame', 'header', nonce, key));
+		expect(Buffer.from(sealed, 'base64').length).toBe(7 + tagLen);
+		const opened = open(name, sealed, 'header', nonce, key);
+		expect(Buffer.from(text(opened), 'base64').toString()).toBe('a frame');
 	});
 
-	it('round trips with associated data', () => {
-		const sealed = okB64(seal('payload', 'frame-header'));
-		expect(new TextDecoder().decode(base64ToBytes(okB64(open(sealed, 'frame-header'))))).toBe(
-			'payload'
+	it('answers FALSE for a flipped byte, the wrong key and the wrong data', () => {
+		const sealed = Buffer.from(text(seal(name, 'secret', 'a', nonce, key)), 'base64');
+		const flipped = Uint8Array.from(sealed);
+		flipped[0]! ^= 0xff;
+		const wrong = [
+			open(name, enc(flipped), 'a', nonce, key),
+			open(name, enc(sealed), 'a', nonce, bytes(keyLen, 7, 9)),
+			open(name, enc(sealed), 'b', nonce, key)
+		];
+		for (const r of wrong) expect(r).toMatchObject({ ok: true, r: { b: false } });
+	});
+
+	it('answers FALSE for a frame shorter than the tag rather than crashing', () => {
+		expect(open(name, enc(bytes(tagLen - 1)), '', nonce, key)).toMatchObject({
+			ok: true,
+			r: { b: false }
+		});
+	});
+
+	it('THROWS for a mis-sized key or nonce, which must not sweep a store', () => {
+		const shortKey = open(name, enc(bytes(40)), '', nonce, bytes(keyLen - 1));
+		const shortNonce = open(name, enc(bytes(40)), '', bytes(nonceLen - 1), key);
+		expect(shortKey).toMatchObject({ ok: false, c: 'SodiumException' });
+		expect(shortNonce).toMatchObject({ ok: false, c: 'SodiumException' });
+		expect(shortKey.ok === false && shortKey.m).toContain('KEYBYTES');
+		expect(shortNonce.ok === false && shortNonce.m).toContain('NPUBBYTES');
+	});
+
+	it('changes the ciphertext with the associated data', () => {
+		expect(text(seal(name, 'same', 'a', nonce, key))).not.toBe(
+			text(seal(name, 'same', 'b', nonce, key))
 		);
 	});
+});
 
-	it('adds exactly the tag length, so a frame budget is predictable', () => {
-		const sealed = base64ToBytes(okB64(seal('12345678')));
-		expect(sealed.length).toBe(8 + AEAD_ABYTES);
-	});
-
-	it('produces different ciphertext for different associated data', () => {
-		expect(okB64(seal('same', 'a'))).not.toBe(okB64(seal('same', 'b')));
-	});
-
-	// #region the split a caller reads
-	it('reports a FLIPPED BYTE as an auth failure, not an argument error', () => {
-		const sealed = base64ToBytes(okB64(seal('tamper me')));
-		sealed[0] = (sealed[0] as number) ^ 0xff;
-		const r = open(b64(sealed));
-		expect(r.ok).toBe(false);
-		expect((r as { auth?: boolean }).auth).toBe(true);
-	});
-
-	it('reports the WRONG KEY as an auth failure', () => {
-		const sealed = okB64(seal('secret'));
-		const r = open(sealed, '', b64(bytes(AEAD_KEYBYTES, 1)));
-		expect(r.ok).toBe(false);
-		expect((r as { auth?: boolean }).auth).toBe(true);
-	});
-
-	it('reports the WRONG associated data as an auth failure', () => {
-		const sealed = okB64(seal('secret', 'header-a'));
-		const r = open(sealed, 'header-b');
-		expect(r.ok).toBe(false);
-		expect((r as { auth?: boolean }).auth).toBe(true);
-	});
-
-	it('reports a TRUNCATED frame as an auth failure rather than crashing', () => {
-		const r = open(b64(bytes(AEAD_ABYTES - 1, 3)));
-		expect(r.ok).toBe(false);
-		expect((r as { auth?: boolean }).auth).toBe(true);
-	});
-
-	it('reports a MIS-SIZED KEY as an argument error, which must NOT sweep the store', () => {
-		const r = aeadHostCall({
-			op: 'decrypt',
-			b64: okB64(seal('x')),
-			nonce64: NONCE,
-			key64: b64(bytes(16))
+describe('the IETF ChaCha20-Poly1305 against RFC 8439 section 2.8.2', () => {
+	it('reproduces the published tag and ciphertext head', () => {
+		const key = bytes(32, 1, 0x80);
+		const nonce = Uint8Array.from([
+			0x07, 0, 0, 0, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47
+		]);
+		const ad = Uint8Array.from([
+			0x50, 0x51, 0x52, 0x53, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7
+		]);
+		const pt =
+			"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+		const r = sodiumHostCall({
+			f: 'sodium_crypto_aead_chacha20poly1305_ietf_encrypt',
+			a: [enc(pt), enc(ad), enc(nonce), enc(key)]
 		});
-		expect(r.ok).toBe(false);
-		// not `auth`, so PHP throws instead of returning FALSE
-		expect((r as { auth?: boolean }).auth).toBeFalsy();
-		expect((r as { error: string }).error).toContain('KEYBYTES');
-	});
-
-	it('reports a MIS-SIZED NONCE as an argument error', () => {
-		const r = aeadHostCall({
-			op: 'encrypt',
-			b64: b64(bytes(4)),
-			nonce64: b64(bytes(12)),
-			key64: KEY
-		});
-		expect(r.ok).toBe(false);
-		expect((r as { auth?: boolean }).auth).toBeFalsy();
-		expect((r as { error: string }).error).toContain('NPUBBYTES');
-	});
-	// #endregion
-
-	it('refuses an unknown op', () => {
-		expect(aeadHostCall({ op: 'sign' })).toMatchObject({ ok: false });
-	});
-
-	it('seals and opens an empty message', () => {
-		const sealed = okB64(seal(''));
-		expect(base64ToBytes(sealed).length).toBe(AEAD_ABYTES);
-		expect(base64ToBytes(okB64(open(sealed))).length).toBe(0);
-	});
-
-	it('handles a message larger than one chacha block', () => {
-		const big = 'x'.repeat(5000);
-		expect(new TextDecoder().decode(base64ToBytes(okB64(open(okB64(seal(big))))))).toBe(big);
-	});
-
-	it('installs on a binary and answers through the mask', () => {
-		const binary: Record<string, unknown> = {};
-		let masked = 0;
-		installAead(binary, (fn) => {
-			masked++;
-			return fn();
-		});
-		const call = binary.cfwAead as (json: string) => string;
-		const reply = JSON.parse(
-			call(JSON.stringify({ op: 'encrypt', b64: '', nonce64: NONCE, key64: KEY }))
-		);
-		expect(reply.ok).toBe(true);
-		expect(masked).toBe(1);
-	});
-
-	it('answers rather than throwing on an unparseable request', () => {
-		const binary: Record<string, unknown> = {};
-		installAead(binary, (fn) => fn());
-		const call = binary.cfwAead as (json: string) => string;
-		expect(JSON.parse(call('not json')).ok).toBe(false);
+		const out = Buffer.from(text(r), 'base64').toString('hex');
+		expect(out.startsWith('d31a8d34648e60db7b86afbc53ef7ec2')).toBe(true);
+		expect(out.endsWith('1ae10b594f09e26a7e902ecbd0600691')).toBe(true);
 	});
 });

@@ -8,9 +8,9 @@
  */
 import { deflateSync, gunzipSync, gzipSync, inflateSync, unzlibSync, zlibSync } from 'fflate';
 import { deflateSync as nodeDeflate, inflateSync as nodeInflate } from 'node:zlib';
-import { base64ToBytes, bytesToBase64 } from '../db/file-store';
-import { ZLIB_FIX_PHP } from '../site/generated/assets';
-import { errorMessage } from '../util/errors';
+import { base64ToBytes, bytesToBase64 } from '../../db/file-store';
+import { errorMessage } from '../../util/errors';
+import { ZLIB_FIX_PHP } from '../generated/assets';
 
 /** the Module key the PHP half resolves through `vrzno_env()` */
 export const ZLIB_BRIDGE = 'cfwZlib';

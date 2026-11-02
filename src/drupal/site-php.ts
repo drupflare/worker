@@ -30,7 +30,6 @@ import {
 	FIRST_RUN_CONFIG_PHP,
 	GUZZLE_HANDLER_CHECK_PHP,
 	HARVEST_SHELL_PHP,
-	HOST_HELPERS_PHP,
 	INVALIDATE_TAGS_PHP,
 	LEAK_OPEN_SESSION_PHP,
 	LEAK_OUTPUT_BUFFER_PHP,
@@ -52,16 +51,9 @@ import {
 	VERIFY_MODULES_PHP,
 	WRITE_WORKLOAD_PHP
 } from '../site/generated/assets';
+import { FIBER_SHIM } from '../site/shims/fiber-shim';
+import { HOST_HELPERS } from '../site/shims/host-helpers';
 import { phpRender, phpScript, phpWhen } from '../util/php';
-import { FIBER_SHIM } from './fiber-shim';
-
-/**
- * The host-call helper every fragment uses to reach `ctx.storage.sql`.
- *
- * It goes through `vrzno_env('cfwSqlExec')` and the `pw_encode`/`pw_decode` codec, as the driver
- * does, so a working fragment also exercises the driver's transport.
- */
-export const HOST_HELPERS = `\n${phpWhen("!function_exists('cfw_host')", HOST_HELPERS_PHP)}\n`;
 
 /**
  * Asks the runtime questions a PDO stand-in cannot answer, one statement each.

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ZLIB_FIX } from '../../src/drupal/zlib-fix';
+import { ZLIB_FIX } from '../../src/site/shims/zlib-fix';
 
 /**
  * The zlib shim end to end: the real PHP fragment, over the real fflate host, checked
@@ -98,7 +98,7 @@ function drivableFragment(): string {
 
 /** the host half, as a line server, importing the code the Durable Object installs */
 const HOST_JS = `
-import { zlibHostCall } from ${JSON.stringify(join(ROOT, 'src/drupal/zlib-fix.ts'))};
+import { zlibHostCall } from ${JSON.stringify(join(ROOT, 'src/site/shims/zlib-fix.ts'))};
 
 for await (const line of console) {
 	if (line.trim() === '') continue;

@@ -12,8 +12,8 @@ import {
 	UPDB_UNIT_PHP,
 	UPDB_VERIFY_PHP
 } from '../site/generated/assets';
+import { FIBER_SHIM } from '../site/shims/fiber-shim';
 import { phpRender } from '../util/php';
-import { FIBER_SHIM } from './fiber-shim';
 
 /**
  * Boots (or reuses) the kernel and loads what the update runners need, as plain PHP so a stack

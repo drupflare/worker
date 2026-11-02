@@ -1,4 +1,4 @@
-import { XMLWRITER_FIX_PHP } from '../site/generated/assets';
+import { XMLWRITER_FIX_PHP } from '../generated/assets';
 
 /**
  * A pure-PHP `XMLWriter` for a build without `ext-xmlwriter`.

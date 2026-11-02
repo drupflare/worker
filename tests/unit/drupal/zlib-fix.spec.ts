@@ -7,7 +7,7 @@ import {
 	zlibApply,
 	zlibHostCall,
 	zlibLevel
-} from '../../../src/drupal/zlib-fix';
+} from '../../../src/site/shims/zlib-fix';
 
 /**
  * The zlib substitution, driven from both ends.

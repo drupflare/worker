@@ -304,6 +304,17 @@ export const VECTORS: readonly Vector[] = [
 			'SHIMMED 2026-08-23, and the entry it replaces said a pure-PHP XMLWriter could not exist because nothing satisfies `extension_loaded()`. Half right: the extension check cannot be shimmed, and it is not what generating a sitemap needs. `XMLWRITER_FIX` supplies the eleven methods `simple_sitemap` 4.2.1 actually calls, verified BYTE FOR BYTE against libxml by `tests/node/xmlwriter-parity.spec.ts` -- which caught three behaviours a hand-written expectation had wrong. The install-blocking `hook_requirements()` error is cleared host-side by `Requirements::requirementsAlter()`, so the module is unmodified'
 	},
 	{
+		id: 'runtime.sodium.extension',
+		group: 'RUNTIME',
+		kind: 'executed',
+		claim: "`extension_loaded('sodium')` is true and the whole ext-sodium API works",
+		probe: "(function () { $k = str_repeat('k', 32); $n = str_repeat('n', 24); return extension_loaded('sodium') && count(get_extension_funcs('sodium')) === 110 && sodium_crypto_secretbox_open(sodium_crypto_secretbox('m', $n, $k), $n, $k) === 'm'; })()",
+		expected: true,
+		blocker: null,
+		evidence:
+			"The rule is conditional: an extension reads loaded only when a shim covers its WHOLE API, and `gd` and the other partial shims stay false. `src/site/shims/extension-table.ts` answers from a manifest that `tests/node/sodium-conformance.spec.ts` writes by running all 110 functions, 102 constants and `SodiumException` against native PHP 8.5.7 (libsodium 1.0.22), including error classes and messages; the built-ins are removed through `disable_functions` and rebound in userland, and no stub extension entry is used (one crashed the isolate at exit 139). Backed by noble, blakejs and BigInt curve code, all synchronous because the build has no Asyncify and `crypto.subtle` would need a park per call. `ReflectionExtension('sodium')` and `phpinfo()` still do not see it"
+	},
+	{
 		id: 'runtime.exec.declared',
 		group: 'RUNTIME',
 		kind: 'declared',

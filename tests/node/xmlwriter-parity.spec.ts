@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { XMLWRITER_FIX } from '../../src/drupal/xmlwriter-fix';
+import { XMLWRITER_FIX } from '../../src/site/shims/xmlwriter-fix';
 
 /**
  * The pure-PHP `XMLWriter` against the real extension, byte for byte.

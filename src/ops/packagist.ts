@@ -47,6 +47,8 @@ export { lockProvides, lockVersions } from './lock-map';
 export function providedSatisfies(provided: string, constraint: string): Satisfaction {
 	let unknown = false;
 	for (const version of provided.split('|')) {
+		// a replace entry of * matches every constraint, as composer reads it
+		if (version === '*') return 'yes';
 		const result = satisfies(version, constraint);
 		if (result === 'yes') return 'yes';
 		if (result === 'unknown') unknown = true;
@@ -130,7 +132,9 @@ export const STANDIN_PLATFORM: PlatformVersions = {
 	'ext-zip': PLATFORM_PHP_VERSION,
 	'ext-exif': PLATFORM_PHP_VERSION,
 	'ext-fileinfo': PLATFORM_PHP_VERSION,
-	'ext-xmlwriter': PLATFORM_PHP_VERSION
+	'ext-xmlwriter': PLATFORM_PHP_VERSION,
+	// the whole ext-sodium API, held by the conformance gate; `extension_loaded('sodium')` is true
+	'ext-sodium': PLATFORM_PHP_VERSION
 };
 
 /** everything a requirement can resolve against; the split is what the verdict reports */

@@ -10,6 +10,7 @@
  */
 
 import { STANDIN_FIX_PHP } from '../site/generated/assets';
+import { EXTENSION_FUNCTIONS } from '../site/shims/extension-table';
 import { renderTemplate } from '../util/template';
 
 /**
@@ -21,6 +22,8 @@ import { renderTemplate } from '../util/template';
  * - uniqid steps past its last id: the built-in polls `gettimeofday()` until the microsecond
  *   changes, which never happens on a frozen clock.
  * - exec and the process family answer as a failed launch (there is no process table).
+ * - extension_loaded, get_loaded_extensions and get_extension_funcs answer from a declared table
+ *   (`EXTENSIONS_FIX`), so an extension reads loaded only when a shim covers its whole API.
  *
  * Each degraded call keeps its name, so feature detection passes, and records a status-report row
  * through `Degradation::record()`.
@@ -40,7 +43,8 @@ export const DISABLED = [
 	'pclose',
 	'proc_get_status',
 	'proc_close',
-	'proc_terminate'
+	'proc_terminate',
+	...EXTENSION_FUNCTIONS
 ] as const;
 
 /**

@@ -15,12 +15,12 @@ TECHNICAL_REPORT.md
 experiments/
 tests/fixtures/unicode-corpus.json
 src/ops/generated/
-src/site/generated/
+src/site/generated/assets.ts
 src/site/html/
 scripts/generated/
 src/ops/shipped-lock.ts
 docs/compatibility.json
-docs/compatibility.md
+docs/architecture/compatibility.md
 
 # nginx has no prettier parser; running the formatter over it is a corruption risk for no gain
 docker/vps/nginx.conf

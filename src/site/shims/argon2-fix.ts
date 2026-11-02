@@ -8,9 +8,9 @@
  * @module
  */
 import { argon2id } from '@noble/hashes/argon2.js';
-import { base64ToBytes, bytesToBase64 } from '../db/file-store';
-import { ARGON2_FIX_PHP } from '../site/generated/assets';
-import { errorMessage } from '../util/errors';
+import { base64ToBytes, bytesToBase64 } from '../../db/file-store';
+import { errorMessage } from '../../util/errors';
+import { ARGON2_FIX_PHP } from '../generated/assets';
 
 /** the Module key the PHP half resolves through `vrzno_env()` */
 export const ARGON2_BRIDGE = 'cfwArgon2';

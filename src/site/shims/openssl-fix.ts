@@ -27,10 +27,10 @@ import {
 	X509Certificate,
 	type KeyObject
 } from 'node:crypto';
-import { base64ToBytes, bytesToBase64 } from '../db/file-store';
-import { OPENSSL_FIX_PHP } from '../site/generated/assets';
-import { errorMessage } from '../util/errors';
-import { renderTemplate } from '../util/template';
+import { base64ToBytes, bytesToBase64 } from '../../db/file-store';
+import { errorMessage } from '../../util/errors';
+import { renderTemplate } from '../../util/template';
+import { OPENSSL_FIX_PHP } from '../generated/assets';
 
 /** the Module key the PHP half resolves through `vrzno_env()` */
 export const SIGN_BRIDGE = 'cfwSign';
@@ -45,11 +45,24 @@ export const OPENSSL_ALGOS: Record<number, string> = {
 	1: 'sha1',
 	2: 'md5',
 	3: 'md4',
-	6: 'sha256',
-	7: 'sha384',
-	8: 'sha512',
-	9: 'sha224'
+	6: 'sha224',
+	7: 'sha256',
+	8: 'sha384',
+	9: 'sha512'
 };
+
+/**
+ * The digest for an `$algorithm` argument, which ext-openssl takes as an `OPENSSL_ALGO_*` int OR a
+ * digest name; xmlseclibs passes `'sha256'`, so an int-only lookup read every SAML signature as
+ * unsupported.
+ */
+export function digestFor(algo: number | string | undefined): string | undefined {
+	if (typeof algo === 'string' && !/^\d+$/.test(algo)) {
+		const name = algo.toLowerCase().replace(/^rsa-/, '');
+		return Object.values(OPENSSL_ALGOS).includes(name) ? name : undefined;
+	}
+	return OPENSSL_ALGOS[Number(algo ?? 1)];
+}
 
 /** what the PHP half sends */
 export type SignRequest = {
@@ -58,8 +71,8 @@ export type SignRequest = {
 	b64?: string;
 	/** the PEM key; private to sign, public or a certificate to verify */
 	key?: string;
-	/** an `OPENSSL_ALGO_*` value */
-	algo?: number;
+	/** an `OPENSSL_ALGO_*` value or a digest name */
+	algo?: number | string;
 	/** base64 of the signature, for verify */
 	sigB64?: string;
 	/** RSA modulus size for `pkeyNew`, in bits */
@@ -283,17 +296,20 @@ export function signHostCall(req: SignRequest): SignReply {
 				Number(req.pad ?? 1) === 4
 					? constants.RSA_PKCS1_OAEP_PADDING
 					: constants.RSA_PKCS1_PADDING;
+			// ext-openssl's OAEP digest is SHA-1; workerd's node:crypto default is SHA-256
+			const oaep = padding === constants.RSA_PKCS1_OAEP_PADDING ? { oaepHash: 'sha1' } : {};
 			const data = base64ToBytes(String(req.b64 ?? ''));
 			const out =
 				req.op === 'publicEncrypt'
-					? publicEncrypt({ key: String(req.key ?? ''), padding }, data)
+					? publicEncrypt({ key: String(req.key ?? ''), padding, ...oaep }, data)
 					: privateDecrypt(
 							{
 								key: privateKeyOf(req).export({
 									type: 'pkcs8',
 									format: 'pem'
 								}) as string,
-								padding
+								padding,
+								...oaep
 							},
 							data
 						);
@@ -364,7 +380,7 @@ export function signHostCall(req: SignRequest): SignReply {
 			return { ok: true, b64: bytesToBase64(new Uint8Array(out)) };
 		}
 
-		const digest = OPENSSL_ALGOS[Number(req.algo ?? 6)];
+		const digest = digestFor(req.algo);
 		if (!digest) return { ok: false, error: `unsupported algorithm ${String(req.algo)}` };
 
 		const key = String(req.key ?? '');
@@ -415,10 +431,10 @@ const opensslDefines = Object.entries({
 	OPENSSL_ALGO_SHA1: 1,
 	OPENSSL_ALGO_MD5: 2,
 	OPENSSL_ALGO_MD4: 3,
-	OPENSSL_ALGO_SHA256: 6,
-	OPENSSL_ALGO_SHA384: 7,
-	OPENSSL_ALGO_SHA512: 8,
-	OPENSSL_ALGO_SHA224: 9,
+	OPENSSL_ALGO_SHA256: 7,
+	OPENSSL_ALGO_SHA384: 8,
+	OPENSSL_ALGO_SHA512: 9,
+	OPENSSL_ALGO_SHA224: 6,
 	OPENSSL_RAW_DATA: 1,
 	OPENSSL_ZERO_PADDING: 2,
 	OPENSSL_DONT_ZERO_PAD_KEY: 4,

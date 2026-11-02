@@ -411,16 +411,16 @@ if (!extension_loaded('openssl') && !function_exists('cfw_openssl_installed')) {
 		 *   Set to the raw signature.
 		 * @param OpenSSLAsymmetricKey|array<int|string, string>|string $private_key
 		 *   The signing key.
-		 * @param int $algorithm
-		 *   An OPENSSL_ALGO_* value.
+		 * @param int|string $algorithm
+		 *   An OPENSSL_ALGO_* value or a digest name.
 		 */
-		function openssl_sign($data, &$signature, $private_key, $algorithm = 6): bool
+		function openssl_sign($data, &$signature, $private_key, $algorithm = 1): bool
 		{
 			$r = cfw_sign_call([
 				'op' => 'sign',
 				'b64' => base64_encode((string) $data),
 				'key' => cfw_openssl_pem($private_key, 'private'),
-				'algo' => (int) $algorithm,
+				'algo' => is_string($algorithm) ? $algorithm : (int) $algorithm,
 			]);
 			if (($r['ok'] ?? false) !== true) {
 				trigger_error(
@@ -451,17 +451,17 @@ if (!extension_loaded('openssl') && !function_exists('cfw_openssl_installed')) {
 		 *   The raw signature.
 		 * @param OpenSSLAsymmetricKey|OpenSSLCertificate|array<int|string, string>|string $public_key
 		 *   The verification key.
-		 * @param int $algorithm
-		 *   An OPENSSL_ALGO_* value.
+		 * @param int|string $algorithm
+		 *   An OPENSSL_ALGO_* value or a digest name.
 		 */
-		function openssl_verify($data, $signature, $public_key, $algorithm = 6): int
+		function openssl_verify($data, $signature, $public_key, $algorithm = 1): int
 		{
 			$r = cfw_sign_call([
 				'op' => 'verify',
 				'b64' => base64_encode((string) $data),
 				'sigB64' => base64_encode((string) $signature),
 				'key' => cfw_openssl_pem($public_key, 'public'),
-				'algo' => (int) $algorithm,
+				'algo' => is_string($algorithm) ? $algorithm : (int) $algorithm,
 			]);
 			if (($r['ok'] ?? false) !== true) {
 				cfw_openssl_degraded(

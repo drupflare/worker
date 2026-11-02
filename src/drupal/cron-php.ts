@@ -17,9 +17,9 @@ import {
 	RUN_FETCH_REOPEN_PHP,
 	RUN_HEALTH_SELF_TEST_PHP
 } from '../site/generated/assets';
+import { FIBER_SHIM } from '../site/shims/fiber-shim';
 import { phpRender, phpWhen } from '../util/php';
 import { renderTemplate } from '../util/template';
-import { FIBER_SHIM } from './fiber-shim';
 
 export { FIBER_SHIM };
 

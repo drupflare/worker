@@ -1,4 +1,4 @@
-import { UNICODE_TABLES_PHP } from '../site/generated/assets';
+import { UNICODE_TABLES_PHP } from '../generated/assets';
 
 /**
  * PHP that reads the Unicode delta table the `drupflare` module ships, degrading to the

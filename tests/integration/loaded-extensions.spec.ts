@@ -4,6 +4,7 @@ import {
 	PLATFORM_PHP_VERSION,
 	POLYFILLED_PLATFORM
 } from '../../src/ops/packagist';
+import { EXTENSION_TABLE } from '../../src/site/shims/extension-table';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -73,7 +74,12 @@ describe('the extensions the shipping binary loads', () => {
 		// the other direction: a loaded extension missing from the map refuses every package that
 		// requires it, which is how ctype, filter and hash read as missing on a build carrying them
 		const loaded = await loadedExtensions();
-		const claimed = [...Object.keys(NATIVE_PLATFORM), ...NOT_COMPOSER_NAMES];
+		// a stand-in the extension table answers true for is loaded as far as PHP can tell
+		const claimed = [
+			...Object.keys(NATIVE_PLATFORM),
+			...NOT_COMPOSER_NAMES,
+			...Object.keys(EXTENSION_TABLE).map(extName)
+		];
 		expect(loaded.filter((ext) => !claimed.includes(ext))).toEqual([]);
 	}, 900_000);
 
@@ -90,7 +96,7 @@ describe('the extensions the shipping binary loads', () => {
 		expect(await loadedExtensions()).not.toContain('ext-gd');
 	}, 900_000);
 
-	// the gap `docs/repository-layout.md` named: the extension set behind two COST decisions was
+	// the gap `docs/getting-started/repository-layout/index.md` named: the extension set behind two COST decisions was
 	// asserted in phasm's `inspect-build.sh` and nowhere in this repository, so a binary swap that
 	// dropped opcache would pass the gate and add ~70 ms of parse to every boot. Neither is a
 	// composer name, so neither belongs in the platform map

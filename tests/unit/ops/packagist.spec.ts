@@ -176,6 +176,12 @@ describe('reading the lock and the payload', () => {
 		expect(providedSatisfies('dev-main', '^2.0')).toBe('unknown');
 	});
 
+	it('treats a provided * as satisfying any constraint', () => {
+		expect(providedSatisfies('*', '*')).toBe('yes');
+		expect(providedSatisfies('*', '^2.0')).toBe('yes');
+		expect(providedSatisfies('1.0|*', '^2.0')).toBe('yes');
+	});
+
 	it('returns an empty map for junk rather than throwing', () => {
 		for (const lock of [null, undefined, {}, { packages: 'nope' }, { packages: [{}] }]) {
 			expect(lockVersions(lock)).toEqual({});

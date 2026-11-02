@@ -1,5 +1,5 @@
-import { MB_ASCII_PHP, MB_FIX_PHP, MB_SANITIZE_PHP } from '../site/generated/assets';
-import { hoistUses, phpWhen } from '../util/php';
+import { hoistUses, phpWhen } from '../../util/php';
+import { MB_ASCII_PHP, MB_FIX_PHP, MB_SANITIZE_PHP } from '../generated/assets';
 import { UNICODE_TABLES } from './unicode-tables';
 
 /**

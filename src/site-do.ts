@@ -1,12 +1,4 @@
-import {
-	mkdirp,
-	mountDriver,
-	mountDrupalLazy,
-	mountDrupalStreaming
-} from '@drupflare/cartridge/fs';
-import { withMask } from '@drupflare/cartridge/mask';
 import '@drupflare/cartridge/shim';
-import { PHP_CODEC } from '@drupflare/durabledb/codec';
 import {
 	SiteDurableObject,
 	bindable,
@@ -16,10 +8,8 @@ import {
 	type SqlBindings,
 	type TxnRequest
 } from '@drupflare/durabledb/do-sqlite';
-import { PhpBase, type PhpBaseModuleFactory, type PhpRuntimeArgs } from 'php-wasm/PhpBase';
-import { backendNeedsPark, selectBackend, type BackendEnv } from './db/backend';
 import { type MirrorBucket } from './db/file-store';
-import { HeapChunkDigestError, type HandleIndex } from './db/heap-store';
+import { type HandleIndex } from './db/heap-store';
 import {
 	SqlMigrator,
 	assetChunkLoader,
@@ -35,21 +25,8 @@ import {
 	writeTargetTable,
 	type WriteTally
 } from './db/write-tally';
-import {
-	HeapRestoreIncomplete,
-	heapRestoreChunkBudget,
-	heapSnapshotEnabled,
-	type AlarmClass,
-	type HeapRestoreCursor
-} from './do/alarm';
+import { HeapRestoreIncomplete, type AlarmClass, type HeapRestoreCursor } from './do/alarm';
 import { alarmBody } from './do/alarm-body';
-import {
-	bootImageBakeEnabled,
-	planBootImage,
-	planPages,
-	restoreBootImage,
-	type BootImagePlan
-} from './do/boot-image';
 import { installCapabilities } from './do/capabilities';
 import { deriveStep, fillOne, strikeFillHead } from './do/fill';
 import { recordInDeployment, reportToFleet } from './do/fleet';
@@ -62,18 +39,15 @@ import {
 	snapshotStep,
 	tryRestoreHeap
 } from './do/heap-image';
-import { cacheTagsIn, forwardTo, pageTagList } from './do/helpers';
+import { cacheTagsIn, pageTagList } from './do/helpers';
 import { bumpGeneration, pathsForTags, purgeForTags } from './do/invalidate';
 import {
-	INTERPRETER_MEMORY,
 	isolateAboveBytes,
 	isolateResidency,
 	keepSpareMemory,
 	recycleAboveBytes,
 	retainInterpreterEnabled,
-	shimGlobals,
-	spareMemoryBytes,
-	takeSpareMemory
+	spareMemoryBytes
 } from './do/isolate';
 import {
 	CF_OAUTH_ACCOUNT_KEY,
@@ -98,19 +72,13 @@ import {
 	UNSTORABLE_KEY
 } from './do/keys';
 import { autoScaleStep, provisionLane, requestReadmission, sessionReach } from './do/lanes';
-import {
-	PACK_INDEX_BYTES,
-	lazyMountBytes,
-	packCachedEnv,
-	type SiteMountInfo
-} from './do/lazy-mount';
+import { PACK_INDEX_BYTES, lazyMountBytes, type SiteMountInfo } from './do/lazy-mount';
 import {
 	argon2Enabled,
 	backgroundPhpHold,
 	fillSettleMs,
 	memoryCacheBins,
 	memoryCacheMaxItems,
-	migrateEngine,
 	phpStringList,
 	r2WriteBudget,
 	sleepBudgetMs,
@@ -142,9 +110,9 @@ import {
 	installPackage,
 	installTree,
 	installableVerdict,
-	mountInstalledModules,
 	packageAutoloads
 } from './do/packages';
+import { bootPhp, type PhpStatic } from './do/php-boot';
 import {
 	ensureServeTables,
 	migrateChunks,
@@ -178,7 +146,6 @@ import {
 	serveFromStorage,
 	withKvGrant
 } from './do/serve';
-import { SERVICES_YAML, settingsOverride } from './do/settings';
 import { assembleFor, harvestShellFor, seedShellFrom, shellCandidates } from './do/shell';
 import { noteAlarmDemand, noteDemand, noteError, noteRangeError, serveStatsSync } from './do/stats';
 import type {
@@ -189,22 +156,12 @@ import type {
 	OpsJob,
 	PageRow,
 	Payload,
-	PhpOutputEvent,
 	Row,
 	SharedRender,
 	ShellAssembly,
 	SiteBinary
 } from './do/types';
-import { ARGON2_FIX, installArgon2 } from './drupal/argon2-fix';
-import { CURL_FIX } from './drupal/curl-fix';
-import { ICONV_FIX } from './drupal/iconv-fix';
-import { MB_FIX } from './drupal/mb-fix';
-import { OPENSSL_FIX, installSign } from './drupal/openssl-fix';
 import { opsRun, type RenderRequest } from './drupal/site-php';
-import { SODIUM_FIX, installAead, installBlake2b } from './drupal/sodium-fix';
-import { DISABLED, STANDIN_FIX } from './drupal/standin-fix';
-import { XMLWRITER_FIX } from './drupal/xmlwriter-fix';
-import { ZLIB_FIX, installZlib } from './drupal/zlib-fix';
 import type { SiteEnv } from './env';
 import {
 	ADVISORY_STATE_KEY,
@@ -216,7 +173,6 @@ import { type AggregateIndex } from './ops/aggregates';
 import { ATTEMPT_TTL_MS } from './ops/attempt';
 import { DAILY_ROWS_QUOTA, hasSessionCookie, type AuthSpend } from './ops/auth-budget';
 import type { CacheTier } from './ops/cache-tiers';
-import { SHIPPED_CAPABILITIES } from './ops/catalog';
 import { isTokenError, needsRefresh, refresh, type TokenSet } from './ops/cf-oauth';
 import {
 	ZERO_ENCOUNTERS,
@@ -233,13 +189,13 @@ import {
 } from './ops/core-version';
 import {
 	HIBERNATION_IDLE_MS,
+	idleBounds,
 	idleRearmMs,
-	keepWarmMs,
 	warmCeilingMs,
 	warmForced,
 	warmIntervalConfigured
 } from './ops/cron';
-import { emptyCrossings, wrapCrossings, type CrossingTally } from './ops/crossings';
+import { type CrossingTally } from './ops/crossings';
 import {
 	DAY_METERS_PREFIX,
 	dayMetersKey,
@@ -249,7 +205,6 @@ import {
 } from './ops/day-meters';
 import { dailyLimit, degradation, degradeHeaders, type Degradation } from './ops/degrade';
 import { deploymentEnv, deploymentEnvPhp } from './ops/deployment-env';
-import { DRIVER_DIGEST } from './ops/driver-digest';
 import { type RangeReport } from './ops/error-probe';
 import { type FleetRow } from './ops/fleet';
 import { readTagList, tagChecksum } from './ops/fragment-index';
@@ -280,7 +235,6 @@ import {
 	type OidcConfig,
 	type OidcProvider
 } from './ops/oidc';
-import { OPCACHE_PACK } from './ops/opcache-pack';
 import { type OracleResult } from './ops/oracle';
 import { outboundGuardEnabled, refuseOutbound } from './ops/outbound-guard';
 import {
@@ -291,7 +245,7 @@ import {
 	type Registry
 } from './ops/package-install';
 import { PACKED_CONTAINER_PATH, type PackedContainer } from './ops/packed-container';
-import { parkEnabled, type ParkInstall } from './ops/park';
+import { type ParkInstall } from './ops/park';
 import type { SleepBudget } from './ops/park-drive';
 import { ParkSockets } from './ops/park-drive';
 import { KV_OVERRIDABLE, isPaid, resolveSettings, type PlanKv } from './ops/plan';
@@ -313,7 +267,6 @@ import { eagerDerivativesEnabled, type DeriveTransport } from './ops/render-lane
 import { isQuarantined, parseState } from './ops/repair';
 import {
 	ReplicaRequiresPrimary,
-	enforceReadOnly,
 	fenceAllows,
 	replicaReadOnly,
 	type ReadOnlyGuard
@@ -335,13 +288,12 @@ import {
 } from './ops/replica-routing';
 import { type LogRecord, type LogStore } from './ops/replication-log';
 import { FIRST_RUN_KEY } from './ops/setup-page';
-import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS } from './ops/shipped-lock';
+import { SHIPPED_CORE_VERSION } from './ops/shipped-lock';
 import { ORIGIN_KEY, chooseOrigin, pinnable } from './ops/site-origin';
 import {
+	SEALED_META_KEYS,
 	adoptLegacyOwnerToken,
 	adoptLegacySecrets,
-	ensureHashSalt,
-	hashSaltAssignment,
 	readSealed,
 	writeSealed,
 	type SecretStore
@@ -357,6 +309,7 @@ import {
 	WARM_INTERVAL_VERIFIED_MS,
 	clampWarmInterval,
 	foldRenderWindow,
+	idleRearm,
 	readRenderWindow,
 	warmDecision,
 	writeRenderWindow,
@@ -372,15 +325,6 @@ import {
 	writeForwardEnabled,
 	type ForwardStatement
 } from './ops/write-forwarding';
-import {
-	DEFAULT_OPCACHE_MODE,
-	OPCACHE_PACK_ROOT,
-	opcacheIni,
-	opcacheMode,
-	opcacheSourceKey,
-	opcachePackState as packedOpcacheState,
-	type OpcacheMode
-} from './runtime/opcache';
 // the `.js` is load-bearing: wrangler.jsonc aliases the specifier `./runtime/php-binary.js`, and
 // without it esbuild resolves the default seam and bundles an 11 MB probe build over the ceiling
 import { PHPFactory, wasmModule } from './runtime/php-binary.js';
@@ -429,90 +373,10 @@ export { CFW_HEADER_VERSION } from './do/limits';
 export type { ShellVerdict } from './do/types';
 
 /** the interpreter, its Module and the shared output buffer, once boot has finished */
-interface PhpInstance {
+export interface PhpInstance {
 	php: PhpStatic;
 	binary: SiteBinary;
 	out: string[];
-}
-
-/**
- * The interpreter, built the way prof.js builds it (static-free-v1, so recorded per-query numbers
- * stay comparable).
- */
-class PhpStatic extends PhpBase {
-	/** the raw entry point php-wasm's published types omit; `run()` is a wrapper over it */
-	declare _run: (code: string) => Promise<unknown>;
-
-	constructor(
-		args: PhpRuntimeArgs = {},
-		diag: string[] = [],
-		mode: OpcacheMode = DEFAULT_OPCACHE_MODE,
-		memory?: WebAssembly.Memory
-	) {
-		const t0 = Date.now();
-		const note = (m: string) => diag.push(`+${Date.now() - t0}ms ${m}`);
-		// php-wasm types the loader's `default` as a constructor but real builds export a factory
-		// (upstream mismatch)
-		super(
-			Promise.resolve({ default: PHPFactory }) as unknown as Promise<PhpBaseModuleFactory>,
-			{
-				...args,
-				ini: [
-					// the opcache seam; `OPCACHE_MODE` selects the arm
-					...opcacheIni(mode),
-					// not a guard: `USE_ZEND_ALLOC=0` turns the enforcing allocator off
-					// (an 8M cap held 38 MB)
-					'memory_limit=96M',
-					// removed so `STANDIN_FIX` can declare degraded versions under the same names
-					`disable_functions=${DISABLED.join(',')}`,
-					// PHP_INI_PERDIR, so only boot can set it; the upload parser is userland here
-					'session.upload_progress.enabled=0',
-					// no stack arguments in fatal error output
-					'fatal_error_backtraces=0',
-					// uploads are parsed in userland, so PHP's own handling stays off
-					'file_uploads=0',
-					'expose_php=0',
-					'allow_url_include=0'
-				].join('\n'),
-				printErr: (t: string) => note(`err: ${t}`),
-				onAbort: (what: unknown) => note(`abort: ${what}`),
-				instantiateWasm(
-					imports: WebAssembly.Imports,
-					receiveInstance: (
-						instance: WebAssembly.Instance,
-						module: WebAssembly.Module
-					) => void
-				) {
-					if (memory) (imports.env as Record<string, unknown>).memory = memory;
-					WebAssembly.instantiate(wasmModule, imports)
-						.then((instance) => {
-							receiveInstance(instance, wasmModule);
-							note('instantiated');
-						})
-						.catch((e: any) => note(`FAILED: ${e?.message ?? e}`));
-					return {};
-				}
-			}
-		);
-	}
-}
-
-/**
- * A memory for a boot with nothing to reuse, or undefined when the loaded binary defines its own.
- */
-function newInterpreterMemory(pages = 0): WebAssembly.Memory | undefined {
-	let imports: WebAssembly.ModuleImportDescriptor[] = [];
-	try {
-		imports = WebAssembly.Module.imports(wasmModule as WebAssembly.Module);
-	} catch {
-		// a stub binary in a spec has no import table; it defines nothing and imports nothing
-	}
-	return imports.some((i) => i.kind === 'memory')
-		? new WebAssembly.Memory({
-				...INTERPRETER_MEMORY,
-				initial: Math.max(INTERPRETER_MEMORY.initial, pages)
-			})
-		: undefined;
 }
 
 /**
@@ -555,7 +419,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/** the last such reuse */
 	lastReuse?: { at: number; bytes: number };
 	/** linear memory when the current interpreter finished booting; a reused memory starts large */
-	private bootLinear = 0;
+	bootLinear = 0;
 	/** the cold boot under way, which a concurrent {@link ensurePhp} caller shares */
 	private bootInFlight?: Promise<PhpInstance>;
 	/** the last boot that started while another interpreter was still resident in this isolate */
@@ -718,12 +582,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/** what the predictor last decided, reported at `/serve-stats` so a policy is legible */
 	lastWarmDecision?: WarmDecision;
 
+	/** the idle re-arm last chosen, with why and the idle time behind it; in memory */
+	lastRearm?: { ms: number; reason: string; idleForMs: number | null };
+
+	/** when a render last began in this incarnation; the exact half of the idle clock */
+	lastRenderAtMs?: number;
+
 	/** what the last asset aggregation removed from a stored page, so 5,400 bytes/row has an n */
 	lastAggregation?: {
 		path: string;
 		libraries: number;
 		tagsRemoved: number;
 		bytesSaved: number;
+		skipped?: 'not-cacheable' | 'no-index' | 'no-match';
 	};
 
 	/** the aggregate manifest, read once per incarnation (undefined once read: there is none) */
@@ -863,7 +734,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * The rebuild's garbage is invisible to the memory estimate, so the next invocation can be
 	 * reset; the interpreter is dropped at the end of that invocation regardless of thresholds.
 	 */
-	private rebuildBoot = false;
+	rebuildBoot = false;
 	/** set by a request carrying a file, cleared when the interpreter drops after it */
 	uploadSeen = false;
 	/** drops taken because the VM trapped, which is a fault rather than a size; see {@link run} */
@@ -1047,292 +918,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/** the cold half of {@link ensurePhp}; only it and its own reboot call this */
-	private async bootPhp(opts: { skipRestore?: boolean }): Promise<PhpInstance> {
-		this.encounters = recordEncounter(this.encounters, 'cold');
-		this.coldsSinceFlush = (this.coldsSinceFlush ?? 0) + 1;
-		// the heap a drop left behind, if any, so this boot never holds a second one beside it
-		const spare = takeSpareMemory();
-		if (spare) {
-			this.heapsReused = (this.heapsReused ?? 0) + 1;
-			this.lastReuse = { at: this.nowMs(), bytes: spare.buffer.byteLength };
-		}
-		let plan: BootImagePlan = opts.skipRestore
-			? { reason: 'skipped' }
-			: await planBootImage(this);
-		const memory = spare ?? newInterpreterMemory(planPages(plan));
-		if (plan.index && !memory) plan = { reason: 'the binary defines its own memory' };
-		// the image's heap is larger than the boot memory once the bake's render has grown it
-		const missing = memory ? planPages(plan) - memory.buffer.byteLength / 65_536 : 0;
-		if (memory && missing > 0) memory.grow(missing);
-		// an uncollected interpreter still counts toward the isolate's 128 MiB while this one grows
-		const resident = isolateResidency();
-		this.traceMemory('boot');
-		if (resident.interpreters > 0) {
-			this.bootBesideResident = { at: this.nowMs(), ...resident };
-			console.warn(JSON.stringify({ cfw: 'boot-beside-resident', ...resident }));
-		}
-
-		const t0 = Date.now();
-		// every closure installed below goes through `self`, so an adopting instance can take them
-		// over
-		const owner = { current: this as SitePhpDurableObject };
-		this.phpOwner = owner;
-		const self = forwardTo(owner);
-		const php = new PhpStatic({}, this.bootDiag, opcacheMode(this.env?.OPCACHE_MODE), memory);
-		// braced on purpose: a brace-less arrow returns `push`'s length and workerd warns on every
-		// event
-		php.addEventListener('output', (e) => {
-			self.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []));
+	private bootPhp(opts: { skipRestore?: boolean }): Promise<PhpInstance> {
+		return bootPhp(this, opts, {
+			factory: PHPFactory,
+			module: wasmModule as WebAssembly.Module
 		});
-		php.addEventListener('error', (e) => {
-			self.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []));
-		});
-		// the one cast: php-wasm resolves this as a loosely-typed Module, and SiteBinary names
-		// both the FS surface the mounts drive and the cfw* members installed just below
-		const binary = (await php.binary) as unknown as SiteBinary;
-		// what a drop hands to the next boot; see `keepSpareMemory()`
-		if (memory) (binary as unknown as { wasmMemory: WebAssembly.Memory }).wasmMemory = memory;
-
-		// the bridge the driver reaches through vrzno_env(); inherited from
-		// SiteDurableObject so exec/txn semantics are the verified ones
-		this.installBridge.call(self, binary as unknown as Record<string, unknown>);
-		// whether this binary can suspend, read by drupflare's service provider; `FetchHandler`
-		// needs Asyncify or JSPI (shipping has neither), so `ParkFetchHandler` answers HTTP instead
-		binary.cfwCanSuspend =
-			typeof shimGlobals.Asyncify === 'object' && shimGlobals.Asyncify.__cfwStub !== true;
-
-		binary.cfwStats = () =>
-			JSON.stringify({
-				queryCount: self.queryCount,
-				databaseSize: Number(self.sql.databaseSize),
-				// what a progressive batch reads between operations, since memory_get_usage() is 0
-				oversized: self.oversized()
-			});
-		// what the Worker knows (pool, meters, fill queue), handed to Drupal so it can be displayed
-		binary.cfwServeStats = () => JSON.stringify(self.serveStatsSync());
-		this.installCapabilities.call(self, binary);
-		// ext-zlib over fflate, masked (a sync deflate is a long JS frame); installed even where
-		// zlib exists (the PHP half then defines nothing)
-		installZlib(binary as unknown as Record<string, unknown>, withMask);
-		// RSA/ECDSA over node:crypto, which is synchronous in workerd, so an ordinary masked bridge
-		installSign(binary as unknown as Record<string, unknown>, withMask);
-		installArgon2(binary as unknown as Record<string, unknown>, withMask);
-		// BLAKE2b over blakejs; no build has ext-sodium, so this is the only content-address source
-		installBlake2b(binary as unknown as Record<string, unknown>, withMask);
-		installAead(binary as unknown as Record<string, unknown>, withMask);
-		// not probed here: the park probe runs PHP, which cannot execute yet at this point of the
-		// boot (see {@link parkState})
-		this.parkInstall = undefined;
-		// close old sockets here, not in `dropInterpreter()` (most drops assign `php = undefined`
-		// directly); their tokens died with the old `$GLOBALS`
-		void this.parkSockets?.closeAll();
-		this.parkSockets = undefined;
-		// read by `ParkFetchHandler::available()`; gated on the traps' switch, else a
-		// `cfwpark+fetch://` target reaches the real `stream_socket_client` (reasoned, unmeasured)
-		(binary as unknown as Record<string, unknown>)['cfwParkFetch'] =
-			SHIPPED_CAPABILITIES.blockingOutbound && parkEnabled(this.env);
-		// same flag for SQL plus a reachable backend: a yield the host will not answer is a hang
-		// (no local database to fall back to)
-		(binary as unknown as Record<string, unknown>)['cfwParkImage'] =
-			SHIPPED_CAPABILITIES.blockingOutbound && parkEnabled(this.env);
-		(binary as unknown as Record<string, unknown>)['cfwSqlPark'] =
-			SHIPPED_CAPABILITIES.blockingOutbound &&
-			parkEnabled(this.env) &&
-			backendNeedsPark(selectBackend(this.env as unknown as BackendEnv));
-		// last, after every installer (an earlier wrapper is overwritten and the tally reads 0)
-		this.crossings = emptyCrossings();
-		this.crossings.bytes = { in: 0, out: 0, maxIn: 0, maxOut: 0, maxName: '' };
-		this.crossingNames = wrapCrossings(
-			binary as unknown as Record<string, unknown>,
-			this.crossings
-		);
-		// outside the tally (a refused call is not a crossing), and last so an installer cannot
-		// overwrite the guard
-		this.replicaGuard = this.isReplica()
-			? enforceReadOnly(
-					binary as unknown as Record<string, unknown>,
-					(refusal) => {
-						self.replicaRefusals.push(refusal);
-						self.replicaRefusalsTotal += 1;
-						if (self.replicaRefusals.length > 20) self.replicaRefusals.shift();
-					},
-					// a pool lane forwards its writes; a var-configured replica has no primary and
-					// keeps refusing
-					this.isPoolLane() && writeForwardEnabled(this.env)
-						? (statements, payload) => self.collectForward(statements, payload)
-						: undefined
-				)
-			: undefined;
-		// before any PHP runs: a handle minted before the pin cannot be pinned retroactively
-		this.pinHandles(binary);
-
-		// SITE_DB_PREFIX swaps only the database (the default pack has no node bundles)
-		// LAZY_MOUNT swaps the mount strategy: streaming inflates 39 MB up front (3,066 ms of a
-		// 3,754 ms cold start), lazy inflates on first open
-		const lazyOptions = {
-			dbPrefix: this.env?.SITE_DB_PREFIX || undefined,
-			// same condition as the streaming path below
-			database: migrateEngine(undefined, this.env) === 'php'
-		};
-		const opcachePackState = packedOpcacheState(
-			OPCACHE_PACK,
-			opcacheMode(this.env?.OPCACHE_MODE),
-			this.env?.LAZY_MOUNT === '1',
-			opcacheSourceKey(DRIVER_DIGEST, SHIPPED_LOCK_VERSIONS)
-		);
-		const packedOpcache = opcachePackState === 'usable';
-		const mountEnv = packCachedEnv(this.env);
-		this.mountInfo =
-			this.env?.LAZY_MOUNT === '1'
-				? packedOpcache
-					? await mountDrupalLazy(binary, mountEnv, {
-							...lazyOptions,
-							layers: [{ prefix: 'drupal-pf' }, { prefix: 'drupal-opc' }]
-						}).catch(() => mountDrupalLazy(binary, mountEnv, lazyOptions))
-					: await mountDrupalLazy(binary, mountEnv, lazyOptions)
-				: await mountDrupalStreaming(binary, this.env, {
-						dbPrefix: this.env?.SITE_DB_PREFIX || undefined,
-						// only the PHP migration engine opens the packed .sqlite (the JS engine
-						// would spend 6.47 MB and a subrequest)
-						database: migrateEngine(undefined, this.env) === 'php'
-					});
-		this.mountInfo.driver = await mountDriver(binary, this.env);
-		// opcache looks in /tmp/<system id>; the layer sits beside the tree, so a link joins them
-		const opcLayer =
-			'layers' in this.mountInfo &&
-			this.mountInfo.layers.some((l) => l.name === 'drupal-opc');
-		if (packedOpcache && opcLayer && OPCACHE_PACK) {
-			try {
-				(binary.FS as unknown as { symlink(target: string, path: string): void }).symlink(
-					`${OPCACHE_PACK_ROOT}/${OPCACHE_PACK.systemId}`,
-					`/tmp/${OPCACHE_PACK.systemId}`
-				);
-				this.mountInfo.opcachePack = OPCACHE_PACK.systemId;
-			} catch {
-				// an unlinked cache is a miss on every script, which is the `off` arm's cost
-			}
-		} else if (opcachePackState === 'stale') {
-			this.mountInfo.opcachePack = 'stale';
-		}
-		// at mount time, not settings.php: a restored heap never boots a kernel, so the override's
-		// `@mkdir()` would not run
-		try {
-			mkdirp(binary.FS, '/drupal/sites/default/files/config/sync');
-		} catch {
-			// a read-only or already-present node is not a boot failure
-		}
-		// after the packed driver, so an installed module overrides a packed file (the only place
-		// `cfw_module_file` reaches PHP)
-		this.installedModuleFiles = mountInstalledModules(this, binary);
-
-		// point the site at this driver, and at a salt only this site has
-		const settingsPath = '/drupal/sites/default/settings.php';
-		const existing = new TextDecoder().decode(binary.FS.readFile(settingsPath));
-		if (!existing.includes('cfw_do_sqlite')) {
-			// the pack ships no hash_salt, so this append is the only assignment (a failed override
-			// throws rather than sharing one salt)
-			const salt = hashSaltAssignment(ensureHashSalt(this.secretStore()));
-			// the pinned origin is interpolated here: settings.php runs once per boot and the pin
-			// belongs to the site
-			const override = settingsOverride({
-				origin: JSON.stringify(this.canonicalOrigin()),
-				...this.bootSettings()
-			});
-			binary.FS.writeFile(settingsPath, existing + override + salt);
-		}
-		// the path settings.php already registered but that never existed; see SERVICES_YAML
-		binary.FS.writeFile('/drupal/sites/default/services.yml', SERVICES_YAML);
-
-		this.php = { php, binary, out: this.out };
-		this.phpBootedAt = this.nowMs();
-		this.bootMs = Date.now() - t0;
-		this.bootLinear = this.heapNow();
-		this.rebuildBoot = this.containerMissing();
-
-		// the published boot image goes first: it is the same restore from another source, shared by
-		// every site whose context equals the bake's
-		this.bootImage = { used: false, reason: plan.reason };
-		if (bootImageBakeEnabled(this.env) && !opts.skipRestore)
-			this.bootImageBaseline = this.heapBytes(binary)?.slice();
-		if (plan.index && plan.variant) {
-			const restored = await restoreBootImage(
-				this,
-				binary,
-				plan.index,
-				plan.variant,
-				plan.reset === true
-			);
-			this.bootImage = { used: restored.restored === true, reason: plan.reason, ...restored };
-			if (restored.dirty === true) {
-				// bytes landed: the heap has the right length and wrong contents, so boot again plain
-				const refused = this.bootImage;
-				this.php = undefined;
-				const fresh = await this.bootPhp({ skipRestore: true });
-				this.bootImage = { ...refused, used: false, rebooted: true };
-				return fresh;
-			}
-		}
-
-		// restore a stored heap matching this pack after the mount, bridge and capabilities
-		// (the heap holds vrzno handles by index into what they populate)
-		if (this.bootImage.used !== true && heapSnapshotEnabled(this.env) && !opts.skipRestore) {
-			try {
-				this.heapRestore = await this.tryRestoreHeap(binary, {
-					maxChunks: heapRestoreChunkBudget(this.env)
-				});
-			} catch (e) {
-				// a refusal is a boot, not an outage: fall through to the normal path
-				this.heapRestoreCursor = undefined;
-				// unless bytes already landed: a refusal on chunk 0 leaves the pack's heap,
-				// one on chunk N has applied N chunks (right length, wrong bytes)
-				const dirty = e instanceof HeapChunkDigestError && e.bytesWritten > 0;
-				this.heapRestore = {
-					restored: false,
-					reason: errorMessage(e),
-					...(dirty ? { discardedHeap: true, dirtyBytes: e.bytesWritten } : {})
-				};
-				if (dirty) {
-					// drop the poisoned instance and boot from the pack (`skipRestore` stops a
-					// retry refusing the same chunk)
-					this.php = undefined;
-					// directly: through `ensurePhp()` this would wait on the boot it is part of
-					const fresh = await this.bootPhp({ skipRestore: true });
-					this.heapRestore.rebooted = true;
-					return fresh;
-				}
-			}
-			// the restore did not finish: the binary and mount survive to the next firing, and
-			// the cursor keeps the object unservable meanwhile
-			if (this.heapRestoreCursor) {
-				await this.setAlarmAt(this.nowMs() + 1);
-				throw new HeapRestoreIncomplete(this.heapRestoreCursor);
-			}
-		}
-
-		// pw_encode()/pw_decode() must precede the driver's client; the mb_* wrappers must
-		// precede Symfony's polyfill bootstrap (its function_exists() guards would win)
-		await this.run(`<?php ${PHP_CODEC}`);
-		await this.run(`<?php ${MB_FIX}`);
-		// same window as MB_FIX: polyfill-iconv's bootstrap must find the name taken (its
-		// iconv_strrpos() is wrong at index 0)
-		await this.run(`<?php ${ICONV_FIX}`);
-		// gz* must exist before AssetDumper runs in a render; inert where the extension exists
-		await this.run(`<?php ${ZLIB_FIX}`);
-		// curl_* must exist before an SDK constructs its own transport (the shim class resolves
-		// on first call; no autoloader yet)
-		await this.run(`<?php ${CURL_FIX}`);
-		// openssl_sign/openssl_verify for firebase/php-jwt and the Google auth client; inert
-		// with the real extension
-		await this.run(`<?php ${OPENSSL_FIX}`);
-		await this.run(`<?php ${ARGON2_FIX}`);
-		// sodium_crypto_generichash*, needed before a content-addressed store's first write
-		await this.run(`<?php ${SODIUM_FIX}`);
-		// XMLWriter must exist before a module class extends it (compile time, hence a class and
-		// not a shim set)
-		await this.run(`<?php ${XMLWRITER_FIX}`);
-		// ZipArchive, finfo, Transliterator and exif, plus the degraded sleep, exec and gd names
-		await this.run(`<?php ${STANDIN_FIX}`);
-		return this.php;
 	}
 
 	installCapabilities(binary: SiteBinary): SiteBinary {
@@ -2006,6 +1596,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.rendersSinceFlush = 0;
 		this.coldsSinceFlush = 0;
 		this.lastRenderWindowFlushMs = nowMs;
+		// an older build reads only five fields, so the stamp is written only while the fade needs it
+		const { floorMs, ceilingMs } = idleBounds(this.env);
+		const fade = ceilingMs > floorMs;
 		const folded = foldRenderWindow(
 			stored,
 			pending,
@@ -2013,8 +1606,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			RATE_WINDOW_MS,
 			survived,
 			colds,
-			this.warmCeiling()
+			this.warmCeiling(),
+			fade ? this.lastRenderAtMs : undefined
 		);
+		if (!fade) delete folded.lastAt;
 		this.metaSet(RENDER_WINDOW_KEY, writeRenderWindow(folded));
 		return folded;
 	}
@@ -2326,8 +1921,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	secretStore(): SecretStore {
 		const kv = this.storage.kv;
 		return {
-			get: (key: string) => this.metaGet(key),
-			set: (key: string, value: string) => this.metaSet(key, value),
+			get: (key: string) => this.metaRowGet(key),
+			set: (key: string, value: string) => this.metaRowSet(key, value),
 			delete: (key: string) => {
 				this.ensureServeTables();
 				this.sql.exec('DELETE FROM cfw_meta WHERE k = ?', key);
@@ -2369,10 +1964,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			if (!this.hasMetaTable()) return;
 			const store = this.secretStore();
 			await adoptLegacyOwnerToken(store);
+			const moved = [...SEALED_META_KEYS];
 			const keys = this.sql
 				.exec<Row<{ k: string }>>(
-					`SELECT k FROM cfw_meta WHERE k IN ('owner_token_hash', 'cf_oauth_token')
-					OR substr(k, 1, 10) = 'git_token_' OR substr(k, 1, 15) = 'git_hooksecret_'`
+					`SELECT k FROM cfw_meta WHERE k IN ('owner_token_hash', 'cf_oauth_token',
+					${moved.map(() => '?').join(', ')})
+					OR substr(k, 1, 10) = 'git_token_' OR substr(k, 1, 15) = 'git_hooksecret_'`,
+					...moved
 				)
 				.toArray()
 				.map((row) => row.k);
@@ -2440,8 +2038,22 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return 'refusal' in provider ? provider : { provider };
 	}
 
-	/** reads a `cfw_meta` value, or `fallback` when the key is absent */
+	/**
+	 * Reads a `cfw_meta` value, or `fallback` when the key is absent.
+	 *
+	 * A key in {@link SEALED_META_KEYS} is read from sealed storage; a row left from before the move
+	 * is adopted on the first read that misses it.
+	 */
 	metaGet(key: string, fallback: string | null = null): string | null {
+		if (SEALED_META_KEYS.has(key)) {
+			const sealed = this.storage.kv.get<string>(key);
+			return sealed ?? readSealed(this.secretStore(), key) ?? fallback;
+		}
+		return this.metaRowGet(key, fallback);
+	}
+
+	/** reads the `cfw_meta` row itself, whatever the key */
+	private metaRowGet(key: string, fallback: string | null = null): string | null {
 		this.ensureServeTables();
 		const row = firstRow(
 			this.sql.exec<Row<{ v: string }>>('SELECT v FROM cfw_meta WHERE k = ?', key)
@@ -2450,15 +2062,29 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/**
-	 * Writes a `cfw_meta` value, skipping one that is already there.
+	 * Writes a `cfw_meta` value, skipping one that is already there. A key in
+	 * {@link SEALED_META_KEYS} goes to sealed storage and leaves no row.
+	 */
+	metaSet(key: string, value: unknown): void {
+		if (SEALED_META_KEYS.has(key)) {
+			const next = String(value);
+			if (this.metaGet(key) === next) this.elidedWrites = (this.elidedWrites ?? 0) + 1;
+			else writeSealed(this.secretStore(), key, next);
+			return;
+		}
+		this.metaRowSet(key, value);
+	}
+
+	/**
+	 * Writes the `cfw_meta` row, skipping one that is already there.
 	 *
 	 * One read to save one write: free allows 5,000,000 rows read against 100,000 written, and a
 	 * write of the existing value is charged in full. `elidedWrites` counts the skips.
 	 */
-	metaSet(key: string, value: unknown): void {
+	private metaRowSet(key: string, value: unknown): void {
 		this.ensureServeTables();
 		const next = String(value);
-		if (this.metaGet(key) === next) {
+		if (this.metaRowGet(key) === next) {
 			this.elidedWrites = (this.elidedWrites ?? 0) + 1;
 			return;
 		}
@@ -3587,10 +3213,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * is solved (climbing toward the ceiling on windows the object survived); an explicit
 	 * `WARM_INTERVAL_MS` wins.
 	 */
-	thermalRearmMs(): number {
+	thermalRearmMs(queued = false): number {
 		const headroom = this.degradation().cron;
 		const configured = idleRearmMs(this.env, headroom, isPaid(this.env));
-		if (!headroom) return configured;
+		if (!headroom) return this.noteRearm(configured, 'degraded');
 		const forced = warmForced(this.env, isPaid(this.env));
 		const stored = this.storedRenderWindow();
 		const decision = warmDecision(this.arrivals ?? [], this.nowMs(), {
@@ -3600,11 +3226,57 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			stored
 		});
 		this.lastWarmDecision = decision;
-		if (!decision.warm) return keepWarmMs(this.env);
-		return (
+		if (!decision.warm) {
+			const { floorMs, ceilingMs } = idleBounds(this.env);
+			const idleFor = this.idleForMs(stored);
+			// reads are skipped while the re-arm is fixed, so the default path costs nothing new
+			const floored = ceilingMs > floorMs ? this.idleFloorReason(queued) : undefined;
+			const next = idleRearm(idleFor, floorMs, ceilingMs, floored);
+			this.lastRearm = { ms: next.ms, reason: next.reason, idleForMs: idleFor ?? null };
+			return next.ms;
+		}
+		return this.noteRearm(
 			warmIntervalConfigured(this.env) ??
-			clampWarmInterval(stored?.intervalMs ?? WARM_INTERVAL_VERIFIED_MS, this.warmCeiling())
+				clampWarmInterval(
+					stored?.intervalMs ?? WARM_INTERVAL_VERIFIED_MS,
+					this.warmCeiling()
+				),
+			'warm'
 		);
+	}
+
+	/** records the re-arm in force for `/serve-stats` and returns it */
+	private noteRearm(ms: number, reason: string): number {
+		this.lastRearm = { ms, reason, idleForMs: null };
+		return ms;
+	}
+
+	/**
+	 * Ms since this site last rendered, or undefined when nothing says.
+	 *
+	 * The in-memory stamp is exact for this incarnation. Past a hibernation the stored window's
+	 * stamp is at most one window old, so a window is taken off it and the fade starts late rather
+	 * than early; a window with no stamp reads as its start.
+	 */
+	private idleForMs(stored: RenderWindow | undefined): number | undefined {
+		const now = this.nowMs();
+		if (this.lastRenderAtMs !== undefined) return Math.max(0, now - this.lastRenderAtMs);
+		if (stored === undefined || stored.renders <= 0) return undefined;
+		return Math.max(0, now - (stored.lastAt ?? stored.startedAt) - RATE_WINDOW_MS);
+	}
+
+	/**
+	 * Work that holds the idle re-arm at the floor: a queue (fill, mail or HTTP), an active pool, a
+	 * migration, a stepped job or update run, or a site mid-repair. Claim steps run as migration and
+	 * reconcile firings, so they hold it through the migration cursor.
+	 */
+	private idleFloorReason(queued: boolean): string | undefined {
+		if (queued) return 'queue';
+		if (this.isPoolLane() || this.lanesProvisioned() > 0) return 'lanes';
+		if (this.migratePartial() !== undefined) return 'migration';
+		if (this.opsJobActive() || updbActive(this)) return 'job';
+		if (parseState(this.metaGet('repair_state')).rung !== 'observe') return 'repair';
+		return undefined;
 	}
 
 	/** the origin public bytes are served from, or '' when everything goes through the Worker */
@@ -4233,7 +3905,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/** whether the next kernel boot has to rebuild the container; unreadable reads as no */
-	private containerMissing(): boolean {
+	containerMissing(): boolean {
 		try {
 			const row = firstRow(
 				this.sql.exec<Row<{ n: number }>>('SELECT COUNT(*) AS n FROM cache_container')

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MB_FIX, MB_SANITIZE } from '../../../src/drupal/mb-fix';
+import { MB_FIX, MB_SANITIZE } from '../../../src/site/shims/mb-fix';
 
 /**
  * Ported from `scripts/test-mb-fix.mjs` (25 hand-rolled assertions; 26 tests here).
@@ -15,7 +15,7 @@ import { MB_FIX, MB_SANITIZE } from '../../../src/drupal/mb-fix';
  * So the oracle is RECORDED rather than live. Every `oracle` below is
  * `bin2hex(mb_substr($raw, 0, 100000))` measured on native PHP 8.5.7 with real mbstring
  * loaded, and `chars` is `mb_strlen($raw)` from the same run. `sanitize()` is a byte-for-byte
- * transliteration of the shipped `cfw_mb_sanitize()` in `src/drupal/mb-fix.js`, and the
+ * transliteration of the shipped `cfw_mb_sanitize()` in `src/site/shims/mb-fix.js`, and the
  * "mirrors the shipped PHP" test below pins the two together: the PHP decision table is
  * read out of `MB_SANITIZE` and compared against what this file implements, so a range
  * edited in the PHP without being mirrored here fails the suite instead of drifting.
@@ -25,7 +25,7 @@ import { MB_FIX, MB_SANITIZE } from '../../../src/drupal/mb-fix';
  * `(string) false` is `''`, which is the actual bug and the evidence that compiling iconv
  * into the wasm build is NOT the fix. There is no iconv (and no PHP) in the workerd test
  * isolate, so that control cannot execute here. It is kept as the recorded measurement
- * above and in `src/drupal/mb-fix.js`'s docblock; reproduce it with:
+ * above and in `src/site/shims/mb-fix.js`'s docblock; reproduce it with:
  *
  *   php -r 'var_export(@iconv_substr("abc\xff\xfedef", 0, 100, "UTF-8"));'   // => false
  *
@@ -42,7 +42,7 @@ const toHex = (bytes: Uint8Array): string =>
 	[...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 
 /**
- * Transliteration of `cfw_mb_sanitize()` from `src/drupal/mb-fix.js`. The rule is ONE `?`
+ * Transliteration of `cfw_mb_sanitize()` from `src/site/shims/mb-fix.js`. The rule is ONE `?`
  * per maximal valid prefix consumed, then resume at the byte that broke the sequence -- not
  * one `?` per bad byte. The lead-byte table carries the overlong and surrogate bounds in the
  * SECOND byte, which is why it is not a flat 0x80-0xBF test.

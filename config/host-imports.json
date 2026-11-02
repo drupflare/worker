@@ -167,9 +167,8 @@
 		"wasi_snapshot_preview1.proc_exit:function": { "class": "compute" }
 	},
 	"host": {
-		"cfwAead": { "class": "compute" },
 		"cfwArgon2": { "class": "compute" },
-		"cfwBlake2b": { "class": "compute" },
+		"cfwBrotli": { "class": "compute" },
 		"cfwCanSuspend": { "class": "compute", "note": "a flag the service provider probes" },
 		"cfwFetch": { "class": "policy", "note": "reads the fetch cache; a miss queues a request" },
 		"cfwFileDelete": { "class": "io" },
@@ -204,6 +203,7 @@
 			"note": "the one host function that reaches CONFIG_KV: allow-listed levers, PLAN refused, writes scoped to the site"
 		},
 		"cfwSign": { "class": "compute" },
+		"cfwSodium": { "class": "compute" },
 		"cfwSqlExec": { "class": "io", "note": "any SQL on the object's own SQLite" },
 		"cfwSqlPark": { "class": "io" },
 		"cfwSqlTxn": { "class": "io", "note": "any SQL on the object's own SQLite" },
@@ -212,6 +212,7 @@
 			"class": "io",
 			"note": "Redis and syslog at the endpoint the operator configured"
 		},
-		"cfwZlib": { "class": "compute" }
+		"cfwZlib": { "class": "compute" },
+		"cfwZstd": { "class": "compute" }
 	}
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { argon2HostCall } from '../../src/drupal/argon2-fix';
+import { argon2HostCall } from '../../src/site/shims/argon2-fix';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -51,7 +51,7 @@ describe('the BLAKE2b bridge, from PHP', () => {
 			]);`);
 
 		// the wiring: false here means src/site-do.ts stopped installing the bridge
-		expect(out.declared, 'site-do.ts must install cfwBlake2b before this fragment runs').toBe(
+		expect(out.declared, 'php-boot.ts must install cfwSodium before this fragment runs').toBe(
 			true
 		);
 		expect(out.abc256).toBe(ABC_256);
@@ -62,9 +62,9 @@ describe('the BLAKE2b bridge, from PHP', () => {
 		expect(out.voided).toBe(true);
 		expect(Number(out.keyMax)).toBe(64);
 		expect(Number(out.bytesMin)).toBe(16);
-		// and the shim never claims to BE the extension; a stub module entry segfaulted at exit 139
-		// when that was tried for mbstring
-		expect(out.extension).toBe(false);
+		// the table answers true because the manifest covers the whole API; a stub module entry is
+		// what segfaulted at exit 139 when it was tried for mbstring, and none is used here
+		expect(out.extension).toBe(true);
 	}, 900_000);
 
 	it('digests binary that is not valid UTF-8, which is why the bridge is base64', async () => {
@@ -196,7 +196,7 @@ describe('the curl and openssl shims are LIVE, not inert', () => {
 		expect(out.opensslVerify).toBe(true);
 		// an undefined constant is a PHP 8 fatal, so a caller composing a request needs these
 		expect(Number(out.curloptUrl)).toBe(10002);
-		expect(Number(out.algoSha256)).toBe(6);
+		expect(Number(out.algoSha256)).toBe(7);
 	}, 900_000);
 
 	it('signs and verifies a real RSA key from PHP, through the bridge', async () => {
@@ -445,7 +445,6 @@ describe('the XChaCha20-Poly1305 AEAD is LIVE, from PHP', () => {
 				'grew' => strlen($sealed) - strlen('a frame'),
 				'opened' => $opened,
 				'keygenLen' => strlen(sodium_crypto_aead_xchacha20poly1305_ietf_keygen()),
-				// the extension stays absent; only the functions arrive
 				'extension' => extension_loaded('sodium'),
 			]);
 		`);
@@ -458,7 +457,7 @@ describe('the XChaCha20-Poly1305 AEAD is LIVE, from PHP', () => {
 		expect(out.grew).toBe(16);
 		expect(out.opened).toBe('a frame');
 		expect(out.keygenLen).toBe(32);
-		expect(out.extension).toBe(false);
+		expect(out.extension).toBe(true);
 	}, 900_000);
 
 	it('answers FALSE on a bad tag and THROWS on a bad argument, which is the split a caller reads', async () => {

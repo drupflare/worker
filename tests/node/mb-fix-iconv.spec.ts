@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { ICONV_STRRPOS } from '../../src/drupal/iconv-fix';
-import { MB_ASCII, MB_SANITIZE } from '../../src/drupal/mb-fix';
+import { ICONV_STRRPOS } from '../../src/site/shims/iconv-fix';
+import { MB_ASCII, MB_SANITIZE } from '../../src/site/shims/mb-fix';
 
 /**
  * The two controls the workers project CANNOT run, recovered.
@@ -22,7 +22,7 @@ import { MB_ASCII, MB_SANITIZE } from '../../src/drupal/mb-fix';
  * `(string) iconv_substr(...)` would still yield `''`. It is real *mbstring* that substitutes,
  * not real iconv.
  *
- * That is why the bug was closed in `src/drupal/mb-fix.js` rather than by a rebuild. If these
+ * That is why the bug was closed in `src/site/shims/mb-fix.js` rather than by a rebuild. If these
  * assertions ever flip, the reasoning behind that decision no longer holds and the JS fix
  * should be re-examined.
  *

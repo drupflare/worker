@@ -1,6 +1,6 @@
 import { TCP_LIVE_PHP } from '../site/generated/assets';
+import { HOST_HELPERS } from '../site/shims/host-helpers';
 import { phpRender } from '../util/php';
-import { HOST_HELPERS } from './site-php';
 
 /** what one `tcpLive()` run is asked to do */
 export interface TcpLiveOptions {

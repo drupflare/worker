@@ -8,7 +8,7 @@ import {
 	ARGON2_VERSION,
 	argon2HostCall,
 	installArgon2
-} from '../../../src/drupal/argon2-fix';
+} from '../../../src/site/shims/argon2-fix';
 
 /**
  * P25's host half.

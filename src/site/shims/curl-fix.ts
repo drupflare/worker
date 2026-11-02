@@ -8,8 +8,8 @@
  * `php -l` can lint the body.
  * @module
  */
-import { CURL_FIX_PHP } from '../site/generated/assets';
-import { renderTemplate } from '../util/template';
+import { renderTemplate } from '../../util/template';
+import { CURL_FIX_PHP } from '../generated/assets';
 
 /**
  * The `CURLOPT_*` constants the shim is willing to be given.

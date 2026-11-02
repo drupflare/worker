@@ -1,6 +1,6 @@
-import { ICONV_FIX_PHP, ICONV_STRRPOS_PHP } from '../site/generated/assets';
-import { hoistUses } from '../util/php';
-import { renderTemplate } from '../util/template';
+import { hoistUses } from '../../util/php';
+import { renderTemplate } from '../../util/template';
+import { ICONV_FIX_PHP, ICONV_STRRPOS_PHP } from '../generated/assets';
 
 /**
  * Corrects `iconv_strrpos()` in symfony/polyfill-iconv, which returns `strlen()` instead of 0

@@ -191,7 +191,8 @@ describe('the object route', () => {
 		const res = await present(site, nonce('i'));
 		expect(res.status).toBe(409);
 		expect(site.meta.has(OWNER_TOKEN_KEY)).toBe(false);
-		expect(site.store.sealedRows.size).toBe(0);
+		// the proof is spent, and that is the only sealed row
+		expect([...site.store.sealedRows.keys()]).toEqual([RECOVER_SPENT_KEY]);
 	});
 
 	it('says so when the deployment has no CONFIG_KV', async () => {
@@ -251,21 +252,17 @@ describe('the proof arithmetic', () => {
 	});
 
 	it('spends once, and forgets a proof only after it could no longer be accepted', () => {
-		const meta = new Map<string, string>();
-		const store = {
-			get: (k: string) => meta.get(k) ?? null,
-			set: (k: string, v: string) => void meta.set(k, v)
-		};
+		const store = memorySecretStore();
+		const spent = () => JSON.parse(store.sealedRows.get(RECOVER_SPENT_KEY) ?? '[]');
 		expect(spendProof(store, 'k1', NOW + 100, NOW)).toBe(true);
 		expect(spendProof(store, 'k1', NOW + 100, NOW + 50)).toBe(false);
 		expect(spendProof(store, 'k2', NOW + 500, NOW + 50)).toBe(true);
-		expect(JSON.parse(meta.get(RECOVER_SPENT_KEY) ?? '[]')).toHaveLength(2);
+		expect(spent()).toHaveLength(2);
+		expect(store.rows.has(RECOVER_SPENT_KEY)).toBe(false);
 		// k1's exp has passed, so it is dropped and k2 stays
 		expect(spendProof(store, 'k3', NOW + 900, NOW + 200)).toBe(true);
-		expect(
-			(JSON.parse(meta.get(RECOVER_SPENT_KEY) ?? '[]') as { h: string }[]).map((s) => s.h)
-		).toEqual(['k2', 'k3']);
-		meta.set(RECOVER_SPENT_KEY, '{"not":"an array"}');
+		expect((spent() as { h: string }[]).map((s) => s.h)).toEqual(['k2', 'k3']);
+		store.sealedRows.set(RECOVER_SPENT_KEY, '{"not":"an array"}');
 		expect(spendProof(store, 'k1', NOW + 100, NOW)).toBe(true);
 	});
 });

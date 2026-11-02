@@ -4,6 +4,7 @@ import {
 	OWNER_HASH_KEY,
 	OWNER_TOKEN_KEY,
 	SALT_BYTES,
+	SEALED_META_KEYS,
 	adoptLegacyOwnerToken,
 	assertSalt,
 	bearerToken,
@@ -15,6 +16,7 @@ import {
 	randomKeyBase64,
 	readSealed,
 	rotateOwnerToken,
+	sealedExportRows,
 	stateSerialized,
 	tokenMatches,
 	writeSealed
@@ -260,5 +262,51 @@ describe('bearerToken', () => {
 		for (const header of [null, '', 'abc123', 'Basic abc123', 'Bearer', 'Bearer   ']) {
 			expect(bearerToken(header), String(header)).toBeUndefined();
 		}
+	});
+});
+
+describe('adopting a row that reached cfw_meta before the move', () => {
+	it('keeps the row when the copy does not read back, so the next read repeats it', () => {
+		const store = fakeStore({ git_remotes: '[1]' });
+		store.sealed.put = () => undefined;
+		expect(readSealed(store, 'git_remotes')).toBe('[1]');
+		expect(store.rows.get('git_remotes')).toBe('[1]');
+	});
+
+	it('repeats a move cut off between the copy and the delete', () => {
+		const store = fakeStore({ git_remotes: '[1]' });
+		const del = store.delete;
+		store.delete = () => {
+			throw new Error('cut off');
+		};
+		expect(() => readSealed(store, 'git_remotes')).toThrow('cut off');
+		expect(store.sealedRows.get('git_remotes')).toBe('[1]');
+		store.delete = del;
+		expect(readSealed(store, 'git_remotes')).toBe('[1]');
+		expect(store.rows.has('git_remotes')).toBe(false);
+		expect([...store.sealedRows]).toEqual([['git_remotes', '[1]']]);
+	});
+});
+
+describe('the authority keys that left cfw_meta', () => {
+	it('are all withheld from a dump that does not ask for secrets', async () => {
+		const { SECRET_META_KEYS } = await import('../../../src/db/export-sql');
+		for (const key of SEALED_META_KEYS) expect(SECRET_META_KEYS.has(key), key).toBe(true);
+	});
+
+	it('are carried by a dump with secrets=1, except a login in flight', () => {
+		const store = fakeStore();
+		for (const key of SEALED_META_KEYS) store.sealedRows.set(key, 'v');
+		const carried = sealedExportRows(store).map(([k]) => k);
+		expect(carried).toEqual(
+			expect.arrayContaining(['git_remotes', 'first_run_at', 'recover_spent'])
+		);
+		expect(carried).not.toContain('oidc_pending');
+		expect(carried).not.toContain('oidc_ticket');
+	});
+
+	it('name the keys the owner-recovery and setup modules use', async () => {
+		const { RECOVER_SPENT_KEY } = await import('../../../src/ops/owner-recovery');
+		expect(SEALED_META_KEYS.has(RECOVER_SPENT_KEY)).toBe(true);
 	});
 });

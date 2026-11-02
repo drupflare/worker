@@ -9,7 +9,9 @@
  * @module
  */
 
+import { OIDC_CLIENT_ID_KEY, OIDC_ISSUER_KEY, OIDC_PENDING_KEY, OIDC_TICKET_KEY } from '../do/keys';
 import { sha256Hex } from './owner-recovery';
+import { FIRST_RUN_KEY } from './setup-page';
 
 /**
  * Durable Object key-value storage, which the SQL bridge cannot reach: the platform reserves the
@@ -169,8 +171,9 @@ export async function rotateOwnerToken(
 }
 
 /**
- * Reads a credential from the sealed store. A legacy `cfw_meta` row is moved over on first read;
- * once the sealed store holds a value (or an empty marker) a row is deleted unread.
+ * Reads a credential from the sealed store. A legacy `cfw_meta` row is copied over on first read
+ * and deleted once the copy reads back; once the sealed store holds a value (or an empty marker) a
+ * row is deleted unread.
  */
 export function readSealed(store: SecretStore, key: string): string | null {
 	const sealed = store.sealed.get(key);
@@ -181,7 +184,8 @@ export function readSealed(store: SecretStore, key: string): string | null {
 	}
 	if (legacy === null) return null;
 	store.sealed.put(key, legacy);
-	store.delete(key);
+	// the row goes only once the sealed copy reads back; a run cut off before this line repeats
+	if (store.sealed.get(key) === legacy) store.delete(key);
 	return legacy;
 }
 
@@ -194,11 +198,34 @@ export function writeSealed(store: SecretStore, key: string, value: string): voi
 	if (store.get(key) !== null) store.delete(key);
 }
 
+/**
+ * Authority state that lives in sealed storage; `cfw_meta` holds none of it. The object routes
+ * `metaGet` and `metaSet` for these keys, so no caller names the store.
+ */
+export const SEALED_META_KEYS: ReadonlySet<string> = new Set([
+	'git_remotes',
+	'recover_spent',
+	FIRST_RUN_KEY,
+	'first_run_keys',
+	OIDC_ISSUER_KEY,
+	OIDC_CLIENT_ID_KEY,
+	OIDC_PENDING_KEY,
+	OIDC_TICKET_KEY
+]);
+
 /** the `cfw_meta` key a dump carries the owner hash under, so an import can adopt it */
 export const OWNER_HASH_EXPORT_KEY = 'owner_token_hash';
 
 /** sealed keys a dump with `secrets=1` carries, and the prefixes of the ones keyed by remote id */
-const EXPORTED_SEALED_KEYS = ['cf_oauth_token'];
+const EXPORTED_SEALED_KEYS = [
+	'cf_oauth_token',
+	'git_remotes',
+	'recover_spent',
+	FIRST_RUN_KEY,
+	'first_run_keys',
+	OIDC_ISSUER_KEY,
+	OIDC_CLIENT_ID_KEY
+];
 const EXPORTED_SEALED_PREFIXES = ['git_token_', 'git_hooksecret_'];
 
 /** SHA-256 as `sha256Hex()` writes it */

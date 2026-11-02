@@ -5,10 +5,10 @@
  * can also redeploy the worker and read it, so a one-minute record written there is a proof no
  * weaker than the token. The record names the sha256 of a nonce only the writer knows; presenting
  * the nonce spends the record and returns the token. See "Owner Token Recovery" in
- * `docs/configuration-operations.md`.
+ * `docs/configuration/operations/index.md`.
  * @module
  */
-import type { SecretStore } from './site-secrets';
+import { readSealed, writeSealed, type SecretStore } from './site-secrets';
 
 /** the public route a client presents the nonce to */
 export const RECOVER_PATH = '/recover-token';
@@ -73,17 +73,14 @@ export function judgeProof(
 	return { verdict: 'ok', exp };
 }
 
-/** the part of a secret store the spent-proof table needs */
-type SpentStore = Pick<SecretStore, 'get' | 'set'>;
-
 interface Spent {
 	h: string;
 	exp: number;
 }
 
-function readSpent(store: SpentStore, nowMs: number): Spent[] {
+function readSpent(store: SecretStore, nowMs: number): Spent[] {
 	try {
-		const parsed: unknown = JSON.parse(store.get(RECOVER_SPENT_KEY) ?? '[]');
+		const parsed: unknown = JSON.parse(readSealed(store, RECOVER_SPENT_KEY) ?? '[]');
 		if (!Array.isArray(parsed)) return [];
 		return parsed.filter(
 			(s): s is Spent =>
@@ -102,10 +99,10 @@ function readSpent(store: SpentStore, nowMs: number): Spent[] {
  * the write, which is what makes two racing requests spend a proof once. Entries drop once their
  * `exp` has passed, since an expired record is refused before it gets here.
  */
-export function spendProof(store: SpentStore, hash: string, exp: number, nowMs: number): boolean {
+export function spendProof(store: SecretStore, hash: string, exp: number, nowMs: number): boolean {
 	const spent = readSpent(store, nowMs);
 	if (spent.some((s) => s.h === hash)) return false;
 	spent.push({ h: hash, exp });
-	store.set(RECOVER_SPENT_KEY, JSON.stringify(spent));
+	writeSealed(store, RECOVER_SPENT_KEY, JSON.stringify(spent));
 	return true;
 }

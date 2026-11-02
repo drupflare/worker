@@ -54,7 +54,7 @@ describe('a dump withholds every live credential', () => {
 
 	it('keeps ordinary rows, so a dump is still a dump', () => {
 		// the control: a prefix rule that withheld everything would pass every case above
-		for (const key of ['generation', 'lanes_provisioned', 'driver_digest', 'git_remotes']) {
+		for (const key of ['generation', 'lanes_provisioned', 'driver_digest', 'reconcile_state']) {
 			expect(withheld(key), `${key} was withheld and should not be`).toBe(false);
 		}
 	});

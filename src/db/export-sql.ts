@@ -62,7 +62,16 @@ export const SECRET_META_KEYS = new Set([
 	// the owner hash a dump with `secrets=1` carries; sealed storage holds it, not `cfw_meta`
 	'owner_token_hash',
 	// the SMTP password, in plaintext inside a JSON blob
-	'site_smtp_settings'
+	'site_smtp_settings',
+	// authority state held in sealed storage; a dump with `secrets=1` carries it from there
+	'git_remotes',
+	'recover_spent',
+	'first_run_at',
+	'first_run_keys',
+	'oidc_issuer',
+	'oidc_client_id',
+	'oidc_pending',
+	'oidc_ticket'
 ]);
 
 /**

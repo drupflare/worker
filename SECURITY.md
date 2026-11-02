@@ -9,7 +9,7 @@ Security fixes go into the latest 1.0 release only.
 | 1.0.x   | latest    |
 
 A fix ships as a patch release. A running site picks up the Worker change on its next deploy, and
-a new interpreter build also needs its pin merged. [docs/php-update-delivery.md](docs/php-update-delivery.md)
+a new interpreter build also needs its pin merged. [docs/operating/php-update-delivery/index.md](docs/operating/php-update-delivery/index.md)
 describes that path, and the release notes say which step a given fix needs.
 
 ## Reporting a Vulnerability
@@ -35,7 +35,7 @@ In scope:
 - the `drupflare` and `rom` Drupal modules and the `stream-http` library as packed into this
   repository's `assets/driver.json`
 - the interpreter build pinned in `interp.lock.json` and the workflows that fetch and verify it
-- `docs/security.md` where it states something that is false
+- `docs/security/index.md` where it states something that is false
 
 Out of scope, with where to send it:
 
@@ -54,7 +54,7 @@ projects. What the attacker can then reach from inside the sandbox is in scope h
 ## How the Runtime Contains a Foothold
 
 The full threat model, with the file and the test behind each claim, is
-[docs/security.md](docs/security.md). In short:
+[docs/security/index.md](docs/security/index.md). In short:
 
 - **PHP runs as WebAssembly inside a V8 isolate inside Cloudflare's process sandbox.** There is no
   operating system, shell, web server or inbound socket in the site's trust boundary, and the module
@@ -90,8 +90,8 @@ Drupflare lists what it does not protect against rather than leave it to be foun
   Cloudflare states a V8 patch gap under 24 hours. The PHP interpreter and Drupal are patched through
   Drupflare releases, a separate and slower path.
 
-The [open rows of the class table](docs/security-incidents.md#classes-addressed-in-v104) and the
-[Planned Work](docs/security-incidents.md#planned-work) table list each one with its size.
+The [open rows of the class table](docs/security/incidents.md#classes-addressed-in-v104) and the
+[Planned Work](docs/security/incidents.md#planned-work) table list each one with its size.
 
 ## Maintenance
 

@@ -55,7 +55,7 @@ describe('module specifiers', () => {
 			(f) =>
 				existsSync(f) &&
 				(f === 'package.json' ||
-					/^(scripts|docs|\.github)\//.test(f) ||
+					/^(scripts|docs|notes|\.github)\//.test(f) ||
 					f === 'CLAUDE.md' ||
 					f === 'TECHNICAL_REPORT.md')
 		);

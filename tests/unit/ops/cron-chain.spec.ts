@@ -168,6 +168,24 @@ describe('cronStep: the queue costs one read when there is nothing to do', () =>
 		expect(step.result.skipped).toBe('no queue table');
 		expect(calls).toHaveLength(0);
 	});
+
+	it('skips the update fetch queue, which only hook_cron drains', async () => {
+		const units = cronUnits();
+		const { step, calls } = await withSql(async (sql) => {
+			seed(sql);
+			sql.exec(
+				'INSERT INTO queue (name, data, expire, created) VALUES (?, ?, 0, ?)',
+				'update_fetch_tasks',
+				'x',
+				NOW_S
+			);
+			const deps = stubDeps(sql);
+			const s = await cronStep({ i: units.length - 2 }, deps, {});
+			return { step: s, calls: deps.calls };
+		});
+		expect(calls).toHaveLength(0);
+		expect(step.result.skipped).toBe('queue is empty');
+	});
 });
 
 describe('cronStep: a queue with items repeats the unit instead of advancing', () => {

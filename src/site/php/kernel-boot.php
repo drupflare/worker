@@ -51,9 +51,17 @@ if (!isset($GLOBALS['__pw_kernel'])) {
 }
 // the request stack is what Drupal's URL generator reads for the host, and a cron fragment
 // pushes none of its own -- so without this an absolute URL falls back to a default it invents
+// preHandle() sets the legacy globals for a visitor and a cron boot never calls it, so $base_url
+// stayed NULL and the update module refused its site key in hmacBase64()
 try {
 	if ($origin !== '' && Drupal::hasContainer()) {
 		Drupal::service('request_stack')->push(Request::create(rtrim($origin, '/') . '/', 'GET'));
+	}
+	if (Drupal::hasContainer() && isset($GLOBALS['__pw_kernel'])) {
+		(new ReflectionMethod($GLOBALS['__pw_kernel'], 'initializeRequestGlobals'))->invoke(
+			$GLOBALS['__pw_kernel'],
+			Request::createFromGlobals(),
+		);
 	}
 } catch (Throwable $e) {
 }

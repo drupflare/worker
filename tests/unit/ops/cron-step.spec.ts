@@ -8,6 +8,7 @@ import {
 	cronHooksFromList,
 	cronUnits,
 	HIBERNATION_IDLE_MS,
+	idleBounds,
 	idleRearmMs,
 	keepWarmMs,
 	KNOWN_CRON_HOOKS,
@@ -334,6 +335,22 @@ describe('the warm re-arm has to beat the hibernation threshold', () => {
 		// without retention a firing past hibernation re-boots every time
 		expect(warmCeilingMs({ WARM_CEILING_MS: '30000', RETAIN_INTERPRETER: '0' })).toBe(9_500);
 		expect(warmCeilingMs({ WARM_CEILING_MS: '30000' }, false)).toBe(9_500);
+	});
+
+	it('reads the idle bounds, the ceiling defaulting to the floor so nothing fades unset', () => {
+		expect(idleBounds({})).toEqual({ floorMs: 240_000, ceilingMs: 240_000 });
+		expect(idleBounds({ IDLE_CEILING_MS: '3600000' })).toEqual({
+			floorMs: 240_000,
+			ceilingMs: 3_600_000
+		});
+		expect(idleBounds({ IDLE_CEILING_MS: 900_000, KEEP_WARM_MS: '60000' })).toEqual({
+			floorMs: 60_000,
+			ceilingMs: 900_000
+		});
+		// a ceiling under the floor, or unusable, is the floor; a huge one is capped at an hour
+		expect(idleBounds({ IDLE_CEILING_MS: '1000' }).ceilingMs).toBe(240_000);
+		expect(idleBounds({ IDLE_CEILING_MS: 'abc' }).ceilingMs).toBe(240_000);
+		expect(idleBounds({ IDLE_CEILING_MS: '999999999' }).ceilingMs).toBe(3_600_000);
 	});
 
 	/**

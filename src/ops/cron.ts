@@ -249,6 +249,7 @@ export interface CronEnv {
 	KEEP_WARM_MS?: string | number;
 	WARM_INTERVAL_MS?: string | number;
 	WARM_CEILING_MS?: string | number;
+	IDLE_CEILING_MS?: string | number;
 	SITE_WARM?: string | number;
 	RETAIN_INTERPRETER?: string | number;
 }
@@ -347,6 +348,22 @@ export const HIBERNATION_IDLE_MS = 10_000;
 export function keepWarmMs(env?: CronEnv): number {
 	const n = Number(env?.KEEP_WARM_MS ?? 240000);
 	return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 240000;
+}
+
+/** the highest idle ceiling the lever accepts, one hour */
+export const IDLE_CEILING_MAX_MS = 3_600_000;
+
+/**
+ * The idle fade's bounds: `KEEP_WARM_MS` is the floor and `IDLE_CEILING_MS` the ceiling.
+ *
+ * Unset, the ceiling is the floor and the re-arm stays the fixed constant; a ceiling below the
+ * floor reads as the floor.
+ */
+export function idleBounds(env?: CronEnv): { floorMs: number; ceilingMs: number } {
+	const floorMs = keepWarmMs(env);
+	const n = Number(env?.IDLE_CEILING_MS);
+	const set = Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), IDLE_CEILING_MAX_MS) : 0;
+	return { floorMs, ceilingMs: Math.max(floorMs, set) };
 }
 
 /**
@@ -1029,6 +1046,8 @@ export async function cronStep(
  *
  * Pure SQL: asking PHP which queues have work costs a kernel boot to be told "none". `expire = 0`
  * is the unclaimed condition, so an item under another invocation's lease is not waiting.
+ * `update_fetch_tasks` has no worker plugin and drains inside `hook_cron`, so picking it boots a
+ * kernel to learn nothing and starves the queues that do have one.
  *
  * `exclude` stops the deepest queue starving the others; `prefer` keeps a repeating (mid-drain)
  * unit on the queue it started.
@@ -1041,7 +1060,7 @@ export function queuePending(
 		const rows = sql
 			.exec(
 				`SELECT name, COUNT(*) AS c FROM queue
-         WHERE expire = 0 GROUP BY name ORDER BY c DESC, name ASC`
+         WHERE expire = 0 AND name <> 'update_fetch_tasks' GROUP BY name ORDER BY c DESC, name ASC`
 			)
 			.toArray();
 		if (rows.length === 0) return { name: null, reason: 'queue is empty', queues: {} };

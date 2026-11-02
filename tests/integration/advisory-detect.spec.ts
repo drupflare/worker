@@ -23,11 +23,15 @@ const deps = (site: ServeDo) => ({
 	runJson: (code: string) => site.runJson(code)
 });
 
-async function sweep(site: ServeDo, passes: number): Promise<string[]> {
+async function sweep(
+	site: ServeDo,
+	passes: number,
+	options: Parameters<typeof driveCron>[2] = {}
+): Promise<string[]> {
 	let cursor: unknown = undefined;
 	const ran: string[] = [];
 	for (let i = 0; i < passes; i++) {
-		const driven = await driveCron(cursor, deps(site), {}, DEFAULT_CRON_BUDGET);
+		const driven = await driveCron(cursor, deps(site), options, DEFAULT_CRON_BUDGET);
 		cursor = writeCursor(driven.cursor as StoredCursor);
 		ran.push(...driven.ran);
 	}
@@ -82,7 +86,8 @@ describe('the advisory sweep writes a record cron actually produces', () => {
 ]);
 $out['seeded'] = 1;`)
 				);
-				await sweep(site, 8);
+				// the update hook refreshes project data now, so it must not overwrite the seed
+				await sweep(site, 8, { hooks: [] });
 				const res = await site.fetch(new Request('https://do.local/__health'));
 				return {
 					status: res.status,
@@ -133,7 +138,7 @@ $out['seeded'] = 1;`)
 ]);
 $out['seeded'] = 1;`)
 				);
-				await sweep(site, 8);
+				await sweep(site, 8, { hooks: [] });
 				return site.advisoryVerdict();
 			});
 

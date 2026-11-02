@@ -52,7 +52,10 @@ export async function cronPhase(ctx: AlarmContext): Promise<void> {
 					() =>
 						driveCron(
 							cursor,
-							{ sql: site.sql, runJson: (code: string) => site.runJson(code) },
+							{
+								sql: site.sql,
+								runJson: (code: string) => site.runJsonMaybeParked(code)
+							},
 							// the pinned origin; cron has no request
 							// and a default would point mail at localhost
 							{

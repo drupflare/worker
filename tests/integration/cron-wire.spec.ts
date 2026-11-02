@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { kernelBoot, runCronHook } from '../../src/drupal/cron-php';
 import { writeCursor, type StoredCursor } from '../../src/ops/cron';
 import { DEFAULT_CRON_BUDGET, driveCron } from '../../src/ops/cron-drive';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
@@ -231,6 +232,71 @@ describe('the hook list the object schedules from', () => {
 				ran.some((unit) => unit === 'hook:a_contrib_module'),
 				`the ring ran ${JSON.stringify(ran)} and never reached the discovered module`
 			).toBe(true);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'runs each cron hook through the parked runner, as every other shell-tier run does',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				const parked: string[] = [];
+				const ran: string[] = [];
+				const parkedRun = (site as any).runJsonMaybeParked.bind(site);
+				(site as any).runJsonMaybeParked = (code: string) => {
+					parked.push(code);
+					return parkedRun(code);
+				};
+				for (let i = 0; i < 8; i++) {
+					await site.storage.put('cronLastRunMs', Date.now() - 60 * 60 * 1000);
+					await site.alarm();
+					const last = (site as any).lastCron?.value;
+					if (Array.isArray(last?.ran)) ran.push(...last.ran);
+				}
+				return { ran, parked, origin: site.canonicalOrigin() };
+			});
+
+			const hooks = out.ran.filter((unit) => unit.startsWith('hook:'));
+			expect(hooks.length, `the ring ran ${JSON.stringify(out.ran)}`).toBeGreaterThan(0);
+			for (const unit of hooks) {
+				const module = unit.slice('hook:'.length);
+				expect(
+					out.parked,
+					`${unit} went through runJson, so its outbound calls never reach the park`
+				).toContain(runCronHook(module, out.origin));
+			}
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+describe('the cron boot gives Drupal the globals a web request gets', () => {
+	const origin = 'https://cron.example.com';
+
+	it(
+		'sets $base_url from the pinned origin, as preHandle() does for a visitor',
+		async () => {
+			const globals = await inObject(freshSite(), async (site) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				return site.runJson(
+					`<?php\n${kernelBoot(JSON.stringify(JSON.stringify(origin)))}\n` +
+						`echo json_encode(['base_url' => $GLOBALS['base_url'] ?? null, 'base_path' => $GLOBALS['base_path'] ?? null]);`
+				);
+			});
+			expect(globals).toEqual({ base_url: origin, base_path: '/' });
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'runs the update hook without refusing its site key on a migrated site',
+		async () => {
+			const hook = await inObject(freshSite(), async (site) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				return site.runJson(runCronHook('update', origin));
+			});
+			expect(hook.error, 'hook:update refused its site key').toBeUndefined();
 		},
 		REQUEST_TIMEOUT
 	);

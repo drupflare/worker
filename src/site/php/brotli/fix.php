@@ -32,7 +32,7 @@ if (!function_exists('brotli_compress') && function_exists('vrzno_env')) {
 		 * Runs one op over the bridge.
 		 *
 		 * @param string $op
-		 *   compress or uncompress.
+		 *   The operation, compress or uncompress.
 		 * @param string $data
 		 *   The bytes to transform.
 		 * @param int $level
@@ -43,6 +43,7 @@ if (!function_exists('brotli_compress') && function_exists('vrzno_env')) {
 		 *   A preset dictionary, or an empty string for none. The host refuses one.
 		 *
 		 * @return array{ok: bool, data?: string, error?: string}
+		 *   The decoded reply, or the reason it failed.
 		 */
 		function cfw_brotli($op, $data, $level = 11, $mode = 0, $dict = ''): array
 		{
@@ -87,6 +88,8 @@ if (!function_exists('brotli_compress') && function_exists('vrzno_env')) {
 		}
 
 		/**
+		 * Compresses a string with brotli.
+		 *
 		 * @param string $data
 		 *   The bytes to compress.
 		 * @param int $level
@@ -97,6 +100,7 @@ if (!function_exists('brotli_compress') && function_exists('vrzno_env')) {
 		 *   Not supported on this host; a non-empty value is refused.
 		 *
 		 * @return string|false
+		 *   The compressed bytes, or FALSE on failure.
 		 */
 		function brotli_compress($data, $level = 11, $mode = 0, $dict = null)
 		{
@@ -105,12 +109,15 @@ if (!function_exists('brotli_compress') && function_exists('vrzno_env')) {
 		}
 
 		/**
+		 * Decompresses a brotli stream.
+		 *
 		 * @param string $data
 		 *   The brotli stream.
 		 * @param string|null $dict
 		 *   Not supported on this host; a non-empty value is refused.
 		 *
 		 * @return string|false
+		 *   The decompressed bytes, or FALSE on failure.
 		 */
 		function brotli_uncompress($data, $dict = null)
 		{

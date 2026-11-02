@@ -1,6 +1,12 @@
 <?php
 
 if (!function_exists('cfw_extensions_installed')) {
+	/**
+	 * Marks that the extension functions below are in place.
+	 *
+	 * @return bool
+	 *   Always TRUE.
+	 */
 	function cfw_extensions_installed(): bool
 	{
 		return true;
@@ -9,8 +15,13 @@ if (!function_exists('cfw_extensions_installed')) {
 	// __CFW_EXTENSION_TABLE__
 
 	/**
+	 * Tells whether an extension is loaded, counting the gated shims.
+	 *
 	 * @param string $extension
 	 *   An extension name, in any case.
+	 *
+	 * @return bool
+	 *   TRUE when the extension is built in or a gated shim covers its whole API.
 	 */
 	function extension_loaded($extension): bool
 	{
@@ -37,6 +48,7 @@ if (!function_exists('cfw_extensions_installed')) {
 	 *   Whether to list Zend extensions instead.
 	 *
 	 * @return array<int, string>
+	 *   The extension names.
 	 */
 	function get_loaded_extensions($zend_extensions = false): array
 	{
@@ -63,10 +75,13 @@ if (!function_exists('cfw_extensions_installed')) {
 	}
 
 	/**
+	 * Lists the functions an extension provides, counting the gated shims.
+	 *
 	 * @param string $extension
 	 *   An extension name, in any case.
 	 *
 	 * @return array<int, string>|false
+	 *   The function names, or FALSE when the extension is unknown or has none.
 	 */
 	function get_extension_funcs($extension)
 	{

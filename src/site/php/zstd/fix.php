@@ -23,7 +23,7 @@ if (!function_exists('zstd_compress') && function_exists('vrzno_env')) {
 		 * Runs one op over the bridge.
 		 *
 		 * @param string $op
-		 *   compress or uncompress.
+		 *   The operation, compress or uncompress.
 		 * @param string $data
 		 *   The bytes to transform.
 		 * @param int $level
@@ -32,6 +32,7 @@ if (!function_exists('zstd_compress') && function_exists('vrzno_env')) {
 		 *   A preset dictionary, or an empty string for none.
 		 *
 		 * @return array{ok: bool, data?: string, error?: string}
+		 *   The decoded reply, or the reason it failed.
 		 */
 		function cfw_zstd($op, $data, $level = 3, $dict = ''): array
 		{
@@ -75,6 +76,8 @@ if (!function_exists('zstd_compress') && function_exists('vrzno_env')) {
 		}
 
 		/**
+		 * Compresses a string with zstd.
+		 *
 		 * @param string $data
 		 *   The bytes to compress.
 		 * @param int $level
@@ -83,6 +86,7 @@ if (!function_exists('zstd_compress') && function_exists('vrzno_env')) {
 		 *   A preset dictionary, or NULL for none.
 		 *
 		 * @return string|false
+		 *   The compressed bytes, or FALSE on failure.
 		 */
 		function zstd_compress($data, $level = 3, $dict = null)
 		{
@@ -91,12 +95,15 @@ if (!function_exists('zstd_compress') && function_exists('vrzno_env')) {
 		}
 
 		/**
+		 * Decompresses a zstd frame.
+		 *
 		 * @param string $data
 		 *   The zstd frame.
 		 * @param string|null $dict
 		 *   The dictionary the frame was compressed with, or NULL for none.
 		 *
 		 * @return string|false
+		 *   The decompressed bytes, or FALSE on failure.
 		 */
 		function zstd_uncompress($data, $dict = null)
 		{
@@ -113,6 +120,7 @@ if (!function_exists('zstd_compress') && function_exists('vrzno_env')) {
 		 *   The dictionary the frame was compressed with, or NULL for none.
 		 *
 		 * @return string|false
+		 *   The decompressed bytes, or FALSE on failure.
 		 */
 		function zstd_decompress($data, $dict = null)
 		{
@@ -121,6 +129,8 @@ if (!function_exists('zstd_compress') && function_exists('vrzno_env')) {
 		}
 
 		/**
+		 * Compresses a string with zstd and a required dictionary.
+		 *
 		 * @param string $data
 		 *   The bytes to compress.
 		 * @param string $dict
@@ -129,6 +139,7 @@ if (!function_exists('zstd_compress') && function_exists('vrzno_env')) {
 		 *   A zstd level, 1 to 22 (or zero and below).
 		 *
 		 * @return string|false
+		 *   The compressed bytes, or FALSE on failure.
 		 */
 		function zstd_compress_dict($data, $dict, $level = 3)
 		{
@@ -137,12 +148,15 @@ if (!function_exists('zstd_compress') && function_exists('vrzno_env')) {
 		}
 
 		/**
+		 * Decompresses a zstd frame with a required dictionary.
+		 *
 		 * @param string $data
 		 *   The zstd frame.
 		 * @param string $dict
 		 *   The dictionary the frame was compressed with; required.
 		 *
 		 * @return string|false
+		 *   The decompressed bytes, or FALSE on failure.
 		 */
 		function zstd_uncompress_dict($data, $dict)
 		{

@@ -178,8 +178,10 @@ if (!function_exists('cfw_sodium_installed')) {
 				switch ($reply['c'] ?? '') {
 					case 'TypeError':
 						throw new TypeError($why);
+
 					case 'ValueError':
 						throw new ValueError($why);
+
 					default:
 						throw new SodiumException($why);
 				}

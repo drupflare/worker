@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { configDigest, type BootImageIndex, type BootImageVariant } from '../src/ops/boot-image.ts';
 
@@ -14,7 +15,11 @@ export const INTERPRETER_WASM = resolve(ROOT, '.interp', 'php8.5.tuned.wasm');
 
 /** the config digest of the packed database, computed by the same function the object runs */
 export function packConfigDigest(path = PACK_SQLITE): string {
-	const db = new DatabaseSync(path, { readOnly: true });
+	// the pack is flagged WAL and a read-only open cannot create the -shm file it needs
+	const dir = mkdtempSync(join(tmpdir(), 'pack-digest-'));
+	const copy = join(dir, 'site.sqlite');
+	copyFileSync(path, copy);
+	const db = new DatabaseSync(copy);
 	try {
 		return configDigest({
 			exec: (query: string) => {
@@ -24,6 +29,7 @@ export function packConfigDigest(path = PACK_SQLITE): string {
 		});
 	} finally {
 		db.close();
+		rmSync(dir, { recursive: true, force: true });
 	}
 }
 

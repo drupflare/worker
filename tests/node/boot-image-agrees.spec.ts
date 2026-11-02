@@ -94,6 +94,13 @@ describe('the digest of the packed database', () => {
 			)
 		).not.toBe(base);
 	});
+
+	it('reads a WAL-flagged database that has no -shm file, and leaves none behind', () => {
+		const path = database('wal.sqlite', (db) => db.exec('PRAGMA journal_mode=WAL'));
+		expect(existsSync(`${path}-shm`)).toBe(false);
+		expect(packConfigDigest(path)).toBe(packConfigDigest(database('plain.sqlite')));
+		expect(existsSync(`${path}-shm`)).toBe(false);
+	});
 });
 
 describe.each(published)('the published %s boot image', (variant) => {

@@ -1,29 +1,10 @@
 /**
- * Backs up the artifacts nothing can regenerate, and verifies the backup from anywhere.
- *
  * ```sh
  * bun scripts/backup-cdn.ts                 # drift between disk and cdn-manifest.json
  * bun scripts/backup-cdn.ts --write         # rewrite the manifest from disk
  * bun scripts/backup-cdn.ts --upload        # put what the bucket lacks or disagrees on
  * bun scripts/backup-cdn.ts --verify        # HEAD every key over HTTPS; no credentials
  * ```
- *
- * TWO ARTIFACTS QUALIFY: `vendor/`, which is 14 hand-built php-wasm binaries produced by a Docker
- * toolchain session, and `assets/drupal/site.sqlite`, whose trim recipe is written down nowhere.
- * Everything else here is output -- the packs, `assets/driver.json`, the `.zst` frames, `typedoc/` --
- * and backing output up is what produced three divergent copies of the one file that mattered.
- *
- * AN UPLOAD THAT REPLACES BYTES ARCHIVES THEM FIRST, unconditionally. It used to refuse and ask for
- * `--allow-overwrite`, on the reasoning that an overwrite "destroys a version nothing regenerates".
- * That is true and a content-addressed archive answers it completely, where a flag answers it only
- * while somebody is still reading the message. The one refusal left is a TRACKED file with
- * uncommitted changes, which no archive can help with: the bytes going up would be recorded nowhere.
- *
- * VERIFICATION IS BY ETAG, NOT BY SIZE. R2 returns an object's md5 as its ETag for a single-part
- * upload, so content is checked without downloading 214 MB. A multipart ETag carries a `-N` suffix and
- * is not an md5; those fall back to a size check and report `size-only`.
- *
- * @see docs/repository-layout.md for what is irreproducible and why
  */
 
 import { execFileSync } from 'node:child_process';
@@ -35,23 +16,10 @@ import { dirname, join, resolve } from 'node:path';
 export const BUCKET = 'drupflare-cdn';
 export const ORIGIN = 'https://cdn.drupflare.com';
 
-/**
- * The same bucket under a second name, tried when the first is unreachable.
- *
- * Not a different store and not a different manifest -- every key, size and hash is identical, so a
- * fetch that falls through here is still verified against `cdn-manifest.json`. `ORIGIN` stays the
- * documented one.
- */
+/** the same bucket under a second name, tried when the first is unreachable; still manifest-verified */
 export const ORIGIN_FALLBACK = 'https://cdn.drupflare.app';
 
-/**
- * The names this bucket answered under before the drupflare domains, still serving it.
- *
- * Kept last so a checkout, a backup or a workflow that still names one keeps working. They are never
- * written into the manifest. Some networks blocklist the whole `.dev` TLD, which surfaces as
- * `UNABLE_TO_VERIFY_LEAF_SIGNATURE` rather than as anything that reads like a DNS policy, which is
- * part of why they are no longer first.
- */
+/** names this bucket answered under before the drupflare domains; kept last, never written to the manifest */
 export const LEGACY_ORIGINS = [
 	'https://drupflare-cdn.gmitch215.dev',
 	'https://drupflare-cdn.gmitch215.xyz'
@@ -60,13 +28,7 @@ export const LEGACY_ORIGINS = [
 /** the origins to try, in order */
 export const ORIGINS = [ORIGIN, ORIGIN_FALLBACK, ...LEGACY_ORIGINS];
 
-/**
- * Fetches one key, trying each origin in turn.
- *
- * Returns the first response that arrives at all, including a 404 -- a reachable origin answering
- * "no such key" is an answer, and retrying it elsewhere would mask a real manifest drift. Only a
- * transport failure moves to the next.
- */
+/** fetches one key, trying each origin in turn; any answer, including a 404, ends the search */
 export async function fetchFromCdn(key: string, init?: RequestInit): Promise<Response> {
 	let last: unknown;
 	for (const origin of ORIGINS) {
@@ -92,16 +54,7 @@ export type CdnEntry = {
 	md5: string;
 	/** where the key belongs on disk, when that is not the key itself */
 	mirrors?: string;
-	/**
-	 * whether the REPOSITORY is the source of truth for the mirrored path.
-	 *
-	 * A restore verifies but never overwrites one of these. For an untracked artifact the bucket is
-	 * authoritative and a download is right; for a committed file the commit is, and restoring over
-	 * it is a downgrade -- which is what silently reverted the container-cid repair.
-	 *
-	 * ON A LIVE KEY TOO, not only an archived one: `assets/drupal/site.sqlite` carries it in both
-	 * groups, and an upload reads it to decide whether a dirty working copy may be published.
-	 */
+	/** the repository is the source of truth for this path; a restore verifies it and never overwrites it */
 	tracked?: boolean;
 };
 
@@ -117,41 +70,14 @@ export type CdnManifest = {
 	archived: readonly ArchivedEntry[];
 };
 
-/**
- * The only two things worth backing up.
- *
- * A directory entry is walked; a file entry is taken as is. Nothing regenerable belongs here, and
- * `bun run assets` / `bun run build:wasm` / `bun run assets:driver` is the test of whether something
- * is regenerable.
- */
+/** the artifacts worth backing up; a directory entry is walked, a file entry is taken as is */
 export const IRREPRODUCIBLE: readonly { path: string; dir?: boolean; tracked?: boolean }[] = [
 	{ path: 'vendor', dir: true },
-	// TRACKED HERE RATHER THAN HAND-ADDED TO THE JSON, which is where it was and which `--write`
-	// silently dropped on its next run. The flag decides whether `restore-artifacts` may overwrite
-	// the file and whether an upload may publish a dirty working copy, so losing it on a regenerate
-	// is the same silent-drift shape the flag was added to prevent
+	// tracked here, not hand-added to the JSON, because `--write` dropped a hand-added flag on its next run.
 	{ path: 'assets/drupal/site.sqlite', tracked: true }
 ];
 
-/**
- * Objects the bucket holds that the tree does not, pinned so they cannot vanish unnoticed.
- *
- * Two kinds. **Superseded `site.sqlite` lineages**: the SQLite header change counter orders the three
- * copies that existed -- live at 19, the `.pack-backup` rollback point at 16, and the original
- * hand-trimmed artifact at 13 with 1618 pages against the current 1852. `assets/drupal/site.sqlite` in
- * the bucket is the live one; the older two are kept here. **A mirror of the shipping interpreter**,
- * under phasm's own variant name, because it comes from a workflow artifact and those expire after 90
- * days.
- *
- * **AND A PAIR THAT WAS DROPPED FROM THE MANIFEST AND SURVIVED IN THE BUCKET.**
- * `vendor/static-control85/php8.5*` was removed when the shipping binary moved to `static-long64`.
- * It reads as dead weight and is not: the bytes are the WASM32 ARM, whose sha appears nowhere else
- * in this manifest and which exists locally only in gitignored `.interp/`. The key name is a third
- * thing again -- phasm's own `vendor/static-control85` is a different 12,676,181-byte build. Dropping
- * a key does not delete the object, so re-pinning costs nothing and makes it checkable.
- *
- * Verified, never uploaded.
- */
+/** objects the bucket holds that the tree does not, pinned so they cannot vanish; verified, never uploaded */
 export const ARCHIVED: readonly ArchivedEntry[] = readArchived();
 
 /** the list lives in the manifest, and `--upload` appends to it, so no entry is written by hand */
@@ -189,13 +115,7 @@ export function digests(path: string): { sha256: string; md5: string } {
 	};
 }
 
-/**
- * Moves a live mirrored entry's digests to the bytes its local file holds now.
- *
- * An upload replaces what a live key serves, and the manifest has to describe the replacement or
- * `restore-artifacts` refuses the new bytes (`got 14011458 bytes, manifest says 13401742`). A
- * `snapshots/` key is content-addressed and never moves, and an absent file is an unbuilt tree.
- */
+/** moves a live mirrored entry's digests to the bytes its local file holds now; `snapshots/` never moves */
 export function refreshMirrors(
 	root: string,
 	archived: readonly ArchivedEntry[]
@@ -255,12 +175,7 @@ export function driftBetween(committed: CdnManifest, current: CdnManifest): Drif
 export type KeyVerdict =
 	'ok' | 'size-only' | 'missing' | 'size-mismatch' | 'etag-mismatch' | 'no-length';
 
-/**
- * Scores a HEAD response against the manifest entry.
- *
- * `size-only` is a pass that names what it could not check: a multipart upload's ETag is not an md5, so
- * content cannot be compared without downloading the object.
- */
+/** scores a HEAD response against the manifest entry; `size-only` names what it could not check */
 export function verdictFor(
 	entry: CdnEntry,
 	status: number,
@@ -275,13 +190,7 @@ export function verdictFor(
 	return clean === entry.md5 ? 'ok' : 'etag-mismatch';
 }
 
-/**
- * HEADs one key over the public domain, which needs no credential.
- *
- * `Accept-Encoding: identity` is load-bearing. The domain answers a default HEAD with
- * `content-encoding: zstd` and NO `content-length`, so the size check degrades to comparing nothing;
- * asking for identity returns the object's own byte count and its ETag.
- */
+/** HEADs one key over the public domain; `Accept-Encoding: identity` keeps the byte count and ETag */
 export async function headKey(
 	origin: string,
 	key: string
@@ -317,21 +226,7 @@ function put(root: string, key: string, file = join(root, key)): void {
 	);
 }
 
-/**
- * Copies the bucket's CURRENT bytes to a content-addressed key, before anything replaces them.
- *
- * This is what `--allow-overwrite` used to stand in for, and it is strictly better at the job that
- * flag was added to do. Its own comment said an overwrite "destroys a version nothing regenerates";
- * a content-addressed archive answers that completely, and a flag answers it only while somebody is
- * still reading the message rather than reflexively passing it. So the archive is unconditional and
- * the flag is gone.
- *
- * Content-addressed, so re-archiving the same bytes is the same key and costs nothing. The name
- * matches the three `snapshots/site.sqlite.<sha12>` entries already in the manifest, which were made
- * by hand for exactly this reason.
- *
- * @returns the archive key, so the caller can name it in the manifest.
- */
+/** copies the bucket's current bytes to a content-addressed key before anything replaces them */
 export function archiveRemote(root: string, key: string): ArchivedEntry {
 	const scratch = join(root, '.cdn-archive');
 	mkdirSync(scratch, { recursive: true });
@@ -366,15 +261,7 @@ export function withArchives(
 	return [...archived, ...added.filter((e) => !have.has(e.key))];
 }
 
-/**
- * Whether a TRACKED artifact's working copy is the committed one.
- *
- * The one refusal an archive cannot answer. Archiving preserves the bytes being replaced; it says
- * nothing about the bytes going up. For a tracked artifact git decides what is canonical, so
- * publishing a dirty working copy puts something in the bucket that no commit records -- and
- * `assets/drupal/site.sqlite` is hand-trimmed with its recipe written down nowhere, which is exactly
- * the file where that would be unrecoverable.
- */
+/** refuses to publish a dirty working copy of a tracked artifact, since no archive can record its bytes */
 export function committedBytes(root: string, path: string): boolean {
 	try {
 		const out = execFileSync('git', ['status', '--porcelain', '--', path], {
@@ -409,13 +296,7 @@ export function mirrorProblems(root: string, archived: readonly ArchivedEntry[])
 	return problems;
 }
 
-/**
- * Downloads one key over the public domain and verifies it against the manifest's own digest.
- *
- * No credential, same as `--verify`: the bucket is fronted by a custom domain, which is what lets CI
- * restore a gitignored artifact without a secret. The size and sha256 come from `cdn-manifest.json`,
- * so a truncated or swapped object fails here rather than as a confusing wasm error later.
- */
+/** downloads one key over the public domain and verifies it against the manifest's own digest */
 async function restoreKey(root: string, entry: CdnEntry): Promise<void> {
 	const res = await fetch(`${ORIGIN}/${entry.key}`, {
 		headers: { 'accept-encoding': 'identity' }
@@ -436,13 +317,8 @@ async function restoreKey(root: string, entry: CdnEntry): Promise<void> {
 
 if (import.meta.main) {
 	const root = resolve(import.meta.dirname, '..');
-	// LAZY, AND THIS IS THE WHOLE REASON `--verify` HAD NEVER VERIFIED A KEY. `manifestFromDisk()`
-	// walks `vendor/static-long64/`, which exists only on a machine that ran `composer install`;
-	// CI never does. Called unconditionally here it threw `ENOENT: scandir .../vendor` before the
-	// dispatch below, so every scheduled run exited 1 before its first HTTP HEAD -- and
-	// `backup.yml` piped through `tee` with no `pipefail`, so the step reported the exit status of
-	// `tee`. Nine consecutive green runs verified nothing. `--verify` reads the committed manifest
-	// and never needs this at all.
+	// lazy: an eager `manifestFromDisk()` threw on CI, where `vendor/` is absent, before `--verify` ran.
+	// `--verify` reads the committed manifest and never needs the disk walk.
 	let walked: CdnManifest | null = null;
 	const current = (): CdnManifest => (walked ??= manifestFromDisk(root));
 	const committed = readManifest(root);
@@ -486,19 +362,7 @@ if (import.meta.main) {
 		const problems: string[] = [];
 		/** archive entries written this run, recorded in the manifest before the upload returns */
 		const archived: ArchivedEntry[] = [];
-		/**
-		 * A SUPERSEDED LINEAGE IS IMMUTABLE; A MIRROR OF A LIVE FILE IS NOT, and treating both as
-		 * archives is why an interpreter bump could not be published.
-		 *
-		 * `--upload` walked `keys` only, and the shipping interpreter is in `archived` -- it lives in
-		 * the bucket under phasm's variant name and has no path in this tree. So the documented
-		 * two-step ("`bun run backup:cdn` publishes the new bytes") could not do its first step, and
-		 * a run of it reported success having uploaded everything EXCEPT the binary it was run for.
-		 *
-		 * `mirrors` is the distinction and it was already there: an archived entry that names a local
-		 * file tracks that file and moves with it; one without a `mirrors` field is history and is
-		 * never uploaded. The old bytes are archived before the replacement either way.
-		 */
+		/** a superseded lineage is immutable; a mirror of a live file moves with its file */
 		const mirroredArchives = (manifest.archived ?? ARCHIVED).filter(
 			(e) => e.mirrors !== undefined
 		);
@@ -507,9 +371,7 @@ if (import.meta.main) {
 			: [...manifest.keys, ...(manifest.archived ?? ARCHIVED)];
 
 		for (const entry of checked) {
-			// SCORED AGAINST THE BYTES ABOUT TO GO UP, not the bytes the manifest last recorded.
-			// For a mirrored archive those differ by definition during a bump -- that IS the bump --
-			// and scoring the stale record reported `ok` and skipped the upload
+			// scored against the bytes about to go up, not the bytes the manifest last recorded.
 			const source = join(root, entry.mirrors ?? entry.key);
 			const going =
 				has('upload') && existsSync(source)
@@ -524,10 +386,7 @@ if (import.meta.main) {
 				problems.push(`${entry.key}: ${verdict} (remote=${length ?? 'none'})`);
 				continue;
 			}
-			// A DIRTY TRACKED FILE IS THE ONE REFUSAL LEFT. Everything else is archived and then
-			// replaced: see `archiveRemote`. This case is different in kind -- the bytes going UP
-			// are an uncommitted edit, so the bucket would carry something no commit records, and
-			// an archive of the old bytes does not help with that.
+			// a dirty tracked file is the one refusal left: the bytes going up are an uncommitted edit.
 			const local = entry.mirrors ?? entry.key;
 			if (entry.tracked === true && !committedBytes(root, local)) {
 				problems.push(

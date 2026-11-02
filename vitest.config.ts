@@ -372,6 +372,9 @@ export default defineConfig({
 					__DRUPFLARE_ABI__: JSON.stringify(abi ?? ''),
 					__DRUPFLARE_PACK_FROM_SOURCE__: JSON.stringify(
 						process.env.PACK_FROM_SOURCE === '1'
+					),
+					__DRUPFLARE_CONTRIB_FIXTURE__: JSON.stringify(
+						process.env.CONTRIB_FIXTURE === '1'
 					)
 				},
 				test: {

@@ -183,6 +183,38 @@ const INPUT_REQUIRED_LOCAL = '$cache = NULL;';
 }
 // #endregion
 
+// #region top bar page context tags
+// the top bar is stored permanently under the route context and PageContext names no tag, so a
+// title edit never reached the label; the entity's own tags are what a save invalidates
+const PAGE_CONTEXT = 'core/modules/navigation/src/Plugin/TopBarItem/PageContext.php';
+const PAGE_CONTEXT_ANCHOR =
+	'    if (!$entity = $this->entityRouteHelper->getContentEntityFromRoute()) {\n      return $build;\n    }\n';
+const PAGE_CONTEXT_TAGS = "    $build['#cache']['tags'] = $entity->getCacheTags();\n";
+
+{
+	const path = join(root, PAGE_CONTEXT);
+	let src = null;
+	try {
+		src = await readFile(path, 'utf8');
+	} catch {
+		skipped.push(`${PAGE_CONTEXT} (not present)`);
+	}
+	if (src !== null) {
+		if (src.includes(PAGE_CONTEXT_TAGS)) {
+			skipped.push(`${PAGE_CONTEXT} (entity cache tags already added)`);
+		} else if (!src.includes(PAGE_CONTEXT_ANCHOR)) {
+			throw new Error(`${PAGE_CONTEXT}: build() moved; update scripts/patch-drupal.mjs`);
+		} else {
+			await writeFile(
+				path,
+				src.replace(PAGE_CONTEXT_ANCHOR, PAGE_CONTEXT_ANCHOR + PAGE_CONTEXT_TAGS)
+			);
+			applied.push(`${PAGE_CONTEXT} (entity cache tags on the title)`);
+		}
+	}
+}
+// #endregion
+
 // #region twig php storage
 const SETTINGS = 'sites/default/settings.php';
 const TWIG_STORAGE_MARKER = "$settings['php_storage']['twig']";

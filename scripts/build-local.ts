@@ -24,7 +24,7 @@
  * busy port is not a reason to discard twelve finished ones.
  *
  * @see scripts/hydrate.ts for the payload half
- * @see docs/building-from-source.md for what each step is for and why the order is the order
+ * @see docs/getting-started/building-from-source/index.md for what each step is for and why the order is the order
  */
 
 import { execFileSync } from 'node:child_process';

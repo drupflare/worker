@@ -110,6 +110,146 @@ jobs:
             echo "\`REQUIRE_ARTIFACTS=1\`, so a stale pack fails before anything is published."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  contrib:
+    name: Verify the Contributed Modules
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: gate
+
+    permissions:
+      contents: read
+
+    env:
+      COMPOSER_CACHE_DIR: ${{ github.workspace }}/.composer-cache
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Out the Siblings
+        uses: ./.github/actions/siblings
+      - name: Key the Contrib Run
+        id: key
+        run: |
+          week=$(date -u +%G-%V)
+          siblings=$(for s in drupflare rom stream-http; do git -C ".siblings/$s" rev-parse HEAD; done | sha256sum | cut -c1-16)
+          test -n "$week" -a -n "$siblings" || { echo "::error::no contrib key resolved" >&2; exit 1; }
+          echo "week=$week" >> "$GITHUB_OUTPUT"
+          echo "siblings=$siblings" >> "$GITHUB_OUTPUT"
+      - name: Restore the Pass Marker
+        id: marker
+        uses: actions/cache@v6
+        with:
+          path: .contrib-marker
+          key: contrib-${{ steps.key.outputs.week }}-${{ steps.key.outputs.siblings }}-${{ hashFiles('config/modules.yml', 'composer.json', 'composer.lock', 'cdn-manifest.json', 'interp.lock.json', 'bun.lock', 'vitest.config.ts', '.github/workflows/build.yml', 'src/**', 'scripts/**', 'tests/integration/contrib-*.spec.ts', 'tests/helpers/**', 'tests/node/contrib-phases.spec.ts') }}
+      - name: Set up Bun
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Set up Node
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Set up PHP
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pdo_sqlite, sqlite3, mbstring, iconv, gd, dom, simplexml, xmlwriter, zip
+          tools: composer:v2
+          coverage: none
+      - name: Cache the Restored Interpreter
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        uses: actions/cache@v6
+        with:
+          path: .interp
+          key: interp-${{ hashFiles('cdn-manifest.json') }}
+      - name: Install Dependencies
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        run: bun install --frozen-lockfile
+      - name: Resolve Drupal Version
+        id: drupalver
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        run: |
+          version=$(bun scripts/fetch-drupal-tree.ts --print-version)
+          test -n "$version" || { echo "::error::no Drupal version resolved" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Restore Drupal Tree
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: drupal-src
+          key: drupal-${{ steps.drupalver.outputs.version }}-${{ hashFiles('composer.lock') }}
+      - name: Restore the Built Pack
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            assets/drupal
+            assets/drupal-pf
+            assets/drupal-sql
+            assets/core
+            assets/modules
+            assets/themes
+            assets/prefill.json
+          key: pack-${{ steps.drupalver.outputs.version }}-${{ hashFiles('scripts/pack-*.ts', 'scripts/build-local.ts', 'scripts/patch-drupal.mjs', 'scripts/drupal/**', 'cdn-manifest.json') }}
+      - name: Cache the Census Downloads
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        uses: actions/cache@v6
+        with:
+          path: .composer-cache
+          key: contrib-composer-${{ hashFiles('composer.lock', 'config/modules.yml') }}
+      - name: Build the Packs
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        run: bun run build:local
+      - name: Pack the Drupal Modules
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        run: bun run assets:driver
+      - name: Install the Census
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        run: |
+          set -o pipefail
+          mkdir -p .contrib-fixture/logs
+          bun scripts/install-census.ts 2>&1 | tee .contrib-fixture/logs/census.log
+      - name: Run the Contrib Lane
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        run: |
+          set -o pipefail
+          bun run test:contrib 2>&1 | tee .contrib-fixture/logs/lane.log
+      - name: Write the Pass Marker
+        if: ${{ steps.marker.outputs.cache-hit != 'true' }}
+        run: |
+          mkdir -p .contrib-marker
+          date -u +%Y-%m-%dT%H:%M:%SZ > .contrib-marker/passed
+      - name: Contrib Lane to Job Summary
+        if: ${{ !cancelled() }}
+        run: |
+          if [ "${{ steps.marker.outputs.cache-hit }}" = "true" ]; then
+            {
+              echo "## Contrib lane"
+              echo
+              echo "Skipped. A run with the same inputs passed and left a marker: the registry,"
+              echo "composer manifests, source, scripts, contrib specs, the three siblings' HEAD"
+              echo "commits and the ISO week are all unchanged. Upstream drupal.org releases are"
+              echo "re-tested when the week turns over."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f .contrib-fixture/summary.md ]; then
+            cat .contrib-fixture/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The contrib lane stopped before it counted anything; read the step log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload the Contrib Logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: contrib-logs
+          path: |
+            .contrib-fixture/logs
+            .contrib-fixture/reports
+            .contrib-fixture/summary.md
+          retention-days: 7
+          if-no-files-found: ignore
+
   dev-payload:
     name: Publish the Branch Payload
     runs-on: ubuntu-latest

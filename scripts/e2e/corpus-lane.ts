@@ -13,7 +13,7 @@
  * nothing asserted it. A repository whose install path the lane cannot drive yet is recorded with
  * every row unknown and the reason, never guessed.
  *
- * Results merge into `docs/compatibility.json`, and `docs/compatibility.md` is rendered from that
+ * Results merge into `docs/compatibility.json`, and `docs/architecture/compatibility.md` is rendered from that
  * file alone.
  */
 
@@ -2598,7 +2598,10 @@ async function main(): Promise<void> {
 		? recordDeployed(current(), corpus.rows, deployedRuns)
 		: mergeResults(current(), corpus.rows, ran);
 	writeFileSync(jsonPath, `${JSON.stringify(merged, null, '\t')}\n`);
-	writeFileSync(join(root, 'docs', 'compatibility.md'), renderMatrix(merged, corpus));
+	writeFileSync(
+		join(root, 'docs', 'architecture', 'compatibility.md'),
+		renderMatrix(merged, corpus)
+	);
 }
 
 if (import.meta.main) await main();

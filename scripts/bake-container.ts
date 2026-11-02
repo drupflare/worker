@@ -458,9 +458,9 @@ export async function withWrangler<T>(
 	/*
 	 * Five things about this line, each of which was wrong first.
 	 *
-	 * The CANONICAL config, not `wrangler.bench.jsonc`: bench aliases the brotli seam, whose
-	 * `.interp/php8.5.wasm.br` lags the glue and aborts the boot with `ASM_CONSTS[e] is not a
-	 * function`. The INSTALLED wrangler, not bunx's, which resolves from the registry when the name
+	 * The CANONICAL config, not `experiments/wrangler/wrangler.bench.jsonc`: bench aliases the
+	 * brotli seam, whose `.interp/php8.5.wasm.br` lags the glue and aborts the boot with
+	 * `ASM_CONSTS[e] is not a function`. The INSTALLED wrangler, not bunx's, which resolves from the registry when the name
 	 * is not already cached. `--var` rather than the process environment, because wrangler forwards
 	 * neither into the worker's `env` -- `/migrate` is an owner route and answered
 	 * `401 owner token required` on CI while passing on any machine that has a `.dev.vars`.

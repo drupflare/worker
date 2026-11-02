@@ -21,7 +21,7 @@
  * and cannot widen what is allowed. The baseline is data; this is the contract.
  *
  * @see scripts/measure/collect-metrics.ts for the half that produces the document
- * @see docs/measurement-classes.md for why no timing figure is eligible for any of this
+ * @see docs/architecture/measurement-classes.md for why no timing figure is eligible for any of this
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -441,7 +441,7 @@ function against(comparison: Comparison, path: string): string {
  * produces no line rather than a zero -- the same rule the collector follows, for the same reason.
  *
  * No line may carry a duration, and none is derivable from anything here: every input is a count or
- * a byte. See `docs/measurement-classes.md`.
+ * a byte. See `docs/architecture/measurement-classes.md`.
  */
 export function interpret(doc: MetricsDocument, comparison: Comparison): string[] {
 	const lines: string[] = [];
@@ -534,7 +534,7 @@ export function renderMarkdown(
 		'',
 		`Commit \`${doc.commit.slice(0, 7)}\`. Counts and bytes only: no duration is collected here, ` +
 			'because an absolute CPU figure comes only from `cpuTime` on a deployed worker. See ' +
-			'`docs/measurement-classes.md`.',
+			'`docs/architecture/measurement-classes.md`.',
 		''
 	];
 	if (baselineSource) lines.push(`Baseline: ${baselineSource}.`, '');

@@ -279,6 +279,8 @@ jobs:
         run: bun run hydrate -- --payload-only --tag="$TAG"
       - name: Bundle the Canonical Config
         run: bunx wrangler deploy --dry-run --outdir=/tmp/deploy-path -c wrangler.jsonc
+      - name: Bundle the Managed Config
+        run: bunx wrangler deploy --dry-run --outdir=/tmp/deploy-path-managed -c wrangler.managed.jsonc
       - name: Deploy Path to Job Summary
         if: ${{ !cancelled() }}
         run: |
@@ -298,4 +300,7 @@ jobs:
             echo "nothing about the published release. The README Deploy button runs the bare"
             echo "form through \`npm run build\`, and that fallback needs a PHP toolchain the"
             echo "Cloudflare build container does not have."
+            echo
+            echo "The managed config, \`wrangler.managed.jsonc\`, is bundled in the step before this"
+            echo "one. It adds the R2 and \`send_email\` bindings the control plane provisions."
           } >> "$GITHUB_STEP_SUMMARY"

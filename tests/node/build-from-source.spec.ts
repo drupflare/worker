@@ -3,6 +3,7 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	statSync,
@@ -884,10 +885,14 @@ describe('the commands the docs and package.json promise', () => {
 		expect(missing).toEqual([]);
 	});
 
-	it('documents every step in docs/building-from-source.md', () => {
+	it('documents every step in docs/getting-started/building-from-source/', () => {
 		// the doc is the reason someone can follow this by hand, so a step it does not name is a step
 		// nobody can run without reading the source
-		const doc = readFileSync(join(ROOT, 'docs/building-from-source.md'), 'utf8');
+		const folder = join(ROOT, 'docs/getting-started/building-from-source');
+		const doc = readdirSync(folder)
+			.filter((file) => file.endsWith('.md'))
+			.map((file) => readFileSync(join(folder, file), 'utf8'))
+			.join('\n');
 		const undocumented = LOCAL_STEPS.filter((s) => !doc.includes(`\`${s.id}\``)).map(
 			(s) => s.id
 		);
@@ -896,8 +901,11 @@ describe('the commands the docs and package.json promise', () => {
 
 	it('names both routes on the build page and links it from the README', () => {
 		const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
-		const page = readFileSync(join(ROOT, 'docs', 'building-from-source.md'), 'utf8');
-		expect(readme).toContain('docs/building-from-source.md');
+		const page = readFileSync(
+			join(ROOT, 'docs/getting-started/building-from-source/index.md'),
+			'utf8'
+		);
+		expect(readme).toContain('docs/getting-started/building-from-source/index.md');
 		expect(page).toContain('bun run hydrate');
 		expect(page).toContain('bun run build:local');
 	});

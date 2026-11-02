@@ -85,3 +85,59 @@ describe('scripts/patch-drupal.mjs on InputRequired::exposedFilterApplied()', ()
 		expect(result.stderr).toContain('exposedFilterApplied() moved');
 	});
 });
+
+const PAGE_CONTEXT = 'core/modules/navigation/src/Plugin/TopBarItem/PageContext.php';
+
+const BUILD =
+	[
+		'  public function build(): array {',
+		'    $build = [',
+		"      '#cache' => [",
+		"        'contexts' => ['route'],",
+		'      ],',
+		'    ];',
+		'',
+		'    if (!$entity = $this->entityRouteHelper->getContentEntityFromRoute()) {',
+		'      return $build;',
+		'    }',
+		'',
+		'    $entity_label = $this->getEntityLabel($entity);'
+	].join('\n') + '\n';
+
+function pageContextRoot(body: string): string {
+	const root = mkdtempSync(join(tmpdir(), 'drupflare-patch-drupal-'));
+	scratches.push(root);
+	mkdirSync(join(root, dirname(PAGE_CONTEXT)), { recursive: true });
+	writeFileSync(join(root, PAGE_CONTEXT), body);
+	return root;
+}
+
+describe('scripts/patch-drupal.mjs on PageContext::build()', () => {
+	it('adds the entity cache tags right after the entity is found', () => {
+		const root = pageContextRoot(BUILD);
+		const result = patch(root);
+		expect(result.status, result.stderr).toBe(0);
+		const src = readFileSync(join(root, PAGE_CONTEXT), 'utf8');
+		expect(src).toContain(
+			"      return $build;\n    }\n    $build['#cache']['tags'] = $entity->getCacheTags();\n"
+		);
+	});
+
+	it('leaves the file byte-identical when run a second time', () => {
+		const root = pageContextRoot(BUILD);
+		patch(root);
+		const once = readFileSync(join(root, PAGE_CONTEXT), 'utf8');
+		const second = patch(root);
+		expect(second.status, second.stderr).toBe(0);
+		expect(second.stdout).toContain('entity cache tags already added');
+		expect(readFileSync(join(root, PAGE_CONTEXT), 'utf8')).toBe(once);
+	});
+
+	it('exits nonzero with the moved message when the entity lookup is gone', () => {
+		const result = patch(
+			pageContextRoot('  public function build(): array {\n    return [];\n  }\n')
+		);
+		expect(result.status).not.toBe(0);
+		expect(result.stderr).toContain('build() moved');
+	});
+});

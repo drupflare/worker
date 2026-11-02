@@ -12,7 +12,7 @@
  * from `cpuTime` in `wrangler tail` on a deployed worker, in-PHP `microtime()` returns 0 on the edge,
  * and a 400-600 ms bimodality has been reported on the same object. A duration measured on a shared
  * runner would be a plausible wrong number, which is the failure mode this project has paid for five
- * times. `docs/measurement-classes.md` is the four-class split and says which instrument owns what.
+ * times. `docs/architecture/measurement-classes.md` is the four-class split and says which instrument owns what.
  *
  * The document carries no timestamp for the same reason: two runs on one commit must produce
  * identical bytes, so a diff is a real change rather than a clock. Run metadata carries the time.

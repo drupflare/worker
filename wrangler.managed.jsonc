@@ -1,0 +1,59 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "drupflare",
+	"main": "src/site.ts",
+	"minify": true,
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"vars": {
+		"CMS": "drupal",
+		"LAZY_MOUNT": "1",
+		"LAZY_FS_BUDGET_BYTES": "4194304",
+		"GEN_BUCKET_MS": "5000",
+		"PLAN": "free",
+		"ASSET_AGGREGATES": "1",
+		"SITE_ID_PORTS": "strip"
+	},
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		},
+		{
+			"type": "Data",
+			"globs": ["**/*.zst", "**/*.br"],
+			"fallthrough": true
+		},
+		{
+			"type": "Text",
+			"globs": ["**/composer.lock"],
+			"fallthrough": true
+		}
+	],
+	"build": { "command": "bun run hydrate" },
+	"durable_objects": {
+		"bindings": [
+			{ "name": "SITE", "class_name": "SitePhpDurableObject" },
+			{ "name": "RENDER_LANES", "class_name": "RenderLane" }
+		]
+	},
+	"kv_namespaces": [{ "binding": "CONFIG_KV" }, { "binding": "PAGE_KV" }],
+	"d1_databases": [{ "binding": "FLEET_DB", "database_name": "drupflare-fleet" }],
+	"r2_buckets": [{ "binding": "FILES", "bucket_name": "drupflare-files" }],
+	"send_email": [{ "name": "SEND_EMAIL" }],
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] },
+		{ "tag": "v2", "new_sqlite_classes": ["RenderLane"] }
+	],
+	"assets": {
+		"directory": "./assets",
+		"binding": "ASSETS"
+	},
+	"triggers": { "crons": ["*/5 * * * *"] },
+	"observability": { "enabled": true },
+	"alias": {
+		"./runtime/php-binary.js": "./src/runtime/php-binary-raw.ts"
+	}
+}

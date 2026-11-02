@@ -36,7 +36,7 @@ import { ARTIFACT_SPECS, PROBE_IMPORTS } from '../artifact-specs';
  * clock -- and the gate must be ABLE TO FAIL, which is asserted here by planting each class of
  * regression and by running the CLI to a non-zero exit.
  *
- * Nothing here asserts a duration, and nothing here may: see `docs/measurement-classes.md`.
+ * Nothing here asserts a duration, and nothing here may: see `docs/architecture/measurement-classes.md`.
  */
 
 const ROOT = resolve(import.meta.dirname, '../..');

@@ -3,7 +3,7 @@
  *
  * ```sh
  * bun scripts/release-payload.ts                 # build dist/drupflare-worker-<version>.tar.gz
- * bun scripts/release-payload.ts --check-bundle   # dry-run the canonical config, price the bundle
+ * bun scripts/release-payload.ts --check-bundle   # dry-run both deploy configs, price each bundle
  * ```
  *
  * WHY A PAYLOAD AND NOT A BUILD. `assets/` is 97 MB of generated packs and `.interp/` holds the
@@ -18,7 +18,7 @@
  * either file that this script cannot carry fails the build instead of shipping a short payload.
  *
  * @see scripts/hydrate.ts for the consuming half
- * @see docs/building-from-source.md for the two routes a clean checkout can take
+ * @see docs/getting-started/building-from-source/index.md for the two routes a clean checkout can take
  */
 
 import { execFileSync } from 'node:child_process';
@@ -598,8 +598,11 @@ function checkAssets(root: string): AssetUpload {
 	return upload;
 }
 
-/** Dry-runs the canonical config and prices the bundle. Needs no credential; measured, not assumed. */
-function checkBundle(root: string): number {
+/** the configs a payload is deployed with: the open-source one and the managed one */
+export const DEPLOY_CONFIGS = ['wrangler.jsonc', 'wrangler.managed.jsonc'] as const;
+
+/** Dry-runs one deploy config and prices the bundle. Needs no credential; measured, not assumed. */
+function checkBundle(root: string, config: string): number {
 	const outdir = join(root, 'dist/dry-run');
 	// a stale artifact in the outdir is counted by measureBundle: a leftover 11 MB probe wasm read
 	// 6,542,971 against a real 2,876,078
@@ -610,7 +613,7 @@ function checkBundle(root: string): number {
 	markHydrating(env);
 	const out = execFileSync(
 		'./node_modules/.bin/wrangler',
-		['deploy', '-c', 'wrangler.jsonc', '--dry-run', '--outdir', outdir],
+		['deploy', '-c', config, '--dry-run', '--outdir', outdir],
 		{ cwd: root, encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'], env }
 	);
 	const bytes = parseWranglerRawBytes(out);
@@ -621,11 +624,11 @@ function checkBundle(root: string): number {
 	const { fits, headroom } = ceilingVerdict(bytes);
 	const local = measureBundle(outdir);
 	console.log(
-		`bundle ${bytes} uncompressed bytes against ${SIZE_CEILING}: ` +
+		`${config} bundle ${bytes} uncompressed bytes against ${SIZE_CEILING}: ` +
 			`${fits ? `fits, ${headroom} under` : `OVER by ${-headroom}`} ` +
 			`(gzip ${gz ?? 'unreported'}, no longer limited; local instrument reads ${local.raw})`
 	);
-	if (!fits) throw new Error('the bundle does not fit the 64 MiB Worker size limit');
+	if (!fits) throw new Error(`the ${config} bundle does not fit the 64 MiB Worker size limit`);
 	return bytes;
 }
 
@@ -637,7 +640,7 @@ if (import.meta.main) {
 	const release = arg('version', pkg.version)!;
 
 	if (has('check-bundle')) {
-		checkBundle(root);
+		for (const config of DEPLOY_CONFIGS) checkBundle(root, config);
 		// the deploy-time class the bundle figure says nothing about
 		checkAssets(root);
 		process.exit(0);

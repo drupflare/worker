@@ -381,3 +381,79 @@ describe('the sibling checkouts', () => {
 		}
 	});
 });
+
+/**
+ * The contrib job installs the census into `drupal-src` and swaps a fixture pack in, so it may only
+ * read the caches other jobs write: a save from here would store that tree under the key the gate
+ * restores a stock tree from. It skips on a marker, and a marker written before the lane passed
+ * would turn a red run into a green one on the next push.
+ */
+describe('the contrib job', () => {
+	const job = () =>
+		(parse(readFileSync(join(DIR, 'build.yml'), 'utf8')) as Workflow).jobs
+			.contrib as unknown as {
+			needs?: string;
+			'timeout-minutes'?: number;
+			steps: NonNullable<Workflow['jobs'][string]['steps']>;
+		};
+	const at = (name: string) => job().steps.findIndex((s) => s.name === name);
+
+	it('waits for the gate and carries no schedule of its own', () => {
+		const doc = parse(readFileSync(join(DIR, 'build.yml'), 'utf8')) as Workflow;
+		expect(job().needs).toBe('gate');
+		expect(doc.on.schedule).toBeUndefined();
+		expect(job()['timeout-minutes']).toBe(60);
+	});
+
+	it('restores the drupal tree and the pack without ever saving them', () => {
+		for (const name of ['Restore Drupal Tree', 'Restore the Built Pack']) {
+			expect(job().steps[at(name)]?.uses, name).toContain('actions/cache/restore@');
+		}
+	});
+
+	it('keys the marker on the siblings, the week and the registry', () => {
+		const key = job().steps[at('Restore the Pass Marker')]?.with?.key ?? '';
+		for (const part of [
+			'steps.key.outputs.week',
+			'steps.key.outputs.siblings',
+			'config/modules.yml',
+			'tests/integration/contrib-*.spec.ts'
+		]) {
+			expect(key, part).toContain(part);
+		}
+		expect(runs({ jobs: { contrib: job() } } as unknown as Workflow)).toContain(
+			'git -C ".siblings/$s" rev-parse HEAD'
+		);
+	});
+
+	it('skips every later step on a marker hit except the summary', () => {
+		const first = at('Restore the Pass Marker');
+		for (const step of job().steps.slice(first + 1)) {
+			if (
+				step.name === 'Contrib Lane to Job Summary' ||
+				step.name === 'Upload the Contrib Logs'
+			)
+				continue;
+			expect(step.if, step.name).toContain("steps.marker.outputs.cache-hit != 'true'");
+		}
+	});
+
+	it('writes the marker after the lane and before nothing that can fail', () => {
+		expect(at('Write the Pass Marker')).toBe(at('Run the Contrib Lane') + 1);
+		const lane = job().steps[at('Run the Contrib Lane')]?.run ?? '';
+		expect(lane).toContain('pipefail');
+		expect(lane).toContain('test:contrib');
+		expect(at('Install the Census')).toBeLessThan(at('Run the Contrib Lane'));
+	});
+
+	it('uploads logs on failure only, for seven days, and never the pack', () => {
+		const step = job().steps[at('Upload the Contrib Logs')] as {
+			if?: string;
+			with?: Record<string, string | number>;
+		};
+		expect(step.if).toContain('failure()');
+		expect(step.with?.['retention-days']).toBe(7);
+		expect(String(step.with?.path)).not.toContain('assets');
+		expect(String(step.with?.path)).not.toContain('shipping');
+	});
+});

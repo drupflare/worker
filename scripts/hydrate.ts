@@ -1,6 +1,4 @@
 /**
- * Turns a clean checkout into a deployable tree.
- *
  * ```sh
  * bun run hydrate                              # the payload for package.json's version
  * bun run hydrate -- --tag=v1.0.1              # a specific release
@@ -9,27 +7,6 @@
  * bun run hydrate -- --from-source             # skip the payload and build every artifact locally
  * bun run hydrate -- --dev[=branch]            # the rolling payload of a branch tip, never a release
  * ```
- *
- * There are TWO routes to the same tree and this script picks between them.
- *
- * **The payload route is the default and the one that matters.** A release asset on a public
- * repository is a plain HTTPS GET, so it needs no Docker, no `gh` auth, no PHP and no Cloudflare
- * credential -- which is exactly what makes the Deploy to Cloudflare button viable, since its build
- * command is `bun install && bun run hydrate` and Workers Builds has no Docker to build with.
- *
- * **The source route is the fallback**, and it exists because the payload route has a hole a button
- * cannot cover: a checkout of a commit no release was cut from, and the window before the first
- * release exists at all. It is `scripts/build-local.ts`, it takes minutes rather than seconds, and it
- * needs a real toolchain -- so it announces itself rather than happening quietly, and
- * `--payload-only` turns it off for any lane that must not silently take it.
- *
- * Every payload byte is checked against the manifest's sha256 before it lands, and nothing outside
- * `assets/` and `.interp/` is written at all. `vendor/` is unreachable from here by construction: it
- * holds 14 hand-built binaries that exist on one machine.
- *
- * @see scripts/release-payload.ts for the producing half
- * @see scripts/build-local.ts for the source route
- * @see docs/building-from-source.md
  */
 
 import { execFileSync } from 'node:child_process';
@@ -52,12 +29,7 @@ import { PAYLOAD_ROOTS, payloadName, sha256, type PayloadManifest } from './rele
 /** where a payload is published, so the default path needs no argument */
 const REPO = process.env.DRUPFLARE_REPO ?? 'drupflare/worker';
 
-/**
- * Whether a manifest path is safe to write.
- *
- * The traversal check is not theoretical: a payload is downloaded over the network, and `tar` will
- * happily write `../../vendor/` if a member says so.
- */
+/** whether a manifest path is safe to write; a downloaded payload can name `../` paths */
 export function isSafePayloadPath(path: string): boolean {
 	if (path.startsWith('/') || path.includes('..')) return false;
 	return PAYLOAD_ROOTS.some((root) => path.startsWith(root));
@@ -76,11 +48,7 @@ export function readManifest(path: string): PayloadManifest {
 	return manifest;
 }
 
-/**
- * Verifies an extracted payload against its own manifest.
- *
- * @returns every discrepancy, empty when the extraction is exactly what the manifest describes.
- */
+/** verifies an extracted payload against its own manifest; returns every discrepancy */
 export function verifyExtracted(dir: string, manifest: PayloadManifest): string[] {
 	const problems: string[] = [];
 	for (const file of manifest.files) {
@@ -126,20 +94,7 @@ function currentBranch(root: string): string {
 	}
 }
 
-/**
- * Every network base to try for a tag, in order, each paired with what answering it would mean.
- *
- * THE CDN OUTRANKS THE RELEASE and that ordering is measured rather than preferred: Workers Builds
- * hung for its whole job timeout on a release asset body in a container that had pulled 13.4 MB
- * from this CDN 0.6 s earlier. The release is still the canonical artifact and still the fallback,
- * so a CDN that is down or behind costs a retry rather than the deploy.
- *
- * The dev line comes last and never displaces a release. A checkout sitting on a commit no release
- * was cut from used to have only the source route, which needs a PHP toolchain the deploy container
- * does not have -- so `dev-<branch>` is what turns that case from "build for minutes, if you can"
- * into "download the tip". `master` is tried after the checkout's own branch because a fork or a
- * detached HEAD names a branch nothing publishes.
- */
+/** every network base to try for a tag, in order; the CDN outranks the release, which is measured */
 function networkBases(
 	root: string,
 	tag: string,
@@ -167,27 +122,7 @@ function networkBases(
 	return bases;
 }
 
-/**
- * Picks the payload to hydrate from, cheapest first.
- *
- * A LOCAL `dist/` tarball outranks the network, because that is what
- * `bun run release:payload` just produced and re-downloading a release to test the build that made it
- * would test the wrong bytes. A release is probed rather than inferred from `git tag`: a shallow clone
- * has no tags, and the tags a clone does have say nothing about whether the asset was ever attached.
- *
- * EVERY NETWORK CANDIDATE IS PROBED BY ITS `SHA256SUMS` rather than by a tarball name. The name is
- * then read back out of that file, which is what lets the rolling dev line resolve at all: it is
- * built from whatever `package.json` said at that commit and a checkout cannot know which version
- * that was.
- *
- * `dev` names a branch and takes the rolling payload of its tip, skipping the local `dist/` and every
- * release. It is for a checkout of a branch whose `package.json` already names the next version, where
- * a release payload of the PREVIOUS version would otherwise answer first and land older bytes under
- * newer code.
- *
- * @param probe - answers whether a URL exists; injected so the routing is testable without a network
- * @param dev - a branch whose dev line to take, or undefined for the ordinary order
- */
+/** picks the payload to hydrate from, cheapest first: a local `dist/` tarball, then the network */
 export async function resolvePayloadSource(
 	root: string,
 	tag: string,
@@ -218,11 +153,7 @@ export async function resolvePayloadSource(
 	};
 }
 
-/**
- * The branch `--dev` names: `--dev=feat/x` is that branch, a bare `--dev` is the checkout's own.
- *
- * @internal exported for its test
- */
+/** the branch `--dev` names: `--dev=feat/x` is that branch, a bare `--dev` is the checkout's own */
 export function devBranch(argv: readonly string[], root: string): string | undefined {
 	const hit = argv.find((a) => a === '--dev' || a.startsWith('--dev='));
 	if (hit === undefined) return undefined;
@@ -240,19 +171,7 @@ const DOWNLOAD_TIMEOUT_MS = 120_000;
 const PROBE_TIMEOUT_MS = 30_000;
 const DOWNLOAD_ATTEMPTS = 3;
 
-/**
- * Downloads a URL to a path, failing on any non-200 rather than writing an error page to disk.
- *
- * **A BARE `fetch()` HERE HANGS THE BUILD INSTEAD OF FAILING IT**, measured on Cloudflare Workers
- * Builds: the job printed `fetching` and stopped dead. {@link assetExists} had already HEADed the
- * same URL through its redirect, so the host resolved and only the body stalled -- and with no
- * signal there was nothing to end it, so the platform's own job timeout was the only thing that
- * could, which names nothing and reads as a slow download rather than an unreachable one.
- *
- * The body is buffered rather than streamed into {@link Bun.write} so the signal covers reading it
- * too, and so a short read is caught here by length instead of two steps later as a sha256 mismatch,
- * which reads as a corrupt release.
- */
+/** downloads a URL to a path, failing on non-200; the body read runs under the abort signal */
 async function download(url: string, to: string, fresh = false): Promise<void> {
 	let last = 'no attempt was made';
 	for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt++) {
@@ -300,23 +219,7 @@ async function assetExists(url: string): Promise<boolean> {
 	}
 }
 
-/**
- * Files the REPOSITORY owns, which the payload may never overwrite.
- *
- * A payload carries a snapshot of `assets/`, and some of those paths are tracked in git: the
- * repository is authoritative for those and the payload is a stale copy of them by construction.
- * Overwriting one silently reverts whatever the tree deliberately holds.
- *
- * **THIS IS THE SAME DEFECT `restore-artifacts.ts` WAS FIXED FOR, one tool over.** A
- * `cdn-manifest.json` entry used to overwrite the tracked `assets/drupal/site.sqlite` on every
- * `bun install`, turning a spec red on a tree nobody had edited; that entry is marked `tracked` and
- * the restore verifies and leaves it alone. Hydrate never got the same treatment and clobbers three
- * tracked files today.
- *
- * Asked of git rather than hard-coded, because a hard-coded list is the thing that drifts. A tree
- * with no git (an unpacked tarball, a container) reports nothing tracked and keeps the old
- * behaviour, which is the safe direction: the payload is then the only source there is.
- */
+/** files the repository owns, which a payload may never overwrite; asked of git, not hard-coded */
 function trackedFiles(root: string): Set<string> {
 	try {
 		const out = execFileSync('git', ['-C', root, 'ls-files', '-z'], {
@@ -347,9 +250,7 @@ function landPayload(root: string, tarball: string, work: string): PayloadManife
 	for (const file of manifest.files) {
 		const dest = join(root, file.path);
 		if (tracked.has(file.path) && existsSync(dest)) {
-			// verified rather than skipped in silence: a disagreement means the payload was built
-			// from a different tree, and the pack and the database it was baked against have to
-			// agree or every first kernel boot rebuilds a 482 KB container
+			// verified, not skipped: a disagreement means the payload was built from a different tree.
 			if (sha256(dest) !== sha256(join(staged, file.path))) drifted.push(file.path);
 			kept.push(file.path);
 			continue;
@@ -379,21 +280,7 @@ function buildFromSource(root: string, forwarded: string[]): void {
 	});
 }
 
-/**
- * The URL a payload is fetched from, carrying its own digest.
- *
- * `SHA256SUMS` is served uncached and the tarball is not (`max-age=14400`), so for up to four hours
- * after a republish a colo can hold the PREVIOUS tarball while every reader already has the new
- * digest. The build then fails on bytes that are fine at origin, and it fails only in the colos
- * holding the stale copy -- which is why the same pair verified clean from another machine minutes
- * later.
- *
- * Putting the digest in the query string gives each published version its own cache key, so a hit
- * can only ever be bytes fetched while that digest was current. It is not a cache-buster: the URL is
- * stable for a given payload and stays cacheable, which is the point.
- *
- * @internal exported for its test
- */
+/** the URL a payload is fetched from, carrying its digest; the tarball is cached for max-age=14400 */
 export function payloadUrl(base: string, asset: string, sha256: string): string {
 	return `${base}/${asset}?sha256=${sha256}`;
 }
@@ -408,30 +295,20 @@ async function hydrateFrom(
 	try {
 		let tarball: string;
 		if (found.kind === 'release') {
-			// SUMS FIRST, because it is what NAMES the tarball. Deriving the name from the tag is
-			// right for a cut release and impossible for the dev line, whose version is whatever
-			// the branch tip happened to carry
+			// SHA256SUMS first: it names the tarball, which the dev line cannot derive from its tag.
 			const sums = join(work, 'SHA256SUMS');
 			await download(`${found.base}/SHA256SUMS`, sums);
 			const { sha256: expected, name: asset } = readSums(readFileSync(sums, 'utf8'));
 
 			tarball = join(work, asset);
 			console.log(`fetching ${found.base}/${asset} (${found.via})`);
-			// THE DIGEST IS IN THE URL, and that is what makes a mismatched pair unreachable rather
-			// than merely unlikely. `SHA256SUMS` is served uncached (`cf-cache-status: DYNAMIC`) and
-			// the tarball is not, so after a republish a colo can hold the PREVIOUS tarball while
-			// every reader gets the new digest -- and the build fails on bytes that were fine at
-			// origin. Observed on a Pages build while the same pair verified clean from another
-			// colo. A per-digest query string gives each published version its own cache key, so a
-			// hit can only ever be bytes fetched while that digest was current.
+			// the digest is in the URL, so a mismatched sums and tarball pair cannot be reached.
 			const versioned = payloadUrl(found.base, asset, expected);
 			await download(versioned, tarball);
 
 			let actual = sha256(tarball);
 			if (expected !== actual) {
-				// a cache entry under the new key that predates the new bytes, which is possible if
-				// something warmed it between the two uploads. One forced revalidation separates
-				// that from real corruption; a second mismatch is not a caching problem
+				// a stale entry under the new key is possible; one forced revalidation separates it from corruption.
 				console.log(`hydrate: ${actual} is not ${expected}; refetching without the cache`);
 				await download(`${versioned}&fresh=${Date.now()}`, tarball, true);
 				actual = sha256(tarball);
@@ -441,9 +318,7 @@ async function hydrateFrom(
 			}
 			console.log(`tarball sha256 ${actual} matches SHA256SUMS`);
 			if (found.via === 'cdn-dev') {
-				// NAMING THE BRANCH IS THE POINT: the resolver tries `master` after the checkout's
-				// own branch, so a fork or a detached HEAD legitimately lands on a line it is not
-				// on, and a message that says only "a branch tip" makes that substitution silent
+				// name the branch: a fork or detached HEAD can legitimately land on a line it is not on.
 				const line = found.base.slice(found.base.lastIndexOf('/') + 1);
 				console.log(
 					`this is the ${line} BRANCH TIP rather than a cut release: no release carried ` +
@@ -467,17 +342,7 @@ async function hydrateFrom(
 	}
 }
 
-/**
- * The artifacts that make a tree deployable, and whether they are all there.
- *
- * **HYDRATING A TREE THAT IS ALREADY HYDRATED OVERWRITES IT**, and the payload it overwrites with is
- * whatever release `package.json`'s version names -- so a developer who has just repacked
- * `assets/driver.json` gets the published copy back, silently. That is the same shape as
- * `restore-artifacts.ts` reverting a hand edit to `site.sqlite`, and it becomes a live hazard the
- * moment `wrangler.jsonc` names this as its build command: every `wrangler deploy` would do it.
- *
- * So a complete tree is left alone unless `--force` says otherwise.
- */
+/** the artifacts that make a tree deployable; a complete tree is left alone unless `--force` says otherwise */
 const HYDRATED_MARKERS = [
 	'assets/driver.json',
 	'assets/prefill.json',
@@ -514,8 +379,7 @@ async function main(): Promise<number> {
 		console.log('pass --force to replace it with the published payload anyway.');
 		return 0;
 	}
-	// --force reaches the source route, where it means "rebuild every step"; the payload route has
-	// nothing to force, since it overwrites whatever is there anyway
+	// --force reaches the source route only; the payload route overwrites whatever is there anyway.
 	const forwarded = process.argv
 		.slice(2)
 		.filter((a: string) => a === '--force' || a.startsWith('--only='));
@@ -546,7 +410,7 @@ async function main(): Promise<number> {
 			console.error(
 				'\n--payload-only forbids the source route. Drop it to build the artifacts locally\n' +
 					'(`bun run build:local`), point --from= at a tarball, or cut a release first.\n' +
-					'See docs/building-from-source.md for what each route needs.'
+					'See docs/getting-started/building-from-source/index.md for what each route needs.'
 			);
 			return 1;
 		}

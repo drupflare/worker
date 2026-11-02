@@ -67,11 +67,11 @@ $settings['enable_html5_validation'] = false;
 // 19 MiB two-pass hash is CPU a login invocation does not have
 $settings['drupflare.argon2'] = __CFW_ARGON2__;
 // Cache bins the interpreter keeps in memory instead of in this tenant's SQLite, from
-// MEMORY_CACHE_BINS. Empty by default. Measured on the shipping pack: a real re-render after a tag
-// invalidation charges 9 rows, of which 6 are the dynamic_page_cache bin -- two thirds of the
-// operation the free plan's regeneration ceiling is computed from, in one bin. What it costs back
-// is a rebuild after every interpreter drop, which is a property of a site's own traffic, so the
-// default is a decision an operator makes rather than one shipped for them
+// MEMORY_CACHE_BINS. Default dynamic_page_cache and menu (DEFAULT_MEMORY_CACHE_BINS in
+// src/do/levers.ts); MEMORY_CACHE_BINS=none turns them off. Measured on /user/login with both bins
+// empty: 1 row in memory against 8 in SQL (realRender class). The memory bins cost a rebuild after
+// every interpreter drop, which is a property of a site's own traffic. An earlier figure of 9 rows
+// per tag-invalidated re-render has no path or date recorded, so it is not used here
 // NOT $settings['cache']['bins'], which names a SERVICE. A service is resolved out of the compiled
 // container, the pack ships that container prebuilt, and its cache key does not move when the
 // driver pack does -- so the settings route names something the container has never heard of and

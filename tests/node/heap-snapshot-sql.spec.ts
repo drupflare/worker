@@ -775,6 +775,24 @@ describe('the restore streams, and that is a STRUCTURAL requirement not an optim
 			streamRestoreInto(sql, new Uint8Array(64), { meta, pageIndex: index.pageIndex })
 		).toThrow(/snapshot is/);
 	});
+
+	it('restores into a larger memory and writes nothing past the image', () => {
+		const heap = sparseHeap([1, 2], 64);
+		writeHeapSnapshot(sql, {
+			heap,
+			streams: [],
+			generation: 'g',
+			nowMs: 1,
+			chunkBytes: 64,
+			pageBytes: 64
+		});
+		const meta = latestSnapshotMeta(sql)!;
+		const index = snapshotPageIndex(sql, meta.id)!;
+		const target = new Uint8Array(heap.length + 64).fill(7);
+		streamRestoreInto(sql, target, { meta, pageIndex: index.pageIndex });
+		expect(target.subarray(0, heap.length)).toEqual(heap);
+		expect(target.subarray(heap.length)).toEqual(new Uint8Array(64).fill(7));
+	});
 });
 
 describe('garbage collection, because an unbounded table ate 46% of a database once', () => {

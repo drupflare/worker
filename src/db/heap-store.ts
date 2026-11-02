@@ -1175,7 +1175,8 @@ export function streamRestoreInto(
 	}
 ): StreamRestoreResult {
 	const { meta, pageIndex } = opts;
-	if (target.length !== meta.byteLength) {
+	// a larger target is a memory a render grew past the image; the caller zeroes its tail
+	if (target.length < meta.byteLength) {
 		throw new RangeError(`heap is ${target.length} bytes, snapshot is ${meta.byteLength}`);
 	}
 	const spans = pageSpans(pageIndex, meta.byteLength, meta.pageBytes);

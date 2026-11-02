@@ -232,8 +232,8 @@ export async function tryRestoreHeap(
 
 	const live = site.heapBytes(binary);
 	if (!live) return { restored: false, reason: 'no reachable heap on this binary' };
-	if (live.length !== meta.byteLength) {
-		// the snapshot came from a different INITIAL_MEMORY
+	if (live.length < meta.byteLength) {
+		// the snapshot came from a larger INITIAL_MEMORY
 		return {
 			restored: false,
 			reason: `heap is ${live.length} bytes, snapshot is ${meta.byteLength}`
@@ -286,6 +286,8 @@ export async function tryRestoreHeap(
 		};
 	}
 
+	// the image never had a tail past its own length, so zero what a reused memory left there
+	if (live.length > meta.byteLength) live.fill(0, meta.byteLength);
 	const t0 = Date.now();
 	// nothing larger than one chunk is allocated: the isolate ceiling is non-monotone (128 MiB
 	// failed while 160 succeeded)

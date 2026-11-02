@@ -11,18 +11,8 @@ const TIMEOUT = 900_000;
 type StoredRow = { seq: number; digest: string; bytes: ArrayBuffer; raw_bytes: number };
 type Row = { seq: number; digest: string; bytes: Uint8Array };
 
-/**
- * A site with reconciliation off, which is what this file needs and not a workaround.
- *
- * A reconciliation step drops every snapshot when it lands, correctly, because a restored kernel
- * predates whatever the step just changed. On a real site the alarm chain settles reconciliation
- * before the image producer runs, so the two never overlap. A spec that images by hand races them:
- * left on, `cfw_heap_chunk` read empty on the warm arm, and driving reconciliation first instead
- * booted a kernel through it and read 37,158,912 bytes against an expected ~10.4 MB.
- *
- * What this file measures is the size and divergence of an image. `RECONCILE=0` removes the other
- * mechanism rather than timing around it.
- */
+// reconciliation drops every snapshot when it lands, so a hand-taken image races it
+// RECONCILE=0 removes that mechanism rather than timing around it; the image should be ~10.4 MB
 async function unreconciledSite(): Promise<DurableObjectStub> {
 	const stub = freshSite();
 	// awaited, not fired: an unawaited set races the migrate that follows it
@@ -32,15 +22,8 @@ async function unreconciledSite(): Promise<DurableObjectStub> {
 	return stub;
 }
 
-/**
- * `fresh=1` re-boots the kernel from the pack, so that image reflects the CODE and carries almost
- * nothing a site has done; the live heap is the one that accumulates content.
- *
- * UNPACKED HERE, because every measurement below is about the HEAP: page-level dedup across two
- * sites, and how well a page or an XOR of two pages compresses. The rows are deflated now, so
- * reading `bytes` straight out would dedup on compressed pages and gzip already-gzipped bytes --
- * assertions that only check `> 0` would still pass while measuring nothing.
- */
+// fresh=1 re-boots the kernel from the pack, so the live heap is the one that holds site content
+// unpacked: dedup and xor measure pages, and deflated rows would dedup compressed bytes
 async function snapshotPages(stub: DurableObjectStub, fresh = true): Promise<Row[]> {
 	const res = await stub.fetch(
 		`https://do.local/__heap?op=snapshot${fresh ? '&fresh=1' : ''}&chunkBytes=${PAGE}`,
@@ -61,7 +44,7 @@ async function snapshotPages(stub: DurableObjectStub, fresh = true): Promise<Row
 	}));
 }
 
-/** gzip rather than zstd: workerd encodes gzip natively, so this is a FLOOR on what zstd would do */
+/** gzip rather than zstd: workerd encodes gzip natively, so this is a floor on what zstd would do */
 async function gzipped(bytes: Uint8Array): Promise<number> {
 	const cs = new CompressionStream('gzip');
 	const writer = cs.writable.getWriter();
@@ -89,8 +72,8 @@ describe('a site as a delta against another site image', () => {
 	it(
 		'prices raw, deduped, compressed and XOR-delta encodings',
 		async () => {
-			// PROVISIONED: both arms were a bare `freshSite()`, so the kernel booted with no
-			// database and the recorded 876x was a ratio over a heap 1.53x too small
+			// both arms were a bare freshSite(), so the kernel booted with no database;
+			// the earlier 876x ratio was taken over a heap 1.53x too small
 			const a = await snapshotPages(await provisionedStub());
 			const base = new Map(a.map((r) => [r.seq, new Uint8Array(r.bytes)]));
 			const baseDigest = new Map(a.map((r) => [r.seq, r.digest]));
@@ -145,10 +128,9 @@ describe('a site as a delta against another site image', () => {
 	it(
 		'stores about the same warm or cold, now that the packed container row is readable',
 		async () => {
-			// THE 3.7x GAP THIS ASSERTED WAS THE CONTAINER DEFECT, not warmth. The packed
-			// `cache_container` row was keyed to a stale dependency hash, so a cold site rebuilt a
-			// 482 KB container into its heap -- 552 pages against 148, and `kernelBootMs` 1,024
-			// against 28. With the row readable both arms land near 10 MB and the ratio is ~1.07.
+			// the 3.7x gap was the packed container defect, not warmth: a stale cache_container row
+			// rebuilt 482 KB into a cold heap (552 pages against 148; kernel boot 1,024 ms against 28)
+			// with the row readable both arms land near 10 MB, and the ratio is ~1.07
 			const cold = await unreconciledSite();
 			await inObject(cold, (s: ServeDo) => call(s, '/__migrate?all=1&prefill=0'));
 			const coldPages = await snapshotPages(cold);
@@ -170,17 +152,13 @@ describe('a site as a delta against another site image', () => {
 
 			const coldBytes = coldPages.reduce((n, r) => n + r.bytes.byteLength, 0);
 			const warmBytes = warmPages.reduce((n, r) => n + r.bytes.byteLength, 0);
-			// A BAND, NOT THE BYTE. This asserted exact equality with the constant, so every change
-			// that added PHP to the packed module failed here -- six wasm pages for ~5 KB of code, and
-			// the only available fix was editing the constant to whatever the tree now measured, which
-			// is a test reporting its own inputs back. What the model needs is that the constant is not
-			// WRONG, so a 15% band catches a real drift and ignores a page of growth
+			// a 15% band, not an exact byte pin: an exact pin fails on every packed PHP change
+			// and gets edited to the new number, so the test reports its own input back
 			expect(coldBytes).toBeGreaterThan(SITE_STORAGE_BYTES.heapSnapshot * 0.85);
 			expect(coldBytes).toBeLessThan(SITE_STORAGE_BYTES.heapSnapshot * 1.15);
 			expect(warmBytes).toBeGreaterThan(SITE_STORAGE_BYTES.warmHeapSnapshot * 0.85);
 			expect(warmBytes).toBeLessThan(SITE_STORAGE_BYTES.warmHeapSnapshot * 1.15);
-			// cold is still the larger of the two, and by very little; asserting a RATIO here would
-			// be a pin on two numbers a page of packed PHP moves
+			// cold stays the larger by very little; a ratio here pins two numbers that packed PHP moves
 			expect(coldBytes).toBeGreaterThanOrEqual(warmBytes);
 			expect(coldBytes / warmBytes).toBeLessThan(1.5);
 		},
@@ -190,8 +168,8 @@ describe('a site as a delta against another site image', () => {
 	it(
 		'names the curve, because two identical sites is the easiest point on it',
 		async () => {
-			// DIVERGENCE WAS THE WRONG VARIABLE: 191.5x came from two `fresh=1` images, so it scored
-			// one BOOT against another. Live, it is 5.6-5.8x and three re-runs spread 1.07-4.10x
+			// two fresh=1 images scored one boot against another (191.5x); the live heap reads 5.6-5.8x
+			// three re-runs spread 1.07-4.10x, so the figure is a band rather than a point
 			const settled = async (): Promise<DurableObjectStub> => {
 				const stub = await provisionedStub();
 				await inObject(stub, async (site: ServeDo) => {
@@ -207,23 +185,8 @@ describe('a site as a delta against another site image', () => {
 					);
 					expect(r.status, await r.clone().text()).toBe(200);
 
-					// FILL FIRST, THEN SERVE. Unchecked this settles nothing -- a cold object answers
-					// the warming page and every arm diverges from a baseline that was never warm --
-					// but the previous form polled `/__serve` five times with no wait, and that is a
-					// race rather than a check. A miss QUEUES the fill for the alarm and answers 503
-					// `warming`, so retrying immediately re-reads the same not-yet-done work: the
-					// retries cannot succeed any faster than the alarm, and under full-suite load the
-					// alarm loses. That failed three times in the gate and passed every time in
-					// isolation, which is exactly the shape a timing race has.
-					//
-					// `fillOne()` renders inline in this invocation, so the page exists before
-					// anything asks for it and the serve below is a plain HIT with nothing to wait on.
-					// AND ITS OUTCOME IS CHECKED. Driving the fill removed the race with the alarm
-					// and then discarded what the fill said, so a fill that did not store the page
-					// came back one line later as `503 warming` -- the same message the race used
-					// to produce, naming nothing. Under full-suite load the render can lose the
-					// gate, which is transient and not the property this file measures, so it is
-					// retried; a fill that keeps failing now fails with its own reason.
+					// fill first: a miss only queues the fill, so a retried serve races the alarm
+					// the fill is retried and its outcome checked; a fill that keeps failing reports why
 					let outcome = await site.fillOne('/');
 					for (let attempt = 0; attempt < 3 && outcome.filled !== '/'; attempt++) {
 						outcome = await site.fillOne('/');
@@ -232,12 +195,7 @@ describe('a site as a delta against another site image', () => {
 						'/'
 					);
 
-					// THE FILL IS THE ASSERTION; THE SERVE IS A WARM-UP. Asserting 200 here failed
-					// under full-suite load with `503 warming` while the fill above had just proved
-					// the page was stored -- so the 503 was the gate being busy, not the page being
-					// absent, and the test was reporting contention as a fault in what it measures.
-					// What this helper owes the caller is a site with content that has rendered; the
-					// first is checked, and the second is attempted rather than demanded.
+					// the fill is the assertion; the serve is a warm-up and may answer 503 under load
 					const served = await call(site, '/__serve?path=/&edge=0');
 					if (served.status !== 200) {
 						console.log(
@@ -249,7 +207,7 @@ describe('a site as a delta against another site image', () => {
 				return stub;
 			};
 
-			// LIVE, not fresh: a `fresh=1` image is identical for every arm by construction, and
+			// live, not fresh: a fresh=1 image is identical across arms by construction;
 			// four such arms came back within 100 bytes of each other on 253,429
 			const baseline = await snapshotPages(await settled(), false);
 			const base = new Map(baseline.map((r) => [r.seq, new Uint8Array(r.bytes)]));
@@ -257,7 +215,7 @@ describe('a site as a delta against another site image', () => {
 
 			const arms: { name: string; drive: (s: ServeDo) => Promise<Response | undefined> }[] = [
 				{ name: 'untouched', drive: async () => undefined },
-				// the CONTROL: same arm as the first, so any gap between them is the instrument
+				// control: same arm as the first, so any gap between them is the instrument
 				{ name: 'untouched (control)', drive: async () => undefined },
 				{
 					name: 'one node',
@@ -274,8 +232,7 @@ describe('a site as a delta against another site image', () => {
 			for (const arm of arms) {
 				const stub = await settled();
 				await inObject(stub, async (site: ServeDo) => {
-					// a 503 is the WARMING page: come back, not failed. Retried, or the arm silently
-					// skips its own divergence
+					// a 503 is the warming page, so retry it rather than skip the arm's divergence
 					let res = await arm.drive(site);
 					for (let i = 0; res && res.status === 503 && i < 5; i++) {
 						res = await arm.drive(site);
@@ -330,7 +287,7 @@ describe('a site as a delta against another site image', () => {
 
 			console.log(`[snapshot-delta curve] ${JSON.stringify(curve, null, 1)}`);
 
-			// two UNTOUCHED sites already differ on 85.8% of live pages; writes take that to 87.8%
+			// two untouched sites already differ on 85.8% of live pages; writes take that to 87.8%
 			const best = curve.map((c) => Number(c.dedupPlusGzipXor));
 			expect(best.every((b) => b > 0)).toBe(true);
 
@@ -343,64 +300,32 @@ describe('a site as a delta against another site image', () => {
 			console.log(
 				`[snapshot-delta noise] ${JSON.stringify({ controlSpread, overallSpread })}`
 			);
-			// a `> 1.01` floor failed twice in three: the control spread runs 1.0016 to 1.0069, so
-			// the DIFFERENCE survives a re-run and its size does not
+			// a `> 1.01` floor failed twice in three; the control spread runs 1.0016 to 1.0069
+			// the difference survives a re-run and its size does not
 			expect(best[0]).not.toBe(best[1]);
 			expect(controlSpread).toBeGreaterThan(1);
-			// A RELATIVE PROPERTY, AND THE 0.7 FLOOR HERE WAS THE MISTAKE THIS FILE ALREADY MADE ONE
-			// FIELD OVER. `xorVsPlain` lost its magnitude assertion after three failed attempts to pin
-			// it; `differingShare` kept one and failed the same way. Measured in isolation the arms read
-			// 0.848 / 0.857 / 0.908 / 0.906 / 0.907, and the control came in at 0.693 under full-suite
-			// load -- so the floor was pinning contention rather than divergence.
-			//
-			// What it was for is that two sites DIVERGE and that writing diverges them further. Both
-			// survive as comparisons, which load moves together and so cannot fake.
+			// a magnitude floor on the relative share pinned contention: 0.848 to 0.907 alone, 0.693 under load
+			// what it guards is that two sites diverge and that writing diverges them further
 			for (const c of curve) {
 				expect(Number(c.differingShare), `${c.arm} differing share`).toBeGreaterThan(0);
 			}
-			// "XOR ALWAYS BEATS PLAIN GZIP" IS REFUTED, and it was my claim from one run. Measured
-			// across arms it spans 0.122 to 1.032, so on a nearly-identical pair the XOR is LARGER
-			// than the page -- a delta of mostly-zeroes still carries the positions that differ, and
-			// gzip does better on the original bytes. Only the reading itself is assertable
+			// xor is not always smaller than plain gzip: it spans 0.122 to 1.032 across arms
+			// a nearly-identical pair gives a delta larger than the page, so only the reading is asserted
 			for (const c of curve) {
 				expect(Number(c.xorVsPlain), `${c.arm} xor`).toBeGreaterThan(0);
 			}
-			// AND "XOR PAYS ON THE DIVERGED ARMS" IS REFUTED TOO, by three consecutive runs. This
-			// asserted that some diverged arm came in under 1.0, and the best one reads 0.999 /
-			// 0.603 / 1.000 across those runs -- it lands exactly ON the threshold, which is what
-			// made it fail. `one node` is the stable reading and it goes the OTHER way, 1.652 /
-			// 1.647 / 1.647, so XOR is reliably WORSE where a node was created.
-			//
-			// What survives: XOR-delta at PAGE granularity is not a win on this workload. That is a
-			// result about the encoding rather than about the instrument, and it is the reason to
-			// hold the storage lever at the site-image level where the dedup was measured.
+			// no xor win on diverged arms: the best reads 0.603 to 1.000, and one node reads 1.647 to 1.652
+			// the result is about page-level xor encoding, so the storage lever stays at site-image level
 			const diverged = curve.filter((c) => !String(c.arm).startsWith('untouched'));
 			expect(diverged.length).toBeGreaterThan(0);
-			// AND A `diverged >= control` COMPARISON WAS TRIED HERE AND IS DECORATIVE. Writes do read
-			// higher in isolation -- 0.908 / 0.906 / 0.907 against 0.848 / 0.857 -- but replacing the
-			// one-node arm's drive with a no-op still passed it, because a THIRD untouched site already
-			// differs from the baseline by about as much. The gap is real and roughly five points, which
-			// is smaller than the excursion load produces, so nothing here can assert it.
-			//
-			// Same conclusion `xorVsPlain` reached above, on the same instrument.
-			// NO MAGNITUDE IS ASSERTED ON THE ONE-NODE ARM, and three failed attempts to assert one
-			// are the reason. It read 1.652 / 1.647 / 1.647 and was pinned above 1.2 as "reliably
-			// worse"; the pack's cache bins became WITHOUT ROWID and the container gained a class,
-			// it read 0.974 / 0.976, and the pin became a 0.8-1.8 band around parity. Adding one
-			// serve table moved the heap again, and six samples on ONE tree with no code change
-			// between them read 0.425 / 0.588 / 0.682 / 1.025 / 1.034 / 1.069 -- a 2.5x spread, so
-			// the band failed about half the time. Across every heap this arm has spanned 0.425 to
-			// 1.652, and other arms have read as low as 0.122.
-			//
-			// So the magnitude tracks whatever is in the heap, which any unrelated schema change
-			// moves, and a band on it reports that change as a regression in an encoding. What
-			// survives is the refutation stated above, held by the per-arm `xorVsPlain > 0` and
-			// `dedupPlusGzipXor > 0` already asserted for every arm. The arm itself is still
-			// required to exist, so the curve cannot silently stop producing it.
+			// a diverged >= control comparison is decorative: an untouched third site differs about as much
+			// the gap is roughly five points (0.908 against 0.848), below the excursion load produces
+			// no magnitude on the one-node arm: its ratio tracks the heap and has spanned 0.425 to 1.652
+			// the per-arm xor and dedup > 0 checks stand, and the arm must still exist so the curve keeps it
 			const nodeArm = curve.find((c) => c.arm === 'one node');
 			expect(nodeArm, 'the one-node arm is what the refutation is about').toBeDefined();
-			// every arm must be the same SHAPE of heap, or the number measures the boot; a
-			// tolerance rather than equality, since the failure it catches is 3.7x (148 vs 553)
+			// every arm must boot the same shape of heap, or the delta measures the boot, not the write
+			// a tolerance rather than equality, since the failure it catches was 3.7x (148 against 553)
 			for (const c of curve) {
 				const ratio = Number(c.pages) / baseline.length;
 				expect(

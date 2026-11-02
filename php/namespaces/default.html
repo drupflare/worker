@@ -73,10 +73,10 @@
 								<div class="accordion" style="margin-bottom: 0">
 		<div class="accordion-group">
 			<div class="accordion-heading">
-									<a class="accordion-toggle " data-toggle="collapse" data-target="#namespace-772346214"></a>
+									<a class="accordion-toggle " data-toggle="collapse" data-target="#namespace-2060057572"></a>
 								<a href="namespaces/default.html" style="margin-left: 30px; padding-left: 0">\</a>
 			</div>
-			<div id="namespace-772346214" class="accordion-body collapse in">
+			<div id="namespace-2060057572" class="accordion-body collapse in">
 				<div class="accordion-inner">
 
 					
@@ -855,7 +855,7 @@
                 <h3 class=" ">brotli_compress()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">brotli_compress(string  <span class="argument">$data</span>, int  <span class="argument">$level = 11</span>, int  <span class="argument">$mode = 0</span>, string|null  <span class="argument">$dict = null</span>) : string|false</pre>
-                <p><em></em></p>
+                <p><em>Compresses a string with brotli.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -889,7 +889,8 @@
                 
                                     <h4>Returns</h4>
                     string|false
-                                            &mdash; 
+                                            &mdash; <p>The compressed bytes, or FALSE on failure.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -921,7 +922,7 @@
                 <h3 class=" ">brotli_uncompress()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">brotli_uncompress(string  <span class="argument">$data</span>, string|null  <span class="argument">$dict = null</span>) : string|false</pre>
-                <p><em></em></p>
+                <p><em>Decompresses a brotli stream.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -943,7 +944,8 @@
                 
                                     <h4>Returns</h4>
                     string|false
-                                            &mdash; 
+                                            &mdash; <p>The decompressed bytes, or FALSE on failure.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -1388,7 +1390,7 @@ whichever comes first; memory_get_usage() reads 0 in this build, so the host is 
                                                     <tr>
                                 <td>string</td>
                                 <td>$op </td>
-                                <td><p>compress or uncompress.</p>
+                                <td><p>The operation, compress or uncompress.</p>
 </td>
                             </tr>
                                                     <tr>
@@ -1420,7 +1422,8 @@ whichever comes first; memory_get_usage() reads 0 in this build, so the host is 
                 
                                     <h4>Returns</h4>
                     array{ok: bool, data?: string, error?: string}
-                                            &mdash; 
+                                            &mdash; <p>The decoded reply, or the reason it failed.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -1786,14 +1789,15 @@ caller actually makes a request, by which time the module is loaded.</p>
                 <h3 class=" ">cfw_extensions_installed()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">cfw_extensions_installed() : bool</pre>
-                <p><em></em></p>
+                <p><em>Marks that the extension functions below are in place.</em></p>
                 
 
                 
                 
                                     <h4>Returns</h4>
                     bool
-                                            &mdash; 
+                                            &mdash; <p>Always TRUE.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -4761,7 +4765,7 @@ gzencode(x, 9, FORCE_GZIP) -- so the three share one mapping.</p>
                                                     <tr>
                                 <td>string</td>
                                 <td>$op </td>
-                                <td><p>compress or uncompress.</p>
+                                <td><p>The operation, compress or uncompress.</p>
 </td>
                             </tr>
                                                     <tr>
@@ -4787,7 +4791,8 @@ gzencode(x, 9, FORCE_GZIP) -- so the three share one mapping.</p>
                 
                                     <h4>Returns</h4>
                     array{ok: bool, data?: string, error?: string}
-                                            &mdash; 
+                                            &mdash; <p>The decoded reply, or the reason it failed.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -5498,7 +5503,7 @@ enough.</p>
                 <h3 class=" ">extension_loaded()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">extension_loaded(string  <span class="argument">$extension</span>) : bool</pre>
-                <p><em></em></p>
+                <p><em>Tells whether an extension is loaded, counting the gated shims.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -5514,7 +5519,8 @@ enough.</p>
                 
                                     <h4>Returns</h4>
                     bool
-                                            &mdash; 
+                                            &mdash; <p>TRUE when the extension is built in or a gated shim covers its whole API.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -5834,7 +5840,7 @@ enough.</p>
                 <h3 class=" ">get_extension_funcs()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">get_extension_funcs(string  <span class="argument">$extension</span>) : array&lt;int,string&gt;|false</pre>
-                <p><em></em></p>
+                <p><em>Lists the functions an extension provides, counting the gated shims.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -5850,7 +5856,8 @@ enough.</p>
                 
                                     <h4>Returns</h4>
                     array<int,string>|false
-                                            &mdash; 
+                                            &mdash; <p>The function names, or FALSE when the extension is unknown or has none.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -5898,7 +5905,8 @@ enough.</p>
                 
                                     <h4>Returns</h4>
                     array<int,string>
-                                            &mdash; 
+                                            &mdash; <p>The extension names.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -10690,7 +10698,7 @@ the same as 0, which means the signature was read and did not match. A caller tr
                 <h3 class=" ">zstd_compress()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">zstd_compress(string  <span class="argument">$data</span>, int  <span class="argument">$level = 3</span>, string|null  <span class="argument">$dict = null</span>) : string|false</pre>
-                <p><em></em></p>
+                <p><em>Compresses a string with zstd.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -10718,7 +10726,8 @@ the same as 0, which means the signature was read and did not match. A caller tr
                 
                                     <h4>Returns</h4>
                     string|false
-                                            &mdash; 
+                                            &mdash; <p>The compressed bytes, or FALSE on failure.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -10750,7 +10759,7 @@ the same as 0, which means the signature was read and did not match. A caller tr
                 <h3 class=" ">zstd_compress_dict()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">zstd_compress_dict(string  <span class="argument">$data</span>, string  <span class="argument">$dict</span>, int  <span class="argument">$level = 3</span>) : string|false</pre>
-                <p><em></em></p>
+                <p><em>Compresses a string with zstd and a required dictionary.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -10778,7 +10787,8 @@ the same as 0, which means the signature was read and did not match. A caller tr
                 
                                     <h4>Returns</h4>
                     string|false
-                                            &mdash; 
+                                            &mdash; <p>The compressed bytes, or FALSE on failure.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -10832,7 +10842,8 @@ the same as 0, which means the signature was read and did not match. A caller tr
                 
                                     <h4>Returns</h4>
                     string|false
-                                            &mdash; 
+                                            &mdash; <p>The decompressed bytes, or FALSE on failure.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -10864,7 +10875,7 @@ the same as 0, which means the signature was read and did not match. A caller tr
                 <h3 class=" ">zstd_uncompress()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">zstd_uncompress(string  <span class="argument">$data</span>, string|null  <span class="argument">$dict = null</span>) : string|false</pre>
-                <p><em></em></p>
+                <p><em>Decompresses a zstd frame.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -10886,7 +10897,8 @@ the same as 0, which means the signature was read and did not match. A caller tr
                 
                                     <h4>Returns</h4>
                     string|false
-                                            &mdash; 
+                                            &mdash; <p>The decompressed bytes, or FALSE on failure.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -10918,7 +10930,7 @@ the same as 0, which means the signature was read and did not match. A caller tr
                 <h3 class=" ">zstd_uncompress_dict()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">zstd_uncompress_dict(string  <span class="argument">$data</span>, string  <span class="argument">$dict</span>) : string|false</pre>
-                <p><em></em></p>
+                <p><em>Decompresses a zstd frame with a required dictionary.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -10940,7 +10952,8 @@ the same as 0, which means the signature was read and did not match. A caller tr
                 
                                     <h4>Returns</h4>
                     string|false
-                                            &mdash; 
+                                            &mdash; <p>The decompressed bytes, or FALSE on failure.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -11018,7 +11031,7 @@ the same as 0, which means the signature was read and did not match. A caller tr
 							</a>
 							and authored
 							                    on
-							November 2nd, 2026 at 17:28.
+							November 2nd, 2026 at 18:31.
 						</section>
 					</section>
 				</section>

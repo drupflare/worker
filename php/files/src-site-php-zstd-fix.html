@@ -73,10 +73,10 @@
 								<div class="accordion" style="margin-bottom: 0">
 		<div class="accordion-group">
 			<div class="accordion-heading">
-									<a class="accordion-toggle " data-toggle="collapse" data-target="#namespace-170453823"></a>
+									<a class="accordion-toggle " data-toggle="collapse" data-target="#namespace-736393698"></a>
 								<a href="namespaces/default.html" style="margin-left: 30px; padding-left: 0">\</a>
 			</div>
-			<div id="namespace-170453823" class="accordion-body collapse in">
+			<div id="namespace-736393698" class="accordion-body collapse in">
 				<div class="accordion-inner">
 
 					
@@ -265,7 +265,7 @@
                                                     <tr>
                                 <td>string</td>
                                 <td>$op </td>
-                                <td><p>compress or uncompress.</p>
+                                <td><p>The operation, compress or uncompress.</p>
 </td>
                             </tr>
                                                     <tr>
@@ -291,7 +291,8 @@
                 
                                     <h4>Returns</h4>
                     array{ok: bool, data?: string, error?: string}
-                                            &mdash; 
+                                            &mdash; <p>The decoded reply, or the reason it failed.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -377,7 +378,7 @@
                 <h3 class=" ">zstd_compress()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">zstd_compress(string  <span class="argument">$data</span>, int  <span class="argument">$level = 3</span>, string|null  <span class="argument">$dict = null</span>) : string|false</pre>
-                <p><em></em></p>
+                <p><em>Compresses a string with zstd.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -405,7 +406,8 @@
                 
                                     <h4>Returns</h4>
                     string|false
-                                            &mdash; 
+                                            &mdash; <p>The compressed bytes, or FALSE on failure.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -437,7 +439,7 @@
                 <h3 class=" ">zstd_uncompress()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">zstd_uncompress(string  <span class="argument">$data</span>, string|null  <span class="argument">$dict = null</span>) : string|false</pre>
-                <p><em></em></p>
+                <p><em>Decompresses a zstd frame.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -459,7 +461,8 @@
                 
                                     <h4>Returns</h4>
                     string|false
-                                            &mdash; 
+                                            &mdash; <p>The decompressed bytes, or FALSE on failure.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -513,7 +516,8 @@
                 
                                     <h4>Returns</h4>
                     string|false
-                                            &mdash; 
+                                            &mdash; <p>The decompressed bytes, or FALSE on failure.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -545,7 +549,7 @@
                 <h3 class=" ">zstd_compress_dict()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">zstd_compress_dict(string  <span class="argument">$data</span>, string  <span class="argument">$dict</span>, int  <span class="argument">$level = 3</span>) : string|false</pre>
-                <p><em></em></p>
+                <p><em>Compresses a string with zstd and a required dictionary.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -573,7 +577,8 @@
                 
                                     <h4>Returns</h4>
                     string|false
-                                            &mdash; 
+                                            &mdash; <p>The compressed bytes, or FALSE on failure.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -605,7 +610,7 @@
                 <h3 class=" ">zstd_uncompress_dict()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">zstd_uncompress_dict(string  <span class="argument">$data</span>, string  <span class="argument">$dict</span>) : string|false</pre>
-                <p><em></em></p>
+                <p><em>Decompresses a zstd frame with a required dictionary.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -627,7 +632,8 @@
                 
                                     <h4>Returns</h4>
                     string|false
-                                            &mdash; 
+                                            &mdash; <p>The decompressed bytes, or FALSE on failure.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -715,7 +721,7 @@
 							</a>
 							and authored
 							                    on
-							November 2nd, 2026 at 17:28.
+							November 2nd, 2026 at 18:31.
 						</section>
 					</section>
 				</section>

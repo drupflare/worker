@@ -73,10 +73,10 @@
 								<div class="accordion" style="margin-bottom: 0">
 		<div class="accordion-group">
 			<div class="accordion-heading">
-									<a class="accordion-toggle " data-toggle="collapse" data-target="#namespace-501799320"></a>
+									<a class="accordion-toggle " data-toggle="collapse" data-target="#namespace-38002106"></a>
 								<a href="namespaces/default.html" style="margin-left: 30px; padding-left: 0">\</a>
 			</div>
-			<div id="namespace-501799320" class="accordion-body collapse in">
+			<div id="namespace-38002106" class="accordion-body collapse in">
 				<div class="accordion-inner">
 
 					
@@ -148,14 +148,15 @@
                 <h3 class=" ">cfw_extensions_installed()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">cfw_extensions_installed() : bool</pre>
-                <p><em></em></p>
+                <p><em>Marks that the extension functions below are in place.</em></p>
                 
 
                 
                 
                                     <h4>Returns</h4>
                     bool
-                                            &mdash; 
+                                            &mdash; <p>Always TRUE.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -187,7 +188,7 @@
                 <h3 class=" ">extension_loaded()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">extension_loaded(string  <span class="argument">$extension</span>) : bool</pre>
-                <p><em></em></p>
+                <p><em>Tells whether an extension is loaded, counting the gated shims.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -203,7 +204,8 @@
                 
                                     <h4>Returns</h4>
                     bool
-                                            &mdash; 
+                                            &mdash; <p>TRUE when the extension is built in or a gated shim covers its whole API.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -251,7 +253,8 @@
                 
                                     <h4>Returns</h4>
                     array<int,string>
-                                            &mdash; 
+                                            &mdash; <p>The extension names.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -283,7 +286,7 @@
                 <h3 class=" ">get_extension_funcs()</h3>
                 <a href="#source-view" role="button" class="pull-right btn" data-toggle="modal" style="font-size: 1.1em; padding: 9px 14px"><i class="fa-solid fa-code"></i></a>
                 <pre class="signature" style="margin-right: 54px;">get_extension_funcs(string  <span class="argument">$extension</span>) : array&lt;int,string&gt;|false</pre>
-                <p><em></em></p>
+                <p><em>Lists the functions an extension provides, counting the gated shims.</em></p>
                 
 
                                     <h4>Parameters</h4>
@@ -299,7 +302,8 @@
                 
                                     <h4>Returns</h4>
                     array<int,string>|false
-                                            &mdash; 
+                                            &mdash; <p>The function names, or FALSE when the extension is unknown or has none.</p>
+
                                                                                 </article>
         </div>
         <aside class="span4 detailsbar">
@@ -387,7 +391,7 @@
 							</a>
 							and authored
 							                    on
-							November 2nd, 2026 at 17:28.
+							November 2nd, 2026 at 18:31.
 						</section>
 					</section>
 				</section>

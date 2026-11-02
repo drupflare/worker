@@ -394,9 +394,8 @@
 </tbody></table></div>
 <p>A free site serves about 100,000 page views a day (about 3M a month) for a well-cached site,
 saturated at 1.00x, and every meter except Worker requests has roughly 5x headroom. That figure
-counts one Worker request a view. Static asset requests are free and unlimited (<code>published</code>, Cloudflare&#39;s
-Workers pricing page), and a drive of 198,000 asset requests invoked no Worker (<code>measured</code>, invocations
-and not billing; see <a href="off-worker-arms.html#the-off-worker-arms">The Off-Worker Arms</a>). Workers Cache is the one documented case that changes
+counts one Worker request a view. Static asset requests do not bill, and a drive of 198,000 asset
+requests invoked no Worker (<code>measured</code>; see <a href="off-worker-arms.html#the-off-worker-arms">The Off-Worker Arms</a>). Workers Cache is the one documented case that changes
 this, and the shipped config does not enable it. With it on, the same arithmetic gives 1,515 views a
 day.</p>
 <div class="table"><table>

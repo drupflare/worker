@@ -155,6 +155,16 @@ a use-after-free, because request memory is never freed between runs. What would
 decision is a working chain against this runtime. The public write-ups use standard SAPIs and
 report none.
 
+## Visitor State That Outlived the Request
+
+Found and fixed on 2026-11-02 while driving `simplesamlphp_auth` and `access_unpublished` to Verified. The container and its services live across requests in the persistent interpreter, so a service that keeps per-request state in a static keeps the previous visitor's value. Three carriers turned up, and each is now reset by name in `RequestResetter` or `DrupflareServiceProvider` in the `drupflare` module.
+
+- **SimpleSAMLphp.** `SimpleSAML\Session` holds the current session in a static, `SessionHandler` caches the session id of the first cookie it read, and the `simplesamlphp_auth` manager keeps a `Simple` that captured that session. After one IdP login, a request that carried no cookie to `/saml_login` was logged in as the previous visitor (`measured`, on the rig). The fix is `RequestResetter::resetSimpleSaml()`. Its regression test fails 3 assertions with the call removed.
+- **access_unpublished.** `TokenGetter` keeps the token it read in a static, so one visitor's token unlocked an unpublished node for the next anonymous visitor. The fix is `clearAccessUnpublishedToken()`.
+- **strata.** `CaptureScope` cached its settings for the life of the container. The fix is the named seed `strata.capture_scope`.
+
+A site that uses none of these modules was not affected. Sites that do need the new driver, and it reaches a deployed site with the release. Nobody has checked whether either leak was ever exploited. Resetting by name does not cover a fourth carrier nobody has found, so a generic reset of resettable services stays open work (see the roadmap).
+
 ## A Request That Ran Its PHP Twice
 
 Found and fixed on 2026-11-02, in the host and not in the interpreter. The object's park driver

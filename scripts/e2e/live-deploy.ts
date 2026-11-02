@@ -419,13 +419,18 @@ export async function provision(site: Site, pass: string, resetWaitMs = 15_000):
 		})
 	};
 	let claim = await site.hit('/firstrun', { ...claimInit, expect: [200, 503] });
-	// a killed claim leaves first_run_at unset, so the retry the reset page asks for is safe
+	// a claim killed before it commits leaves first_run_at unset, so the retry is safe; one killed
+	// after it commits answers "already configured" and the token it minted is lost
 	if (claim.res.status === 503 && /<title>Try Again<\/title>/i.test(claim.body)) {
 		console.error(
 			`RESET: /firstrun hit the Try Again page, retrying once after ${resetWaitMs / 1000} s:${claim.body.replace(/\s+/g, ' ').slice(0, 300)}`
 		);
 		await sleep(resetWaitMs);
 		claim = await site.hit('/firstrun', claimInit);
+		if (/"already configured"/.test(claim.body))
+			throw new ClaimLost(
+				`the first claim committed before the restart: ${claim.body.slice(0, 200)}`
+			);
 	} else if (claim.res.status === 503) {
 		site.problems.push(
 			`POST /firstrun answered 503, expected 200: ${claim.body.slice(0, 160)}`
@@ -533,6 +538,12 @@ export function quotaExhausted(text: string): boolean {
 
 /** raised when the account cannot carry the run; the lane skips rather than failing */
 export class QuotaSkip extends Error {}
+
+/** the claim committed before a restart answered it, so the site is claimed and its token is gone */
+export class ClaimLost extends Error {}
+
+/** the exit code that tells the workflow to deploy again once */
+export const CLAIM_LOST_EXIT = 75;
 
 /** the notice a skipped run prints, naming what was used, what was needed and when it resets */
 export function quotaNotice(used: number | null, needed: number, now = new Date()): string {
@@ -728,6 +739,7 @@ async function main(): Promise<void> {
 	let failed: string[] = [];
 	let skipped: string | null = null;
 	let deployedOnly = false;
+	let claimLost = false;
 	try {
 		const deploy = spawnSync('bunx', ['wrangler', 'deploy', '-c', config], {
 			cwd: root,
@@ -852,7 +864,10 @@ async function main(): Promise<void> {
 	} catch (e) {
 		if (e instanceof QuotaSkip || (await quotaInEvents(name, started))) {
 			skipped = quotaNotice(null, ROWS_PER_RUN);
-		} else failed.push(`the run itself failed: ${e instanceof Error ? e.message : String(e)}`);
+		} else {
+			claimLost = e instanceof ClaimLost;
+			failed.push(`the run itself failed: ${e instanceof Error ? e.message : String(e)}`);
+		}
 	} finally {
 		rmSync(config, { force: true });
 		if (!keep && !deployedOnly) {
@@ -931,7 +946,7 @@ async function main(): Promise<void> {
 	}
 	if (failed.length > 0) {
 		for (const f of failed) console.log(`::error::${f}`);
-		process.exit(1);
+		process.exit(claimLost && failed.length === 1 ? CLAIM_LOST_EXIT : 1);
 	}
 	report('live deploy lane: every invocation succeeded');
 }

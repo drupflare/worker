@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import {
+	ClaimLost,
 	encodeForm,
 	failures,
 	FREE_DAILY_ROWS,
@@ -203,6 +204,20 @@ describe('claiming the site through /firstrun', () => {
 		const site = new Site(rig.origin);
 		try {
 			await expect(provision(site, 'pw', 0)).rejects.toThrow(/no JSON/);
+			expect(rig.claims()).toBe(2);
+		} finally {
+			rig.close();
+		}
+	});
+
+	it('names a claim that committed before the restart, which loses its token', async () => {
+		const rig = await serveClaims([
+			{ status: 503, body: RESET_PAGE },
+			{ status: 200, body: '{"ok":false,"error":"already configured"}' }
+		]);
+		const site = new Site(rig.origin);
+		try {
+			await expect(provision(site, 'pw', 0)).rejects.toBeInstanceOf(ClaimLost);
 			expect(rig.claims()).toBe(2);
 		} finally {
 			rig.close();

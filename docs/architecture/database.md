@@ -1,0 +1,143 @@
+# The Site Database
+
+`assets/drupal/site.sqlite` is the Drupal database every new site is created from. It is the tracked
+database under `assets/`, and this page is how it is built. Read its current size and shape
+off the file rather than from here. `node scripts/diff-site-db.ts` compares a fresh build against it.
+
+One command produces it:
+
+```sh
+php -d opcache.enable_cli=0 -d xdebug.mode=off \
+  scripts/drupal/install-site-db.php drupal-src /tmp/site.sqlite
+```
+
+`bun run build:site-db <output>` runs the same command with the flags already set. The script refuses to write
+`assets/drupal/site.sqlite` unless given `--allow-shipping-pack`, so the normal loop is build
+elsewhere and compare:
+
+```sh
+node scripts/diff-site-db.ts assets/drupal/site.sqlite /tmp/site.sqlite
+```
+
+## What the Script Does
+
+1. **Installs Drupal** into `drupal-src/sites/build` with the `standard` profile, driving
+   `install_drupal()` directly. It never installs into `sites/default`, which holds the baked Twig
+   cache and the working settings.
+2. **Enables `media` and `drupflare`.** The shipped module set is the `standard` profile's
+   dependency closure, plus `update` from the install form, plus these two.
+3. **Applies the `page_content_type` recipe.** Drupal 11.4 ships no node type in `standard`; `page`
+   and `article` are recipes under `core/recipes/`.
+4. **Writes four configuration values** through `ConfigFactory::save()`.
+5. **Drops the cache secondary indexes** on every bin except `cache_data`.
+6. **Truncates `watchdog`**, checkpoints the WAL and vacuums.
+
+Each step prints what it did, so a build log records the module set, the recipe list, the config keys
+and the index count.
+
+## The Four Configuration Values
+
+| Key                                     | Value   | Why                                                                   |
+| --------------------------------------- | ------- | --------------------------------------------------------------------- |
+| `system.performance:cache.page.max_age` | `300`   | at `0` every render answers `private, no-store` and no page is stored |
+| `system.performance:css.preprocess`     | `false` | the aggregates are built at pack time and served from `/agg/`         |
+| `system.performance:js.preprocess`      | `false` | the same                                                              |
+| `automated_cron.settings:interval`      | `0`     | the host owns the schedule; Drupal must not run cron inside a serve   |
+
+`max_age` is the one to understand. Drupal's installer default of `0` suits a host that configures a
+reverse proxy separately. This runtime serves its own cached pages, so at `0` the fill chain declines
+to store every response it renders and the page table stays empty.
+
+**Write these through Drupal, never with SQL.** `ConfigFactory::save()` writes the `config` row and
+clears the `cache_config` copy. Drupal reads the bin first, so an `UPDATE` against `config` alone
+leaves the old value in force.
+
+## The Cache Indexes
+
+Every cache bin ships `<bin>_created` and `<bin>_expire`. The pair is dropped on every bin except
+`cache_data`, which keeps it.
+
+Nothing on this runtime reads them. `DatabaseBackend::getMultiple()` selects by `cid`, and
+`garbageCollection()` never runs because the host sweeps expiry itself. Each surviving index costs a
+charged row on every insert into the bin, and the fill path is what the free plan's row budget
+binds. `cache_data` keeps both because the host's own `gcPass()` caps that bin with
+`ORDER BY created` and sweeps it with `expire < ?`; dropping them turns every alarm into a full scan.
+
+`tests/node/index-audit.spec.ts` asserts both halves: thirteen bins at one charged row per stored
+row, and `cache_data` at three.
+
+## What Reproducible Means Here
+
+Structurally, not byte for byte. A Drupal install mints a random hash salt, a UUID per config
+object, a password hash and per-row timestamps, so two correct runs differ in thousands of bytes
+while describing the same site. `scripts/diff-site-db.ts` compares the table set, the module set,
+the config names and five row counts.
+
+A fresh build agrees with the shipped file on the module set, the config rows and the table set: 41
+modules, 175 config rows and every table. The remaining differences are these:
+
+| Difference                           | Direction    | Cause                                                    |
+| ------------------------------------ | ------------ | -------------------------------------------------------- |
+| `state:drupflare.router_fingerprint` | build only   | written when the module is enabled                       |
+| `state:twig_extension_hash_prefix`   | shipped only | written by `bun run assets:twig`, a later build step     |
+| `state:system.theme.files`           | shipped only | written on the first request                             |
+| six `cache_*` bins                   | shipped only | Drupal creates them on the first request, not at install |
+
+The six lazy bins and the state rows in `FIRST_REQUEST_STATE_ROWS` are named in `diff-site-db.ts`
+rather than tolerated by a wildcard, so a seventh missing table is a failure instead of a rounding error.
+
+## The Router Follows the Driver
+
+`router` is a table that `RouteBuilder` writes, not a cache Drupal rebuilds on demand. A database
+built before a module's routes existed lacks them, and the Drupflare admin section, Runtime Status
+and the Operations Terminal answer 404 on every site created from it.
+
+The packed database carries the current driver's routes. `tests/node/driver-pack.spec.ts` fails when
+the packed router lacks a route the driver declares or carries a permission the driver no longer
+declares. Existing sites are reached by the
+`router-driver-routes` step in `src/ops/reconcile.ts`, which compares a site's `router` rows against
+`DRIVER_ROUTES` and rebuilds when any are absent. After a rebuild, run `assets:twig`, `assets:core`,
+`assets:pack` and `assets:scrub`, then `assets:container`: a fresh install mints a new
+`twig_extension_hash_prefix` and the pack has to follow it.
+
+## Changing One Row
+
+Rebuilding is preferred. A surgical edit is still sometimes right, and two rules apply.
+
+**Find every cached copy of what you are editing.** A `config` row usually has a serialized twin in
+`cache_config`, and Drupal reads the twin first.
+
+**When copying a cache row between databases, check `expire = -1` and that both databases carry
+identical `cachetags`.** A checksum that disagrees with the destination's tags means the row is
+present and rejected, so the cost it was meant to remove is still paid and nothing looks wrong.
+
+After any change, run `bun run assets:sql` to rewrite the migration chunks the Durable Object
+replays, then `node scripts/diff-site-db.ts <previous file> assets/drupal/site.sqlite` to see what
+moved.
+
+## Reading It With Other Tools
+
+The user tables are declared `COLLATE NOCASE_UTF8`, a collation the Drupal SQLite driver registers
+per connection. A plain `sqlite3` client or a raw `new PDO()` cannot rebuild an index over them and
+fails with `no such collation sequence`. Read-only queries are fine; anything that rewrites an index
+has to go through Drupal's own connection.
+
+## Upgrading Drupal Core
+
+The root `composer.lock` decides which core the pack is built from. The runtime bundles the lock and
+reads its versions from it, and `bun run fetch:drupal` materialises the locked core into
+`drupal-src`. Nothing else records the version, so a renovate bump of the lock is the whole change.
+An upgrade by hand is:
+
+```sh
+composer update # or bump the pin in composer.json first
+bun run fetch:drupal -- --force
+bun run build:site-db /tmp/site.sqlite
+node scripts/diff-site-db.ts assets/drupal/site.sqlite /tmp/site.sqlite
+```
+
+`bun run qa:core-freshness` reports whether the shipped core is behind upstream, including whether
+its branch still receives security fixes.
+
+To swap the core under a full tree rebuild, follow [Upgrading Drupal Core](../getting-started/building-from-source/upgrading-core.md#upgrading-drupal-core)
+in Building From Source.

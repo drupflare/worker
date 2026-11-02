@@ -1,0 +1,257 @@
+{
+	"administration": "operating/administration",
+	"architecture": "architecture/index",
+	"building-from-source": {
+		"to": "getting-started/building-from-source/index",
+		"anchors": {
+			"the-steps": "getting-started/building-from-source/steps",
+			"1-2-the-interpreter": "getting-started/building-from-source/steps",
+			"3-4-the-driver-pack": "getting-started/building-from-source/steps",
+			"5-8-the-drupal-tree": "getting-started/building-from-source/steps",
+			"9-16-the-assets": "getting-started/building-from-source/steps",
+			"14-the-aggregates": "getting-started/building-from-source/steps",
+			"why-the-order-is-the-order": "getting-started/building-from-source/build-order",
+			"15-the-container-row": "getting-started/building-from-source/build-order",
+			"17-the-prefill": "getting-started/building-from-source/build-order",
+			"caching": "getting-started/building-from-source/build-order",
+			"a-step-is-judged-by-its-artifact": "getting-started/building-from-source/build-order",
+			"rebuilding-only-part-of-it": "getting-started/building-from-source/build-order",
+			"upgrading-drupal-core": "getting-started/building-from-source/upgrading-core",
+			"the-sequence": "getting-started/building-from-source/upgrading-core",
+			"what-a-patch-release-moves": "getting-started/building-from-source/upgrading-core",
+			"the-two-rows-nothing-regenerates": "getting-started/building-from-source/upgrading-core"
+		}
+	},
+	"compatibility": "architecture/compatibility",
+	"configuration-integrations": {
+		"to": "configuration/integrations/index",
+		"anchors": {
+			"outbound-mail": "configuration/integrations/mail",
+			"the-smtp-modules-own-settings": "configuration/integrations/mail",
+			"what-each-transport-reaches": "configuration/integrations/mail",
+			"the-send_email-binding": "configuration/integrations/mail",
+			"smtp": "configuration/integrations/mail",
+			"limits-and-what-a-refusal-means": "configuration/integrations/mail",
+			"connecting-a-cloudflare-account": "configuration/integrations/mail",
+			"onboarding-a-sending-domain": "configuration/integrations/mail",
+			"outbound-tcp": "configuration/integrations/tcp",
+			"the-parked-tier": "configuration/integrations/tcp",
+			"workers-ai": "configuration/integrations/workers-ai",
+			"two-catalogues": "configuration/integrations/workers-ai",
+			"what-this-tier-does-not-do": "configuration/integrations/workers-ai",
+			"oidc-login": "configuration/integrations/oidc-login",
+			"spool": "configuration/integrations/spool"
+		}
+	},
+	"configuration-operations": {
+		"to": "configuration/operations/index",
+		"anchors": {
+			"owner-token-recovery": "configuration/operations/owner-access",
+			"owner-audit-log": "configuration/operations/owner-access",
+			"database-updates": "configuration/operations/updates",
+			"pack-reconciliation": "configuration/operations/updates",
+			"the-addressable-sweep": "configuration/operations/updates",
+			"runtime-overrides": "configuration/operations/overrides",
+			"reading-and-writing-overrides": "configuration/operations/overrides",
+			"from-drupal-without-the-owner-token": "configuration/operations/overrides",
+			"the-three-permissions": "configuration/operations/overrides"
+		}
+	},
+	"configuration-replicas": "configuration/replicas",
+	"configuration-runtime": "configuration/runtime",
+	"configuration-serving": {
+		"to": "configuration/serving/index",
+		"anchors": {
+			"static-asset-cache-lifetimes": "configuration/serving/static-assets",
+			"request-headers": "configuration/serving/static-assets",
+			"outbound_guard": "configuration/serving/request-limits",
+			"max_body_bytes": "configuration/serving/request-limits",
+			"the-kv-page-tier": "configuration/serving/page-cache",
+			"never_stale": "configuration/serving/page-cache",
+			"memory_cache_bins": "configuration/serving/page-cache",
+			"asset_aggregates": "configuration/serving/static-assets",
+			"edge_plan": "configuration/serving/page-cache",
+			"prefill-and-mirroring": "configuration/serving/files-and-images",
+			"files-and-images": "configuration/serving/files-and-images",
+			"image-styles": "configuration/serving/files-and-images",
+			"files_public_url": "configuration/serving/files-and-images",
+			"image_engine": "configuration/serving/files-and-images",
+			"r2-page-origin-caching": "configuration/serving/r2-page-origin",
+			"the-cache-rule": "configuration/serving/r2-page-origin",
+			"smart-tiered-cache": "configuration/serving/r2-page-origin",
+			"absorption-in-the-model": "configuration/serving/r2-page-origin"
+		}
+	},
+	"configuration": {
+		"to": "configuration/index",
+		"anchors": {
+			"cms": "configuration/site-identity",
+			"site-identity-and-origin": "configuration/site-identity",
+			"site_id": "configuration/site-identity",
+			"site_id_ports": "configuration/site-identity",
+			"site_location_hint": "configuration/site-identity",
+			"site_origin": "configuration/site-identity",
+			"alias-hosts": "configuration/site-identity",
+			"plan": "configuration/plan-and-routes",
+			"extensibility-routes": "configuration/plan-and-routes",
+			"migrated-project-settings": "configuration/migrated-settings",
+			"diagnostics": "configuration/diagnostics",
+			"pw_diagnostics": "configuration/diagnostics",
+			"php_log_level": "configuration/diagnostics",
+			"pw_sql_trace": "configuration/diagnostics"
+		}
+	},
+	"database": "architecture/database",
+	"economics": {
+		"to": "impact/economics/index",
+		"anchors": {
+			"the-conventional-hosts": "impact/economics/conventional-hosts",
+			"what-a-conventional-host-needs": "impact/economics/conventional-hosts",
+			"what-running-it-showed": "impact/economics/conventional-hosts",
+			"the-free-plan": "impact/economics/free-plan-and-warming",
+			"kept-warm": "impact/economics/free-plan-and-warming",
+			"what-the-price-column-does-not-buy": "impact/economics/free-plan-and-warming",
+			"the-shape-of-the-bills": "impact/economics/bills",
+			"cost-per-request": "impact/economics/bills"
+		}
+	},
+	"energy-fleet": "impact/energy/fleet",
+	"energy-views": "impact/energy/views",
+	"energy": {
+		"to": "impact/energy/index",
+		"anchors": {
+			"production-baseline": "impact/energy/production-baseline",
+			"watts-for-a-busy-core": "impact/energy/production-baseline",
+			"the-worst-case": "impact/energy/production-baseline",
+			"operating-states": "impact/energy/operating-states",
+			"where-the-saving-comes-from": "impact/energy/operating-states",
+			"the-render-fraction": "impact/energy/operating-states",
+			"where-the-figures-come-from": "impact/energy/inputs",
+			"model-inputs": "impact/energy/inputs",
+			"the-two-hosts": "impact/energy/inputs",
+			"energy-per-request": "impact/energy/per-request",
+			"a-per-request-figure-needs-its-rate": "impact/energy/per-request",
+			"the-two-runtimes-at-matched-load": "impact/energy/per-request",
+			"logged-in-views": "impact/energy/per-request",
+			"service-bindings-and-r2": "impact/energy/per-request",
+			"what-the-idle-floor-costs": "impact/energy/per-request"
+		}
+	},
+	"environment": {
+		"to": "impact/carbon",
+		"anchors": {
+			"water": "impact/water",
+			"embodied-carbon": "impact/embodied"
+		}
+	},
+	"external-database": {
+		"to": "operating/external-database/index",
+		"anchors": {
+			"why-the-default-is-not-external": "operating/external-database/why-not-default",
+			"the-configuration-cap-bounds-the-product-shape": "operating/external-database/why-not-default",
+			"every-statement-parks": "operating/external-database/why-not-default",
+			"the-consistency-story-lives-in-the-object": "operating/external-database/why-not-default",
+			"the-query-cache-cannot-be-used-for-a-cms-on-the-same-database": "operating/external-database/why-not-default",
+			"latency-moves-from-zero-to-regional": "operating/external-database/why-not-default",
+			"an-open-socket-bills-duration": "operating/external-database/why-not-default",
+			"the-query-budget": "operating/external-database/why-not-default"
+		}
+	},
+	"free-vs-paid": {
+		"to": "impact/economics/free-vs-paid/index",
+		"anchors": {
+			"the-off-worker-arms": "impact/economics/free-vs-paid/off-worker-arms",
+			"what-a-binding-or-an-r2-read-adds": "impact/economics/free-vs-paid/off-worker-arms"
+		}
+	},
+	"getting-started": {
+		"to": "getting-started/index",
+		"anchors": {
+			"claim-the-site": "getting-started/claim-and-log-in",
+			"log-in": "getting-started/claim-and-log-in",
+			"manage-the-site": "getting-started/claim-and-log-in",
+			"updating-a-deployed-worker": "getting-started/updating",
+			"keeping-an-existing-site-current": "getting-started/updating",
+			"covering-the-rest-of-the-site": "getting-started/updating"
+		}
+	},
+	"git-remotes": "operating/git-remotes",
+	"government": "audiences/government",
+	"impact": {
+		"to": "impact/index",
+		"anchors": {
+			"what-this-does-not-claim": "impact/limits",
+			"reproducing-the-numbers": "impact/reproducing",
+			"references": "impact/references"
+		}
+	},
+	"limitations": "architecture/limitations",
+	"measurement-classes": "architecture/measurement-classes",
+	"modules": "architecture/modules",
+	"php-update-delivery": {
+		"to": "operating/php-update-delivery/index",
+		"anchors": {
+			"verification": "operating/php-update-delivery/verification",
+			"output": "operating/php-update-delivery/verification",
+			"manual-runs": "operating/php-update-delivery/verification",
+			"credentials": "operating/php-update-delivery/verification",
+			"rollback": "operating/php-update-delivery/rollback",
+			"staged-rollout": "operating/php-update-delivery/rollback",
+			"trust": "operating/php-update-delivery/trust-and-cost",
+			"self-hosted-sites": "operating/php-update-delivery/trust-and-cost",
+			"cost": "operating/php-update-delivery/trust-and-cost",
+			"rejected-alternatives": "operating/php-update-delivery/trust-and-cost",
+			"out-of-scope": "operating/php-update-delivery/trust-and-cost"
+		}
+	},
+	"recovery": "operating/recovery",
+	"replica-lanes": "operating/replica-lanes",
+	"repository-layout": {
+		"to": "getting-started/repository-layout/index",
+		"anchors": {
+			"tracked-against-untracked": "getting-started/repository-layout/paths",
+			"docs": "getting-started/repository-layout/paths",
+			"experiments": "getting-started/repository-layout/paths",
+			"assetscore": "getting-started/repository-layout/paths",
+			"vendor": "getting-started/repository-layout/paths",
+			"drupal-src": "getting-started/repository-layout/paths",
+			"siblings": "getting-started/repository-layout/paths",
+			"unwired-scripts": "getting-started/repository-layout/automation",
+			"test-coverage-of-headline-claims": "getting-started/repository-layout/automation",
+			"nightly-automation": "getting-started/repository-layout/automation"
+		}
+	},
+	"security-controls": {
+		"to": "security/controls/index",
+		"anchors": {
+			"request-path": "security/controls/requests",
+			"outbound-requests": "security/controls/requests",
+			"uploads-and-request-parsing": "security/controls/requests",
+			"credentials-and-persistence": "security/controls/credentials",
+			"response-headers": "security/controls/requests",
+			"the-build": "security/controls/build-and-patching",
+			"patching": "security/controls/build-and-patching"
+		}
+	},
+	"security-incidents": "security/incidents",
+	"security": {
+		"to": "security/index",
+		"anchors": {
+			"what-it-does-not-remove": "security/not-removed",
+			"application-bugs": "security/not-removed",
+			"code-execution-inside-the-sandbox": "security/not-removed",
+			"memory-corruption-inside-the-sandbox": "security/not-removed",
+			"javascript-code-execution-in-the-isolate": "security/not-removed",
+			"data-in-the-same-object": "security/not-removed",
+			"co-tenancy-and-side-channels": "security/not-removed",
+			"platform-failure-and-concentration": "security/not-removed",
+			"supply-chain": "security/not-removed",
+			"cost-as-an-attack-and-visibility": "security/not-removed",
+			"state-that-survives-between-requests": "security/not-removed",
+			"how-much-safer": "security/how-much-safer",
+			"references": "security/how-much-safer"
+		}
+	},
+	"testing": "getting-started/testing",
+	"vps-comparison": "impact/economics/vps-comparison"
+}

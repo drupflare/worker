@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Security Controls - Drupflare</title>
+		<meta
+			name="description"
+			content="What Drupflare provides today, control by control: the host surface, the request path, outbound requests, uploads, credentials, response headers, the build and patching."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Security Controls - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="What Drupflare provides today, control by control: the host surface, the request path, outbound requests, uploads, credentials, response headers, the build and patching."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html" aria-current="page">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Security</a></p>
+<h1 id="security-controls">Security Controls</h1>
+<p>What Drupflare provides today, control by control: the host surface, the request path, outbound requests, uploads, credentials, response headers, the build and patching. The claims and their labels are on <a href="../index.html">Security</a>.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#host-surface">Host Surface</a></li></ol></nav><h2 id="pages">Pages</h2>
+<ul>
+<li><a href="requests.html">Request Controls</a>: request path, outbound requests, uploads and response headers.</li>
+<li><a href="credentials.html">Credentials and Persistence</a>: how credentials and persistent state are protected.</li>
+<li><a href="build-and-patching.html">Build and Patching Controls</a>: the build and patching.</li>
+</ul>
+<h2 id="host-surface">Host Surface</h2>
+<p>The interpreter reaches the outside through two routes: the imports of the wasm module, and the
+<code>cfw*</code> functions the Durable Object installs on the Emscripten <code>Module</code>.</p>
+<p><strong>The module.</strong> The shipping module, <code>.interp/php8.5.wasm</code> as pinned in <code>interp.lock.json</code>, imports
+102 functions, all from <code>env</code> and <code>wasi_snapshot_preview1</code>. The tuned copy derived from it imports
+103, the extra one being <code>env.memory</code> (Measured: <code>WebAssembly.Module.imports()</code> on both files).
+<code>config/host-imports.json</code> holds every one with a class, and <code>bun scripts/import-census.ts</code> fails on
+an import that is not on file, a name that is gone, or a class that is missing
+(<code>tests/node/host-import-census.spec.ts</code>, Measured, falsified by removing an entry and by leaving
+one unclassified). A new import therefore cannot join the surface without a reviewed line.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Imports</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>hard</code></td>
+<td>18</td>
+<td>The host has no such function: five abort stubs, 11 closed in the tuned glue (below), two asyncjs stubs</td>
+</tr>
+<tr>
+<td><code>policy</code></td>
+<td>2</td>
+<td>The function exists and a list decides: the two <code>emscripten_asm_const_*</code> entries that carry the bridge</td>
+</tr>
+<tr>
+<td><code>compute</code></td>
+<td>60</td>
+<td>libc, time, memory, in-isolate pipes and fake name lookups; no outside effect</td>
+</tr>
+<tr>
+<td><code>io</code></td>
+<td>22</td>
+<td>The in-isolate file system and the wasi read and write calls</td>
+</tr>
+</tbody></table></div>
+<p>The five abort stubs are <code>posix_spawnp</code>, <code>getdtablesize</code>, <code>__assert_fail</code>, <code>_abort_js</code> and
+<code>emscripten_fiber_swap</code>. <code>posix_spawnp</code> aborts (<code>.interp/php8.5-worker.mjs</code>, &quot;missing function:
+posix_spawnp&quot;), so there is no fork, no exec and no process table.</p>
+<p><strong>Raw sockets, closed in v1.0.4.</strong> Emscripten&#39;s stock glue implements <code>socket</code>, <code>connect</code> and the
+rest of the socket calls over a <code>WebSocket</code>, and resolves names through a fake DNS.
+<code>closeSockets()</code> in <code>scripts/measure/growth-glue.ts</code> replaces the bodies of the 10 socket syscalls
+and <code>getaddrinfo</code> in the tuned glue, so each returns a fixed refusal. Measured in node with a
+recording <code>WebSocket</code> on <code>globalThis</code>: on the stock glue <code>fsockopen</code> and <code>stream_socket_client</code>
+constructed 3 WebSockets, including one to <code>probe.invalid</code>; on the tuned glue 0
+(<code>tests/node/growth-glue.spec.ts</code>). Every legitimate network path here goes through a <code>cfw*</code> host
+function, and 149 park, Redis, mail, HTTP-queue and TCP tests ran with a recording <code>WebSocket</code> and
+constructed none.</p>
+<p><strong>The vrzno bridge, closed in v1.0.4.</strong> The interpreter carries <code>vrzno</code>, the extension that lets PHP
+call JavaScript. Its <code>EM_ASM</code> bodies reached all of <code>globalThis</code>, an <code>eval</code>, a dynamic <code>import</code> and
+every property of <code>Module</code>, so userland PHP could call a JavaScript global directly, including
+<code>fetch</code> and <code>WebSocket</code>, with no host function and no outbound guard in the way. The shipping PHP
+uses only <code>vrzno_env(&#39;&lt;cfw name&gt;&#39;)</code>. <code>closeVrznoBridge()</code> in the same file now leaves three things:
+<code>vrzno_env</code> answers only names of the form <code>cfw[A-Za-z0-9]*</code>, the root handle is an empty frozen
+object instead of <code>globalThis</code>, and each <code>cfw*</code> function reaches PHP as a sealed wrapper with no
+prototype, whose object or function replies become null. <code>vrzno_eval</code>, <code>vrzno_run</code> and
+<code>vrzno_import</code> answer a fixed string. Measured in node, 14 attempts, control against shipping glue:
+the stock glue made 3 recorded calls (a <code>fetch</code> to a metadata address, a <code>WebSocket</code>, a <code>fetch</code> to
+another host) and returned live proxies for <code>process</code>, <code>crypto</code> and <code>Function</code>; the tuned glue
+made 0 calls and returned null for each (<code>tests/node/growth-glue.spec.ts</code>,
+<code>tests/integration/interpreter-lifecycle.spec.ts</code>, both falsified). What it leaves open: PHP can
+still call any <code>cfw*</code> function with any argument, which is the capability list below, and a PHP
+write to the frozen root throws a JavaScript <code>TypeError</code> through the wasm frame, which ends that
+invocation. Whether the open bridge could read <code>process.env</code> on a hosted Worker, where the secrets
+sit, was not measured on the platform and is treated as having been possible. The fix reaches a
+deployed site only with the next deploy of the tuned glue.</p>
+<p><strong>The <code>cfw*</code> functions</strong> are the intended capability set (<code>src/do/capabilities.ts</code>,
+<code>src/ops/park-drive.ts</code>, <code>src/ops/tcp.ts</code>, Read):</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Function</th>
+<th>What it reaches</th>
+<th>Limit</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>cfwSqlExec</code>, <code>cfwSqlTxn</code>, <code>cfwSqlPark</code></td>
+<td>Any SQL on the site&#39;s own Durable Object SQLite</td>
+<td>It is Drupal&#39;s own database connection; <code>_cf_KV</code> answers <code>SQLITE_AUTH</code></td>
+</tr>
+<tr>
+<td><code>cfwFetch</code>, <code>cfwHttpCacheGet</code></td>
+<td>The fetch cache only; a miss queues a request and returns</td>
+<td>No synchronous network by construction</td>
+</tr>
+<tr>
+<td><code>cfwQueueFetch</code>, <code>cfwParkFetch</code></td>
+<td>Any public HTTP(S) URL, with PHP&#39;s headers and body</td>
+<td>Deny-list for private and metadata hosts, applied to every redirect hop</td>
+</tr>
+<tr>
+<td><code>cfwTcp</code></td>
+<td>Redis and syslog at the endpoint the operator configured</td>
+<td>PHP names no host; port must match the configured endpoint</td>
+</tr>
+<tr>
+<td><code>cfwMail</code></td>
+<td>A message queued through the site&#39;s mail transport</td>
+<td>From-domain check and size caps</td>
+</tr>
+<tr>
+<td><code>cfwFile*</code>, <code>cfwFilePublicBase</code></td>
+<td>The site&#39;s own file tables</td>
+<td><code>..</code> rejected; flat keyspace inside one object</td>
+</tr>
+<tr>
+<td><code>cfwSettings</code></td>
+<td><code>CONFIG_KV</code>, for the allow-listed levers</td>
+<td><code>PLAN</code>, <code>CSP_MODE</code> and the outbound guard are refused; writes are scoped to the site</td>
+</tr>
+<tr>
+<td><code>cfwOidcClaims</code>, <code>cfwModules</code>, <code>cfwHealth</code></td>
+<td>One redeemed OIDC ticket, the module list, the health ledger</td>
+<td>Read or own-object only</td>
+</tr>
+<tr>
+<td><code>cfwAead</code>, <code>cfwArgon2</code>, <code>cfwBlake2b</code>, <code>cfwSign</code>, zlib, image, stats, log</td>
+<td>Computation in JavaScript inside the object</td>
+<td>Canvas and operation caps</td>
+</tr>
+</tbody></table></div>
+<p><code>cfwSettings</code> is the one host function that reaches <code>CONFIG_KV</code>. No host function names the <code>SITE</code>
+namespace or the fleet D1 database, so PHP cannot address another site&#39;s object or the fleet table
+(Measured: the census spec asserts that scan, and a planted function naming <code>SITE</code> through a
+computed key is caught). The scan reads what a host function&#39;s own source names and not what its
+helpers reach, which is why <code>writeSettings</code> has its own spec.</p>
+<p>Shell functions go through a router in the <code>drupflare</code> module (<code>src/Exec/Commands.php</code>) that serves
+a fixed program list, including <code>echo</code>, <code>zip</code>, <code>curl</code> and <code>wget</code>, and refuses pipes, redirection
+and every other program. The router is a compatibility layer written in PHP. It decides what
+ordinary PHP code can do. The property that matters for an attacker is different: the wasm module
+has no process to fork or exec into, because <code>posix_spawnp</code> aborts and there is no kernel.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

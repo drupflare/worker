@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Replica Lanes - Drupflare</title>
+		<meta
+			name="description"
+			content="Read replicas for a site, each a separate Durable Object filled from the primary."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Replica Lanes - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Read replicas for a site, each a separate Durable Object filled from the primary."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html">Getting Started</a>
+				<a href="../operating/index.html" aria-current="page">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Operating</a></p>
+<h1 id="replica-lanes">Replica Lanes</h1>
+<p>Read replicas for a site, each a separate Durable Object filled from the primary.</p>
+<p>A Durable Object runs one request at a time, and a PHP render holds it for the whole render. A site is not confined to one object. A namespace holds unlimited objects, so a site spreads its serving path across lanes, each a separate object named <code>&lt;site&gt;#r&lt;n&gt;</code>. Only <code>/serve</code> spreads. Owner and diagnostic routes pin to the primary, so <code>/export</code> cannot answer from a lane&#39;s copy.</p>
+<p>A lane removes queueing, not service time. A cached page is answered from the edge cache or the object&#39;s own SQLite without booting PHP, so a site taking 100 req/s of cached traffic queues nothing and needs no lane. A site taking 20 req/s of authenticated renders may need several.</p>
+<p>Lanes work because an authenticated GET writes no authoritative state under this SAPI. Measured per table on real renders: no <code>sessions</code> row, no <code>users_field_data.access</code>, no <code>flood</code>. Core throttles the access write on <code>KernelEvents::TERMINATE</code>, which this SAPI never dispatches. A lane keeps its own copy, sweeps expired rows (<code>src/ops/replica.ts</code>) and applies the primary&#39;s replication log. It refuses anything authoritative with a 421, and the front worker retries that request on the primary.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#scaling">Scaling</a></li><li><a href="#what-a-lane-buys-against-a-vps">What a Lane Buys Against a VPS</a></li><li><a href="#autoscaling">Autoscaling</a></li><li><a href="#how-a-lane-is-built">How a Lane Is Built</a></li></ol></nav><h2 id="scaling">Scaling</h2>
+<p>Two quantities carry different claims.</p>
+<h3 id="per-object">Per Object</h3>
+<p>Driven alone on a deployed paid worker, a lane answered 31 authenticated renders per second at a p50 of 216 ms, with 8 concurrent clients and every response reporting <code>x-cfw-cache: RENDER</code>. The same object answered 268 cached pages per second at a p50 near 20 ms, reporting <code>x-cfw-cache: HIT</code>. A render is roughly ten times the work of a cached hit.</p>
+<h3 id="across-a-pool">Across a Pool</h3>
+<p>Addressing each object directly and summing, a pool reaches 1.00, 1.72, 3.64, 7.10 and 15.19x at 1, 2, 4, 8 and 16 lanes, which is 95% of perfect at sixteen. This describes how many objects a site has and what each one serves. It does not describe what a visitor gets, so quote the routed figure.</p>
+<p>Routed traffic is hashed to a lane, and the primary serves bucket 0 as well as feeding replication. Driven that way against deployed sites with authenticated admin pages, with a fixed 20 second window per cell, sixteen lanes served 4.74x what one object served at 16 clients and 4.54x at 64 clients. p50 fell 16.4x at 16 clients and 24.8x at 64.</p>
+<details>
+<summary>Routed measurements by lane count</summary><div class="table"><table>
+<thead>
+<tr>
+<th>lanes</th>
+<th>served, 16 clients</th>
+<th>p50</th>
+<th>served, 64 clients</th>
+<th>p50</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>0</td>
+<td>62</td>
+<td>5969 ms</td>
+<td>98</td>
+<td>16048 ms</td>
+</tr>
+<tr>
+<td>1</td>
+<td>54</td>
+<td>7712 ms</td>
+<td>78</td>
+<td>33741 ms</td>
+</tr>
+<tr>
+<td>2</td>
+<td>79</td>
+<td>3172 ms</td>
+<td>154</td>
+<td>10431 ms</td>
+</tr>
+<tr>
+<td>4</td>
+<td>81</td>
+<td>2867 ms</td>
+<td>147</td>
+<td>6506 ms</td>
+</tr>
+<tr>
+<td>8</td>
+<td>128</td>
+<td>1715 ms</td>
+<td>220</td>
+<td>6125 ms</td>
+</tr>
+<tr>
+<td>16</td>
+<td>294</td>
+<td>364 ms</td>
+<td>445</td>
+<td>647 ms</td>
+</tr>
+</tbody></table></div>
+<p>Each cell counts served requests, not a rate. Every cell drives the same window, and a rate computed over elapsed time charges an arm twice for its own tail.</p>
+</details><p>The routed throughput ratio compares a pool with one object at the same client count and window. Here <code>S_N</code> is the count of requests served with <code>N</code> replica lanes, and <code>S_0</code> the count with none:</p>
+<pre><code class="math">R_N = \frac{S_N}{S_0}</code></pre><p>At sixteen lanes <code>R</code> is 4.74 at 16 clients and 4.54 at 64 clients, from the table above.</p>
+<h3 id="when-a-lane-helps">When a Lane Helps</h3>
+<p>Below saturation a lane loses: 0.87x at 32 clients and 0.98x at 64. Routing hashes over two buckets, so the lane takes about 60% of the traffic onto an object whose Drupal caches are colder than the primary&#39;s, and adds no parallelism. Above saturation it is the difference between answering and not. At 128 clients one lane serves 2.06x what no pool serves.</p>
+<p>At 512 concurrent clients over 200 distinct authenticated node pages, the same 20 second window served 0 requests with no lane, 426 with one lane, 814 with two and 1,889 with eight. A single object sheds every request at that load. This workload differs from the routed table, and the two sets of numbers must not be divided into each other.</p>
+<details>
+<summary>Saturation measurements</summary><div class="table"><table>
+<thead>
+<tr>
+<th>lanes</th>
+<th>served, 512 clients</th>
+<th>vs one lane</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>0</td>
+<td>0</td>
+<td>none</td>
+</tr>
+<tr>
+<td>1</td>
+<td>426</td>
+<td>1.00x</td>
+</tr>
+<tr>
+<td>2</td>
+<td>814</td>
+<td>1.91x</td>
+</tr>
+<tr>
+<td>8</td>
+<td>1,889</td>
+<td>4.43x</td>
+</tr>
+</tbody></table></div>
+<p>The 4-lane cell is withheld. Its site returned a 500 rate the other arms did not reproduce, and the rig was torn down before the cell could be driven again.</p>
+</details><p>The load comes from a Worker, not a laptop, driven through a service binding and fanned out across sub-invocations. A probe that holds service time fixed and sweeps only the fan-out puts that generator&#39;s own ceiling above 512 concurrent subrequests, so the pool is what gets measured.</p>
+<p>The rig confirms the pool is addressed correctly. At 32 lanes all 33 objects answer, the distribution across buckets is even, and content writes forward from a lane to the primary without collision.</p>
+<h3 id="rows-written">Rows Written</h3>
+<p>Every row written on the primary is written again on each lane. Rows written is the meter that bounds regeneration, so a pool buys read throughput at a write-amplification cost. An 8-lane pool reaches the daily row ceiling nine times sooner than one object. Size a pool against the write rate as well as the read rate: it is a lever for read-heavy sites and a penalty on write-heavy ones.</p>
+<p>With <code>N</code> replica lanes, and <code>W</code> the rows one change writes on the primary, the pool writes this many rows for that change:</p>
+<pre><code class="math">W_{\text{pool}} = (N + 1)\, W</code></pre><h2 id="what-a-lane-buys-against-a-vps">What a Lane Buys Against a VPS</h2>
+<p>A VPS has no lane axis. Its ceiling is the cores it was bought with. Raising it means resizing the box or putting a load balancer in front of several, with shared session and cache state behind them. That is an architecture change, done by hand.</p>
+<p>A lane is a Durable Object the primary copies itself into, addressed by a hash of the visitor&#39;s affinity key. Adding one changes no configuration a site owner writes. The comparison splits by traffic shape, not by hardware:</p>
+<ul>
+<li><strong>Anonymous cached traffic</strong>, which is most of it, never reaches an object on either side. Drupflare answers from the colo nearest the visitor and a VPS answers from its one region, so the difference is the network term in <a href="../impact/economics/vps-comparison.html#geography">Geography</a>.</li>
+<li><strong>Authenticated traffic</strong> is where lanes decide it. A converged session is answered from the compiled plan in the front worker&#39;s isolate, and the lanes exist for the requests that miss it.</li>
+</ul>
+<p>The two bill on different axes. A VPS bills for its box whether or not anyone visits. Hetzner&#39;s CX22 is 2 vCPU and 4 GB for EUR 3.79 a month, and DigitalOcean&#39;s equivalent is $24. Drupflare bills per request and per row written on a $5 Workers Paid plan. For one busy site the monthly figures are close enough that price does not decide it. For a fleet, or for a site whose traffic is bursty, they are not comparable: the VPS pays for its peak all month.</p>
+<p>On an uncached render Drupflare is not the faster side. It competes on the traffic a real site receives. Where it is slower is listed under <a href="../architecture/limitations.html">Limitations</a>.</p>
+<h2 id="autoscaling">Autoscaling</h2>
+<p>The primary counts, per alarm window, how many requests waited for its gate. Three consecutive windows must all show waiting before a lane is provisioned. The target is the smallest queue depth across those three, one lane per sustained waiter (<code>laneTarget()</code> in <code>src/ops/replica-demand.ts</code>). A burst that clears inside one window provisions nothing. A quiet window clears the run.</p>
+<p>Autoscaling stops at 32 lanes by default. That bound is per-lane idle cost, which is storage plus replication catch-up, not a throughput limit. A new lane is also refused when the projected day&#39;s rows would pass 80% of the plan&#39;s daily row limit (<code>laneFitsRows()</code>, same file), because each lane rewrites every replicated row. <code>REPLICA_MAX_LANES</code> moves the cap, and <code>REPLICA_AUTOSCALE=0</code> turns autoscaling off. The variables are listed on <a href="../configuration/replicas.html">Replica Settings</a>.</p>
+<h2 id="how-a-lane-is-built">How a Lane Is Built</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>piece</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Provisioning</strong></td>
+<td><code>?action=provision&amp;lane=&lt;n&gt;</code> on the primary copies itself into a lane, bounded per invocation and resumable by a cursor it hands back</td>
+</tr>
+<tr>
+<td><strong>Restore</strong></td>
+<td>each chunk carries the table&#39;s DDL, so a lane needs no Drupal install of its own</td>
+</tr>
+<tr>
+<td><strong>Catch-up</strong></td>
+<td>the lane pulls the primary&#39;s replication log on its own alarm and is promoted through <code>admissionVerdict()</code></td>
+</tr>
+<tr>
+<td><strong>Routing</strong></td>
+<td>a lane is chosen by hashing an affinity key; see <a href="#routing-a-request">Routing a Request</a></td>
+</tr>
+<tr>
+<td><strong>Failover</strong></td>
+<td>a lane that is not <code>SERVING</code>, or meets a call it may not perform, answers 421 with a retry-safe flag</td>
+</tr>
+<tr>
+<td><strong>Staleness</strong></td>
+<td><code>REPLICA_LAG_MS</code> bounds how far behind a serving lane may fall, at 30 s</td>
+</tr>
+</tbody></table></div>
+<p>Three refusals hold the copy together. A torn copy, where table A is at generation 12 and table B at 13, is refused by <code>chunkRefusal()</code> (<code>src/ops/replica-restore.ts</code>), and the position stays in flight until a whole consistent copy lands. A lane cannot pass for one that has finished, because the first chunk declares every table the copy will deliver (<code>expect</code>), and the lane holds the driver to that list. No lane is admitted until <code>system.private_key</code> arrives from the primary, since two objects each minting their own would issue CSRF tokens the other rejects (<code>MANDATORY_STATE</code> in <code>src/ops/replica-admission.ts</code>).</p>
+<h3 id="lane-stages">Lane Stages</h3>
+<p>A lane&#39;s stage is stored in the object&#39;s <code>replica_stage</code> meta key, and the serve route answers 421 to any lane not at <code>SERVING</code> (<code>src/do/routes/serve.ts</code>). <code>ReplicaStage</code> in <code>src/ops/replica-admission.ts</code> names the stages. <code>setReplicaStage()</code> in <code>src/site-do.ts</code> refuses any move <code>canTransition()</code> does not allow.</p>
+<pre><code class="mermaid">stateDiagram-v2
+    direction TB
+    [*] --> CREATED
+    CREATED --> RESTORING
+    RESTORING --> VERIFIED
+    VERIFIED --> CATCHING_UP
+    CATCHING_UP --> ELIGIBLE
+    ELIGIBLE --> SERVING
+    CREATED --> WITHDRAWN
+    RESTORING --> WITHDRAWN
+    VERIFIED --> WITHDRAWN
+    CATCHING_UP --> WITHDRAWN
+    ELIGIBLE --> WITHDRAWN
+    SERVING --> WITHDRAWN
+    WITHDRAWN --> CREATED</code></pre><p>Forward moves go one step at a time. Any stage except <code>WITHDRAWN</code> may move to <code>WITHDRAWN</code>, and <code>WITHDRAWN</code> may move only to <code>CREATED</code>. The code takes these moves:</p>
+<ul>
+<li><strong>CREATED to RESTORING</strong>: the first restore chunk lands (<code>src/do/replication.ts</code>).</li>
+<li><strong>RESTORING to VERIFIED</strong>: the <code>done</code> chunk lands, and the mandatory state and every expected table are present.</li>
+<li><strong>VERIFIED to CATCHING_UP</strong>: a log pull finds the primary ahead of the lane.</li>
+<li><strong>CATCHING_UP to ELIGIBLE to SERVING</strong>: <code>admissionVerdict()</code> admits the lane, and the loop in <code>catchUpOnce()</code> walks both steps in one call. <code>ELIGIBLE</code> is never left stored between calls.</li>
+<li><strong>To WITHDRAWN</strong>: <code>catchUpOnce()</code> withdraws a lane when a record is refused or the stored position is untrusted. The lane can be at <code>VERIFIED</code>, <code>CATCHING_UP</code> or <code>SERVING</code> at that point.</li>
+<li><strong>WITHDRAWN to CREATED</strong>: <code>requestReadmission()</code> (<code>src/do/lanes.ts</code>) clears the copy and asks the primary for a new one.</li>
+</ul>
+<p><code>admissionVerdict()</code> admits a lane only when the mandatory state is present, the schema versions match, the applied generation equals the primary&#39;s advertised generation, and the fingerprints agree. An unknown on either side refuses.</p>
+<p>A restored lane drives itself. Reaching <code>VERIFIED</code> arms its alarm. Each firing pulls <code>action=log</code> from the primary and applies it, then <code>admissionVerdict()</code> decides promotion to <code>SERVING</code> (<code>src/do/alarm/lane.ts</code>). A lane below <code>SERVING</code> owns its alarm chain and re-arms every 2 s. A <code>WITHDRAWN</code> lane resets itself to <code>CREATED</code>, clears its torn-copy markers and asks the primary for a fresh copy, then re-arms and repeats the ask until the copy lands. The primary queues the lane and takes the repair before growing the pool, on a quiet site as well as a busy one.</p>
+<h3 id="routing-a-request">Routing a Request</h3>
+<p><code>openContext()</code> in <code>src/site/target.ts</code> picks the object, and <code>sendHop()</code> in <code>src/site/hop.ts</code> sends the request. <code>chooseTarget()</code> in <code>src/ops/replica-routing.ts</code> makes the decision.</p>
+<pre><code class="mermaid">flowchart TD
+    A[&quot;Request reaches the front worker&quot;] --> B{&quot;Pool has lanes and path is /serve?&quot;}
+    B -->|no| P[&quot;Primary object&quot;]
+    B -->|yes| C{&quot;Write with no session, origination route, or forwarding off?&quot;}
+    C -->|yes| P
+    C -->|no| D[&quot;Hash affinity key modulo lane count&quot;]
+    D -->|lane 0| P
+    D -->|lane 1 or more| R[&quot;Replica object&quot;]
+    R --> G{&quot;Replica is SERVING and accepts the call?&quot;}
+    G -->|yes| H[&quot;Replica answers&quot;]
+    G -->|no| X[&quot;421 with requires-primary and retry-safe 1&quot;]
+    X -->|front worker retries| P</code></pre><p>The lane count is the larger of <code>REPLICA_COUNT</code> and the pool size this isolate last learned from the primary&#39;s <code>x-cfw-lanes</code> header (<code>src/site/target.ts</code>, <code>believedLanes()</code> in <code>src/ops/replica-routing.ts</code>). The affinity key is the path for a request that carries a session, the client address for an anonymous one, and the path when neither is present (<code>affinityKey()</code>).</p>
+<p>Writes stay on the primary in three cases: <code>WRITE_FORWARD</code> is off, the write carries no session (a lane cannot mint one, because its <code>Set-Cookie</code> never reaches the client), or the route originates state only the primary may write, such as module installs, settings and uploads (<code>originationRoute()</code>).</p>
+<p>The front worker retries on the primary only when the 421 carries <code>x-cfw-requires-primary</code> and <code>x-cfw-retry-safe: 1</code> (<code>shouldFailover()</code>, <code>src/ops/replica-routing.ts</code>). The replica sets <code>retry-safe</code> from <code>didMutate()</code>. If a refusal arrives after a mutating call started, the replica answers 500 with <code>retry-safe: 0</code> and the request is not retried (<code>replicaHandoff()</code>, <code>src/do/serve.ts</code>). The router keeps no readiness cache. A lane that is not ready answers 421, and the retry costs one extra hop.</p>
+<h3 id="the-replication-log">The Replication Log</h3>
+<p>The primary records each invocation&#39;s authoritative writes as one log record, sealed at the end of the invocation (<code>sealGeneration()</code> in <code>src/do/replication.ts</code>). Lanes pull records with <code>action=log</code>. Each record holds:</p>
+<ul>
+<li><strong><code>generation</code></strong>: the commit sequence value when the invocation sealed.</li>
+<li><strong><code>parent</code></strong>: the generation of the last sealed record, which this record builds on.</li>
+<li><strong><code>schemaVersion</code></strong>: the pack generation both sides must agree on.</li>
+<li><strong><code>fingerprint</code></strong>: the primary&#39;s hash of the authoritative state at <code>generation</code>.</li>
+<li><strong><code>statements</code></strong>: the writes in order, each with positional parameters.</li>
+<li><strong><code>overflowed</code></strong>: set when the writes were too many to log. The record then carries no statements, and a lane that meets it must restore.</li>
+</ul>
+<p>The record shape and the applier are in <code>src/ops/replication-log.ts</code>.</p>
+<p>Generations can skip numbers. The sequence advances on invalidation, and one invocation can move it several steps before it seals. A number that no record carries is then skipped. <code>malformed()</code> requires only that <code>generation</code> be greater than <code>parent</code>, and its comment says gaps are normal.</p>
+<p>The chain check is <code>planApply()</code>, and it accepts a record only when <code>parent</code> equals the lane&#39;s applied generation. A higher parent means a record is missing. A lower parent means the record builds on a position the lane already passed. Either refuses, and <code>catchUpOnce()</code> withdraws the lane. The parent is the last sealed record rather than <code>commitSeq() - 1</code>, because a seal can land past the current sequence value. A caught-up lane sits on that last sealed record, so the equality holds by construction. A record at or below the applied generation is a duplicate and is skipped.</p>
+<p><code>catchUpOnce()</code> applies each record in one transaction, since it does not pass a <code>chunkSize</code> to <code>applyRecord()</code>.</p>
+<hr>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

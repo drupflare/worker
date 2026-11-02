@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Trust, Cost and Scope - Drupflare</title>
+		<meta
+			name="description"
+			content="What the pipeline asks a site to trust, how self-hosted sites differ, what it costs, which designs were rejected, and what it leaves out."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Trust, Cost and Scope - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="What the pipeline asks a site to trust, how self-hosted sites differ, what it costs, which designs were rejected, and what it leaves out."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html" aria-current="page">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Operating</a> / <a href="index.html">PHP Interpreter Update Delivery</a></p>
+<h1 id="trust-cost-and-scope">Trust, Cost and Scope</h1>
+<p>What the pipeline asks a site to trust, how self-hosted sites differ, what it costs, which designs were rejected, and what it leaves out.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#trust">Trust</a></li><li><a href="#self-hosted-sites">Self-Hosted Sites</a></li><li><a href="#cost">Cost</a></li><li><a href="#rejected-alternatives">Rejected Alternatives</a></li><li><a href="#out-of-scope">Out of Scope</a></li></ol></nav><h2 id="trust">Trust</h2>
+<p>The interpreter is the entire PHP runtime for every hosted site, and it executes inside the Durable
+Object that holds that site&#39;s database, with the host bridge and the SQL handle in reach. It is also
+the least reviewable artifact in the system: the shipping build is stripped at <code>-O2</code>, so <code>strings</code>
+finds no symbol names, and 97.2% of a link map attributes to a single <code>lto.tmp</code> object. There is no
+post-hoc audit available, so the pre-execution checks are the whole control.</p>
+<p>What the pipeline proves today: the bytes came from a named artifact on a named repository over an
+authenticated API, the frame header agrees with the binary, the seam imports the files that were
+fetched, the bundle resolves and fits, and every file is content-addressed in the pin.</p>
+<p>What it does not prove: provenance. phasm&#39;s <code>build.yml</code> attests <code>subject-path: dist/*</code>, so each
+staged asset carries its own subject digest, but nothing in this repository runs
+<code>gh attestation verify</code> against a downloaded artifact. Add it against
+<code>--repo drupflare/phasm --signer-workflow drupflare/phasm/.github/workflows/build.yml</code> to close the
+gap. Behaviour on the deployed site is checked by the health self-test, <code>BootSelfTest::run()</code>, which the
+host calls through <code>runHealthSelfTest()</code> in <code>src/drupal/cron-php.ts</code> from the cron path in
+<code>src/ops/cron.ts</code>.</p>
+<h2 id="self-hosted-sites">Self-Hosted Sites</h2>
+<p>A self-hosted site runs in the user&#39;s own Cloudflare account and drupflare holds no credential
+there. The one-click template is the user&#39;s own repository with Workers Builds connected, so an
+upstream interpreter arrives as a release they choose to consume. The mechanism ends at a pull
+request; whether it merges is theirs.</p>
+<h2 id="cost">Cost</h2>
+<p>Nothing in the pipeline runs in the Worker, so it costs zero on both free-tier ceilings.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>component</th>
+<th>Worker requests</th>
+<th>DO requests</th>
+<th>rows written</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Notification and verification (CI)</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<td><code>versions upload</code> / <code>versions deploy</code></td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Canary in, then promote</td>
+<td>0</td>
+<td>2 cold boots per site per release</td>
+<td>boot-class rows, which a cold object pays anyway</td>
+</tr>
+</tbody></table></div>
+<p>The only runtime cost is the cold boot each Durable Object pays when it is reassigned a version,
+twice per rollout. At a few interpreter releases per year that does not appear in either ceiling,
+and a version change introduces no new row class.</p>
+<p>Free and paid stay equivalent. Versions, gradual deployments and rollbacks are not plan-gated, and the
+bundle ceiling is 64 MiB uncompressed on both plans. The gate reads it from wrangler&#39;s <code>Total Upload</code>
+line.</p>
+<h2 id="rejected-alternatives">Rejected Alternatives</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>rejected</th>
+<th>why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Runtime swap from R2, KV or DO storage</td>
+<td>Request-time codegen is forbidden and startup I/O is forbidden. Both halves are needed and neither is available.</td>
+</tr>
+<tr>
+<td>Interpreter as a Workers Static Asset, fetched at boot</td>
+<td>Same constraint as the runtime swap: the bytes must be present at bundle time.</td>
+</tr>
+<tr>
+<td>Dynamic Workers with <code>{data: ArrayBuffer}</code></td>
+<td>PHP runs inside the Durable Object because <code>ctx.storage.sql</code> is synchronous only there and PHP&#39;s calls block. A Dynamic Worker is a different isolate, so every database call becomes async RPC out of synchronous wasm.</td>
+</tr>
+<tr>
+<td>A scheduled poll of phasm&#39;s releases</td>
+<td>The dispatch delivers the same signal without a 6-hourly job, and GitHub disables <code>schedule</code> workflows after 60 days of repository inactivity.</td>
+</tr>
+<tr>
+<td>Polling GitHub from the Worker</td>
+<td>The site cannot act on the answer. The unauthenticated GitHub API allows 60 requests/hour per source IP on a shared Worker egress, and free allows 5 Cron Triggers per account against 250 on paid, one of which the fill window spends.</td>
+</tr>
+<tr>
+<td>&quot;Update available&quot; as a repair-ladder rung</td>
+<td><code>repair.ts</code> strikes drive quarantine and rollback. An upgrade is not a fault and would contaminate the counters that decide whether a site stops serving.</td>
+</tr>
+<tr>
+<td>Fetching binaries into <code>vendor/</code></td>
+<td>15 hand-built binaries under <code>vendor/static*/</code> that this repository cannot reproduce. A pipeline that writes there is one bad path expansion from the only permanent loss in the project. <code>.interp/</code> is gitignored and disposable.</td>
+</tr>
+<tr>
+<td>Committing the binary to either repository</td>
+<td>9-12 MB per variant. phasm&#39;s <code>lint</code> job fails on a tracked <code>*.wasm</code>.</td>
+</tr>
+<tr>
+<td><code>wrangler deploy</code> on a green gate</td>
+<td>The gate proves the bundle builds and fits. It cannot prove a new interpreter renders correctly on the edge.</td>
+</tr>
+</tbody></table></div>
+<h2 id="out-of-scope">Out of Scope</h2>
+<ul>
+<li><strong>Deploying.</strong> The pipeline ends at a pull request and an artifact. Promotion, canary and rollback
+are <code>wrangler</code> commands a human runs.</li>
+<li><strong>Drupal.</strong> <code>SHIPPED_LOCK_VERSIONS</code>, <code>assets/drupal/site.sqlite</code> and <code>assets/driver.json</code> are a
+separate lane, and <code>site.sqlite</code> is built by <code>scripts/drupal/install-site-db.php</code> (see <a href="../../architecture/database.html">Site Database</a>). That lane reaches an existing site
+through <code>src/ops/reconcile.ts</code> rather than through a redeploy: a step observes the site&#39;s end state,
+and <code>container-driver-digest</code> compares <code>src/ops/driver-digest.ts</code> against what the site recorded, so
+a <code>#[Hook]</code> class added to a sibling after the bake is discovered on the next boot. A redeploy alone
+does not move it, because <code>DrupalKernel::getContainerCacheKey()</code> is composer&#39;s <code>VERSIONS_HASH</code> plus
+the PHP version and the OS.</li>
+<li><strong>Attestation.</strong> Covered in <a href="#trust">Trust</a>.</li>
+<li><strong>PHP 8.5 on the edge.</strong> The shipping seam is 8.5. opcache reads <code>opcache.file_cache</code> during PHP&#39;s
+module startup, before the mount sequence creates <code>/tmp/opcache</code>, and the boot exits with status -2.
+<code>src/runtime/opcache.ts</code> sets it to <code>/tmp</code>, which emscripten&#39;s MEMFS always creates. Each new build
+still needs its own deploy to prove it renders; the gate proves the bundle builds and fits.</li>
+<li><strong>A minor-version bump.</strong> 8.3 to 8.5 moves the glue filename, needs a new seam plus one line in
+wrangler&#39;s <code>alias</code>, changes <code>DEFAULT_PLATFORM.php</code> in <code>src/ops/packagist.ts</code>, and re-runs
+<code>tests/node/php-fragments.spec.ts</code> and <code>bun run test:health</code> under the new interpreter. The
+version guard in step 1 of <a href="verification.html#verification">Verification</a> refuses the fetch until the seam moves
+first.</li>
+<li><strong>Multiple Worker scripts.</strong> Gradual deployments split versions of a single script. A fleet on N
+independently deployed scripts is N rollouts.</li>
+<li><strong>Toolchain pins are split.</strong> The frame needs no external tool: <code>node:zlib</code> packs it and
+<code>node:zlib</code> inflates it on the edge. The interpreter is pinned to a builder image digest.</li>
+</ul>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

@@ -16,8 +16,9 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="parsejsonreply"><span class="tsd-kind-call-signature">parseJsonReply</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">raw</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">&gt;</span><a href="#parsejsonreply" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>The JSON object a PHP fragment printed after any notices. A deprecation such as <code>{closure}</code>
-carries a brace, so each <code>{</code> is tried in turn until the rest parses.</p>
+<div class="tsd-comment tsd-typography"><p>The JSON object a PHP fragment printed after any notices. A deprecation such as <code>{closure}</code> or
+a log line such as <code>%date{M j}</code> carries a brace, so each <code>{</code> that could open an object is tried
+in turn until the rest parses; one that cannot (<code>{</code> then a letter) is skipped without counting.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -25,7 +26,7 @@ carries a brace, so each <code>{</code> is tried in turn until the rest parses.<
 <li><span><span class="tsd-kind-parameter">raw</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/c1ac1f3886d03300945c6aa521ef4e9b30088e0b/src/ops/json-reply.ts#L8">src/ops/json-reply.ts:8</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cccc9886047794a49657ceb07070d6711a1a6ddc/src/ops/json-reply.ts#L9">src/ops/json-reply.ts:9</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

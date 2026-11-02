@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>The Shape Of The Bills - Drupflare</title>
+		<meta
+			name="description"
+			content="The two bills differ in shape more than in total."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="The Shape Of The Bills - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The two bills differ in shape more than in total."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html" aria-current="page">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Impact</a> / <a href="index.html">Economics</a></p>
+<h1 id="the-shape-of-the-bills">The Shape Of The Bills</h1>
+<p>The two bills differ in shape more than in total. A conventional host charges per site per month
+whether or not anyone visits, and for hardware that grows with traffic; drupflare charges for traffic
+served, against an allowance that costs nothing until it is crossed. The comparison therefore widens
+with the number of idle sites and narrows with traffic.</p>
+<p>On a paid account the monthly bill is a fixed base plus one charge for each meter&#39;s usage above its
+included allowance, as <code>scripts/economics/bill.ts</code> computes it. B is the base subscription, m runs over
+the meters (requests, CPU milliseconds, rows written, storage, Durable Object requests and Durable Object
+duration), u_m is that meter&#39;s usage for the month, I_m is its included allowance, c_m is its rate and
+U_m is the unit the rate is quoted in:</p>
+<pre><code class="math">\text{bill} = B + \sum_{m} c_m \cdot \frac{\mathrm{max}(0, u_m - I_m)}{U_m}</code></pre><p>The two Durable Object meters round their excess up to the next whole unit before the rate applies. Usage
+includes a kept-warm site&#39;s own rows and object requests, which the chain spends before any visitor arrives.
+A month in which every free-plan daily cap stays within its limit costs nothing, and the formula does not
+apply to it.</p>
+<p>For a single site at ten million views a
+month drupflare costs $5.15, the $5 subscription plus $0.15 of usage, against $10.50 for the
+cheapest VPS, and the latency-matched host is 11.3 times dearer.</p>
+<h2 id="cost-per-request">Cost Per Request</h2>
+<p>Each unit a request can spend, priced at the paid plan&#39;s rate past its included allowance. The Worker
+request and the Durable Object request are per view, and the R2 operations are per read or per write.
+<code>derived</code>, from <code>bun scripts/economics/bindings.ts</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>unit</th>
+<th>rate</th>
+<th align="right">cost per million</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Worker request, one a view</td>
+<td>$0.30 a million</td>
+<td align="right">$0.30</td>
+</tr>
+<tr>
+<td>Worker CPU, edge-cache hit at 0.703 ms (p50)</td>
+<td>$0.02 a million ms</td>
+<td align="right">$0.014</td>
+</tr>
+<tr>
+<td>Worker CPU, object hit at 1.80 ms</td>
+<td>$0.02 a million ms</td>
+<td align="right">$0.036</td>
+</tr>
+<tr>
+<td>Durable Object request, one a view on an object</td>
+<td>$0.15 a million</td>
+<td align="right">$0.15</td>
+</tr>
+<tr>
+<td>Worker-to-Worker call, 1.10 ms of CPU, no request</td>
+<td>$0.02 a million ms</td>
+<td align="right">$0.022</td>
+</tr>
+<tr>
+<td>R2 Class B read, no cache absorption</td>
+<td>$0.36 a million</td>
+<td align="right">$0.36</td>
+</tr>
+<tr>
+<td>R2 Class A write, one a fill</td>
+<td>$4.50 a million</td>
+<td align="right">$4.50</td>
+</tr>
+</tbody></table></div>
+<p>The Worker-to-Worker row is billed as CPU only, because Cloudflare does not charge a request fee for a
+call through a service binding (<code>published</code>, Workers pricing page). Static assets are free and unlimited on
+the same page. Whether that call counts toward the free plan&#39;s 100,000 requests a day is unmeasured.</p>
+<p>The bill for a thousand sites, on the paid plan, in dollars a month (<code>derived (modelled)</code>):</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">views a site a month</th>
+<th>warming</th>
+<th align="right">shipped</th>
+<th align="right">+1 Worker invocation a view</th>
+<th align="right">Worker-to-Worker call billed as a request</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">10,000</td>
+<td>asleep</td>
+<td align="right">$5.80</td>
+<td align="right">$6.02</td>
+<td align="right">$8.80</td>
+</tr>
+<tr>
+<td align="right">10,000</td>
+<td>warm</td>
+<td align="right">$350.65</td>
+<td align="right">$350.87</td>
+<td align="right">$353.65</td>
+</tr>
+<tr>
+<td align="right">100,000</td>
+<td>asleep</td>
+<td align="right">$38.44</td>
+<td align="right">$40.64</td>
+<td align="right">$68.44</td>
+</tr>
+<tr>
+<td align="right">100,000</td>
+<td>warm</td>
+<td align="right">$383.29</td>
+<td align="right">$385.49</td>
+<td align="right">$413.29</td>
+</tr>
+<tr>
+<td align="right">1,000,000</td>
+<td>asleep</td>
+<td align="right">$365.14</td>
+<td align="right">$387.14</td>
+<td align="right">$665.14</td>
+</tr>
+<tr>
+<td align="right">1,000,000</td>
+<td>warm</td>
+<td align="right">$709.99</td>
+<td align="right">$731.99</td>
+<td align="right">$1,009.99</td>
+</tr>
+</tbody></table></div>
+<p>The shipped column is the bill the headline quotes. The middle column is the upper bound from
+<a href="../energy/per-request.html#service-bindings-and-r2">Service Bindings And R2</a>. At 10,000 views a site the render share
+already puts the account past its CPU allowance, so the extra CPU is charged in full: $5.80 becomes $6.02,
+a rise of 3.8%. The third column is a what-if, because the pricing page says a call through a service
+binding carries no request fee.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

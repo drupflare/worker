@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>What It Does Not Remove - Drupflare</title>
+		<meta
+			name="description"
+			content="The risks the architecture does not remove: application bugs, code execution and memory corruption inside the sandbox, JavaScript in the isolate, shared data, side channels, platform failure, supply..."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="What It Does Not Remove - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The risks the architecture does not remove: application bugs, code execution and memory corruption inside the sandbox, JavaScript in the isolate, shared data, side channels, platform failure, supply..."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html">Configuration</a>
+				<a href="../security/index.html" aria-current="page">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Security</a></p>
+<h1 id="what-it-does-not-remove">What It Does Not Remove</h1>
+<p>The risks the architecture does not remove: application bugs, code execution and memory corruption inside the sandbox, JavaScript in the isolate, shared data, side channels, platform failure, supply chain, cost as an attack, and state that survives between requests.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#application-bugs">Application Bugs</a></li><li><a href="#code-execution-inside-the-sandbox">Code Execution Inside the Sandbox</a></li><li><a href="#memory-corruption-inside-the-sandbox">Memory Corruption Inside the Sandbox</a></li><li><a href="#javascript-code-execution-in-the-isolate">JavaScript Code Execution in the Isolate</a></li><li><a href="#data-in-the-same-object">Data in the Same Object</a></li><li><a href="#co-tenancy-and-side-channels">Co-Tenancy and Side Channels</a></li><li><a href="#platform-failure-and-concentration">Platform Failure and Concentration</a></li><li><a href="#supply-chain">Supply Chain</a></li><li><a href="#cost-as-an-attack-and-visibility">Cost as an Attack and Visibility</a></li><li><a href="#state-that-survives-between-requests">State That Survives Between Requests</a></li></ol></nav><h2 id="application-bugs">Application Bugs</h2>
+<p>A SQL injection, an authorization bypass or a cross-site request forgery behaves as it does on any
+host. Drupalgeddon (CVE-2014-3704, SA-CORE-2014-005) is a SQL injection reachable by an anonymous
+user, and it reads the same database here. SA-CORE-2020-004 (CVE-2020-13663) is a CSRF flaw in the
+Form API, and a browser does not care where the server runs.</p>
+<h2 id="code-execution-inside-the-sandbox">Code Execution Inside the Sandbox</h2>
+<p>Drupalgeddon 2 (CVE-2018-7600, CVSS 9.8) and SA-CORE-2019-003 (CVE-2019-6340) execute PHP. So does
+SA-CORE-2026-014 (CVE-2026-108097), a Field UI remote code execution in core published 2026-10-14.
+Its advisory says &quot;At least one known exploit path does not require authentication&quot; and also says
+the flaw &quot;is not directly exploitable with core alone&quot;, with serious exploit paths through
+contributed modules. In each case the attacker runs PHP in the object, with the host functions
+(see <a href="controls/index.html#host-surface">Host Surface</a>) and the database in the same object. The architecture contains what that PHP can do
+outside the object. It does not stop the PHP from running.</p>
+<h2 id="memory-corruption-inside-the-sandbox">Memory Corruption Inside the Sandbox</h2>
+<p>WebAssembly does not make a C program&#39;s memory bugs harder to exploit. Lehmann, Kinder and Pradel
+(USENIX Security 2020) find that many classic vulnerabilities that common mitigations block in
+native code are exposed in WebAssembly, that the platform enables new attacks such as
+overwriting constant data, and that attacks can divert control flow or manipulate the host. Their
+conclusion is &quot;a perhaps surprising lack of binary security in WebAssembly&quot;
+(<a href="https://www.usenix.org/conference/usenixsecurity20/presentation/lehmann">USENIX</a>, abstract).
+Stiévenart, De Roover and Ghafari compiled 4,469 C programs with known buffer
+overflows to x86 and to WebAssembly, found 1,088 whose outcome differed, and attribute it to &quot;the
+lack of security measures such as stack canaries in the generated WebAssembly&quot;
+(<a href="https://arxiv.org/abs/2111.01421">arXiv:2111.01421</a>, abstract).</p>
+<p>So treat an exploit of a PHP memory bug as no harder inside the sandbox than on a native build, and
+do not count on in-sandbox exploit difficulty. WebAssembly checks an indirect call&#39;s type
+signature, so a hijack is limited to functions of the same type
+(<a href="https://webassembly.org/docs/security/">webassembly.org</a>). What the sandbox changes is the step
+after: code in the module reaches the host only through the imports above.</p>
+<h2 id="javascript-code-execution-in-the-isolate">JavaScript Code Execution in the Isolate</h2>
+<p>A foothold in the isolate&#39;s JavaScript would be worse than one in PHP, because the isolate holds
+the bindings the Worker holds: the <code>SITE</code> and render-lane namespaces, <code>CONFIG_KV</code> and <code>PAGE_KV</code>
+across sites, the fleet D1 database, <code>ASSETS</code>, and the variables and secrets in <code>env</code> (an email
+token, the SMTP password, <code>REDIS_URL</code> with its password, the OIDC client secret). The <code>cfw*</code> list
+limits what PHP can ask for and does nothing to limit JavaScript that is already running. This
+section is Inferred from the bindings model and <code>wrangler.jsonc</code>; the Durable Object and secrets
+documentation was not read.</p>
+<p>Three paths to that foothold:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Path</th>
+<th>What stops it</th>
+<th>What the repo does</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>From wasm outward</td>
+<td>V8&#39;s isolation; Cloudflare says the V8 sandbox needs a bypass to leave</td>
+<td>The bridge and socket closures above remove the userland routes. The engine&#39;s code-generation ban remains for any other object</td>
+<td><code>contained</code></td>
+</tr>
+<tr>
+<td>From the engine</td>
+<td>Cloudflare&#39;s patch gap, under 24 hours for V8; the sandbox is &quot;not a complete Spectre mitigation&quot; in its words</td>
+<td>Nothing here changes V8 or <code>workerd</code></td>
+<td><code>open</code></td>
+</tr>
+<tr>
+<td>From the supply chain</td>
+<td>Cloudflare accepts no native uploads, which does not cover an npm package that runs at build time</td>
+<td>A lockfile pins versions, not contents. <code>postinstall</code> runs <code>scripts/restore-artifacts.ts</code> on every install and fetches the interpreter from a CDN, checked against <code>cdn-manifest.json</code></td>
+<td><code>open</code></td>
+</tr>
+</tbody></table></div>
+<p>The engine path has one published case. Check Point (2026-08) reported use-after-free and
+out-of-bounds bugs in <code>workerd</code>&#39;s zlib, HTMLRewriter and URLPattern code and a bypass of the
+key-value SQL authorizer. On self-hosted <code>workerd</code> with the V8 sandbox switched off they reached
+native code execution and a co-located Worker&#39;s API token. Cloudflare confirmed the bugs reproduce
+on its production platform with one exception and says they are fixed there. No date was found and no
+CVEs were assigned (<a href="https://research.checkpoint.com/2026/when-agentic-glue-melts/">Check Point</a>,
+extract). A second item, CVE-2026-87491, is a V8 out-of-bounds write in the CISA known-exploited
+catalog whose entry names Chrome and Chromium; whether the Workers build is affected was not
+established. Both count as <code>open</code> until Cloudflare gives a hosted date and says what the Workers
+build took.</p>
+<p>Cloudflare&#39;s security model page does not say that <code>eval</code> or runtime WebAssembly compilation is
+blocked, so the page does not claim it. A <code>new Function</code> was refused in a deployed probe and
+request-time <code>WebAssembly.Module</code> compilation is refused by <code>workerd</code> (<code>notes/memory-and-isolates.md</code> and <code>notes/measurement-history.md</code>, both measured on
+this project&#39;s own probes). Neither is a statement about hosted Workers in general.</p>
+<p>Of the 14 runtime npm packages, advisories were checked for four. <code>mysql2</code> 3.24.4 is above the fix
+for GHSA-3f6p-5ww8-9rcr, and <code>pg</code> has a 2018 advisory whose affected range was not read. The other
+ten and every transitive package are unchecked, and an unchecked package counts as <code>open</code>.</p>
+<h2 id="data-in-the-same-object">Data in the Same Object</h2>
+<p>Code execution inside the sandbox reads and writes the whole site database, which is in the same
+object. Sealed storage keeps credentials out of that database, and nothing keeps the site&#39;s
+content, users, sessions and configuration out of it. Egress is open by design:
+<code>cfwQueueFetch</code> sends any public HTTP(S) request PHP builds, because the legitimate set (update
+servers, OIDC providers, webhooks) is open-ended. The deny-list protects private and metadata
+addresses and does not stop a site&#39;s own data leaving to a public host. A per-site egress allow-list
+is <code>L</code> and is not built.</p>
+<h2 id="co-tenancy-and-side-channels">Co-Tenancy and Side Channels</h2>
+<p>Cloudflare runs many isolates in one process. On 2026-08-19 it published a revisit of remote Spectre
+attacks on Workers, reporting a leak of &quot;up to 12 bit/s with an accuracy of more than 99%&quot; of a JWT
+a researcher placed in a co-located Worker. It adds that &quot;The V8 sandbox is not a complete Spectre
+mitigation&quot; and &quot;MPK is not a complete answer to remediate Spectre, but it strictly reduces the
+leakage surface&quot;. It lists frozen timers, no shared memory, detection, memory shuffling, process
+isolation for suspicious scripts, the V8 sandbox and in-process isolation with memory protection
+keys. Only the memory protection keys carry a date, September 2025
+(<a href="https://blog.cloudflare.com/revisiting-spectre-attacks-on-workers/">Cloudflare</a>; paper
+<a href="https://arxiv.org/abs/2608.17043">arXiv:2608.17043</a>, abstract only). A site that holds a secret in
+a Durable Object is exposed to this class on any shared platform. The mitigations are Cloudflare&#39;s.</p>
+<h2 id="platform-failure-and-concentration">Platform Failure and Concentration</h2>
+<p>A bug in Cloudflare&#39;s own software reaches every tenant. Cloudbleed (2017) leaked memory from
+Cloudflare&#39;s HTML parser into responses for about 1 in every 3,300,000 requests during its worst
+window, and the post says the trigger was customer content
+(<a href="https://blog.cloudflare.com/incident-report-on-memory-leak-caused-by-cloudflare-parser-bug/">Cloudflare</a>).
+Two 2025 outages were not attacks: the 12 June Workers KV outage, which the post says &quot;lasted 2
+hours and 28 minutes&quot; while its own timeline runs 17:52 to 20:28 UTC
+(<a href="https://blog.cloudflare.com/cloudflare-service-outage-june-12-2025/">post</a>), and the 18 November
+outage, which came from a database permissions change that doubled a feature file past a proxy limit
+(<a href="https://blog.cloudflare.com/18-november-2025-outage/">post</a>). Drupflare&#39;s design answer is that a
+site keeps serving with the control plane gone. It cannot keep serving with Cloudflare gone.</p>
+<h2 id="supply-chain">Supply Chain</h2>
+<p>Composer packages and the interpreter&#39;s own dependencies run as code in every host. The PHP
+project reverted two malicious commits to its source repository in March 2021 before any release
+carried them (<a href="https://www.php.net/archive/2021.php">php.net</a>). The same risk applies to a Composer
+package or an interpreter dependency here as anywhere.</p>
+<p>What v1.0.4 adds is a digest check at install. <code>packages.drupal.org</code> publishes a SHA-1 <code>dist.shasum</code>
+on every release of the three modules checked (23, 24 and 58 of 58) and an archive downloaded from
+<code>ftp.drupal.org</code> matched it. A package that carries a digest is checked before it is unpacked, and a
+mismatch refuses the install even with <code>force=1</code>. Packagist publishes an empty string for all 189,
+91 and 499 releases checked of three packages, so those install unverified and the result says
+<code>verified: false</code>. The check guards a swapped or corrupted archive, not a registry that lies in both
+its metadata and its archive. Packagist trust is <code>open</code> and needs a different root, such as a signed
+lock (<code>L</code>). The first release of a malicious package is <code>open</code> on every host. The fetched
+interpreter is checked against its pinned digest and, once the attestation step has run, against
+phasm&#39;s build provenance.</p>
+<h2 id="cost-as-an-attack-and-visibility">Cost as an Attack and Visibility</h2>
+<p>No primary source on denial of wallet was found. The project&#39;s own rig has seen the mechanism: a
+bench site driven all night used 103.8% of its daily row quota and went read-only, so every login
+answered 503 (<code>CLAUDE.md</code>, measured). A busy site on the free plan can be degraded by traffic. This
+is <code>open</code>. There is also no host disk image and no host log to examine after an incident, so
+forensics rest on Workers observability events and the owner audit log&#39;s anchor lines.</p>
+<h2 id="state-that-survives-between-requests">State That Survives Between Requests</h2>
+<p>A warm Durable Object keeps its interpreter between requests, and static state in PHP survives.
+Seven cases are documented in this repository: an AJAX flag that randomised every later element id,
+an entity access cache that kept an unpublished node readable by anonymous visitors, a cached
+local-task list that rendered one node&#39;s tabs on another, a <code>file_save_upload()</code> function static
+that handed one user&#39;s uploaded file to the next upload to the same field, SimpleSAMLphp&#39;s
+<code>Session</code> static and the <code>simplesamlphp_auth</code> manager, which logged a request with no cookie in as
+the previous visitor, the <code>access_unpublished</code> token getter, which kept the last visitor&#39;s token so
+an anonymous request read an embargoed node, and strata&#39;s <code>CaptureScope</code>, which memoises its
+settings for the life of the container and so ignored a saved change. Each was found and fixed, and each had no signal until a test looked for
+it (<code>notes/platform-facts.md</code>, &quot;The boundary sweep walks SERVICES now&quot;).</p>
+<p>A service that holds per-request state needs a named entry in the request resetter&#39;s seed list.
+Contrib services are reached that way, because a generic pass that calls <code>reset()</code> on every
+initialised service would also reset about 20 core services, and what each of those drops is not
+measured. The sweep that looks for such state walks the services a request instantiated and so
+catches a new carrier only after a test drives it.</p>
+<p>This class is specific to a persistent
+runtime. A request-per-process server such as PHP-FPM resets it by design.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

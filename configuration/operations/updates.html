@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Updates and Reconciliation - Drupflare</title>
+		<meta
+			name="description"
+			content="How database updates run, how a pack update reaches an existing site, and the sweep over addressable state."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Updates and Reconciliation - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="How database updates run, how a pack update reaches an existing site, and the sweep over addressable state."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Operations Settings</a></p>
+<h1 id="updates-and-reconciliation">Updates and Reconciliation</h1>
+<p>How database updates run, how a pack update reaches an existing site, and the sweep over addressable state.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#database-updates">Database Updates</a></li><li><a href="#pack-reconciliation">Pack Reconciliation</a></li><li><a href="#the-addressable-sweep">The Addressable Sweep</a></li></ol></nav><h2 id="database-updates">Database Updates</h2>
+<p><code>updb</code> slices Drupal&#39;s own update path across invocations. Each var here bounds a slice, a pass or a whole run.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>UPDB_FLUSH_SPLIT</code></td>
+<td>on</td>
+<td>split a cache flush across invocations</td>
+</tr>
+<tr>
+<td><code>UPDB_ALLOW_UNBOUNDED</code></td>
+<td>off</td>
+<td>permit an update with no measurable bound</td>
+</tr>
+<tr>
+<td><code>UPDB_SNAPSHOT_MAX_ROWS</code></td>
+<td>none</td>
+<td>rows a pre-update snapshot may hold</td>
+</tr>
+<tr>
+<td><code>UPDB_RETRY_POLICY</code></td>
+<td>none</td>
+<td>how a failed slice is retried</td>
+</tr>
+<tr>
+<td><code>UPDB_ON_ABORT</code></td>
+<td>none</td>
+<td>what happens to a run that cannot continue</td>
+</tr>
+<tr>
+<td><code>UPDB_MAX_ATTEMPTS</code></td>
+<td>none</td>
+<td>attempts per slice</td>
+</tr>
+<tr>
+<td><code>UPDB_MAX_PASSES</code></td>
+<td>none</td>
+<td>passes over the update list</td>
+</tr>
+<tr>
+<td><code>UPDB_MAX_COLD_WAITS</code></td>
+<td>none</td>
+<td>consecutive cold-object waits tolerated</td>
+</tr>
+<tr>
+<td><code>UPDB_MAX_BEATS</code></td>
+<td>none</td>
+<td>alarm beats one run may consume</td>
+</tr>
+<tr>
+<td><code>UPDB_CHECK_REQUIREMENTS</code></td>
+<td>none</td>
+<td>run Drupal&#39;s own update requirements check first</td>
+</tr>
+</tbody></table></div>
+<p>Read <code>src/ops/updb.ts</code> before changing any of these; the defaults are what a sliced update was
+measured against.</p>
+<h2 id="pack-reconciliation">Pack Reconciliation</h2>
+<p>The pack delivers only at provisioning, so a fix that lands inside it reaches new sites and no
+existing one. Reconciliation is the delivery path for the rest.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>RECONCILE</code></td>
+<td>on</td>
+<td>brings an existing site up to the pack that ships today</td>
+</tr>
+</tbody></table></div>
+<p>Each step in <code>src/ops/reconcile.ts</code> carries an observation of the site&#39;s end state, asked before the
+step runs and again afterwards. So a site provisioned after a fix answers <code>satisfied</code> and is marked
+done without doing any work, and a step that ran and left the site still owing it is recorded as
+failed rather than applied. A step gets three attempts before it stops being retried and stays
+visible on the status report. The states a step moves through:</p>
+<pre><code class="mermaid">stateDiagram-v2
+    [*] --> Observed
+    Observed --> Satisfied: already true, no work
+    Observed --> Applied: step runs and the site now satisfies it
+    Observed --> Failed: step runs and the site still owes it
+    Failed --> Observed: next firing, fewer than three failures
+    Failed --> Stopped: third failure
+    Satisfied --> [*]
+    Applied --> [*]
+    Stopped --> [*]</code></pre><p>A step that changes configuration or state runs through Drupal&#39;s own writers rather than SQL.
+<code>ConfigFactory::save()</code> already clears <code>cache_config</code> and invalidates <code>config:&lt;name&gt;</code>; a host
+re-deriving that list gets it wrong, and the copy it forgets is the one that made the original
+<code>cache.page.max_age</code> fix inert on every site.</p>
+<p>Every applied step drops the heap image, unconditionally. A restored kernel predates whatever the
+step just changed.</p>
+<p><code>GET /reconcile</code> reports every step and its standing. <code>POST /reconcile</code> drives one. The alarm chain
+drives it on its own; the route is for an operator who wants a fix now rather than at the next
+firing. Off is for a site being debugged against a known state, and leaving it off means a security
+fix in the pack never arrives.</p>
+<p>The D1 fleet inventory carries <code>reconcile_version</code> beside the pack generation. The pack generation
+says which pack a site was provisioned from and never moves afterwards, so on its own it cannot tell
+a patched old site from an unpatched one.</p>
+<h2 id="the-addressable-sweep">The Addressable Sweep</h2>
+<p>Page coverage is demand-driven: a URL renders when a visitor asks for it, and that visitor waits.
+The sweep enumerates the addressable space from the <code>router</code> table and the entity tables, ranks it,
+and queues the top of the list for the fill batch that already exists.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>SWEEP</code></td>
+<td>off</td>
+<td>enumerate and queue uncovered addressable URLs</td>
+</tr>
+<tr>
+<td><code>SWEEP_ROWS_FRACTION</code></td>
+<td>0.25</td>
+<td>share of the day&#39;s rows it may spend, 0.01-0.5</td>
+</tr>
+</tbody></table></div>
+<p>It never renders. Every path goes into the fill queue and the alarm&#39;s fill batch drains it under the
+memory break it already has, so the sweep cannot be the batch that crosses the isolate limit.</p>
+<p>The governor sets the limits. It refuses below a remaining-budget floor, spends at most its declared
+fraction of the day&#39;s rows and Durable Object requests, resumes tomorrow when spent, and carries a
+cursor so a partial sweep does not repeat work. Enumeration reads the <code>router</code> table and the entity
+tables and never crawls the site&#39;s own links, which would walk the facet and pager space and spend
+the budget on URLs nobody requests.</p>
+<p>Off by default for a meter reason rather than caution: the row and DO quotas are account-wide and a
+site reads only its own, so four sweeping sites saturate the account while each one reads itself as
+healthy. <code>src/ops/fleet.ts</code> is the inventory a fleet-aware share would read.</p>
+<p><code>GET /sweep</code> reports coverage and the governor&#39;s last decision, including the reason when it
+declines. <code>GET /sweep?run=1</code> forces a step off its interval.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

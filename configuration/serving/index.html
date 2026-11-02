@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Serving and Caching Settings - Drupflare</title>
+		<meta
+			name="description"
+			content="Settings for page caching, static assets, prefill, files and images, and the R2 page origin. The index of every variable is on Configuration."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Serving and Caching Settings - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Settings for page caching, static assets, prefill, files and images, and the R2 page origin. The index of every variable is on Configuration."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Configuration</a></p>
+<h1 id="serving-and-caching-settings">Serving and Caching Settings</h1>
+<p>Settings for page caching, static assets, prefill, files and images, and the R2 page origin. The index of every variable is on <a href="../index.html">Configuration</a>.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#serving-and-caching">Serving and Caching</a></li></ol></nav><h2 id="pages">Pages</h2>
+<ul>
+<li><a href="page-cache.html">Page Cache Settings</a>: the KV page tier, NEVER_STALE, MEMORY_CACHE_BINS and EDGE_PLAN.</li>
+<li><a href="static-assets.html">Static Asset Settings</a>: asset cache lifetimes, request headers and ASSET_AGGREGATES.</li>
+<li><a href="request-limits.html">Request Limits</a>: OUTBOUND_GUARD and MAX_BODY_BYTES.</li>
+<li><a href="files-and-images.html">Files, Images and Prefill</a>: prefill and mirroring, files and image styles.</li>
+<li><a href="r2-page-origin.html">R2 Page Origin Caching</a>: a cache rule, tiered cache and the model terms for an R2 page origin.</li>
+</ul>
+<h2 id="serving-and-caching">Serving and Caching</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GEN_BUCKET_MS</code></td>
+<td>5,000</td>
+<td>how long the edge reuses a resolved site generation before re-reading it</td>
+</tr>
+<tr>
+<td><code>MAX_BODY_BYTES</code></td>
+<td>2 MiB</td>
+<td>largest non-file request body the edge forwards</td>
+</tr>
+<tr>
+<td><code>MAX_UPLOAD_BYTES</code></td>
+<td>100 MiB</td>
+<td>largest <code>multipart/form-data</code> body the edge forwards</td>
+</tr>
+<tr>
+<td><code>OUTBOUND_GUARD</code></td>
+<td>on</td>
+<td>refuse an outbound fetch to a private, loopback or metadata address; <code>0</code> off</td>
+</tr>
+<tr>
+<td><code>PAGE_KV_ENABLED</code></td>
+<td>on</td>
+<td>the cross-colo KV page tier; <code>0</code> off, <code>1</code> also lets free store compiled plans</td>
+</tr>
+<tr>
+<td><code>PAGE_KV_TTL</code></td>
+<td>86,400</td>
+<td>seconds a stored page lives; floored at KV&#39;s own 60 s minimum</td>
+</tr>
+<tr>
+<td><code>KV_WRITES_PER_DAY</code></td>
+<td>per plan</td>
+<td>page writes to <code>PAGE_KV</code> one site may make a UTC day; 800 on free, no limit on paid</td>
+</tr>
+<tr>
+<td><code>EDGE_PLAN</code></td>
+<td>on</td>
+<td>serve an authenticated page from a compiled plan in the front worker; <code>0</code> off</td>
+</tr>
+<tr>
+<td><code>CSP_MODE</code></td>
+<td>per plan</td>
+<td>baseline Content-Security-Policy on HTML: <code>off</code>, <code>report-only</code> or <code>enforce</code>; paid defaults to report-only</td>
+</tr>
+<tr>
+<td><code>SPOOL</code></td>
+<td>per plan</td>
+<td>spool, the client-side replica: on for paid, off for free; <code>0</code> off, <code>1</code> on</td>
+</tr>
+<tr>
+<td><code>SPOOL_IMAGES</code></td>
+<td>on</td>
+<td>convert images to WebP for browsers that accept it while spool is on; <code>0</code> off</td>
+</tr>
+<tr>
+<td><code>SPOOL_VIDEO</code></td>
+<td>on</td>
+<td>add <code>preload=&quot;none&quot;</code> to video tags while spool is on; <code>0</code> off</td>
+</tr>
+<tr>
+<td><code>SPOOL_EMBEDS</code></td>
+<td>on</td>
+<td>swap YouTube and Vimeo iframes for click-to-load facades while spool is on; <code>0</code> off</td>
+</tr>
+<tr>
+<td><code>NEVER_STALE</code></td>
+<td>unset</td>
+<td>extra path prefixes that may never be served from a previous generation</td>
+</tr>
+<tr>
+<td><code>AGED_SERVE_MAX_MS</code></td>
+<td>60,000</td>
+<td>how long a page a save superseded may still be answered while it refills; 0 off</td>
+</tr>
+<tr>
+<td><code>ASSET_AGGREGATES</code></td>
+<td>unset</td>
+<td>substitute the build&#39;s CSS and JS aggregates into a stored page; <code>1</code> on, and the canonical config sets it</td>
+</tr>
+<tr>
+<td><code>MEMORY_CACHE_BINS</code></td>
+<td>unset</td>
+<td>cache bins the interpreter holds in memory instead of in SQL; <code>none</code> turns all off</td>
+</tr>
+<tr>
+<td><code>MEMORY_CACHE_MAX_ITEMS</code></td>
+<td>64</td>
+<td>entries one in-memory bin may hold before it drops its oldest</td>
+</tr>
+<tr>
+<td><code>RENDER_BUDGET_MS</code></td>
+<td>per plan</td>
+<td>wall-clock ms a MISS may spend rendering before handing off to the alarm</td>
+</tr>
+<tr>
+<td><code>FILL_BATCH_SIZE</code></td>
+<td>per plan</td>
+<td>pages one alarm firing may fill before re-arming; capped at 50</td>
+</tr>
+<tr>
+<td><code>WINDOW_SITES</code></td>
+<td>unset</td>
+<td>narrows the scheduled fill window to these sites; unset drives the whole fleet</td>
+</tr>
+<tr>
+<td><code>WINDOW_MAX_FILLS</code></td>
+<td>50</td>
+<td>fills one window may drive</td>
+</tr>
+<tr>
+<td><code>WINDOW_WALL_MS</code></td>
+<td>60,000</td>
+<td>wall-clock ms one window may run</td>
+</tr>
+</tbody></table></div>
+<p>Anonymous requests pass the page tiers in this order. An authenticated request goes to a compiled plan first, and the shared tiers never hold its page.</p>
+<pre><code class="mermaid">flowchart TD
+    A[&quot;Anonymous request&quot;] --> B[&quot;Edge cache&quot;]
+    B -->|miss| C[&quot;PAGE_KV&quot;]
+    C -->|miss| D[&quot;Durable Object&quot;]
+    E[&quot;Authenticated request&quot;] --> F[&quot;Compiled plan&quot;]
+    F -->|no plan| D</code></pre>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

@@ -1,0 +1,755 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Runtime Settings - Drupflare</title>
+		<meta
+			name="description"
+			content="Settings for cron, warming, the interpreter lifecycle, replica mode, boot and storage. The index of every variable is on Configuration."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Runtime Settings - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Settings for cron, warming, the interpreter lifecycle, replica mode, boot and storage. The index of every variable is on Configuration."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Configuration</a></p>
+<h1 id="runtime-settings">Runtime Settings</h1>
+<p>Settings for cron, warming, the interpreter lifecycle, replica mode, boot and storage. The index of every variable is on <a href="index.html">Configuration</a>.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#cron">Cron</a></li><li><a href="#warming">Warming</a></li><li><a href="#interpreter-lifecycle">Interpreter Lifecycle</a></li><li><a href="#replica-mode">Replica Mode</a></li><li><a href="#boot-and-storage">Boot and Storage</a></li></ol></nav><h2 id="cron">Cron</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>DRUPAL_CRON</code></td>
+<td>on</td>
+<td>whether Drupal cron runs from the alarm; <code>0</code> turns it off</td>
+</tr>
+<tr>
+<td><code>CRON_INTERVAL_MS</code></td>
+<td>900,000</td>
+<td>minimum gap between firings</td>
+</tr>
+<tr>
+<td><code>CRON_MAX_UNITS</code></td>
+<td>6</td>
+<td>hooks or queues one firing may run</td>
+</tr>
+<tr>
+<td><code>CRON_MAX_ROWS</code></td>
+<td>500</td>
+<td>rows one firing may write</td>
+</tr>
+<tr>
+<td><code>CRON_MAX_MS</code></td>
+<td>500</td>
+<td>wall-clock ms one firing may occupy</td>
+</tr>
+<tr>
+<td><code>CRON_QUEUE_BATCH_SIZE</code></td>
+<td>5</td>
+<td>queue items drained per queue per firing</td>
+</tr>
+<tr>
+<td><code>UPDATE_FETCH_URL</code></td>
+<td>unset</td>
+<td>release-history origin the declared prefetch warms; unset is drupal.org</td>
+</tr>
+<tr>
+<td><code>GC_INTERVAL_MS</code></td>
+<td>3,600,000</td>
+<td>gap between garbage-collection passes</td>
+</tr>
+<tr>
+<td><code>CACHE_DATA_MAX_ROWS</code></td>
+<td>5,000</td>
+<td>row cap on <code>cache_data</code></td>
+</tr>
+<tr>
+<td><code>WATCHDOG_ROW_LIMIT</code></td>
+<td>unset</td>
+<td>row cap on <code>watchdog</code>; unset reads <code>dblog.settings</code> from the site</td>
+</tr>
+</tbody></table></div>
+<p><code>CRON_INTERVAL_MS</code> is what makes the per-firing budget a budget. The alarm is not a clock, since it re-arms at +1 ms while a fill queue is draining, so &quot;once per alarm&quot; during an active fill is once per page, each one costing an interpreter unit and up to <code>CRON_MAX_ROWS</code> writes. At 15 minutes the worst case is 96 firings/day, so a site that hit the row cap every time spends 48,000 of the 100,000 daily rows. Lowering it is the fastest way to burn the meter that binds regeneration.</p>
+<p>Cron renders against the site&#39;s origin, so links in mail it sends point at the site. See <a href="site-identity.html#site_origin"><code>SITE_ORIGIN</code></a>.</p>
+<h2 id="warming">Warming</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>KEEP_WARM_MS</code></td>
+<td>240,000</td>
+<td>idle alarm re-arm and the floor of the idle fade; 10,000 to 3,600,000; KV-overridable</td>
+</tr>
+<tr>
+<td><code>IDLE_CEILING_MS</code></td>
+<td>unset</td>
+<td>ceiling of the idle fade; 10,000 to 3,600,000; unset keeps the re-arm fixed at <code>KEEP_WARM_MS</code></td>
+</tr>
+<tr>
+<td><code>SITE_WARM</code></td>
+<td>by plan</td>
+<td><code>1</code> warms, <code>0</code> never warms; unset warms a paid site and leaves a free one to the thermal policy</td>
+</tr>
+<tr>
+<td><code>WARM_INTERVAL_MS</code></td>
+<td>8,000</td>
+<td>the warm re-arm, KV-overridable; clamped to 600,000, or to 8,000 when <code>RETAIN_INTERPRETER=0</code></td>
+</tr>
+<tr>
+<td><code>WARM_CEILING_MS</code></td>
+<td>unset</td>
+<td>ceiling the solved warm interval may climb to; 9,500 to 120,000; KV-overridable</td>
+</tr>
+</tbody></table></div>
+<p>A Durable Object hibernates after 10 seconds of idle, and hibernation discards in-memory state, so <code>this.php</code> dies there. Measured on a deployed worker: an object holding a 32 MB allocation and an id minted in its constructor kept one incarnation across 71 consecutive 8 s alarms, and at 12, 20, 30 and 45 s the constructor ran again on every probe.</p>
+<p><code>KEEP_WARM_MS</code> ships at 240,000, which is 24x the threshold, so it re-arms an idle alarm and keeps nothing warm.</p>
+<p><code>IDLE_CEILING_MS</code> lets that idle re-arm grow with idle time. For a site the predictor does not keep warm, the next re-arm is the time since its last render, clamped between <code>KEEP_WARM_MS</code> and <code>IDLE_CEILING_MS</code>, so each wake lands twice as far from the last activity as the one before. The floor holds while fill, mail or HTTP work is queued, while a pool has lanes, and during a migration, a stepped job, an update run or a repair. With the ceiling unset the re-arm is the fixed <code>KEEP_WARM_MS</code>, as before. The clock is the render window row: its sixth field, <code>lastAt</code>, records the newest render when the window rolls, so the fade adds no row. After a hibernation the stamp can be a window old, so 15 minutes come off it and the fade starts late. Only renders stamp it; a cached page served by the object does not. <code>/serve-stats</code> reports <code>rearm</code> with the interval in force, the reason and the idle time. No deployed run measures this yet, so neither lever has marks on the settings form.</p>
+<p>The <code>*/5</code> fill window skips a site whose queue is empty: the object answers the socket request with a 204 and <code>x-cfw-window: skipped:empty-queue</code>, and the driver reports <code>skipped</code>.</p>
+<p><code>SITE_WARM</code> re-arms at <code>WARM_INTERVAL_MS</code> instead. At 8,000 the object never hibernates, so every request finds the interpreter it left. A longer interval lets it hibernate, and the next instance then adopts the retained interpreter only when it lands in the same isolate; without retention (<code>RETAIN_INTERPRETER=0</code>) nothing can be adopted and the interval stays clamped below 10,000.</p>
+<p><code>WARM_CEILING_MS</code> sets the ceiling the solved warm interval may climb to, from 9,500 to 120,000 ms. The solver starts at 8,000 ms, steps 500 ms below 9,500 and 2,000 ms above, and takes one step per two clean 15-minute windows. Above 9,500 ms a window is clean when it had at least one render and no cold boot; at or below it a window is clean when one incarnation spanned it, as before. A window with a cold boot sends the interval back to 8,000 ms, and a window with no render holds it. <code>/serve-stats</code> reports <code>warmCeilingMs</code> and <code>warmWindowColds</code> beside <code>warmDecision</code>. The var has no effect when <code>RETAIN_INTERPRETER=0</code>, which keeps the ceiling at 9,500, or when <code>WARM_INTERVAL_MS</code> is set, because the explicit interval wins. Why it is off: on one demo object on one colo (2026-10-31) the object stayed hot for gaps up to 40 s with warming off in one drive, and a repeat seven hours later read 12 of 12 cold at 40 s; an earlier 12-worker rotation read 30 s adopting 36% of idle visits, with four hosts never adopting. No fixed interval past hibernation is supported by that evidence. The lever lets one site find its own ceiling instead of taking the fixed one.</p>
+<p>The default follows the economics. An explicit <code>SITE_WARM</code> always wins. Unset, a paid site warms: one site&#39;s 10,800 firings a day sit inside paid&#39;s included Durable Object requests and rows. Unset on free it is the thermal policy below, because the same firings are 10.8% of free&#39;s daily row and request budgets, and whether that buys enough is the operator&#39;s call. Both levers are on <code>/settings</code>. An idle tick charges one row, the <code>setAlarm</code> itself. What warming buys is the 1,398 ms cold boot on every page that renders, which is the authenticated tier; a cached page answers off SQL without booting PHP at all, so warming cannot make one faster by any amount.</p>
+<p>Past hibernation the curve has one knee, at 30 s. Measured on paid deployments with a page that needs PHP, requested after 150-300 s of idle. The 30-120 s rows come from 12 workers over four phases, rotated so every worker ran every interval (288 visits).</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>re-arm</th>
+<th>firings a day</th>
+<th>share of free&#39;s budgets</th>
+<th>paid, per site-month</th>
+<th>adopted</th>
+<th>the request</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>8 s (<code>SITE_WARM</code>)</td>
+<td>10,800</td>
+<td>10.8%</td>
+<td>$0.373</td>
+<td>always</td>
+<td>never hibernated: 156-371 ms</td>
+</tr>
+<tr>
+<td>30 s</td>
+<td>2,880</td>
+<td>2.9%</td>
+<td>$0.099</td>
+<td>36%</td>
+<td>100-692 ms adopted, ~2.1 s not</td>
+</tr>
+<tr>
+<td>60-120 s</td>
+<td>720-1,440</td>
+<td>0.7-1.4%</td>
+<td>$0.025-0.050</td>
+<td>14-15%</td>
+<td>106-888 ms adopted, ~2.2 s not</td>
+</tr>
+<tr>
+<td>240 s</td>
+<td>360</td>
+<td>0.4%</td>
+<td>$0.012</td>
+<td>~2%</td>
+<td>booted: 2-4 s</td>
+</tr>
+</tbody></table></div>
+<p>Past 10 s, adoption depends first on where the platform places the object. Four of the twelve workers never adopted at any interval; on the other eight, 30 s adopted 54% and 60-120 s 21-23%. Every visit that did not adopt found no retained interpreter in its isolate.</p>
+<p>A site that is not warming re-arms at 240 s, whether the thermal policy declined it or an operator set <code>SITE_WARM=0</code>, because that is the cheapest point and the thermal policy declines exactly the sites whose firings cost more than the boots they save. 60-120 s cost two to four times the firings for little more. An operator who wants the middle point sets <code>SITE_WARM=1</code> and <code>WARM_INTERVAL_MS=30000</code> on <code>/settings</code>; 30 s is also the shortest interval under $0.10 a month.</p>
+<p>The interval is priced per site rather than flat. A flat 8 s re-arm is 10,800 object requests and 10,800 rows a day whatever the traffic, 10.8% of the free daily budget for one site, and it is charged at both ends of the band it is only worth paying inside. <code>src/ops/thermal.ts</code> keeps a 64-entry ring of recent arrivals (in memory, so the decision costs no rows), estimates the probability of a render inside the hibernation threshold, and warms only while that probability times the 1,398 ms boot exceeds what a firing costs. Below roughly 505 renders/day it declines; above roughly 8,640 the site never idles 10 s and is already resident, so the warming would be redundant rather than harmful.</p>
+<p>An active session overrides the rate estimate, because the rate is the wrong predictor for one. <code>renderRate()</code> is a property of anonymous traffic: it decides how likely a visitor is to arrive. What decides whether an expensive render is imminent is whether somebody is signed in and working, and an editor on a quiet site sits far below the 505 renders/day crossing while producing exactly the requests a cold boot hurts most. In measurement, an authenticated render took 31 ms on a warm object and 513 ms on a cold one. A compiled plan removes the render, not the boot: the first three requests of a session still render, and any request that falls through the plan tier pays whatever the object costs at that moment.</p>
+<p>So an authenticated render keeps the object warm for 30 minutes on its own. It is a window rather than a latch, so a session that ended stops paying within one window, and at the 8 s re-arm it costs 225 firings, 225 requests and 225 rows, once. The signal is the uid Drupal reported rather than the presence of a cookie, so a stale cookie cannot arm it.</p>
+<p>An explicit <code>SITE_WARM</code> still wins in both directions, including over an active session. Setting it to <code>1</code> warms a site the estimate would decline, and <code>0</code> declines one the estimate would warm. The predictor decides only when the var is unset.</p>
+<p>After an editorial save the object prewarms one representative per route family rather than arbitrary URLs, because the page cache is keyed on the URL and what a visitor arriving on <code>/node/41</code> meets cold is the object, not the page.</p>
+<p>Duration is not the meter. An object waiting on an armed alarm is idle and eligible to hibernate, and an idle-eligible object is not billed for duration; warming spends requests and rows.</p>
+<h2 id="interpreter-lifecycle">Interpreter Lifecycle</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>RECYCLE_ABOVE_BYTES</code></td>
+<td>117440512</td>
+<td>drop the interpreter at the end of an invocation above this linear-memory reading; floor 32 MiB</td>
+</tr>
+<tr>
+<td><code>ISOLATE_ABOVE_BYTES</code></td>
+<td>130023424</td>
+<td>the same drop against the whole-isolate estimate (linear memory plus the JS side); floor 64 MiB</td>
+</tr>
+<tr>
+<td><code>FILL_SETTLE_MS</code></td>
+<td>60,000</td>
+<td>ms after a boot before the alarm runs PHP (fills, cron, reconcile); <code>0</code> is off</td>
+</tr>
+<tr>
+<td><code>RETAIN_INTERPRETER</code></td>
+<td>on</td>
+<td>keeps an evicted instance&#39;s interpreter for the next instance to adopt; <code>0</code> is off</td>
+</tr>
+</tbody></table></div>
+<p><code>RECYCLE_ABOVE_BYTES</code> is the backstop for the isolate&#39;s 128 MiB limit, behind the primary defence. <code>USE_ZEND_ALLOC=0</code> means PHP returns nothing between requests, so demand inside one incarnation is cumulative; <code>/__migrate</code> and <code>/__firstrun</code> drop the interpreter when they finish, and this catches everything else. It must fire between invocations: linear memory is reclaimed only when the old module is collected, so dropping mid-request holds both allocations at once. <code>/serve-stats</code> reports <code>recycles</code> and <code>lastRecycle</code>; an object recycling every request is paying a boot per page.</p>
+<p>The limit is per isolate, not per object, and an isolate can host several objects of one class. <code>/serve-stats</code> reports <code>isolate</code>: its <code>id</code>, the <code>interpreters</code> it holds and their <code>linearBytes</code> added together. Two interpreters do not fit 128 MiB, so <code>interpreters</code> above 1 is the thing to look for on a replica pool.</p>
+<p><code>RETAIN_INTERPRETER</code> keeps the interpreter in the isolate when the instance is evicted, so the next request skips the boot while the isolate survives. In measurement, adopting a kept interpreter took 61-169 ms against 1-2.5 s for a boot. When the isolate is gone the next request boots as it would have anyway. An adopted interpreter is refused when the site committed a write since it was kept. <code>/serve-stats</code> reports <code>retention</code>.</p>
+<h2 id="replica-mode">Replica Mode</h2>
+<p>The replica variables are on <a href="replicas.html">Replica Settings</a>. This section covers the read-only interlock and the calls between a primary and its replicas.</p>
+<p><strong><code>REPLICA_READ_ONLY</code> is a safety interlock.</strong> Setting it wraps every installed <code>cfw*</code> capability so the object cannot commit an authoritative write, and refuses anything unrecognised. The mode is reported under <code>replica</code> in <code>/serve-stats</code>.</p>
+<p>A replica is started by a bulk copy and kept current by a log, both over <code>/__replica</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>call</th>
+<th>on</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GET ?action=snapshot</code></td>
+<td>primary</td>
+<td>the table plan; 409 when the primary&#39;s own identity is unminted</td>
+</tr>
+<tr>
+<td><code>GET ?action=snapshot&amp;table=&amp;offset=</code></td>
+<td>primary</td>
+<td>one page of one copyable table</td>
+</tr>
+<tr>
+<td><code>POST ?action=restore</code></td>
+<td>replica</td>
+<td>lands one chunk; <code>VERIFIED</code> when the whole copy has arrived</td>
+</tr>
+<tr>
+<td><code>GET ?action=log&amp;since=</code></td>
+<td>primary</td>
+<td>the records a replica at that generation still needs</td>
+</tr>
+<tr>
+<td><code>POST ?action=apply</code></td>
+<td>replica</td>
+<td>applies one record</td>
+</tr>
+<tr>
+<td><code>?action=stage&amp;to=</code></td>
+<td>either</td>
+<td>moves the stage, 409 on an illegal move</td>
+</tr>
+</tbody></table></div>
+<p>A replica refuses a request it may not answer with 421 and <code>x-cfw-requires-primary</code>, and refuses a stale one with 503 when the caller sent <code>x-cfw-require-generation</code>.</p>
+<h2 id="boot-and-storage">Boot and Storage</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>HEAP_SNAPSHOT</code></td>
+<td>on</td>
+<td>restore a stored wasm heap instead of booting the kernel; <code>0</code> disables</td>
+</tr>
+<tr>
+<td><code>HEAP_IMAGE</code></td>
+<td>off</td>
+<td>take that heap image in the first place; <code>1</code> enables. A restore costs more than a boot</td>
+</tr>
+<tr>
+<td><code>BOOT_IMAGE</code></td>
+<td>off</td>
+<td>boot a cold object from the published boot image when the site matches it; <code>1</code> enables</td>
+</tr>
+<tr>
+<td><code>BOOT_IMAGE_BAKE</code></td>
+<td>off</td>
+<td>lets an object capture its own boot image; only the local bake rig sets it</td>
+</tr>
+<tr>
+<td><code>HEAP_RESTORE_CHUNKS</code></td>
+<td>all at once</td>
+<td>chunks of a snapshot one invocation may apply</td>
+</tr>
+<tr>
+<td><code>LAZY_MOUNT</code></td>
+<td><code>1</code> in the canonical config</td>
+<td>stream the pack per file instead of inflating it whole</td>
+</tr>
+<tr>
+<td><code>LAZY_FS_BUDGET_BYTES</code></td>
+<td>20 MiB, 4 MiB in the canonical config</td>
+<td>resident bytes the lazy filesystem keeps before evicting</td>
+</tr>
+<tr>
+<td><code>SITE_DB_PREFIX</code></td>
+<td>the packed default</td>
+<td>which database pack an object mounts</td>
+</tr>
+<tr>
+<td><code>SQL_CHUNK_PREFIX</code></td>
+<td><code>drupal-sql</code></td>
+<td>which asset directory the migration chunks are read from</td>
+</tr>
+<tr>
+<td><code>MIGRATE_ENGINE</code></td>
+<td><code>sql</code></td>
+<td><code>sql</code> replays chunks in JavaScript; <code>php</code> needs a <code>pdo_sqlite</code> the shipping binary does not carry</td>
+</tr>
+<tr>
+<td><code>MIGRATE_SELF_DRIVE</code></td>
+<td>on</td>
+<td>whether a partial migration re-arms its own alarm</td>
+</tr>
+<tr>
+<td><code>MIGRATE_CHUNKS_PER_INVOCATION</code></td>
+<td>40 on free, all on paid</td>
+<td>chunks replayed per invocation</td>
+</tr>
+</tbody></table></div>
+<h3 id="opcache_mode"><code>OPCACHE_MODE</code></h3>
+<div class="table"><table>
+<thead>
+<tr>
+<th>value</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>off</code></td>
+<td>default; opcache disabled</td>
+</tr>
+<tr>
+<td><code>file</code></td>
+<td>opcache on with the file cache as its only backing store</td>
+</tr>
+<tr>
+<td><code>shm</code></td>
+<td>opcache on with shared memory as its backing store</td>
+</tr>
+<tr>
+<td><code>pack</code></td>
+<td>reads a file cache baked into the pack, read-only</td>
+</tr>
+</tbody></table></div>
+<p><code>off</code> is the default. <code>file</code> writes its cache into the in-memory filesystem and never reads it back, so opcache reports itself disabled on that arm. <code>shm</code> accelerates scripts but places its arena in PHP&#39;s linear memory; in one measurement that took an object to 191.25 MiB, past the 128 MiB isolate limit. <code>off</code> renders no slower than <code>file</code> and leaves more memory free.</p>
+<p><code>pack</code> needs <code>bun scripts/bake-opcache.ts</code> first and mounts nothing without it. It loads the baked cache as a second layer and cuts a cold render&#39;s object CPU by roughly 500-900 ms (deployed, n=8 per arm, with the levers swapped between deploys as a control). It holds 8.58 MB more of the isolate, and the visitor&#39;s wall time did not follow the CPU across the swap. Re-bake after any driver or composer change: scripts are never revalidated against their source, so the mount refuses a layer baked from other sources.</p>
+<h3 id="argon2"><code>ARGON2</code></h3>
+<p><code>1</code> hashes passwords with argon2id at m=19456 KiB, t=2, p=1, computed on the host. Default off.</p>
+<p>Turning it on is a migration: every bcrypt hash on the site reports as needing a rehash, and each account is upgraded at its owner&#39;s next login. Existing hashes keep working throughout; core&#39;s password service stays in place as the inner service and still owns bcrypt and legacy <code>$S$</code> hashes. Hashes are written in PHP&#39;s own <code>$argon2id$v=19$m=..,t=..,p=..$salt$tag</code> form, so a site that leaves this platform can verify them on any PHP with ext-argon2.</p>
+<p>A hash costs a 19 MiB transient allocation and two passes of CPU. That is more than a free-plan login invocation has.</p>
+<h3 id="shell_assembly"><code>SHELL_ASSEMBLY</code></h3>
+<p>Allows an authenticated GET to be answered from a stored shell with its personalised regions filled at the edge. On by default with no plan branch; <code>0</code> opts out, and an empty value is treated as unset. Assembly writes rows, described below. No visitor is served an assembly that has not been proven against their own render.</p>
+<p>A path with no stored shell is seeded from the next authenticated request, which is what lets assembly resume after an invalidation. Every bump purges every shell, because no Drupal cache tag reaches one, so without seeding the feature stops at the first content change until an operator re-harvests.</p>
+<p>An operator harvest takes two sessions of one role set and stores the shell only when both normalise to identical bytes. A seed takes one session, which widens what may be stored and leaves what may be served where it was. A visitor whose permissions hash differs from the stored shell&#39;s falls through to an ordinary render.</p>
+<p>Each visitor&#39;s first request for a harvested path re-harvests under their own session and requires their normalised shell to equal the stored one byte for byte. That response carries <code>x-cfw-cache: VERIFY</code> and is answered from their own harvest; later requests carry <code>x-cfw-cache: ASSEMBLED</code>. A shell that disagrees is deleted and the reason is recorded in <code>cfw_meta</code> under <code>shellRefusal</code>.</p>
+<p>The proof is stored per <code>(path, permissions hash, uid)</code> and voided when the path is harvested again. It costs 40 to 52 rows written once per visitor and path, against 4 to 10 for each render it then replaces; an assembly writes none.</p>
+<p>A generation bump drops every stored shell, including a <code>cachetags</code> bump. A shell caches the shared region of a page and Drupal has no cache tag pointing at it, so nothing else would invalidate it. Assembly stops on that path until the shell is harvested again.</p>
+<p><code>HEAP_SNAPSHOT</code> gates the restore and <code>HEAP_IMAGE</code> gates the producer. The producer is off by default; <code>HEAP_IMAGE=1</code> opts back in.</p>
+<p>It is off because a restore costs more than the boot it replaces. Two deployed free workers differing only in these two vars, <code>cpuTime</code> on the cold render, nothing asked of either object during the idle:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>arm</th>
+<th>cpuTime (ms)</th>
+<th align="right">n</th>
+<th align="right">median</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>HEAP_IMAGE=1</code> and <code>HEAP_SNAPSHOT=1</code></td>
+<td>2020, 1908, 1937, 1561, 1912</td>
+<td align="right">5</td>
+<td align="right">1,912</td>
+</tr>
+<tr>
+<td>both <code>0</code></td>
+<td>1277, 1343, 1113, 1251</td>
+<td align="right">4</td>
+<td align="right">1,264</td>
+</tr>
+</tbody></table></div>
+<p>The ranges do not overlap, so a restore cost about 648 ms more than booting from scratch, and it consumes storage against an account-wide 5 GB cap. The cause of the extra time is not known.</p>
+<p>The image size depends on when it is taken. <code>snapshotStep()</code> takes its image from an alarm that finds no resident interpreter, so on a fresh site it captures the cold shape at 37,158,912 bytes. An image taken after a kernel boot and a serve is 9,699,328 bytes, and a restore from that image was measured at 314.5 ms faster than booting.</p>
+<p><code>snapshotStep()</code> still takes one image per pack generation from the alarm when opted in, and <code>/heap</code> reports <code>imagedGeneration</code>, <code>imageAttempts</code> and <code>lastHeapImage</code>. It never drops the interpreter: it runs before the fill loop and only when <code>this.php === null</code>. It also refuses to overwrite an image an operator took, since the GC keeps exactly one. When an image is stored its chunks are deflated, which bounds the storage at 3,134,727 bytes rather than 11,206,656.</p>
+<p>The image is taken before the first render. Byte-identical anonymous output does not prove that no session state survives a render, so no post-render image is produced. The shared boot image below is the one exception, and it earns it differently: it is taken once from a throwaway site, and its test asserts the session id, the <code>$_SESSION</code> keys and the user after a restore.</p>
+<h3 id="the-shared-boot-image">The shared boot image</h3>
+<p><code>BOOT_IMAGE=1</code> boots a cold object from a heap image published with the worker, where a plain boot builds that heap from the database. It is off by default, because no real site&#39;s cold-boot share has been measured against it. <code>bun run assets:bootimage</code> bakes it into <code>assets/bootimage/</code>.</p>
+<p>A boot restores an image only when the site equals what the image was baked from: the pack generation and enabled modules, the driver digest, a digest of the <code>config</code> rows, and a digest of the settings and PHP fragments the heap was built under. Any difference boots plain, which is always correct, so a stale image costs a plain boot. Two images are published. The <code>pack</code> image is for a site the pack made. The <code>claimed</code> image is for a claimed site and carries <code>config=reset</code> in place of the digest, because every claimed site has its own name, mail and timezone; its restore also resets the config factory and the entity memory cache.</p>
+<p>After the pages land, the restore runs <code>src/site/php/boot-image/rekey.php</code>: it reads <code>settings.php</code> again (the site&#39;s salt and origin), flushes <code>cache.memory</code> and every memory bin, resets every cache collector (State&#39;s private key, and anything the bake computed but had not persisted) and reseeds <code>mt_rand</code>. A replica or pool lane never boots from the image.</p>
+<p>The image is checked four ways. The first three were each rerun with the step that serves them removed, and the spec failed.</p>
+<ul>
+<li><strong>Rendered output.</strong> A restored site renders what a plain boot renders, over five pages, after normalizing the ids a render invents. A first render that read as many rows as a plain boot would show the heap was not used, so the spec asserts fewer.</li>
+<li><strong>Site values.</strong> The salt and the private key read before any request are the site&#39;s own, and a second restored site draws different <code>mt_rand</code> values. Without the settings re-read the bake&#39;s salt survives.</li>
+<li><strong>Config.</strong> A claimed site&#39;s own name shows, and so do a theme colour, a disabled block, the maintenance switch, a new menu link and a saved node, from the image and from a plain boot alike. With the config reset off all six cases fail.</li>
+<li><strong>Corrupt files.</strong> A corrupt file refuses the restore. If an earlier file already landed, the interpreter is dropped and the site boots plain; the page is the same either way.</li>
+</ul>
+<p>A heap restored from a bake is only as fresh as an interpreter that rendered once. The bake&#39;s active trail for <code>/user/login</code> sat in a cache collector, waiting to be persisted, and the first request&#39;s resetter wrote it into the new site&#39;s cache under that site&#39;s current tag checksums. It read as valid and lacked a link the site had added. Resetting every collector on each restore prevents this.</p>
+<p>Deployed, on a claimed site with <code>SITE_WARM=0</code> and <code>RETAIN_INTERPRETER=0</code>, a cold round cost 2,527 ms of object <code>cpuTime</code> without the image and 1,105 ms with it (medians, n=7 per arm, one worker each), and 3,974 against 2,454 ms of wall time. The cost is the request&#39;s fetch plus the alarm it queued behind, since the platform charges the boot to the alarm. The technical report has the table and its limits.</p>
+<p>What is not measured: the share of real cold boots that match an image, the pack image deployed, a site with content or a large module set, and what the extra 18.6 MiB of memory (1,320 to 1,375 pages against 1,024) costs per fresh isolate, which a deployed memory is charged for in full. A site with a different module set, settings or interpreter build boots plain; the published index also names the interpreter, and <code>tests/node/boot-image-agrees.spec.ts</code> fails when it is not the one on disk.</p>
+<p>What replaces this as the number to watch is the cold-encounter share, not the cold-boot duration. <code>src/ops/cold-encounter.ts</code> classifies every request the object handles and <code>/serve-stats</code> reports <code>coldOfPhp</code>, <code>coldOfObject</code> and <code>coldOfTraffic</code>. 1,264 ms is the floor for an object <code>thermal.ts</code> decided not to keep warm, and that policy already ships.</p>
+<p>Read <code>coldOfTraffic</code>, not <code>coldOfObject</code>. A plan hit, an isolate memo hit, a <code>caches.default</code> hit and a KV page read all return from the front worker, so the object&#39;s own denominator is the leftovers and a share taken against it reads several times high. The front worker reports what it absorbed on the next request that hops anyway, under <code>x-cfw-absorbed</code>, and <code>coldOfTraffic</code> is null until it has, because a worker too old to report and a site with nothing absorbed are otherwise the same reading.</p>
+<p><strong>Changing <code>LAZY_MOUNT</code>, <code>MIGRATE_ENGINE</code> or <code>SITE_DB_PREFIX</code> in a deploying config means changing <code>assets/.assetsignore</code> too.</strong> The shipping asset set is derived from the canonical values of those three; <code>tests/unit/runtime/assets-ignore.spec.ts</code> fails when the two disagree.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

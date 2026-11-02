@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Site Identity and Origin Settings - Drupflare</title>
+		<meta
+			name="description"
+			content="The variable that selects the CMS, and the variables that name a site and fix the origin its sessions and links use."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Site Identity and Origin Settings - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The variable that selects the CMS, and the variables that name a site and fix the origin its sessions and links use."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Configuration</a></p>
+<h1 id="site-identity-and-origin-settings">Site Identity and Origin Settings</h1>
+<p>The variable that selects the CMS, and the variables that name a site and fix the origin its sessions and links use.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#cms">CMS</a></li><li><a href="#site-identity-and-origin">Site Identity and Origin</a></li></ol></nav><h2 id="cms">CMS</h2>
+<p><code>CMS</code> selects which CMS the build packs, and <code>drupal</code> is the only value. It is read at BUILD time by
+<code>bun run assets:driver</code>, from the environment and then from <code>wrangler.jsonc</code>, which sets it. Unlike
+every other var it has no default: a missing or unknown value fails the build instead of packing
+Drupal under another name. At runtime it is only reported, as the fleet row&#39;s <code>cms</code>.</p>
+<h2 id="site-identity-and-origin">Site Identity and Origin</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>SITE_ID</code></td>
+<td>derived, then <code>site</code></td>
+<td>which site a request resolves to, when KV maps no host</td>
+</tr>
+<tr>
+<td><code>SITE_ID_PORTS</code></td>
+<td><code>keep</code></td>
+<td>whether a port is part of a site id derived from the hostname</td>
+</tr>
+<tr>
+<td><code>SITE_ORIGIN</code></td>
+<td>pinned on first use</td>
+<td>the <code>scheme://host[:port]</code> Drupal builds absolute URLs against</td>
+</tr>
+<tr>
+<td><code>SITE_LOCATION_HINT</code></td>
+<td>unset</td>
+<td>which region the site&#39;s Durable Object is created in</td>
+</tr>
+</tbody></table></div>
+<h3 id="site_id"><code>SITE_ID</code></h3>
+<p>One object per site, and the object&#39;s name is the site identity, so a wrong answer here serves a
+request from a different site&#39;s database. The layers, in order, are implemented in <code>src/ops/site-id.ts</code>: <code>?site=</code> (only when the caller opts
+in), a <code>site:host:&lt;host&gt;</code> KV mapping, then <code>SITE_ID</code>, then the deployment&#39;s primary site
+(<code>src/ops/deployment-site.ts</code>), then the hostname itself, then the literal <code>site</code>.</p>
+<p>The optional layers sit above the derived one because derivation answers for every real host, so
+anything below it would be unreachable on exactly the hosts it exists to configure. <code>localhost</code>,
+<code>127.0.0.1</code>, <code>0.0.0.0</code> and <code>::1</code> name no site and fall past derivation, which is what lets a local
+dev server and a deployed site run the same code path.</p>
+<p>Set it when one deployment serves one site under a name you choose. Leave it unset when the hostname
+is the identity. Changing it after a site has content points the Worker at a different, empty object;
+the old one still holds the data.</p>
+<h3 id="site_id_ports"><code>SITE_ID_PORTS</code></h3>
+<p><code>keep</code> or <code>strip</code>. <code>keep</code> is the default: a non-default port is part of a derived site id, so
+<code>example.com:8443</code> and <code>example.com</code> are two sites, as they are on a standalone workerd node that
+serves different sites on different ports. <code>strip</code> drops any port, which is right on Cloudflare,
+where a hostname is one site and the platform proxies extra ports (8443, 2053 and others) to it;
+under <code>keep</code> each one creates a site object that holds an alarm chain and no visitors. The canonical
+<code>wrangler.jsonc</code> sets <code>strip</code>. An id derived from a default-port host is the same under both values,
+and a KV mapping, <code>SITE_ID</code> or the deployment&#39;s primary site is unaffected. Do not set <code>strip</code> on
+a node that has sites on non-default ports, since their ids would change.</p>
+<p>The KV reads in the chain (the host mapping and the deployment document) wait at most 2 seconds. A
+read that does not answer uses the last value this isolate saw, or falls through as a failed read
+does.</p>
+<p>Spec: <code>tests/unit/ops/site-id.spec.ts</code>.</p>
+<h3 id="site_location_hint"><code>SITE_LOCATION_HINT</code></h3>
+<p>One of <code>wnam enam sam weur eeur apac apac-ne apac-se oc afr me</code>, or unset.</p>
+<p>Unset by default. Placement follows the first request a site answers, which for a deploy-button site
+is wherever the deployer was. Pinning a region on an owner&#39;s behalf trades latency for one audience
+against latency for every other, so the choice belongs to whoever knows the audience.</p>
+<p>It applies when the object is created. Cloudflare ignores it for an object that already exists,
+so setting it on a running site moves nothing.</p>
+<p>An unrecognised value is ignored. The value reaches <code>SITE.get()</code> on the serving path, and a hint the
+platform rejects would take the site down for the sake of a preference.</p>
+<p>KV-overridable through the <code>settings</code> key, so a region can be chosen without a redeploy.</p>
+<h3 id="site_origin"><code>SITE_ORIGIN</code></h3>
+<p>Every absolute URL Drupal emits is built from the origin: the canonical tag, a form action, a
+<code>Location:</code>, the link in a password-reset mail.</p>
+<p>The inbound <code>Host</code> carries no guarantee: an attacker who can set it can move a password-reset link
+onto a host they control. So the origin is a property of the site, resolved in
+<code>src/ops/site-origin.ts</code> in this order:</p>
+<ol>
+<li><code>SITE_ORIGIN</code>, which wins outright.</li>
+<li><strong>The pin</strong>, held in <code>cfw_meta</code> under <code>site_origin</code>. Trust on first use: the first non-local
+origin a site serves is stored, and later requests do not overwrite it. A forged <code>Host</code> after the
+pin changes nothing.</li>
+<li>The observed origin, when there is no pin; that request is the one that sets the pin.</li>
+<li><code>http://localhost</code>, only when nothing above produced a usable value.</li>
+</ol>
+<p>A bare hostname is accepted and assumed <code>https</code>. A full URL is trimmed to its authority, so
+<code>https://example.com/</code> does not become a double slash in every canonical tag. Only <code>http</code> and <code>https</code>
+are accepted: a <code>javascript:</code> form action is why this is an allowlist.</p>
+<p>A local origin is never pinned (<code>localhost</code>, <code>127.0.0.1</code>, <code>0.0.0.0</code>, <code>::1</code>, <code>do.local</code>), so running
+the suite or a <code>wrangler dev</code> against a persisted object cannot fix a real site&#39;s canonical URL to a
+developer&#39;s laptop.</p>
+<p>Set it when the site is reached through a host it cannot observe: behind a proxy that rewrites
+<code>Host</code>, or on a deploy whose first request is a health check. <code>SITE_ORIGIN</code> takes precedence over the
+pin on every request, so it can change the origin of a site that has already pinned one; the stored
+value is left in place.</p>
+<p>Getting it wrong points canonical tags, redirects and mailed links at the wrong host. What a request
+resolves to is a separate question, answered by <code>SITE_ID</code>.</p>
+<p>Specs: <code>tests/unit/ops/site-origin.spec.ts</code>, <code>tests/integration/render-origin.spec.ts</code>.</p>
+<h3 id="alias-hosts">Alias Hosts</h3>
+<p>A site answers on more than one hostname through <code>site:host:&lt;host&gt;</code> entries in <code>CONFIG_KV</code>, one per
+host, each naming the site. <code>drangler domain add &lt;host&gt;</code> writes the entry with your wrangler login
+and adds a Custom Domain route for the next deploy.</p>
+<p>Every render uses the site&#39;s origin, so the stored page carries the canonical host. On a request
+whose host resolved through a KV entry and differs from that origin, the front worker rewrites the
+response for the visitor&#39;s host: absolute URLs in text bodies (plain and JSON-escaped), <code>Location</code>,
+and the <code>Domain</code> on <code>Set-Cookie</code>, which Drupal derives from the render host and a browser refuses
+from any other. The session cookie keeps its name, so one login works on every alias. The response
+carries <code>x-cfw-alias: &lt;canonical host&gt;</code>.</p>
+<p>Only a KV-mapped host is rewritten. An operator wrote that entry, so a forged <code>Host</code> cannot turn it
+on, and an unmapped host that reaches the site through the deployment primary keeps the canonical
+links. The first request a site ever answers still pins its origin, so claim the site on its main
+host before adding aliases.</p>
+<p>Specs: <code>tests/unit/ops/site-origin.spec.ts</code>, <code>tests/integration/deployment-site.spec.ts</code>.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Git Remotes - Drupflare</title>
+		<meta
+			name="description"
+			content="A site follows as many git repositories as you connect to it. A push installs the module, and the result is written back to the provider as a commit status."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Git Remotes - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="A site follows as many git repositories as you connect to it. A push installs the module, and the result is written back to the provider as a commit status."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html">Getting Started</a>
+				<a href="../operating/index.html" aria-current="page">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Operating</a></p>
+<h1 id="git-remotes">Git Remotes</h1>
+<p>A site follows as many git repositories as you connect to it. A push installs the module, and the
+result is written back to the provider as a commit status. The page that manages remotes is
+<code>/_cfw/git</code>, and it drives three files: <code>src/ops/git-smart.ts</code> (the transport),
+<code>src/ops/git-provider.ts</code> (the provider layer above it) and <code>src/ops/git-sync.ts</code> (the layout and
+diff).</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-transport">The Transport</a></li><li><a href="#what-gets-installed">What Gets Installed</a></li><li><a href="#branches-requests-and-diffs">Branches, Requests and Diffs</a></li><li><a href="#triggers">Triggers</a></li><li><a href="#deliveries">Deliveries</a></li><li><a href="#what-a-push-does">What a Push Does</a></li><li><a href="#verify-and-roll-back">Verify and Roll Back</a></li><li><a href="#write-back">Write-Back</a></li><li><a href="#storage">Storage</a></li><li><a href="#provider-coverage">Provider Coverage</a></li></ol></nav><h2 id="the-transport">The Transport</h2>
+<p>The transport is git&#39;s own smart HTTP, so anything that serves a repository over HTTPS works:
+GitHub, GitLab, Bitbucket, Gitea, Forgejo, a bare repository behind nginx, or an internal mirror. Two
+requests do the whole job:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Request</th>
+<th>Cost</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Poll</td>
+<td><code>GET /info/refs?service=git-upload-pack</code></td>
+<td>a few hundred bytes when nothing has moved</td>
+</tr>
+<tr>
+<td>Pull</td>
+<td><code>POST /git-upload-pack</code>, one commit, depth 1</td>
+<td>the changed objects, as a packfile</td>
+</tr>
+</tbody></table></div>
+<p>The packfile is read in the Worker: pkt-line framing, both delta forms, and the tree walk that turns
+a commit into files. Private repositories authenticate with the operator&#39;s access token over HTTPS.
+A public repository needs no credential.</p>
+<h3 id="provider-apis">Provider APIs</h3>
+<p>Provider APIs sit above the transport, and the transport does not depend on them. The <code>generic</code>
+provider uses no API at all. Its branches and open requests come from the ref advertisement, since
+every provider publishes <code>refs/pull/N/head</code> or <code>refs/merge-requests/N/head</code>.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>API</th>
+<th>Default host</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>github</code></td>
+<td>REST v3</td>
+<td><code>https://api.github.com</code></td>
+</tr>
+<tr>
+<td><code>gitlab</code></td>
+<td>REST v4</td>
+<td><code>https://gitlab.com</code></td>
+</tr>
+<tr>
+<td><code>bitbucket</code></td>
+<td>REST 2.0</td>
+<td><code>https://api.bitbucket.org</code></td>
+</tr>
+<tr>
+<td><code>gitea</code></td>
+<td>REST v1, Forgejo too</td>
+<td>none; the host is required</td>
+</tr>
+<tr>
+<td><code>generic</code></td>
+<td>none</td>
+<td>none; the host is required</td>
+</tr>
+</tbody></table></div>
+<h2 id="what-gets-installed">What Gets Installed</h2>
+<p>Module names come from <code>*.info.yml</code> and not from the directory. A repository checked out under one
+name that provides another installs correctly, and a repository holding several extensions installs
+all of them at their own paths. Modules land in <code>modules/custom/</code>, themes in <code>themes/custom/</code> and
+profiles in <code>profiles/custom/</code>.</p>
+<p>Only mountable files are kept: PHP, YAML, Twig, JavaScript and CSS. <code>tests/</code>, <code>vendor/</code>,
+<code>node_modules/</code>, <code>.github/</code> and dotfiles are dropped. Each kept file is stored as its own row, and
+the pull reports what it skipped and why.</p>
+<p>PHP costs no bundle bytes. Module source is fetched over the assets binding and not compiled into
+the Worker, so the size ceiling that governs the rest of the runtime does not apply to a custom
+module written in PHP.</p>
+<p>A submodule inside another module&#39;s tree stays where it is and is mounted once.</p>
+<h3 id="mount-path">Mount Path</h3>
+<p>A remote can name a <code>mount</code>: a path inside <code>modules</code>, <code>themes</code> or <code>profiles</code>, such as
+<code>modules/mantle2</code>. Set it when a site already keeps the module somewhere else. A pull then updates
+the module where it lives, instead of adding a second copy beside it. The setting applies when the
+repository holds one module. With several, each keeps its default mount. <code>/git?action=add&amp;mount=</code>
+takes it.</p>
+<p>A path containing <code>..</code>, a dot segment, a leading slash or a <code>core/</code> prefix is refused, both when the
+remote is added and on every pull.</p>
+<p><code>vendor/</code> is never delivered. A module whose dependencies are bundled inside <code>vendor/</code> keeps the
+ones it was carried with, and a new dependency in a later commit has to arrive another way.</p>
+<h2 id="branches-requests-and-diffs">Branches, Requests and Diffs</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Action</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Check</td>
+<td>reads the remote head without downloading anything</td>
+</tr>
+<tr>
+<td>Diff</td>
+<td>fetches the commit and reports added, modified and removed files with line counts</td>
+</tr>
+<tr>
+<td>Pull</td>
+<td>applies that diff and mounts the result</td>
+</tr>
+<tr>
+<td>Branch switch</td>
+<td>moves the site to another branch, deleting what the old one had and the new one does not</td>
+</tr>
+<tr>
+<td>Requests</td>
+<td>lists open pull and merge requests</td>
+</tr>
+<tr>
+<td>Preview</td>
+<td>installs a request&#39;s head instead of the branch, and holds it there</td>
+</tr>
+</tbody></table></div>
+<p>A preview is held against polling and against pushes, so a branch that moves while somebody is
+reviewing does not replace what they are looking at. Leaving the preview returns the site to its
+branch.</p>
+<h2 id="triggers">Triggers</h2>
+<p>Polling works against any remote and needs no cooperation from it. Each repository has its own
+interval. It defaults to 60 minutes and cannot go below 5; <code>0</code> turns polling off. A poll costs one
+ref advertisement. The alarm polls at most three due remotes per firing, oldest first, so one slow
+remote cannot starve the others.</p>
+<p>A 429 response sets a backoff. The first is one minute, each refusal doubles it, and a
+<code>Retry-After</code> header replaces the calculation when the provider sends one. Both are capped at one
+hour (<code>src/ops/git-sync.ts</code>).</p>
+<p>Webhooks make a push arrive immediately. GitHub, GitLab, Bitbucket, Gitea and Forgejo can register
+one from the page. For any other remote, the page mints a secret and shows the delivery URL to
+register by hand.</p>
+<h2 id="deliveries">Deliveries</h2>
+<p><code>/githook?remote=&lt;id&gt;</code> receives deliveries. The caller carries no credential this Worker controls,
+so the signature is the whole of the authentication. An unverifiable delivery is refused.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Header</th>
+<th>What it proves</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GitHub</td>
+<td><code>X-Hub-Signature-256</code></td>
+<td>HMAC-SHA256 over the raw body</td>
+</tr>
+<tr>
+<td>Gitea, Forgejo</td>
+<td><code>X-Hub-Signature-256</code></td>
+<td>the same scheme, verified the same way</td>
+</tr>
+<tr>
+<td>Bitbucket</td>
+<td><code>X-Hub-Signature</code></td>
+<td>HMAC, method read from the header prefix</td>
+</tr>
+<tr>
+<td>GitLab</td>
+<td><code>webhook-signature</code></td>
+<td>HMAC-SHA256, GitLab 19.0 and a feature flag</td>
+</tr>
+<tr>
+<td>GitLab</td>
+<td><code>X-Gitlab-Token</code></td>
+<td>the shared secret, in plaintext</td>
+</tr>
+<tr>
+<td>Any git remote</td>
+<td><code>X-Hub-Signature-256</code></td>
+<td>accepted if the sender can produce it; refused otherwise</td>
+</tr>
+</tbody></table></div>
+<p>GitLab installs before 19.0 send the secret in plaintext and cannot be HMAC-verified. Both forms are
+accepted, and the page shows which one the last delivery used, since the two differ in what they
+prove.</p>
+<h2 id="what-a-push-does">What a Push Does</h2>
+<p>A push to the tracked branch installs the commit inline and writes the result back as a status. A
+push to any other branch and a branch delete are acknowledged without installing or recording the head. A push to the
+tracked branch arriving while a request is being previewed records the head and stops there.</p>
+<pre><code class="mermaid">sequenceDiagram
+    participant H as Git host
+    participant W as Worker
+    participant O as Site object
+    H->>W: POST /githook?remote=id
+    W->>O: forward to the site object
+    O->>O: verify the signature and read the event
+    alt signature does not match
+        O-->>W: 401 refused
+    else other branch or a delete
+        O-->>W: acknowledge, no install
+    else preview in progress
+        O->>O: record the head and stop
+    else tracked branch
+        O->>H: fetch the commit at depth 1
+        H-->>O: packfile
+        O->>O: plan, apply and verify the boot
+        O->>H: commit status on the pushed sha
+    end
+    O-->>W: JSON result
+    W-->>H: 200</code></pre><p>The status write runs only when the provider has an API and the remote holds a token. A plain remote
+gets no status.</p>
+<h2 id="verify-and-roll-back">Verify and Roll Back</h2>
+<p>A pull is applied in one transaction and then verified. Verification has two checks. The kernel boot
+builds the container, and the module load runs every enabled module&#39;s PHP, because a boot alone reads
+no <code>.module</code> file when the container comes from <code>cache_container</code>. A missing verdict from either
+check counts as a failure.</p>
+<p>If either check fails, the previous file set is restored and the site keeps serving. The reason is
+stored on the remote as its last error, and the pull reports <code>rolledBack</code>. A path already owned by
+another remote or by a <code>composer require</code> is reported as a conflict and not taken.</p>
+<pre><code class="mermaid">flowchart TD
+    A[Plan and conflict check pass] --> B[Write the file set in one transaction]
+    B --> C[Boot the Drupal kernel]
+    C -->|error or no verdict| R[Restore the previous file set]
+    C -->|booted| D[Load each enabled module file]
+    D -->|refused or no verdict| R
+    D -->|loaded| E[Record the installed sha and clear the last error]
+    R --> F[Record the reason on the remote]</code></pre><p>The checks are in <code>gitVerifyBoot()</code> (<code>src/do/git-delivery.ts</code>). <code>gitApply()</code> and <code>gitRestore()</code> in
+the same file write and restore the set.</p>
+<h2 id="write-back">Write-Back</h2>
+<p>A commit status goes on the pushed sha: a state, a context, a description and a link. All three
+providers support it, and an access token can write it.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Read the tree</th>
+<th>Write a status</th>
+<th>Create a webhook</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GitHub</td>
+<td><code>Contents: read</code></td>
+<td><code>Commit statuses: write</code></td>
+<td><code>Webhooks: write</code></td>
+</tr>
+<tr>
+<td>GitLab</td>
+<td><code>read_api</code></td>
+<td><code>api</code></td>
+<td><code>api</code>, Maintainer or Owner</td>
+</tr>
+<tr>
+<td>Bitbucket</td>
+<td><code>repository:read</code></td>
+<td><code>repository:read</code></td>
+<td><code>webhook</code></td>
+</tr>
+<tr>
+<td>Gitea, Forgejo</td>
+<td><code>read:repository</code></td>
+<td><code>write:repository</code></td>
+<td><code>write:repository</code></td>
+</tr>
+<tr>
+<td>Any git remote</td>
+<td>read access over HTTPS</td>
+<td>no API</td>
+<td>register by hand</td>
+</tr>
+</tbody></table></div>
+<details>
+<summary>Provider scope notes</summary><p>GitHub&#39;s Checks API carries annotations and per-line output, and only a GitHub App can write one. A
+repository-scoped fine-grained token is refused with <code>Resource not accessible by personal access token</code> on both check-run endpoints and accepted on the status endpoint, so the product writes commit
+statuses.</p>
+<p>GitLab has no scope narrower than <code>api</code> for writing a status.</p>
+<p>Bitbucket has no personal access token. An Atlassian API token authenticates as HTTP Basic with the
+account email as the username, so its row asks for one.</p>
+<p>Gitea takes <code>state</code> on the way in and answers <code>status</code> on the way out, which matters when reading a
+status back through its API.</p>
+<p>A plain remote has nowhere to put a status, so <code>statusRequest()</code> returns null for it.</p>
+</details><h2 id="storage">Storage</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Where</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>git_remotes</code></td>
+<td>sealed</td>
+<td>the configured remotes, as one JSON row</td>
+</tr>
+<tr>
+<td><code>git_token_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>the access token for one remote</td>
+</tr>
+<tr>
+<td><code>git_email_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>the Atlassian account email, Bitbucket only</td>
+</tr>
+<tr>
+<td><code>git_hooksecret_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>the shared secret a delivery is verified against</td>
+</tr>
+<tr>
+<td><code>git_head_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>the sha the last poll saw</td>
+</tr>
+<tr>
+<td><code>git_installedsha_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>the sha whose files are mounted</td>
+</tr>
+<tr>
+<td><code>git_interval_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>poll cadence in minutes; <code>0</code> turns polling off</td>
+</tr>
+<tr>
+<td><code>git_backoff_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>epoch ms before which nothing polls this remote</td>
+</tr>
+<tr>
+<td><code>git_previewof_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>the request being previewed instead of the branch</td>
+</tr>
+</tbody></table></div>
+<p>Module source lands in <code>cfw_module_file</code>, one row per file, owned by the remote id. That is the same
+table <code>composer require</code> writes to, which is what makes a conflict detectable.</p>
+<p>Everything in this table lives in the object&#39;s own storage, and none of it can be set from KV. A
+writer who could change a remote could point the site at a repository they control. A writer who
+could read a token would have push access to the operator&#39;s repository. Access tokens therefore live
+in the site&#39;s own database, never in the KV namespace that carries runtime overrides. The scopes each
+provider needs are under <a href="#write-back">Write-Back</a>.</p>
+<h2 id="provider-coverage">Provider Coverage</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>State</th>
+<th>Exercised Against</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GitHub</td>
+<td>verified</td>
+<td>github.com</td>
+</tr>
+<tr>
+<td>GitLab</td>
+<td>verified</td>
+<td>GitLab CE</td>
+</tr>
+<tr>
+<td>Gitea</td>
+<td>verified</td>
+<td>Gitea 28.0.0</td>
+</tr>
+<tr>
+<td>Forgejo</td>
+<td>verified</td>
+<td>Forgejo 16</td>
+</tr>
+<tr>
+<td>Any HTTPS remote</td>
+<td>verified</td>
+<td><code>git upload-pack</code> directly</td>
+</tr>
+<tr>
+<td>Bitbucket</td>
+<td>supported</td>
+<td>n/m</td>
+</tr>
+</tbody></table></div>
+<p>Bitbucket authenticates with one API token and two names. The REST API takes the Atlassian account
+email, and git over HTTPS takes the Bitbucket username, which is case sensitive. Both fields are on
+the page.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

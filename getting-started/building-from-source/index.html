@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Building From Source - Drupflare</title>
+		<meta
+			name="description"
+			content="Two commands turn a clean clone into a deployable tree, and they are not interchangeable."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Building From Source - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Two commands turn a clean clone into a deployable tree, and they are not interchangeable."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html" aria-current="page">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Getting Started</a></p>
+<h1 id="building-from-source">Building From Source</h1>
+<p>Two commands turn a clean clone into a deployable tree, and they are not interchangeable.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>route</th>
+<th>command</th>
+<th>needs</th>
+<th>takes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>payload</strong></td>
+<td><code>bun run hydrate</code></td>
+<td>network</td>
+<td>seconds</td>
+</tr>
+<tr>
+<td><strong>source</strong></td>
+<td><code>bun run build:local</code></td>
+<td>network, PHP, composer, node 24+</td>
+<td>minutes</td>
+</tr>
+</tbody></table></div>
+<p><code>bun run hydrate</code> takes the payload route by default and falls back to the source route when no
+payload exists. <code>--payload-only</code> forbids the fallback; <code>--from-source</code> skips straight to it.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#why-two-routes">Why Two Routes</a></li><li><a href="#where-a-payload-comes-from">Where a Payload Comes From</a></li><li><a href="#quick-start">Quick Start</a></li><li><a href="#prerequisites-per-route">Prerequisites, Per Route</a></li><li><a href="#related">Related</a></li></ol></nav><h2 id="pages">Pages</h2>
+<ul>
+<li><a href="steps.html">The Steps</a>: the seventeen build steps, from the interpreter to the assets.</li>
+<li><a href="build-order.html">Build Order and Caching</a>: why the order is fixed, what is cached, and partial rebuilds.</li>
+<li><a href="upgrading-core.html">Upgrading Drupal Core</a>: the sequence for a core bump and what a patch release moves.</li>
+</ul>
+<h2 id="why-two-routes">Why Two Routes</h2>
+<p><code>assets/</code> is generated packs and <code>.interp/</code> holds the interpreter. Both are gitignored, so a clean
+checkout has neither and <code>wrangler deploy</code> has nothing to upload.</p>
+<p>The payload route downloads them as one verified tarball. It is a plain HTTPS GET: no Docker, no
+<code>gh</code> auth, no PHP, no Cloudflare credential. That is what makes the Deploy to Cloudflare button
+work. Its build command is <code>bun run hydrate</code> (<code>build.command</code> in <code>wrangler.jsonc</code>), and Workers
+Builds has no Docker to build with.</p>
+<p>The source route regenerates the same bytes locally. It covers what the payload cannot: a checkout of
+a commit no release was cut from, and a repository with no release yet. It produces every artifact
+the payload carries, <code>assets/prefill.json</code> included.</p>
+<h2 id="where-a-payload-comes-from">Where a Payload Comes From</h2>
+<p><code>hydrate</code> tries four places and takes the first that answers, and every one of them is verified
+against the <code>SHA256SUMS</code> published beside it.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>order</th>
+<th>source</th>
+<th>what it is</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td><code>--from=&lt;path&gt;</code> or <code>dist/</code></td>
+<td>a tarball on disk, which outranks the network</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>payloads/v&lt;version&gt;/</code> on R2</td>
+<td>the release, mirrored to the CDN</td>
+</tr>
+<tr>
+<td>3</td>
+<td>the GitHub Release</td>
+<td>the same bytes, canonical</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>payloads/dev-&lt;branch&gt;/</code> on R2</td>
+<td>that branch&#39;s tip, replaced on every push</td>
+</tr>
+</tbody></table></div>
+<p><strong>The CDN copy is tried before the GitHub Release.</strong> A Workers Builds job once stalled for its whole
+timeout on a release asset download, while the same 13.4 MB restored from the CDN in seconds. The Release stays canonical and stays the fallback, so a CDN outage costs a retry
+rather than a deploy.</p>
+<p><strong>The dev line is tried last and never displaces a release.</strong> It is keyed by branch: the checkout&#39;s
+own branch first, then <code>master</code>. It lets a checkout on a commit no release was cut from download a
+tree in seconds instead of building one with a toolchain the deploy container does not have.
+<code>bun run build:local</code> is still there when you want the bytes regenerated rather than fetched.</p>
+<p><strong><code>--dev[=branch]</code> takes the dev line directly.</strong> <code>bun run hydrate -- --dev=master</code> skips <code>dist/</code>
+and every release and downloads the tip of that branch, and a bare <code>--dev</code> names the checkout&#39;s own
+branch. It is for a checkout whose <code>package.json</code> already carries the next version: without it, a
+release of the previous version answers first and lands older bytes under newer code. It refuses to
+combine with <code>--from</code>, <code>--tag</code> or <code>--from-source</code>, since each of those names a different payload. The
+bytes are a branch tip, so the next push replaces them and the run says so.</p>
+<p>Both lines are published by CI from the tarball the release job already built, so nothing is
+rebuilt to publish it. The keys come from <code>scripts/payload-cdn.ts</code>, which the resolver and the
+workflows both read; <code>tests/node/workflows.spec.ts</code> fails if a workflow starts spelling a key of its
+own.</p>
+<h2 id="quick-start">Quick Start</h2>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> clone</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://github.com/drupflare/worker.git</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">cd</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> worker</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> install</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">     # postinstall restores the interpreter from the CDN, verified by sha256</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> hydrate</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # payload if there is one, source build if there is not</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> dev</span></span></code></pre><p>To see what a build would do without doing it:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:plan</span></span></code></pre><h2 id="prerequisites-per-route">Prerequisites, Per Route</h2>
+<p>The payload route needs Bun and a network. Nothing else.</p>
+<p>The source route needs each of these, and <code>bun run build:plan</code> names any that are missing before it
+spends a minute:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>tool</th>
+<th>version</th>
+<th>used by</th>
+<th>note</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>bun</code></td>
+<td>latest</td>
+<td>everything</td>
+<td></td>
+</tr>
+<tr>
+<td><code>node</code></td>
+<td>24+</td>
+<td><code>core</code>, <code>sql</code>, <code>patch</code></td>
+<td><code>node:sqlite</code>, which Bun does not ship</td>
+</tr>
+<tr>
+<td><code>php</code></td>
+<td>8.3+</td>
+<td><code>site</code>, <code>twig</code></td>
+<td>with <code>pdo_sqlite</code>, <code>sqlite3</code>, <code>mbstring</code>, <code>iconv</code></td>
+</tr>
+<tr>
+<td><code>composer</code></td>
+<td>2</td>
+<td><code>tree</code></td>
+<td>the Drupal release tarball is core only</td>
+</tr>
+<tr>
+<td><code>git</code></td>
+<td>any</td>
+<td><code>siblings</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>tar</code></td>
+<td>any</td>
+<td><code>tree</code></td>
+<td></td>
+</tr>
+</tbody></table></div>
+<p>Two of these run under <code>node</code> rather than <code>bun</code>. <code>pack-sql.ts</code> needs <code>node:sqlite</code>.
+<code>pack-drupal.ts</code> writes <code>core.bin.gz</code> from <code>gzipSync(blob, { level: 9 })</code>, and the two runtimes do
+not emit the same deflate stream for the same input, so running it under Bun would move a shipped
+asset with nothing reporting it.</p>
+<h2 id="related">Related</h2>
+<ul>
+<li><a href="../../configuration/index.html">Configuration</a>: every variable and binding, and what breaks when one is wrong</li>
+<li><a href="../repository-layout/index.html">Repository Layout</a>: every path outside <code>src/</code> and how it arrives</li>
+<li><a href="https://github.com/drupflare/worker/blob/master/scripts/README.md">Scripts</a>: why each script is in the language it is in</li>
+</ul>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

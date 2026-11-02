@@ -18,8 +18,8 @@
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Renders through the park when the traps are armed, and plainly when they are not.</p>
 <p>A parked render costs an extra <code>_run</code> per blocking call, so a site with no armed traps takes the
-plain path. A parked run that does not finish still answers (the chain is unwound in
-<code>drivePark</code> and what it printed is parsed); only an unparseable answer re-renders unparked.</p>
+plain path. A parked run that does not finish still answers (the chain is finished without the
+park in <code>drivePark</code> and what it printed is parsed); nothing here ever runs <code>code</code> a second time.</p>
 <p>Every shell-tier run goes through here: a bare <code>runJson</code> leaves a <code>cache_*</code> read inside
 <code>renderPlaceholder()</code> unparked, it fails on the real socket, and a Redis site never assembles.</p>
 </div>
@@ -30,7 +30,7 @@ plain path. A parked run that does not finish still answers (the chain is unwoun
 <li><span><span class="tsd-kind-parameter">code</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/do_types.Payload.html" class="tsd-signature-type tsd-kind-type-alias">Payload</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/c1ac1f3886d03300945c6aa521ef4e9b30088e0b/src/do/outbound.ts#L189">src/do/outbound.ts:189</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cccc9886047794a49657ceb07070d6711a1a6ddc/src/do/outbound.ts#L190">src/do/outbound.ts:190</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

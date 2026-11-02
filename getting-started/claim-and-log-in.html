@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Claiming and Managing a Site - Drupflare</title>
+		<meta
+			name="description"
+			content="How the first owner claims a freshly provisioned site, logs in, and finds the surfaces that manage it afterwards."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Claiming and Managing a Site - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="How the first owner claims a freshly provisioned site, logs in, and finds the surfaces that manage it afterwards."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html" aria-current="page">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Getting Started</a></p>
+<h1 id="claiming-and-managing-a-site">Claiming and Managing a Site</h1>
+<p>How the first owner claims a freshly provisioned site, logs in, and finds the surfaces that manage it afterwards.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#claim-the-site">Claim the Site</a></li><li><a href="#log-in">Log In</a></li><li><a href="#manage-the-site">Manage the Site</a></li></ol></nav><h2 id="claim-the-site">Claim the Site</h2>
+<p>The pack ships an installed database, so Drupal&#39;s <code>install.php</code> never runs and never asks you to
+pick a password. <code>/firstrun</code> does that, and until it runs, uid 1 carries an empty hash that no
+password can match.</p>
+<p>An unclaimed site says so. Once the migration finishes, a browser asking for any HTML page gets a
+one-click claim page instead of the front page: enter a site name, an administrator email and
+optionally a password, and the credentials come back in the response. The page carries
+<code>x-cfw-setup: required</code> and is never stored. A <code>curl</code>, an asset fetch and a POST all fall through to
+the normal path, so only a browser navigation is blocked.</p>
+<p>To claim it from a terminal instead:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -X</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> POST</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "localhost:8787/firstrun"</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  -H</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> 'content-type: application/json'</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  -d</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> '{"siteName":"My Site","adminMail":"you@example.com"}'</span></span></code></pre><p>The response carries <code>adminPass</code> and <code>ownerToken</code>, each shown once and stored nowhere. Save both
+before closing the terminal. Pass <code>&quot;adminPass&quot;:&quot;...&quot;</code> in the body to choose your own instead of
+taking the minted one. Claiming a site also pins its render origin; see
+<a href="../configuration/site-identity.html#site-identity-and-origin">Site Identity and Origin</a>.</p>
+<p>The body takes <code>siteName</code>, <code>siteMail</code>, <code>adminName</code>, <code>adminMail</code>, <code>adminPass</code> and <code>timezone</code>, all
+optional. A password never travels in a query string: <code>?pass=</code> is refused by name, because the
+request line is what <code>wrangler tail</code>, observability and every intermediary log.</p>
+<p>A bare <code>GET /firstrun</code> reports whether a site has been claimed without claiming it:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "localhost:8787/firstrun"</span></span></code></pre><p>Once claimed, <code>/firstrun</code> answers 409. Reconfiguring is <code>POST /firstrun?force=1</code> with
+<code>Authorization: Bearer &lt;ownerToken&gt;</code>, which resets the administrator password.</p>
+<p>A claim is one invocation on a site still on the module set the pack baked. A migrated site claims
+in three, each with its own CPU budget: a warm-up that fills the discovery caches, the module
+install, then the claim itself. A CPU kill rolls back every write in its invocation, so a single
+long claim restarted from nothing on each retry.</p>
+<p>A migrated site claims with <code>POST /firstrun</code> and <code>{&quot;migrated&quot;: true}</code>, which mints the owner token and
+marks the site claimed without changing uid 1, the site name or any mail setting.</p>
+<h2 id="log-in">Log In</h2>
+<p>Log in at <code>/user/login</code> as <code>admin</code> with the <code>adminPass</code> from the claim. That is the Drupal account,
+and it is the only credential that reaches the administrative UI.</p>
+<p>The owner token is a different credential and is not a Drupal login. It signs in to the <code>/_cfw</code>
+pages at <code>/_cfw/login</code>, and it is sent as <code>Authorization: Bearer &lt;ownerToken&gt;</code> to reach the owner
+routes directly, without turning on <code>PW_DIAGNOSTICS</code>. These are the ones this page uses:</p>
+<details>
+<summary>Owner routes used on this page</summary><div class="table"><table>
+<thead>
+<tr>
+<th>route</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/export</code></td>
+<td>dumps the site database; the &quot;a customer can leave&quot; property</td>
+</tr>
+<tr>
+<td><code>/health</code></td>
+<td>the health ledger, the repair state and the budget projections</td>
+</tr>
+<tr>
+<td><code>/settings</code></td>
+<td>every runtime lever with its value and source; <code>PUT</code> merges a patch</td>
+</tr>
+<tr>
+<td><code>/setup/cf</code></td>
+<td>connect, inspect or revoke a Cloudflare account for the site</td>
+</tr>
+<tr>
+<td><code>/setup/mail</code></td>
+<td>onboard a sending domain onto a zone</td>
+</tr>
+<tr>
+<td><code>/setup/oidc</code></td>
+<td>set the OpenID Connect issuer and client id</td>
+</tr>
+<tr>
+<td><code>/installable</code></td>
+<td>whether a package can be installed here</td>
+</tr>
+<tr>
+<td><code>/install</code></td>
+<td>fetch a package from a registry and write its files</td>
+</tr>
+<tr>
+<td><code>/enable</code></td>
+<td>turn an installed module on</td>
+</tr>
+<tr>
+<td><code>/modify</code></td>
+<td>upload a module tree as a revision</td>
+</tr>
+<tr>
+<td><code>/reconcile</code></td>
+<td>what a site still owes the shipping pack, and one step of it</td>
+</tr>
+<tr>
+<td><code>/sweep</code></td>
+<td>coverage of the site&#39;s URLs, and one step of the sweep</td>
+</tr>
+<tr>
+<td><code>/git</code></td>
+<td>remotes, branches, pull requests and the working-tree diff</td>
+</tr>
+</tbody></table></div>
+</details><p><code>OWNER_ROUTES</code> in <code>src/site/routes.ts</code> is the whole list. Without the token these routes answer 401
+with a <code>WWW-Authenticate: Bearer</code> challenge; a diagnostic route answers 404 to the same caller.</p>
+<p>Signing in at <code>/_cfw/login</code> exchanges the token for a session cookie that page script cannot read and
+that no cross-site request carries. It expires after twelve hours, and <code>/_cfw/logout</code> ends it.</p>
+<p>A dump withholds the owner token, the Cloudflare OAuth tokens and the hash salt, and reports how many
+rows it held back. <code>?secrets=1</code> carries them: a faithful restore needs the salt, since it signs
+one-time login links and form tokens, and a backup kept anywhere else should not have it.</p>
+<p>A lost <code>adminPass</code> is recovered through Drupal&#39;s own password reset, which needs mail configured. A
+lost <code>ownerToken</code> comes back with <code>drangler recover-token &lt;site&gt; --store</code>, which proves write access
+to the site&#39;s <code>CONFIG_KV</code> namespace with a single-use record and receives the stored token;
+<code>--store</code> saves it in the system keychain. <a href="../configuration/operations/owner-access.html#owner-token-recovery">Owner Token Recovery</a>
+has the protocol.</p>
+<h2 id="manage-the-site">Manage the Site</h2>
+<p><a href="https://github.com/drupflare/drangler"><code>drangler</code></a> is the CLI for the rest of a site&#39;s life. It
+needs no checkout of anything:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> add</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -g</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> @drupflare/drangler</span></span>
+<span class="line"></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> status</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # plan, generation, header contract, claim state, diagnostics</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> health</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # is it up, and which cache tier answered</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> doctor</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">                 # the local toolchain and the Cloudflare credential</span></span></code></pre><p>Moving to a newer Drupflare is <code>drangler update</code>. With no argument it fast-forwards the local
+checkout and rebuilds the artifacts that belong to the version it left behind; naming a deployed
+worker updates the checkout and then deploys it there.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> update</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">             # the local .drupflare checkout, to the latest</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> update</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --to</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> v0.3.0</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # or to a named version</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> update</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">     # and then deploy it to an existing worker</span></span></code></pre><p>The same CLI claims a site (<code>site claim</code>), recovers its owner token (<code>recover-token</code>), maps
+hostnames (<code>domain add</code>), drives reconciliation and the sweep, uploads module revisions (<code>modify</code>)
+and migrates a site in either direction. Its README has the command table and says which commands
+write to a live site.</p>
+<p>One deployment serves one site on any number of hostnames. <code>drangler domain add &lt;host&gt;</code> maps a
+hostname and adds its Custom Domain route; <a href="../operating/administration.html#url-routing">URL Routing</a> covers the
+rest.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

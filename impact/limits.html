@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>What This Does Not Claim - Drupflare</title>
+		<meta
+			name="description"
+			content="What the impact figures do not claim. Each limit below is stated with the reason behind it."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="What This Does Not Claim - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="What the impact figures do not claim. Each limit below is stated with the reason behind it."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html" aria-current="page">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Impact</a></p>
+<h1 id="what-this-does-not-claim">What This Does Not Claim</h1>
+<p>What the impact figures do not claim. Each limit below is stated with the reason behind it.</p>
+<ul>
+<li><strong>No per-tenant Cloudflare wattage.</strong> It is not observable. Probing a deployed Cloudflare Container
+found no energy counter by any of the six routes a Linux process has, and no energy field exists
+anywhere in the account&#39;s analytics schema. The Cloudflare side of every figure on these pages is an
+allocation over measured workload and published hardware.</li>
+<li><strong>No cost for custom domains.</strong> The bills on the economics pages are Workers account bills. A site on its own domain
+through Cloudflare for SaaS adds $0.10 a hostname a month past the first 100 <a href="references.html">[40]</a>, so 1,000 of them
+add $90 a month and take the asleep bill at 10,000 views from $5.80 to $95.80. How a fleet&#39;s domains
+attach decides whether that applies, and <code>scripts/economics/pricing.ts</code> takes the count.</li>
+<li><strong>No R2 wattage.</strong> R2 exposes no CPU and no energy counter, so an R2 operation carries no energy figure.
+Static assets are free and unlimited (<code>published</code>), and a 198,000-request drive invoked no Worker
+(<code>measured</code>, invocations and not billing). The billing read is pending (gate 65). Workers Cache is the one
+exception, which the shipped config does not enable; with it on, a free account serves 1,515 views a day.
+The R2 rates and free tier are in <code>scripts/economics/rates.ts</code> with their pages.
+<a href="economics/free-vs-paid/off-worker-arms.html#the-off-worker-arms">The Off-Worker Arms</a> has the arms, and
+<a href="energy/per-request.html#service-bindings-and-r2">Service Bindings And R2</a> has the energy bracket.</li>
+<li><strong>No consolidated-host bill.</strong> The conventional bills price one origin a site. A consolidated host
+pays for memory alone at least $5.00 a GiB a month at the cheapest sourced plan: $5,000 for 1,000
+sites at 1 GiB each, $1,250 at 0.25 GiB and $500 at 0.1 GiB, before CPU, disk, transfer and
+backups. A bill of $350.65 buys 71.8 MiB of memory a site across 1,000 sites and $5.80 buys 1.2 MiB,
+so a consolidated host undercuts the kept-warm bill only if a site fits in about 72 MiB. No source
+gives a Drupal site&#39;s memory on a shared host.</li>
+<li><strong>No claim that 1,000 sites replace 1,000 servers.</strong> VPS providers and managed platforms already
+consolidate, so the comparison is against hosting that has captured most of the multi-tenancy
+saving.</li>
+<li><strong>Conventional prices are sized list prices.</strong> They exclude labour, a CDN, the database and file
+replication of a multi-region origin and cross-region transfer, and they price a box from documented
+minimums and a measured stack. The stack was measured with SQLite and not MariaDB, on one machine
+and on a Cloudflare container, and no source gives PHP-FPM memory per child for Drupal.</li>
+<li><strong>The energy worst case and the priced box differ in size.</strong> The energy model charges a VPS a 320th
+of a host, two vCPUs. The cost model prices one vCPU and 2 GiB, which is a 192nd of a 384 GiB host by
+memory, so the energy charge is at most low for the box priced.</li>
+<li><strong>Pantheon as a price, not an energy baseline.</strong> It is already multi-tenant, and how many machines
+it runs, how well utilised they are and how much of that would persist without a given workload
+are all unobservable from outside.</li>
+<li><strong>No market-share multiplier.</strong> A CMS&#39;s share of websites is a count of sites and not a quantity of
+compute. It changes the addressable population and transfers no measurement.</li>
+<li><strong>Incremental energy is not a hosting total.</strong> The rig produces idle-subtracted workload energy. A
+continuously provisioned server also pays its idle, and the equivalent allocation on a shared edge
+fleet cannot be measured. <a href="energy/operating-states.html#operating-states">Operating States</a> brackets it from zero to a
+memory-share bound; neither end is a reading.</li>
+<li><strong>No allocation for Cloudflare&#39;s own fleet utilisation.</strong> The 2.22 W a busy core is the full-load
+floor, and <a href="energy/production-baseline.html#watts-for-a-busy-core">Watts For A Busy Core</a> shows what a lower host load would
+charge. At 10,000 views that leaves the saving at 99.98% against one VPS, and it moves no
+per-view ratio, since both sides use the same figure.</li>
+<li><strong>No cold-encounter reading.</strong> The headline carries none, and no deployed site has reported
+<code>coldOfTraffic</code>. The sensitivity rows are assumptions about how many editor sessions find an object
+cold.</li>
+<li><strong>No price on the hostname lookup.</strong> A request through the production hostname resolves the site
+from a key-value mapping, memoised for a minute, and its CPU time has not been read. Its wall time
+is 4 ms warm and 46 to 140 ms in a colo that has not seen the key, and CPU time excludes the wait.
+The closest per-view cell has room for about 0.3 ms of extra CPU on every view against a free hit
+and 0.9 ms against an nginx hit, at a million views a month and above.</li>
+<li><strong>No price on the shell tier, replica lanes or the plan&#39;s compile.</strong> A logged-in view that misses
+the compiled plan can be answered from a stored shell, which renders a fragment instead of the
+page. Lanes copy writes to every object of a busy site. The plan compiles from three agreeing
+sessions. None has an energy class here, and <a href="energy/views.html#how-the-lead-moves">How The Lead Moves</a> charges a
+missed plan as a render.</li>
+<li><strong>No visitor-device energy in any total.</strong> <a href="energy/views.html#visitor-devices">Visitor Devices</a> prices a
+repeat navigation on its own. It is a desktop reading with the fresh-asset share swept, no phone has
+been measured, and it is never summed with the server figures.</li>
+<li><strong>No price on the v1.0.4 security controls.</strong> The CPU readings on these pages predate the PHP 8.5.12
+interpreter and the controls, and no deployed <code>cpuTime</code> has been read since. What is counted: a new
+object&#39;s first fill writes one more row, 83 against 82, once per object for the module integrity
+record (<code>measured</code>). The interpreter is 14,011,458 bytes against 13,401,742, 4.5% larger
+(<code>measured</code>). An owner action appends to the audit log, and no view triggers one. A claimed site
+hashes each module file the first time it opens it. Heap image checks run only where <code>HEAP_IMAGE</code> is
+on, which is not the default. The report-only policy header adds about 120 bytes to each HTML
+response before compression (<code>derived</code>). None of these has an energy figure.</li>
+<li><strong>Institutional rows use an assumed workload.</strong> The page views come from the case studies. The
+logged-in share, the saves a day and the pages a save invalidates are the model&#39;s, not theirs.</li>
+</ul>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

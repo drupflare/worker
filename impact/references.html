@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>References - Drupflare</title>
+		<meta
+			name="description"
+			content="The numbered references that the impact pages cite as [1] to [42]. Numbers stay stable, so a citation on any page points at the entry with that number."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="References - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The numbered references that the impact pages cite as [1] to [42]. Numbers stay stable, so a citation on any page points at the entry with that number."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html" aria-current="page">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Impact</a></p>
+<h1 id="references">References</h1>
+<p>The numbered references that the impact pages cite as [1] to [42]. Numbers stay stable, so a citation on any page points at the entry with that number.</p>
+<p>[1] Standard Performance Evaluation Corporation, &quot;SPECpower_ssj2008 result: Dell Inc. PowerEdge
+R6725 (AMD EPYC 9845),&quot; SPEC, Nov. 4, 2025. Two chips, 320 cores, 640 hardware threads, active idle
+135 W, 711 W at 100% target load. Accessed: Oct. 1, 2026. [Online]. Available:
+<a href="https://www.spec.org/power_ssj2008/results/res2025q4/power_ssj2008-20251021-01543.txt">https://www.spec.org/power_ssj2008/results/res2025q4/power_ssj2008-20251021-01543.txt</a></p>
+<p>[2] U.S. Energy Information Administration, &quot;How much electricity does an American home use?,&quot;
+EIA FAQ, Jan. 8, 2024. Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://www.eia.gov/tools/faqs/faq.php?id=97&amp;t=3">https://www.eia.gov/tools/faqs/faq.php?id=97&amp;t=3</a></p>
+<p>[3] U.S. Environmental Protection Agency, &quot;Greenhouse Gas Emissions from a Typical Passenger
+Vehicle,&quot; EPA, Jun. 3, 2026. Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://www.epa.gov/greenvehicles/greenhouse-gas-emissions-typical-passenger-vehicle">https://www.epa.gov/greenvehicles/greenhouse-gas-emissions-typical-passenger-vehicle</a></p>
+<p>[4] Acquia, &quot;Availability,&quot; Acquia Docs. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://docs.acquia.com/acquia-cloud/arch/security/availability">https://docs.acquia.com/acquia-cloud/arch/security/availability</a></p>
+<p>[5] Amazon Web Services, &quot;aws-refarch-drupal,&quot; GitHub. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://github.com/aws-samples/aws-refarch-drupal">https://github.com/aws-samples/aws-refarch-drupal</a></p>
+<p>[6] Uptime Institute, &quot;Uptime Institute Global Data Center Survey 2025,&quot; Uptime Institute Intelligence,
+Keynote Report 180, Jul. 2025. Accessed: Oct. 14, 2026. [Online]. Available:
+<a href="https://intelligence.uptimeinstitute.com/resource/uptime-institute-global-data-center-survey-2025">https://intelligence.uptimeinstitute.com/resource/uptime-institute-global-data-center-survey-2025</a></p>
+<p>[7] nginx, &quot;Module ngx_http_proxy_module,&quot; nginx documentation. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://nginx.org/en/docs/http/ngx_http_proxy_module.html">https://nginx.org/en/docs/http/ngx_http_proxy_module.html</a></p>
+<p>[8] Pantheon, &quot;Global CDN,&quot; Pantheon Docs. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://docs.pantheon.io/guides/global-cdn">https://docs.pantheon.io/guides/global-cdn</a></p>
+<p>[9] Acquia, &quot;Arizona State University,&quot; Acquia Customer Stories. Accessed: Sep. 28, 2026. [Online].
+Available: <a href="https://www.acquia.com/resources/customer-stories/arizona-state-university">https://www.acquia.com/resources/customer-stories/arizona-state-university</a></p>
+<p>[10] Last Call Media, &quot;Huge Performance Gains for Mass.gov,&quot; Drupal.org Case Studies, Apr. 2, 2019.
+Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://new.drupal.org/case-study/huge-performance-gains-for-massgov">https://new.drupal.org/case-study/huge-performance-gains-for-massgov</a></p>
+<p>[11] Mobomo, &quot;NASA.gov,&quot; Drupal.org Case Studies, May 25, 2018. Accessed: Sep. 28, 2026. [Online].
+Available: <a href="https://new.drupal.org/case-study/nasagov">https://new.drupal.org/case-study/nasagov</a></p>
+<p>[12] DevPanel, &quot;How a U.S. Government News Agency Uncovered 75% Hosting Savings with DevPanel on
+AWS,&quot; DevPanel Blog, Jul. 20, 2025. Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://devpanel.com/blog/how-a-u-s-government-news-agency-uncovered-75-hosting-savings-with-devpanel-on-aws/">https://devpanel.com/blog/how-a-u-s-government-news-agency-uncovered-75-hosting-savings-with-devpanel-on-aws/</a></p>
+<p>[13] E. Graham, N. Fulghum, and K. Altieri, &quot;Global Electricity Review 2025,&quot; Ember, Apr. 8, 2025.
+Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://ember-energy.org/app/uploads/2025/04/Report-Global-Electricity-Review-2025.pdf">https://ember-energy.org/app/uploads/2025/04/Report-Global-Electricity-Review-2025.pdf</a></p>
+<p>[14] Cloudflare, &quot;Cloudflare Emissions Inventory, 2024,&quot; Cloudflare, Inc., Jul. 15, 2025. Scope 2
+location-based, facilities and network rows summed. Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://cf-assets.www.cloudflare.com/slt3lc6tev37/2lg914L21Lyfpcya6weavX/6ded4e6ca673dbc1197c6b772a92aa29/Emission_inventory_PDF__2024.pdf">https://cf-assets.www.cloudflare.com/slt3lc6tev37/2lg914L21Lyfpcya6weavX/6ded4e6ca673dbc1197c6b772a92aa29/Emission_inventory_PDF__2024.pdf</a></p>
+<p>[15] Cloudflare, &quot;The 2025 Cloudflare Radar Year in Review,&quot; The Cloudflare Blog. Accessed: Sep. 28, 2026. [Online]. Available: <a href="https://blog.cloudflare.com/radar-2025-year-in-review/">https://blog.cloudflare.com/radar-2025-year-in-review/</a></p>
+<p>[16] A. Shehabi et al., &quot;2024 United States Data Center Energy Usage Report,&quot; Lawrence Berkeley
+National Laboratory, Berkeley, CA, USA, Rep. LBNL-2001637, Dec. 2024. Accessed: Sep. 28, 2026.
+[Online]. Available:
+<a href="https://eta-publications.lbl.gov/sites/default/files/2024-12/lbnl-2024-united-states-data-center-energy-usage-report_1.pdf">https://eta-publications.lbl.gov/sites/default/files/2024-12/lbnl-2024-united-states-data-center-energy-usage-report_1.pdf</a></p>
+<p>[17] Boavizta, &quot;Get the impacts of a server,&quot; Boavizta API documentation. Accessed: Sep. 28, 2026.
+[Online]. Available: <a href="https://doc.api.boavizta.org/getting_started/single_server/">https://doc.api.boavizta.org/getting_started/single_server/</a></p>
+<p>[18] Cloudflare, &quot;Pricing,&quot; Cloudflare Workers documentation, Aug. 28, 2026. Accessed: Sep. 28, 2026.
+[Online]. Available: <a href="https://developers.cloudflare.com/workers/platform/pricing/">https://developers.cloudflare.com/workers/platform/pricing/</a></p>
+<p>[19] Cloudflare, &quot;Pricing,&quot; Cloudflare Durable Objects documentation, Aug. 25, 2026. Accessed: Sep.
+28, 2026. [Online]. Available: <a href="https://developers.cloudflare.com/durable-objects/platform/pricing/">https://developers.cloudflare.com/durable-objects/platform/pricing/</a></p>
+<p>[20] Stack Overflow, &quot;2025 Developer Survey: Technology,&quot; Stack Overflow. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://survey.stackoverflow.co/2025/technology/">https://survey.stackoverflow.co/2025/technology/</a></p>
+<p>[21] Synergy Research Group, &quot;Q2 Cloud Market Passes $143 Billion,&quot; Jul. 30, 2026. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://www.srgresearch.com/articles/q2-cloud-market-passes-143-billion-highest-growth-rate-in-eight-years">https://www.srgresearch.com/articles/q2-cloud-market-passes-143-billion-highest-growth-rate-in-eight-years</a></p>
+<p>[22] DigitalOcean, &quot;Load Balancers Pricing,&quot; DigitalOcean Documentation, Jul. 13, 2026. Accessed:
+Sep. 28, 2026. [Online]. Available:
+<a href="https://docs.digitalocean.com/products/networking/load-balancers/details/pricing/">https://docs.digitalocean.com/products/networking/load-balancers/details/pricing/</a></p>
+<p>[23] Google Cloud, &quot;Multi-regional deployment archetype,&quot; Google Cloud Architecture Center. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://docs.cloud.google.com/architecture/deployment-archetypes/multiregional">https://docs.cloud.google.com/architecture/deployment-archetypes/multiregional</a></p>
+<p>[24] Amazon Web Services, &quot;Disaster recovery options in the cloud,&quot; AWS Whitepapers. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-options-in-the-cloud.html">https://docs.aws.amazon.com/whitepapers/latest/disaster-recovery-workloads-on-aws/disaster-recovery-options-in-the-cloud.html</a></p>
+<p>[25] Pantheon, &quot;Pantheon Pricing,&quot; Pantheon.io. Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://pantheon.io/plans/pricing">https://pantheon.io/plans/pricing</a></p>
+<p>[26] Akamai, &quot;Linode types,&quot; Linode API v4. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://api.linode.com/v4/linode/types">https://api.linode.com/v4/linode/types</a></p>
+<p>[27] nginx, &quot;Module ngx_http_fastcgi_module,&quot; nginx documentation. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://nginx.org/en/docs/http/ngx_http_fastcgi_module.html">https://nginx.org/en/docs/http/ngx_http_fastcgi_module.html</a></p>
+<p>[28] Apache Software Foundation, &quot;Apache Core Features: TimeOut,&quot; Apache HTTP Server 2.4 documentation. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://httpd.apache.org/docs/2.4/mod/core.html">https://httpd.apache.org/docs/2.4/mod/core.html</a></p>
+<p>[29] Cloudflare, &quot;Error 524,&quot; Cloudflare Support. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-524/">https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-524/</a></p>
+<p>[30] Google, &quot;Optimize Time to First Byte (TTFB),&quot; web.dev. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://web.dev/articles/ttfb">https://web.dev/articles/ttfb</a></p>
+<p>[31] Akamai, &quot;Shared CPU Compute Instances,&quot; Akamai Cloud documentation. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://techdocs.akamai.com/cloud-computing/docs/shared-cpu-compute-instances">https://techdocs.akamai.com/cloud-computing/docs/shared-cpu-compute-instances</a></p>
+<p>[32] Amazon Web Services, &quot;Key concepts and definitions for burstable performance instances,&quot; Amazon EC2 User Guide. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-credits-baseline-concepts.html">https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-credits-baseline-concepts.html</a></p>
+<p>[33] Canonical, &quot;System requirements,&quot; Ubuntu Server documentation. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://ubuntu.com/server/docs/reference/installation/system-requirements">https://ubuntu.com/server/docs/reference/installation/system-requirements</a></p>
+<p>[34] MariaDB, &quot;InnoDB System Variables,&quot; MariaDB documentation. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://mariadb.com/docs/server/server-usage/storage-engines/innodb/innodb-system-variables">https://mariadb.com/docs/server/server-usage/storage-engines/innodb/innodb-system-variables</a></p>
+<p>[35] Drupal.org, &quot;Memory requirements,&quot; Drupal system requirements. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://www.drupal.org/docs/getting-started/system-requirements/memory-requirements">https://www.drupal.org/docs/getting-started/system-requirements/memory-requirements</a></p>
+<p>[36] Vultr, &quot;Plans,&quot; Vultr API v2. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://api.vultr.com/v2/plans">https://api.vultr.com/v2/plans</a></p>
+<p>[37] Amazon Web Services, &quot;Amazon Lightsail Pricing,&quot; AWS. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://aws.amazon.com/lightsail/pricing/">https://aws.amazon.com/lightsail/pricing/</a></p>
+<p>[38] DigitalOcean, &quot;Droplet Pricing,&quot; DigitalOcean. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://www.digitalocean.com/pricing/droplets">https://www.digitalocean.com/pricing/droplets</a></p>
+<p>[39] Microsoft, &quot;Azure Retail Prices API&quot; and &quot;Bandwidth pricing,&quot; Microsoft Azure. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://prices.azure.com/api/retail/prices">https://prices.azure.com/api/retail/prices</a> and <a href="https://azure.microsoft.com/en-us/pricing/details/bandwidth/">https://azure.microsoft.com/en-us/pricing/details/bandwidth/</a></p>
+<p>[40] Cloudflare, &quot;Plans,&quot; Cloudflare for SaaS documentation. Accessed: Oct. 14, 2026. [Online]. Available: <a href="https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/plans/">https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/plans/</a></p>
+<p>[41] Cloudflare, &quot;Pricing,&quot; R2 documentation, last updated Oct. 30, 2026. Accessed: Nov. 2, 2026. [Online]. Available: <a href="https://developers.cloudflare.com/r2/pricing/">https://developers.cloudflare.com/r2/pricing/</a></p>
+<p>[42] Cloudflare, &quot;Pricing,&quot; Workers documentation, last updated Oct. 2, 2026. Accessed: Nov. 2, 2026. [Online]. Available: <a href="https://developers.cloudflare.com/workers/platform/pricing/">https://developers.cloudflare.com/workers/platform/pricing/</a></p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

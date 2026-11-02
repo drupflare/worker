@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Runtime Overrides - Drupflare</title>
+		<meta
+			name="description"
+			content="The names on KVOVERRIDABLE can be overridden from the CONFIGKV namespace under the key settings, as one JSON object."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Runtime Overrides - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The names on KVOVERRIDABLE can be overridden from the CONFIGKV namespace under the key settings, as one JSON object."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Operations Settings</a></p>
+<h1 id="runtime-overrides">Runtime Overrides</h1>
+<p>The names on <code>KV_OVERRIDABLE</code> can be overridden from the <code>CONFIG_KV</code> namespace under the key
+<code>settings</code>, as one JSON object. One key covers them all: a single read is atomic, costs one of the
+100,000 daily KV reads instead of one per lever, and gives an operator one place to see every
+override in force.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">{ </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">"RENDER_BUDGET_MS"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">4000</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">"FILL_BATCH_SIZE"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">8</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">"PREFILL"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"0"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8"> }</span></span></code></pre><nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#reading-and-writing-overrides">Reading and Writing Overrides</a></li><li><a href="#from-drupal-without-the-owner-token">From Drupal, Without the Owner Token</a></li><li><a href="#the-three-permissions">The Three Permissions</a></li></ol></nav><h2 id="reading-and-writing-overrides">Reading and Writing Overrides</h2>
+<p><code>GET /settings</code> reports every lever with its value and its source (<code>kv</code>, <code>var</code> or <code>default</code>);
+<code>PUT /settings</code> merges a JSON patch. Both take the owner token.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -H</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "authorization: Bearer </span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$OWNER_TOKEN</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://your-site/settings</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -X</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> PUT</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -H</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "authorization: Bearer </span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$OWNER_TOKEN</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -H</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> 'content-type: application/json'</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  -d</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> '{"RENDER_BUDGET_MS": 4000, "PREFILL": "0"}'</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://your-site/settings</span></span></code></pre><p>An unlisted name is refused and named in the reply rather than dropped in silence. The allow-list is
+enforced at the writer as well as the reader: a reader-side filter makes an unlisted name inert, and a
+writer-side filter makes it unstorable.</p>
+<p>The route is answered by the front Worker with no object hop: <code>CONFIG_KV</code> is a front-Worker binding,
+so reaching it through the Durable Object would spend a request to get at a namespace the isolate
+already holds.</p>
+<h2 id="from-drupal-without-the-owner-token">From Drupal, Without the Owner Token</h2>
+<p>The same levers are editable at <code>/admin/config/drupflare/settings</code>, gated on the
+<code>administer drupflare site</code> permission. Each field holds the stored override, with the deployed value
+beside it and its source named, so an operator can tell an override they chose from a default nobody
+has looked at. Only the fields that changed are sent, because a patch carrying every field would turn
+a deployed value into a stored override by the act of pressing save.</p>
+<p>Every lever has a domain, <code>LEVER_DOMAINS</code> in <code>src/ops/plan.ts</code>: a flag is <code>0</code> or <code>1</code>, a number has
+the range its reader clamps to, and a fixed choice (<code>OPCACHE_MODE</code>, <code>MAIL_TRANSPORT</code>,
+<code>SITE_LOCATION_HINT</code>) is one of its listed values. The form offers a select or a bounded number
+field from it, and <code>writeSettings()</code> refuses a value outside it and names the reason, so a mistyped
+value cannot reach a reader. <code>LAZY_FS_BUDGET_BYTES</code> accepts values up to 8 MiB.</p>
+<h2 id="the-three-permissions">The Three Permissions</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>permission</th>
+<th>reaches</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>view drupflare status</code></td>
+<td>the runtime status page, read only</td>
+</tr>
+<tr>
+<td><code>administer drupflare site</code></td>
+<td>the levers, and the operations terminal&#39;s cache and queue work</td>
+</tr>
+<tr>
+<td><code>administer drupflare owner</code></td>
+<td>code delivery, including the terminal&#39;s <code>en</code> and package lines</td>
+</tr>
+</tbody></table></div>
+<p><code>administer drupflare owner</code> is granted at claim, through a <code>Site Owner</code> role given to the claimed
+account, and only an account that already holds it can grant it. Holding <code>administer permissions</code> is
+not enough: the permission forms disable its checkboxes, and a role or user save that adds or removes
+it is put back when the acting user lacks it. An administrator role carries every permission, so
+assigning one is the same grant. The owner token outranks all three and works when Drupal does not.</p>
+<p>A site created before the tiers reconciles onto them: the five older names map to the three, and
+uid 1 is given the owner role.</p>
+<p><strong><code>PLAN</code> is not on that form and cannot be written through it.</strong> Every lever there has a worst case
+of a slower site; <code>PLAN</code> selects a limits profile whose quotas are account-wide, while whoever
+reaches a Drupal form administers one tenant. It stays on the owner-token route above, and the host
+capability behind the form refuses it at every spelling.</p>
+<p><code>/admin/modules/drupflare</code> is the matching read-only page for code delivery: it names the three
+delivery paths and lists what has been delivered to this site. Delivering code stays an owner action
+on <code>/_cfw/git</code>, for the same tenancy reason. Within the operations terminal, <code>en</code> and any package
+line additionally require <code>administer drupflare owner</code>, so a site can grant the terminal without
+granting the ability to add code to the runtime.</p>
+<p>The front Worker and the Durable Object each hold their own copy of the bindings, so the overrides are
+applied inside the object too. <code>adoptSettings()</code> overlays every name on the allow-list in the object,
+and it runs from <code>alarm()</code> as well as <code>handle()</code>, because several levers are read on the fill chain and
+an alarm never passes through <code>handle()</code>. The fast storage lane adopts nothing: it is await-free by
+construction and reads no lever.</p>
+<p>A lever is consulted from KV before its var. An operator can change a setting without a redeploy, and
+the var is the fallback.</p>
+<p><strong>The list is an allow-list and it is a privilege boundary.</strong> KV is operator-writable, so merging an
+arbitrary object into the environment would let anyone with KV write set <code>PW_DIAGNOSTICS=1</code>. Every
+name here is a performance lever whose worst case is a slow site; none changes what is reachable.
+<code>PLAN</code> has its own key, resolver and authorisation for the reason given above. The mail credentials
+are absent for the same reason: <code>MAIL_TRANSPORT</code> only chooses between transports the deploy already
+configured, while a KV writer who could set <code>SMTP_HOST</code> would receive every password-reset link the
+site sends.</p>
+<p>A malformed document, an unknown key and a KV error all yield no overrides, and none of them throws.
+Values are read once per isolate per minute.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

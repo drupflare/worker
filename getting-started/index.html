@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Getting Started - Drupflare</title>
+		<meta
+			name="description"
+			content="From a clean clone to a running site, then claiming it and moving an existing one in."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Getting Started - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="From a clean clone to a running site, then claiming it and moving an existing one in."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html" aria-current="page">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="getting-started">Getting Started</h1>
+<p>From a clean clone to a running site, then claiming it and moving an existing one in.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#prerequisites">Prerequisites</a></li><li><a href="#install-and-run">Install and Run</a></li><li><a href="#first-boot">First Boot</a></li><li><a href="#building-from-a-clean-clone">Building From a Clean Clone</a></li><li><a href="#moving-a-site-in">Moving a Site In</a></li></ol></nav><h2 id="pages">Pages</h2>
+<ul>
+<li><a href="claim-and-log-in.html">Claiming and Managing a Site</a>: claim a new site, log in, and the management surfaces.</li>
+<li><a href="updating.html">Updating a Site</a>: taking a new release, keeping a site current, and what an update leaves alone.</li>
+</ul>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li><a href="https://bun.sh/">Bun</a></li>
+<li>Node 24+ as well; a few scripts need <code>node:sqlite</code>, which Bun does not ship</li>
+<li>PHP 8.3+ with <code>pdo_sqlite</code> (only to run the database driver&#39;s test suite)</li>
+<li>A Cloudflare account with Durable Objects enabled (available on the free plan)</li>
+</ul>
+<h2 id="install-and-run">Install and Run</h2>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> clone</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://github.com/drupflare/worker.git</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">cd</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> worker</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> install</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> hydrate</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> dev</span></span></code></pre><p><code>assets/</code> and <code>.interp/</code> are generated and gitignored, so a clean clone has nothing to deploy until
+<code>bun run hydrate</code> lands them. See <a href="#building-from-a-clean-clone">Building From a Clean Clone</a>.</p>
+<p>Then open it:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">open</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> http://localhost:8787/</span></span></code></pre><p>The first visit starts the site up, which is <a href="#first-boot">First Boot</a> below. To replay the whole
+database in one shot, which is faster locally:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "localhost:8787/migrate?all=1"</span></span></code></pre><h2 id="first-boot">First Boot</h2>
+<p>A deployed site has an empty Durable Object until something asks it for a page. The first request
+records the ask, arms the alarm chain and answers 503 with a self-refreshing page, and the object
+replays the packed database a batch of chunks at a time until the cursor is done.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>header</th>
+<th>value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>x-cfw-migrate</code></td>
+<td><code>starting</code>, then <code>&lt;chunk&gt;/&lt;chunks&gt;</code></td>
+</tr>
+<tr>
+<td><code>x-cfw-migrate-state</code></td>
+<td><code>queued</code>, <code>running</code> or <code>failed</code></td>
+</tr>
+<tr>
+<td><code>retry-after</code></td>
+<td><code>2</code> on the first request, <code>1</code> while chunks are going</td>
+</tr>
+</tbody></table></div>
+<p>A browser follows the <code>&lt;meta http-equiv=&quot;refresh&quot;&gt;</code> on that page and lands on the site by itself.
+Every other client gets the same 503 with the one-word body <code>migrating</code>.</p>
+<p>Measured on a deployed free worker with the 75-chunk pack of that release, the replay took 2
+invocations, <code>x-cfw-migrate</code> read <code>40/75</code> on the first poll, and a real Drupal page answered about 6
+seconds after the deploy. A 503 in that window means the site is starting, not that the deploy
+failed.</p>
+<p>Free replays <code>FREE_CHUNKS_PER_INVOCATION</code> chunks per invocation, which is 40; paid and local replay
+the whole pack in one. Batching is bound by chunk count because the clock does not advance across a
+synchronous replay. The chunk count is whatever <code>assets/drupal-sql/manifest.json</code> reports, and it
+moves whenever the packed database does.</p>
+<h2 id="building-from-a-clean-clone">Building From a Clean Clone</h2>
+<p><code>bun install</code> restores the interpreter from the CDN in its postinstall step. <code>bun run hydrate</code> then
+lands the packs: from the release payload when one is published, and from a source build when none
+is. <a href="building-from-source/index.html">Building From Source</a> covers the two routes, the prerequisites for
+each, the seventeen build steps, and why <code>prefill</code> is the one step allowed to fail without failing
+the build.</p>
+<h2 id="moving-a-site-in">Moving a Site In</h2>
+<p><a href="https://github.com/drupflare/drangler"><code>drangler</code></a> reads an existing Drupal site, scores the move
+and carries it over; the worker accepts what it sends.</p>
+<ul>
+<li><strong>Preview.</strong> <code>drangler preview --host &lt;ssh target&gt; --root &lt;docroot&gt;</code> makes a working duplicate of
+a live site with read-only commands on the old server. It converts a MySQL, MariaDB or PostgreSQL
+dump to SQLite, carries the public and private files and the code, and reads <code>$config</code> literals
+and <code>.htaccess</code> redirects and headers. The duplicate runs on <code>wrangler dev</code>, or deploys with
+<code>--deploy</code>.</li>
+<li><strong>Drupal 10 sources.</strong> A Drupal 10 site is a migration source that drangler plans onto the Drupal
+11 pack. A custom install profile travels inside the database, so the site can be claimed.</li>
+<li><strong>Registry-first delivery.</strong> <code>/install</code> resolves a composer graph: <code>replace</code>, stability flags,
+branch aliases, branch archives, metapackages, virtual packages and <code>InstalledVersions</code>.
+Composer plugins are skipped. <code>drangler build --project</code> covers patches and private repositories.</li>
+<li><strong>Settings from the old host.</strong> <code>DRUPAL_ENV_&lt;NAME&gt;</code>, <code>DRUPAL_CONFIG</code> and <code>DRUPAL_SETTINGS</code> reach PHP, and
+<code>RESPONSE_HEADERS</code> and <code>REDIRECTS</code> carry a migrated site&#39;s header and redirect rules. See
+<a href="../configuration/migrated-settings.html#migrated-project-settings">Migrated Project Settings</a>.</li>
+<li><strong>Response headers.</strong> Every response carries <code>X-Content-Type-Options</code>, <code>X-Frame-Options</code> and
+<code>Referrer-Policy</code>, and <code>Strict-Transport-Security</code> over https. <code>RESPONSE_HEADERS</code> replaces or
+removes any of them and is where a <code>Content-Security-Policy</code> goes. The baseline is described on
+<a href="../security/controls/requests.html#response-headers">Response Headers</a>.</li>
+</ul>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

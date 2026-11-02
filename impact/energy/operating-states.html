@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Operating States and Where the Saving Comes From - Drupflare</title>
+		<meta
+			name="description"
+			content="The states a site operates in, and which part of the work accounts for the saving."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Operating States and Where the Saving Comes From - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The states a site operates in, and which part of the work accounts for the saving."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html" aria-current="page">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Impact</a> / <a href="index.html">Energy</a></p>
+<h1 id="operating-states-and-where-the-saving-comes-from">Operating States and Where the Saving Comes From</h1>
+<p>The states a site operates in, and which part of the work accounts for the saving.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#operating-states">Operating States</a></li><li><a href="#where-the-saving-comes-from">Where The Saving Comes From</a></li></ol></nav><h2 id="operating-states">Operating States</h2>
+<p>A site is either asleep or kept warm, and a third accounting charges the kept-warm site for the memory
+it holds. The headline on <a href="index.html#energy-savings">Energy</a> is the sleeping state, the ceiling on efficiency. The last row of the
+second table is the most pessimistic bound the model carries; it is not a floor under every possible
+state.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>state</th>
+<th>what selects it</th>
+<th>an editor&#39;s first request after idle</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>asleep</td>
+<td>the free plan&#39;s default, where the thermal policy leaves a quiet site alone, or <code>SITE_WARM=0</code> on any plan</td>
+<td>a cold interpreter boot, 2 to 4 s; a cached page is unaffected</td>
+</tr>
+<tr>
+<td>kept warm</td>
+<td>the paid plan&#39;s default: the alarm re-arms every 8 s and the object never hibernates</td>
+<td>156 to 371 ms</td>
+</tr>
+<tr>
+<td>kept warm, memory charged</td>
+<td>an accounting of the row above, not a configuration</td>
+<td>156 to 371 ms</td>
+</tr>
+</tbody></table></div>
+<p>The transitions, as the table and prose describe them:</p>
+<pre><code class="mermaid">stateDiagram-v2
+    [*] --> Asleep: free plan default, quiet site under thermal policy, or SITE_WARM=0
+    [*] --> KeptWarm: paid plan default
+    Asleep --> Asleep: cold encounter, a boot and a first render
+    KeptWarm --> KeptWarm: cold encounter from an eviction, a deploy or a replaced isolate</code></pre><p>The latencies are the measured warming curve in the <a href="../../configuration/index.html">configuration reference</a>.
+Choosing between the first two trades cost and energy against an editor&#39;s cold start, and both are
+supported. A thousand sites at 10,000 views each cost $5.80 a month asleep and $350.65 kept warm on
+one account, $0.0058 and $0.351 a site, because the warming chain&#39;s 10,800 firings and 10,896 rows a
+site a day are billed against an allowance that is account-wide; <a href="../economics/index.html">What It Costs To
+Run</a> has the tables.</p>
+<p>Energy a year of one site in each state, <code>derived (modelled)</code>, from <code>bun scripts/economics/states.ts</code>.
+Savings are against the production deployment and against one small VPS, the worst case:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>state</th>
+<th align="right">10,000 views</th>
+<th align="right">against production</th>
+<th align="right">against one VPS</th>
+<th align="right">1,000,000 views</th>
+<th align="right">against production</th>
+<th align="right">against one VPS</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>asleep, no cold encounters (the headline)</td>
+<td align="right">0.53 Wh</td>
+<td align="right">99.9998%</td>
+<td align="right">99.9944%</td>
+<td align="right">18.3 Wh</td>
+<td align="right">99.9919%</td>
+<td align="right">99.80%</td>
+</tr>
+<tr>
+<td>asleep, 1 cold encounter a day</td>
+<td align="right">1.40 Wh</td>
+<td align="right">99.9994%</td>
+<td align="right">99.9850%</td>
+<td align="right">19.1 Wh</td>
+<td align="right">99.9915%</td>
+<td align="right">99.80%</td>
+</tr>
+<tr>
+<td>asleep, 5 cold encounters a day</td>
+<td align="right">4.92 Wh</td>
+<td align="right">99.9978%</td>
+<td align="right">99.9473%</td>
+<td align="right">22.7 Wh</td>
+<td align="right">99.9899%</td>
+<td align="right">99.76%</td>
+</tr>
+<tr>
+<td>kept warm, warming CPU at the billed wall time</td>
+<td align="right">65.7 Wh</td>
+<td align="right">99.9707%</td>
+<td align="right">99.30%</td>
+<td align="right">83.5 Wh</td>
+<td align="right">99.9628%</td>
+<td align="right">99.11%</td>
+</tr>
+<tr>
+<td>kept warm, a tenth of that</td>
+<td align="right">7.04 Wh</td>
+<td align="right">99.9969%</td>
+<td align="right">99.9246%</td>
+<td align="right">24.8 Wh</td>
+<td align="right">99.9889%</td>
+<td align="right">99.73%</td>
+</tr>
+<tr>
+<td>kept warm, charged a booted interpreter&#39;s measured 170 MiB</td>
+<td align="right">589 Wh</td>
+<td align="right">99.74%</td>
+<td align="right">93.69%</td>
+<td align="right">607 Wh</td>
+<td align="right">99.73%</td>
+<td align="right">93.51%</td>
+</tr>
+<tr>
+<td>kept warm, large-site stress: the full 195 MiB budget</td>
+<td align="right">675 Wh</td>
+<td align="right">99.70%</td>
+<td align="right">92.77%</td>
+<td align="right">693 Wh</td>
+<td align="right">99.69%</td>
+<td align="right">92.58%</td>
+</tr>
+<tr>
+<td>compound adversarial bound</td>
+<td align="right">745 Wh</td>
+<td align="right">99.67%</td>
+<td align="right">92.02%</td>
+<td align="right">763 Wh</td>
+<td align="right">99.66%</td>
+<td align="right">91.83%</td>
+</tr>
+</tbody></table></div>
+<p>At 10,000,000 views the same rows run from 179.5 Wh asleep to 924 Wh in the last row, which is 99.92%
+to 99.59% against production and 98.08% to 90.11% against one VPS. Every row saves more than 99.5%
+against production and more than 90% against the worst case. The compound bound adds the full object
+budget, the warming CPU at the billed wall time and five cold encounters a day. It is not a state a
+site sits in: an object that stays warm does not meet idle cold boots, so those encounters come from
+outside causes such as an eviction, a deploy or a replaced isolate.</p>
+<ul>
+<li><strong>Cold encounters:</strong> a sensitivity with no measured rate. A cold encounter is a boot plus a first
+render with the cache bins empty, 1,264 ms plus 2,127 ms of CPU, both measured. How many a site
+meets is the number of editor sessions that find the object cold, and cached anonymous views never
+boot PHP. <code>coldOfTraffic</code> is the instrument for the rate and no deployed site has reported a
+reading, so the headline carries none. At 10,000 views, five a day moves the saving from 99.9998% to
+99.9978%.</li>
+<li><strong>Warming CPU:</strong> bounded, not read. A firing bills 23.3 ms of wall time (n=116 on two deployed
+objects) and its CPU time has not been read. The first warm row charges all of the wall time as
+CPU, an upper bound; the second charges a tenth.</li>
+<li><strong>Memory:</strong> the memory rows charge a kept-warm object for the memory it holds, as accounting bounds.
+A booted interpreter takes about 165 to 175 MiB of an object&#39;s 195 MiB budget, measured on a paid
+object with a build whose linear memory started at 80 MiB; the shipping build starts at 64 MiB,
+which can only lower it. A large site such as farmOS holds 196 to 201 MB warm. The first row
+charges 170 MiB and the second the full 195 MiB, the limit at which the platform resets an object
+and not a measured footprint for every site. The memory of a warm object is a plateau: an
+interpreter&#39;s linear memory is reused after a drop and keeps the largest size any interpreter
+reached, so a kept-warm object holds its high-water mark until its incarnation ends. 170 MiB of the
+384 GiB host is 0.0432%, charged at the host&#39;s 135 W idle draw and the 1.15 PUE: 589 Wh a year. That
+assumes the host is provisioned for memory. Cloudflare does not publish how objects are packed, and
+if the memory sits in DRAM that is powered anyway the marginal charge is zero. A site that sleeps
+ends its incarnation after ten idle seconds, and a cached page is served without booting the
+interpreter, so it holds the interpreter&#39;s memory only while it renders. The sleeping rows carry no
+memory charge.</li>
+</ul>
+<h2 id="where-the-saving-comes-from">Where The Saving Comes From</h2>
+<p>The saving has two sources, and neither depends on PHP running faster.</p>
+<ul>
+<li><strong>Idle capacity:</strong> conventional multi-tenant hosting for small sites is memory-bound. Packed at
+1,000 sites of 1 GB on a 1.5 TB two-socket host, the fleet runs its processors near zero and draws
+about 1,826 kWh a year at 10,000 views a site, 1,822 of it idle (99.8%). It buys processors it never
+uses and powers them continuously. A sleeping site consumes energy only while it executes.</li>
+<li><strong>Invalidation:</strong> a page store invalidates on content change, while a CDN expires on a clock.
+<code>cfw_page</code> carries a <code>stale_at</code> column set when a save invalidates a tag, so a cached page survives
+until the content behind it changes. A CDN in front of a conventional origin re-renders every path,
+at every edge location, once per TTL whether or not anything changed. Modelled at 20 million views
+per site per month with five saves a day, that is 28.34% of requests rendering for a CDN and origin
+against 0.004% for drupflare, 186,371 renders a day against 25. A per-location cache miss reaches
+the page store, which answers without PHP.</li>
+</ul>
+<h3 id="the-render-fraction">The Render Fraction</h3>
+<p><code>derived (modelled)</code>. Models of edge-cached hosting often assume a flat share of requests that
+render. The share depends on traffic:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span>renders = sum over paths of min(requests, window / TTL)   per path, per edge location</span></span>
+<span class="line"><span>          + saves x pages invalidated per save</span></span></code></pre><p>The floor does not depend on traffic, so the fraction falls as traffic rises. It is a property of a
+site&#39;s content-to-traffic ratio, and a single number for a whole fleet is wrong in both directions.
+For a CDN and origin a common 1% assumption is first reached at roughly 723 million views per site
+per month, far above the range these models cover.</p>
+<p>drupflare has no TTL term and no location term. Its renders are saves times the pages each save
+invalidates, 5 for an ordinary node save, so at five saves a day a site renders about 25 pages a day
+whatever its traffic. The fraction is 7.6% at 10,000 views a month, 1% at about 76,000 and 0.004% at
+20 million. A save the main menu references invalidates every cached page, 34 on the measured site,
+and is the pessimistic arm.</p>
+<p>For a CDN and origin the edge-location count is the largest term: at 20 million views it spans 4.38%
+at one location to 62.91% at fifty. A measurement taken from a single source address reads a floor,
+because a one-address generator drives one edge location while real visitors spread across many.</p>
+<p><code>scripts/measure/render-fraction.ts</code> computes it, with each input named as measured or modelled.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

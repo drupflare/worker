@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Economics - Drupflare</title>
+		<meta
+			name="description"
+			content="What a Drupflare site costs to run against the hosting it replaces, at each traffic level. Prices are list prices; the energy behind them is on Energy, and the scope of each claim is on Impact."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Economics - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="What a Drupflare site costs to run against the hosting it replaces, at each traffic level. Prices are list prices; the energy behind them is on Energy, and the scope of each claim is on Impact."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html" aria-current="page">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Impact</a></p>
+<h1 id="economics">Economics</h1>
+<p>What a Drupflare site costs to run against the hosting it replaces, at each traffic level. Prices are list prices; the energy behind them is on <a href="../energy/index.html">Energy</a>, and the scope of each claim is on <a href="../limits.html#what-this-does-not-claim">Impact</a>. Citations in brackets refer to the <a href="../references.html#references">references on Impact</a>.</p>
+<p>The figures are <code>derived</code>: Cloudflare&#39;s published rates <a href="../references.html">[18]</a>, [19] applied to the measured workload, and the list prices of the conventional hosts they are compared with. <code>bun scripts/economics/comparison.ts --md</code> generates the tables, so they follow the model behind them.</p>
+<p>You deploy to your own Cloudflare account. There is no platform fee in any figure on these pages and no
+per-tenant charge. Quotas are account-wide, so several sites share one envelope and do not each pay
+their own floor.</p>
+<p>The tables down to <a href="free-plan-and-warming.html#kept-warm">Kept Warm</a> are for sites that sleep, which is the free plan&#39;s default and
+<code>SITE_WARM=0</code> on any plan. <a href="free-plan-and-warming.html#kept-warm">Kept Warm</a> prices the paid plan&#39;s default, where every site stays warm.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#prices-at-each-traffic-level">Prices At Each Traffic Level</a></li><li><a href="#where-the-curves-meet">Where The Curves Meet</a></li></ol></nav><h2 id="pages">Pages</h2>
+<ul>
+<li><a href="conventional-hosts.html">Conventional Hosts</a>: the conventional hosts, what they need, and what running it showed.</li>
+<li><a href="free-plan-and-warming.html">The Free Plan and Keeping a Site Warm</a>: the free plan, keeping a site warm and what the price does not buy.</li>
+<li><a href="bills.html">The Shape Of The Bills</a>: how a bill splits, including cost per request.</li>
+<li><a href="vps-comparison.html">Drupflare vs a Traditional VPS</a>: latency, throughput and cost against nginx and PHP-FPM on the same tree.</li>
+<li><a href="free-vs-paid/index.html">Free vs Paid</a>: what each plan allows and which limit binds first.</li>
+</ul>
+<h2 id="prices-at-each-traffic-level">Prices At Each Traffic Level</h2>
+<p>What hosting the same site costs conventionally, per site:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>cheapest VPS</th>
+<th>DigitalOcean</th>
+<th>most popular cloud</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>$10.50</td>
+<td>$14.40</td>
+<td>$12.50</td>
+<td>$58.20</td>
+<td>$41.67</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>$10.50</td>
+<td>$14.40</td>
+<td>$12.50</td>
+<td>$58.20</td>
+<td>$41.67</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>$10.50</td>
+<td>$14.40</td>
+<td>$12.50</td>
+<td>$58.20</td>
+<td>$41.67</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>$10.50</td>
+<td>$14.40</td>
+<td>$12.50</td>
+<td>$58.20</td>
+<td>$41.67</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>$12.50</td>
+<td>$21.60</td>
+<td>$12.50</td>
+<td>$58.20</td>
+<td>$41.67</td>
+</tr>
+</tbody></table></div>
+<p>Amazon Lightsail publishes no transfer overage price for instances, so a plan whose transfer is
+exceeded is not priced. At the CPU cost measured here the vCPUs a load needs bring enough included
+transfer in every row, so none is dropped.</p>
+<p>Above 9 million views the hardware grows with the traffic, and so does the bill. The same prices at
+higher traffic, with drupflare&#39;s per-site bill at 1,000 sites:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>cheapest VPS</th>
+<th>DigitalOcean</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+<th>drupflare</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>30,000,000</td>
+<td>$25.00</td>
+<td>$43.20</td>
+<td>$79.80</td>
+<td>$41.67</td>
+<td>$10.92</td>
+</tr>
+<tr>
+<td>100,000,000</td>
+<td>$75.00</td>
+<td>$129.60</td>
+<td>$144.60</td>
+<td>$41.67</td>
+<td>$36.39</td>
+</tr>
+<tr>
+<td>1,000,000,000</td>
+<td>$877.00</td>
+<td>$1,206.40</td>
+<td>$1,221.40</td>
+<td>$41.67</td>
+<td>$363.86</td>
+</tr>
+</tbody></table></div>
+<h2 id="where-the-curves-meet">Where The Curves Meet</h2>
+<p>The bill grows with traffic and the conventional host&#39;s grows in whole boxes and in transfer, so the
+lines can cross. Solved on the real functions with <code>comparison.ts --crossover</code>, per site, up to a
+trillion views a site a month. The break-even is the first traffic at which drupflare&#39;s per-site bill reaches
+the host&#39;s price. With s sites, C(s, v) is the account bill from <a href="bills.html#the-shape-of-the-bills">The Shape Of The Bills</a>, and P(v) is the
+host&#39;s monthly price per site at v views a site a month:</p>
+<pre><code class="math">v^{*} = \min\{ v \geq 10^{4} : \frac{C(s, v)}{s} \geq P(v) \}</code></pre><p>The search starts at 10,000 views and multiplies v by 1.01 each step, up to 10^12. P(v) is a step
+function, because the VPS is priced in whole boxes sized to its render load, so the search also records
+the last point above which drupflare stays behind. <code>never</code> means no step reached the host&#39;s price.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>against</th>
+<th>1 site</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>cheapest VPS</td>
+<td>never</td>
+<td>never</td>
+</tr>
+<tr>
+<td>latency-matched VPS</td>
+<td>never</td>
+<td>never</td>
+</tr>
+</tbody></table></div>
+<p>drupflare is the cheaper bill at every traffic level against both. At 1,000 sites and 100 million
+views per site the cheapest VPS costs $75.00 a site against drupflare&#39;s $36.39, and at a billion
+views $877.00 against $363.86.</p>
+<p>The managed floor would cross near 112 million views for one site and 115 million for a thousand,
+but only because it is held flat at the entry plan&#39;s price. No managed plan serves that traffic at
+$41.67, so the crossing comes from the flat price.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

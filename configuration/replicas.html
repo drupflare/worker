@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Replica Settings - Drupflare</title>
+		<meta
+			name="description"
+			content="Settings for replica lanes: count, autoscaling, write forwarding and lag. The concepts are on Replica Lanes; the index of every variable is on Configuration."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Replica Settings - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Settings for replica lanes: count, autoscaling, write forwarding and lag. The concepts are on Replica Lanes; the index of every variable is on Configuration."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Configuration</a></p>
+<h1 id="replica-settings">Replica Settings</h1>
+<p>Settings for replica lanes: count, autoscaling, write forwarding and lag. The concepts are on <a href="../operating/replica-lanes.html">Replica Lanes</a>; the index of every variable is on <a href="index.html">Configuration</a>.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#variables">Variables</a></li><li><a href="#replica_count"><code>REPLICA_COUNT</code></a></li><li><a href="#replica_autoscale"><code>REPLICA_AUTOSCALE</code></a></li><li><a href="#replica_max_lanes"><code>REPLICA_MAX_LANES</code></a></li><li><a href="#write_forward"><code>WRITE_FORWARD</code></a></li><li><a href="#replica_lag_ms"><code>REPLICA_LAG_MS</code></a></li><li><a href="#creating-a-lane">Creating a Lane</a></li></ol></nav><h2 id="variables">Variables</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>REPLICA_COUNT</code></td>
+<td>0</td>
+<td>Replica lanes beyond the primary. 0 means one object per site. Values above 256 are clamped to 256.</td>
+</tr>
+<tr>
+<td><code>REPLICA_AUTOSCALE</code></td>
+<td>on</td>
+<td>Grows the pool under sustained queueing. <code>0</code> pins the pool at <code>REPLICA_COUNT</code>.</td>
+</tr>
+<tr>
+<td><code>REPLICA_MAX_LANES</code></td>
+<td>32</td>
+<td>Ceiling autoscaling will not grow past. Values above 32 are capped at 32. <code>0</code> stops growth.</td>
+</tr>
+<tr>
+<td><code>WRITE_FORWARD</code></td>
+<td>on</td>
+<td>Lets a lane execute a write and forward it to the primary. <code>0</code> sends every write to the primary.</td>
+</tr>
+<tr>
+<td><code>REPLICA_LAG_MS</code></td>
+<td>30,000</td>
+<td>The longest a serving lane may go without pulling the log. Clamped to 1,000 through 300,000 ms.</td>
+</tr>
+<tr>
+<td><code>REPLICA_READ_ONLY</code></td>
+<td>off</td>
+<td><code>1</code> puts the object into replica mode. The setting is deployment-wide; see <a href="runtime.html">Runtime Settings</a>.</td>
+</tr>
+</tbody></table></div>
+<h2 id="replica_count"><code>REPLICA_COUNT</code></h2>
+<p>Lane 0 is the primary, and lanes 1 to n are objects named <code>&lt;site&gt;#r&lt;lane&gt;</code>. <code>#</code> is outside the set <code>encodeSiteId()</code> keeps and outside its <code>_&lt;hex&gt;</code> escape, so a replica name cannot collide with a site id however a hostname is spelled.</p>
+<p>The lane count the router uses is the larger of <code>REPLICA_COUNT</code> and the pool size the isolate last learned from the primary (<code>chooseTarget()</code> in <code>src/site/target.ts</code>). With the default of 0, every routing decision resolves to the primary and nothing changes.</p>
+<p>An object&#39;s role comes from its own name. <code>REPLICA_READ_ONLY</code> is deployment-wide and would make the primary read-only too, so raising <code>REPLICA_COUNT</code> cannot put an existing object into replica mode by accident. The variable tells the router how many lanes to spread across, and nothing else.</p>
+<p>Only <code>/serve</code> spreads. Every other route pins to the primary. A route wrongly pinned loses capacity, and a route wrongly spread answers from a replica&#39;s copy. Lane selection and the 421 handoff are described on <a href="../operating/replica-lanes.html#routing-a-request">Replica Lanes</a>.</p>
+<p>One lane helps only once the single object is saturated. A fixed <code>REPLICA_COUNT</code> suits a site that is already contended. Autoscaling provisions lanes only under sustained queueing, which is the regime where even one lane pays. The measurements are on <a href="../operating/replica-lanes.html#when-a-lane-helps">Replica Lanes</a>.</p>
+<p>The ceiling is 256 because of arithmetic. A lane mints forwarded row ids from its own residue class modulo the partition (<code>ID_PARTITION_LANES</code>, <code>src/ops/write-forwarding.ts</code>), and the primary takes class 0. 256 is the largest pool whose writers all hold a class of their own. Past it, two writers would mint the same id.</p>
+<p>Set <code>REPLICA_COUNT</code> no higher than the lanes a site has provisioned. Above that, the router hashes over buckets whose objects do not exist, which costs a wasted hop and a retry on the primary for each one. <code>REPLICA_COUNT</code>, <code>REPLICA_AUTOSCALE</code> and <code>REPLICA_MAX_LANES</code> are all KV-overridable, so a pool can be turned on, resized or turned off without a redeploy.</p>
+<h2 id="replica_autoscale"><code>REPLICA_AUTOSCALE</code></h2>
+<p>Raising <code>REPLICA_COUNT</code> by hand tells the router that lanes exist. It does not create them, so the lanes it routes to hold no data and answer 421 until somebody drives the provisioning loop. Autoscaling is the half that creates one.</p>
+<p>The signal is the number of requests that waited for the primary&#39;s gate in a window. A Durable Object runs one request at a time and a PHP render holds it for the whole render, so a waiting request is the queue, and a queue is the only thing a pool can fix. The target is one lane per waiter that held across the last three windows (the minimum over them), so a single burst cannot provision a lane that then exists forever. A window with no queue count falls back to peak concurrent in-flight requests, and the target is then the minimum peak across the three windows, minus one (<code>laneTarget()</code> in <code>src/ops/replica-demand.ts</code>). One quiet window clears the run. The copy is driven a chunk at a time off the alarm, the same way a fresh site migrates, so no firing owns a whole table copy.</p>
+<p>An explicit <code>REPLICA_COUNT</code> is a floor rather than a ceiling: a site told to run 2 lanes runs at least 2 and may still grow. <code>REPLICA_AUTOSCALE=0</code> is how an operator pins the number instead.</p>
+<h2 id="replica_max_lanes"><code>REPLICA_MAX_LANES</code></h2>
+<p>The ceiling autoscaling will not grow past. The default is 32, and larger values are capped at 32.</p>
+<p>Throughput does not set the cap. Addressing objects directly and summing, efficiency against perfect scaling is 100, 95, 90 and 85% at 8, 16, 32 and 48 replicas, a loss of about 5 points per doubling. This figure describes the topology. Routed throughput is a separate measurement, on <a href="../operating/replica-lanes.html#across-a-pool">Replica Lanes</a>. The default of 32 is a cost bound, not a correctness one. The correctness ceiling is 256, as described under <code>REPLICA_COUNT</code>.</p>
+<p>Set <code>REPLICA_AUTOSCALE=0</code> when measuring against a fixed lane count. Autoscaling builds lanes under the load a benchmark offers, so a control arm provisioned with zero lanes can answer from <code>r1</code> and <code>r2</code> on its first run. Read <code>x-cfw-lanes</code> back at drive time rather than trusting the configured number.</p>
+<p>A pool is reached only by isolates that have already seen it. <code>believedLanes()</code> is per isolate and is set from the <code>x-cfw-lanes</code> the primary reports on a response. The first request a cold isolate makes goes to the primary whatever the pool size. The belief expires after <code>LANES_TRUST_MS</code> (60 seconds, <code>src/ops/replica-routing.ts</code>). Sustained traffic keeps every isolate warm, while a low-rate or bursty client sees a larger share answered by the primary. Count distinct <code>x-cfw-replica</code> values across a burst to read a pool, since a single response cannot show it.</p>
+<p>A lane the router is not choosing falls back to the slow re-arm and hibernates, so an unused lane costs storage and replication catch-up rather than a warming chain.</p>
+<h2 id="write_forward"><code>WRITE_FORWARD</code></h2>
+<p>Lets a pool lane execute a write and forward the statements to the primary rather than refusing it. On unless <code>0</code>. It is reachable only where a pool already exists: every caller is behind a lane name or a non-zero <code>REPLICA_COUNT</code>, and both are off by default. A site with no pool is unaffected by this value.</p>
+<p>The lane runs the whole write locally, discards its own effect through the driver&#39;s <code>commit: false</code> path, and hands the statement list to the primary, which stays the sequencer. Ids are partitioned so that every writer holds a residue class no other writer mints: lanes from their lane number, the primary from slice 0. A lane records the ids it forwarded so it cannot repeat one before replication catches up.</p>
+<p>Two things are worth knowing before turning it off. A write reaches a lane at all only because this is on. With it off, the router pins every POST to the primary, so the one object the pool exists to relieve keeps every form submission. An unbuffered write, one Drupal issues outside a transaction, takes the transaction bridge on a lane rather than the exec bridge, because <code>cfwSqlExec</code> has no rollback and a write on it can be neither forwarded nor discarded. That routing lives in the driver. The host&#39;s guard refuses an exec write and fails over, which is what happens if the two ever disagree about whether a connection holds a residue class.</p>
+<h2 id="replica_lag_ms"><code>REPLICA_LAG_MS</code></h2>
+<p>The bound on how far behind a serving lane may fall. A <code>SERVING</code> lane pulls the primary&#39;s log on its own alarm, and <code>replicaLagMs()</code> (<code>src/ops/replica-routing.ts</code>) sets the interval. The default is 30,000 ms, clamped to 1,000 through 300,000 ms. Below a second a lane spends more on asking than on serving.</p>
+<p>Without this bound, a serving lane re-arms at <code>KEEP_WARM_MS</code> (240,000 ms) and can serve a copy four minutes behind the primary. The staleness fence refuses only a caller that states a freshness requirement, and a visitor states none.</p>
+<p>Each round costs two Durable Object requests against the primary, so this is a cost knob as much as a freshness one.</p>
+<h2 id="creating-a-lane">Creating a Lane</h2>
+<p><code>GET /replica?action=provision&amp;lane=&lt;n&gt;</code> on the primary. It copies a bounded number of rows, answers with a cursor, and the caller passes that cursor back until <code>done</code>:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$SITE</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">/replica?action=provision&#x26;lane=1"</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$SITE</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">/replica?action=provision&#x26;lane=1&#x26;cursor=&#x3C;the cursor from the last answer>"</span></span></code></pre><p>It runs on the primary because that is the object a caller can reach. A lane has no route into it from outside. The lane needs no Drupal install of its own, since each chunk carries the table&#39;s DDL, and it reaches <code>VERIFIED</code> on the final chunk, which arms its alarm. From there it is self-driving.</p>
+<p><code>budget</code> sets rows per invocation and defaults to 4,000. The cursor carries the generation the copy began at, so a commit on the primary part-way through answers <code>torn</code>, which keeps the far end from refusing in a way that reads like a bug. Restart the copy; there is no resume.</p>
+<p>A primary cannot be copied from until it has minted <code>system.private_key</code>, which Drupal does on first use and never at install. <code>action=snapshot</code> answers 409 naming the gap. <code>\Drupal::service(&#39;private_key&#39;)-&gt;get()</code> on the primary closes it.</p>
+<p>Cron defaults to on. Leave it on unless a site has a reason not to: a module that depends on cron does not fail when cron never runs, it silently does nothing. Six of twenty-five surveyed contrib modules need it.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

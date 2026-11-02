@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Production Baseline - Drupflare</title>
+		<meta
+			name="description"
+			content="Enterprise Drupal runs oversupplied. Teams that put performance ahead of cost run high-availability, multi-region deployments sized for peak, and those nodes draw their idle power around the clock."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Production Baseline - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Enterprise Drupal runs oversupplied. Teams that put performance ahead of cost run high-availability, multi-region deployments sized for peak, and those nodes draw their idle power around the clock."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html" aria-current="page">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Impact</a> / <a href="index.html">Energy</a></p>
+<h1 id="production-baseline">Production Baseline</h1>
+<p>Enterprise Drupal runs oversupplied. Teams that put performance ahead of cost run high-availability,
+multi-region deployments sized for peak, and those nodes draw their idle power around the clock. The
+baseline is three regions, a high-availability web pair and database pair in each (12 nodes), 4-vCPU
+nodes sized at 15% utilisation. Each node owns its vCPUs&#39; share of a 640-thread host drawing 135 W
+idle and 711 W at full load, at the 1.54 colocation PUE.</p>
+<p>A deployment&#39;s annual energy <code>E</code>, in kWh, is its node count <code>n</code> times each node&#39;s share of the
+640-thread host (<code>v</code> vCPUs over 640), times the host&#39;s power at utilisation <code>u</code>, times PUE, over
+8,766 hours. The host&#39;s power is 135 W idle plus 576 W (711 less 135) scaled by <code>u</code>:</p>
+<pre><code class="math">E = \frac{n v}{640} (135 + 576 u) \cdot 1.54 \cdot \frac{8766}{1000}</code></pre><p>That deployment draws 224 kWh a year while idle-dominated. drupflare serving the same site at 1
+million views a month draws 18.3 Wh a year. The saving is the percentage by which drupflare&#39;s annual
+energy <code>E_d</code> falls below the deployment&#39;s <code>E_p</code>:</p>
+<pre><code class="math">S = 100 \cdot (1 - \frac{E_d}{E_p})</code></pre><p>At one million views that is a saving of 99.9919%.</p>
+<p>Idle energy of each deployment, and the saving of one drupflare site against it by views a month, the
+worst case last. <code>derived (modelled)</code>, from <code>bun scripts/economics/perview.ts</code>.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>deployment</th>
+<th align="right">idle energy (kWh a year)</th>
+<th align="right">10,000</th>
+<th align="right">100,000</th>
+<th align="right">1,000,000</th>
+<th align="right">10,000,000</th>
+<th align="right">30,000,000</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>production: 3 regions, 12 nodes, 4 vCPU, 15%</td>
+<td align="right">224.2</td>
+<td align="right">99.9998%</td>
+<td align="right">99.9990%</td>
+<td align="right">99.9919%</td>
+<td align="right">99.9199%</td>
+<td align="right">99.7601%</td>
+</tr>
+<tr>
+<td>peak-sized: 3 regions, 12 nodes, 8 vCPU, 10%</td>
+<td align="right">390.0</td>
+<td align="right">99.9999%</td>
+<td align="right">99.9995%</td>
+<td align="right">99.9953%</td>
+<td align="right">99.9540%</td>
+<td align="right">99.8621%</td>
+</tr>
+<tr>
+<td>single-region HA: 1 region, 4 nodes, 4 vCPU, 15%</td>
+<td align="right">74.7</td>
+<td align="right">99.9993%</td>
+<td align="right">99.9971%</td>
+<td align="right">99.9756%</td>
+<td align="right">99.7597%</td>
+<td align="right">99.2802%</td>
+</tr>
+<tr>
+<td>worst case: one small VPS, 2 vCPU, 15%</td>
+<td align="right">9.34</td>
+<td align="right">99.9944%</td>
+<td align="right">99.9771%</td>
+<td align="right">99.8045%</td>
+<td align="right">98.0780%</td>
+<td align="right">94.2413%</td>
+</tr>
+</tbody></table></div>
+<p>The node count, the vCPU per node and the utilisation are modelled, because no source sizes a
+production node. The topology follows Acquia&#39;s high-availability design, which spreads a site over several
+availability zones of one region <a href="../references.html">[4]</a>, and the AWS reference architecture for Drupal, whose subnets
+sit in two or three zones [5]. Neither states instance sizes. The 135 W and 711 W server power, the 320 cores and the
+640 threads are the SPECpower result [1]. The PUE is 1.54 for the conventional host and 1.15 for
+Cloudflare&#39;s hyperscale facilities, both Uptime Institute averages [6]. A VPS vCPU is a hardware thread,
+so a node owns its vCPUs over 640 of the host.</p>
+<p>drupflare&#39;s busy core is a physical core, because each Workers isolate thread runs on one. Its energy
+is CPU time on the traffic mix at 2.22 W a core, charged under <a href="#watts-for-a-busy-core">Watts For A Busy
+Core</a>, with logged-in views at the compiled-plan cost. <a href="views.html#energy-per-view">Energy Per
+View</a> has the mix and the plan.</p>
+<p>The saving is the idle term. These nodes are provisioned for peak, so almost all of their energy is
+spent waiting. A site that sleeps between requests holds no compute and spends energy only while a
+view, a render or a cold boot executes. A site kept warm also pays for its warming and holds its
+memory, which <a href="operating-states.html#operating-states">Operating States</a> prices. Per request the two runtimes are at
+parity, as the measurements below show, so none of this comes from PHP running faster.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#watts-for-a-busy-core">Watts For A Busy Core</a></li><li><a href="#the-worst-case">The Worst Case</a></li></ol></nav><h2 id="watts-for-a-busy-core">Watts For A Busy Core</h2>
+<p>The 2.22 W charge is the host&#39;s 711 W at full load over its 320 cores. A busy core is charged its
+idle share plus the marginal draw that load adds, where <code>W_core</code> is watts per busy core, 135 W is the
+idle draw and 576 W the rise from idle to full load:</p>
+<pre><code class="math">W_{\text{core}} = \frac{135 + 576}{320} = \frac{711}{320} = 2.22</code></pre><p>The 2.22 W charge is the full-load end of the measured curve, so it is a floor: a host that runs
+below full load spends more per busy core-second. From the same SPECpower result [1], <code>derived</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">host load</th>
+<th align="right">watts per busy core</th>
+<th align="right">against the model</th>
+<th align="right">linear model understates the draw by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">100%</td>
+<td align="right">2.22</td>
+<td align="right">1.00x</td>
+<td align="right">1.00x</td>
+</tr>
+<tr>
+<td align="right">50%</td>
+<td align="right">2.91</td>
+<td align="right">1.31x</td>
+<td align="right">1.10x</td>
+</tr>
+<tr>
+<td align="right">30%</td>
+<td align="right">3.76</td>
+<td align="right">1.69x</td>
+<td align="right">1.17x</td>
+</tr>
+<tr>
+<td align="right">15%</td>
+<td align="right">5.88</td>
+<td align="right">2.65x</td>
+<td align="right">1.27x</td>
+</tr>
+<tr>
+<td align="right">10%</td>
+<td align="right">8.00</td>
+<td align="right">3.60x</td>
+<td align="right">1.33x</td>
+</tr>
+</tbody></table></div>
+<p>The idle and full-load points are the result&#39;s own, and the 256 W at 10% load and 466 W at 50% are
+read from it. Charging 8.0 W a busy core raises drupflare&#39;s 0.525 Wh a year at 10,000 views to 1.89 Wh
+and leaves the saving at 99.98% against one small VPS. It cancels in every per-view ratio below,
+because both sides are priced at the same watts per core.</p>
+<p>The conventional figures carry the opposite error. The model interpolates linearly between idle and
+peak, which gives 221 W for a host at 15% load where the measured curve gives 282 W, so every
+conventional figure here is about 22% low (the measured curve is 1.27 times the model) and the saving is understated. SPECpower&#39;s load is a share
+of throughput rather than of CPU utilisation, so read the 22% as a direction and not a correction.</p>
+<h2 id="the-worst-case">The Worst Case</h2>
+<p>The last row of the production table is the smallest conventional deployment there is: one small VPS
+of two vCPUs, a 320th of a host at 15% utilisation, no redundancy and one region. It draws 9.34 kWh a
+year, and the saving holds there too: 99.8045% at a million views a month and 94.2413% at 30 million,
+<code>derived (modelled)</code>. The utilisation and host share are chosen to be generous to the VPS, so this is
+the lowest saving the model produces, not a typical one. The other energy pages use this deployment
+wherever they quote a single-site VPS.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>The Free Plan and Keeping a Site Warm - Drupflare</title>
+		<meta
+			name="description"
+			content="What a site costs on the free plan, what keeping it warm adds, and what the price column does not buy."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="The Free Plan and Keeping a Site Warm - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="What a site costs on the free plan, what keeping it warm adds, and what the price column does not buy."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html" aria-current="page">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Impact</a> / <a href="index.html">Economics</a></p>
+<h1 id="the-free-plan-and-keeping-a-site-warm">The Free Plan and Keeping a Site Warm</h1>
+<p>What a site costs on the free plan, what keeping it warm adds, and what the price column does not buy.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-free-plan">The Free Plan</a></li><li><a href="#kept-warm">Kept Warm</a></li><li><a href="#what-the-price-column-does-not-buy">What The Price Column Does Not Buy</a></li></ol></nav><h2 id="the-free-plan">The Free Plan</h2>
+<p>The free plan covers 3.04 million views a month across the whole account, split however you like:
+one site at 3.04 million views, a hundred sites at 30,439 each, a thousand at 3,043 each. Past that
+the Workers Paid plan is $5 a month, including 10 million requests, 50 million rows written and 5 GB
+of storage.</p>
+<p>Worker requests, one per view, are the meter that runs out first. Every view reaches the Worker,
+cached or not, so no change to rendering moves this ceiling. Only a response that never runs the
+Worker avoids it: a static asset, or a hostname not routed to the Worker. The 3.04 million assumes
+the 65 static assets beside each page do not bill as Worker requests. Cloudflare publishes them as free
+and unlimited (<code>published</code>), and a 198,000-request drive invoked no Worker (<code>measured</code>, invocations and
+not billing; the billing read is pending, gate 65). The one exception is Workers Cache,
+which the shipped config does not enable: with it on, the same page load spends 66 requests and the
+account serves 1,515 views a day. Mirroring pages to R2 or publishing them as assets lifts the ceiling in the model, to 10.2
+million views a month for an R2 mirror with no Cache Rule and 82.0 million with one, and to 90.5
+million for the assets arm, which is not built. Each carries conditions and a lower regeneration
+ceiling, and <a href="free-vs-paid/off-worker-arms.html#the-off-worker-arms">The Off-Worker Arms</a> has the scenarios and
+sources. At the shipping default a
+fill writes 1.75 rows, and the re-render ceiling is 50,916 a day, set by rows written. Renders follow
+saves rather than views: at five saves a day a site re-renders about 25 pages, so a thousand active
+sites use under half of that ceiling. For a large idle fleet the binding meter changes to storage, at
+4.7 MB per site, and uploaded files are stored in each site&#39;s database against the same 5 GB.</p>
+<p>What you pay, on your own account:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>$5.80</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>free</td>
+<td>free</td>
+<td>$5.15</td>
+<td>$38.44</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>free</td>
+<td>$5.15</td>
+<td>$37.64</td>
+<td>$365.14</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>$5.15</td>
+<td>$37.56</td>
+<td>$364.34</td>
+<td>$3,644.64</td>
+</tr>
+</tbody></table></div>
+<p>The first free cap you reach, and how much of it is used:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>storage 0%</td>
+<td>storage 1%</td>
+<td>storage 9%</td>
+<td>storage 95%</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>requests 0%</td>
+<td>requests 3%</td>
+<td>requests 33%</td>
+<td>requests</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>requests 3%</td>
+<td>requests 33%</td>
+<td>requests</td>
+<td>requests</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>requests 33%</td>
+<td>requests</td>
+<td>requests</td>
+<td>requests</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>requests</td>
+<td>requests</td>
+<td>requests</td>
+<td>requests</td>
+</tr>
+</tbody></table></div>
+<p>Against each host, one site, as the ratio of the host&#39;s bill to drupflare&#39;s:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>cheapest VPS</th>
+<th>most popular cloud</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>2.4x cheaper</td>
+<td>2.4x cheaper</td>
+<td>11.3x cheaper</td>
+<td>8.1x cheaper</td>
+</tr>
+</tbody></table></div>
+<p>Against each host, a thousand sites, every site asleep between requests. The 10,037.7x cell is the
+sleeping-fleet ceiling against the latency-matched origin at 10,000 views a site; kept warm, the
+same cell is 166.0x (<a href="#kept-warm">Kept Warm</a>):</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>cheapest VPS</th>
+<th>most popular cloud</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>1810.9x cheaper</td>
+<td>2155.9x cheaper</td>
+<td>10037.7x cheaper</td>
+<td>7186.2x cheaper</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>273.2x cheaper</td>
+<td>325.2x cheaper</td>
+<td>1514.1x cheaper</td>
+<td>1084.0x cheaper</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>28.8x cheaper</td>
+<td>34.2x cheaper</td>
+<td>159.4x cheaper</td>
+<td>114.1x cheaper</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>3.4x cheaper</td>
+<td>3.4x cheaper</td>
+<td>16.0x cheaper</td>
+<td>11.4x cheaper</td>
+</tr>
+</tbody></table></div>
+<h2 id="kept-warm">Kept Warm</h2>
+<p>A paid plan keeps every site resident by default: the alarm re-arms every 8 s, the object never
+hibernates, and an editor&#39;s first request after idle answers in 156 to 371 ms rather than 2 to 4 s.
+The free plan leaves a site to the thermal policy, which declines any site below about 505 renders a
+day, and any plan can set <code>SITE_WARM=0</code>. One site&#39;s chain sits inside the paid allowances. A fleet&#39;s
+does not, because the allowances are account-wide: each warm site writes 10,896 rows and makes 10,800
+object requests a day, and a thousand of them write 331 million rows a month against 50 million
+included. The chain is billed for its wall time, 23.3 ms a firing (n=116). <code>derived</code>, from the rate
+card and that firing, with a recomputation from the rate card alone pinned in
+<code>tests/node/economics-energy.spec.ts</code>:</p>
+<p>What you pay with every site kept warm:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>$5.45</td>
+<td>$9.80</td>
+<td>$350.03</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>free</td>
+<td>$5.45</td>
+<td>$9.95</td>
+<td>$350.65</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>free</td>
+<td>$5.45</td>
+<td>$10.10</td>
+<td>$383.29</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>free</td>
+<td>$5.75</td>
+<td>$42.59</td>
+<td>$709.99</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>$5.30</td>
+<td>$38.16</td>
+<td>$369.29</td>
+<td>$3,989.49</td>
+</tr>
+</tbody></table></div>
+<p>Kept warm, against each host, one site:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>cheapest VPS</th>
+<th>most popular cloud</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>2.4x cheaper</td>
+<td>2.4x cheaper</td>
+<td>11.0x cheaper</td>
+<td>7.9x cheaper</td>
+</tr>
+</tbody></table></div>
+<p>Kept warm, against each host, a thousand sites:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>cheapest VPS</th>
+<th>most popular cloud</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>30.0x cheaper</td>
+<td>35.7x cheaper</td>
+<td>166.3x cheaper</td>
+<td>119.0x cheaper</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>29.9x cheaper</td>
+<td>35.6x cheaper</td>
+<td>166.0x cheaper</td>
+<td>118.8x cheaper</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>27.4x cheaper</td>
+<td>32.6x cheaper</td>
+<td>151.8x cheaper</td>
+<td>108.7x cheaper</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>14.8x cheaper</td>
+<td>17.6x cheaper</td>
+<td>82.0x cheaper</td>
+<td>58.7x cheaper</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>3.1x cheaper</td>
+<td>3.1x cheaper</td>
+<td>14.6x cheaper</td>
+<td>10.4x cheaper</td>
+</tr>
+</tbody></table></div>
+<p>A fleet pays for keeping its sites warm, about 35 cents a site a month at 1,000 sites. At 10,000 views
+a site that leaves a thousand sites 30 times cheaper than the cheapest VPS, 166 times cheaper than a
+latency-matched origin and 119 times cheaper than the managed floor. The sleeping tables reach 1,810
+times at the cheapest VPS and 10,037 times at the latency-matched one. Those are ceilings, reached by
+a fleet of mostly idle sites left to sleep.</p>
+<h2 id="what-the-price-column-does-not-buy">What The Price Column Does Not Buy</h2>
+<p>A monthly price buys capacity from one place, and this page does not measure capacity beyond the
+sizing on <a href="conventional-hosts.html#what-a-conventional-host-needs">What A Conventional Host Needs</a>. It does not buy the latency profile: the same workload measures 100.2 ms on a VPS
+against 8.9 ms on drupflare once an 82 ms round trip is injected, because one serves from a region
+and the other from the visitor&#39;s colo. It does not buy the tail either, where the VPS p50 runs from
+59 ms at 4 clients to 182 ms at 96 while drupflare holds. The latency-matched column prices the first
+of those; nothing here prices the second.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

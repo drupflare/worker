@@ -9,7 +9,7 @@
 		<title>Technical Report: Drupal on Cloudflare Workers - Drupflare</title>
 		<meta
 			name="description"
-			content="The engineering record: architecture, platform limits, costs and measurements."
+			content="Drupal 11.4.7 runs on Cloudflare Workers with PHP 8.5 executing as WebAssembly inside a Durable Object, using that object's own SQLite as the database."
 		/>
 		<link
 			rel="icon"
@@ -21,7 +21,7 @@
 		/>
 		<meta
 			property="og:description"
-			content="The engineering record: architecture, platform limits, costs and measurements."
+			content="Drupal 11.4.7 runs on Cloudflare Workers with PHP 8.5 executing as WebAssembly inside a Durable Object, using that object's own SQLite as the database."
 		/>
 		<meta
 			property="og:image"
@@ -213,6 +213,11 @@
 				border-radius: 0.8rem;
 				background: var(--card);
 			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
 			.readme .toc ol {
 				columns: 2 15rem;
 				margin: 0.5rem 0 0;
@@ -331,11 +336,13 @@
 					/>
 					Drupflare
 				</a>
-				<a href="getting-started.html">Getting Started</a>
-				<a href="architecture.html">Architecture</a>
-				<a href="configuration.html">Configuration</a>
-				<a href="security.html">Security</a>
-				<a href="impact.html">Impact</a>
+				<a href="getting-started/index.html">Getting Started</a>
+				<a href="operating/index.html">Operating</a>
+				<a href="architecture/index.html">Architecture</a>
+				<a href="configuration/index.html">Configuration</a>
+				<a href="security/index.html">Security</a>
+				<a href="impact/index.html">Impact</a>
+				<a href="audiences/index.html">Audiences</a>
 				<a href="technical-report.html" aria-current="page">Technical Report</a>
 				<a href="api/index.html">API</a>
 				<a href="php/index.html">PHP</a>
@@ -615,9 +622,11 @@ wall clock with three bins emptied (n=9) and 52-95 ms reassembling from a warm d
 <code>activeTime</code> to within 2-6%. Priced at the 308 ms maximum, duration allows 329,748 fills a day. Until
 2026-09-24 the model priced a fill at the 2,127 ms cold-bins figure, which made duration read as
 binding at 47,749.</p>
-<p><strong>Each class is priced on its dearer path.</strong> <code>/user/login</code> realRenders in 8 and reassembles in 1; <code>/</code>
+<p><strong>Each class is priced on its dearer path.</strong> <code>/user/login</code> realRenders in 8 on SQL bins and in 1 at
+the shipping default, with <code>dynamic_page_cache</code> and <code>menu</code> in memory, and reassembles in 1; <code>/</code>
 realRenders in 3 and reassembles in 2, because the login form carries six <code>dynamic_page_cache</code>
-variants to the front page&#39;s one. So <code>realRender</code> comes from login and <code>warmReassemble</code> from <code>/</code>.
+variants to the front page&#39;s one. The audit spec drives <code>/user/login</code> for <code>realRender</code>, so the <code>/</code>
+figure of 3 is not pinned there. So <code>realRender</code> comes from login and <code>warmReassemble</code> from <code>/</code>.
 Setting the reassemble to the login figure made the warmest priced class undercut a real fill, and
 <code>fill-bins.spec.ts</code> failed on exactly that.</p>
 <p>The row half of that was 12,240 until the daily meters stopped checkpointing on a flat 60 s clock.
@@ -936,7 +945,7 @@ pays nothing; <code>WITH</code>, <code>PRAGMA</code> and non-SELECT are refused.
 <p><strong>An external database is reachable from the object through Hyperdrive.</strong> <code>DB_BACKEND=hyperdrive</code>
 routes the driver&#39;s statements to PostgreSQL or MySQL through the park. Verified 2026-09-25 on a paid
 throwaway: a Durable Object ran <code>SELECT 1</code> through a Hyperdrive configuration backed by a Workers VPC
-service and a Cloudflare Tunnel, in 6-9 ms of query time. <code>docs/external-database.md</code> has the TLS and
+service and a Cloudflare Tunnel, in 6-9 ms of query time. <code>docs/operating/external-database/index.md</code> has the TLS and
 permission requirements that surfaced.</p>
 <h3 id="the-php-filesystem">The PHP Filesystem</h3>
 <p>The Drupal tree is mounted lazily from the shared ASSETS binding and a file is inflated only when PHP
@@ -1025,7 +1034,7 @@ are persisted to <code>cfw_meta</code> because the alarm re-resolves the transpo
 <p><strong>Host-side pre-exchange is not the only route.</strong> The argument against the alternative
 was that <code>WITH_OPENSSL=0</code> leaves the interpreter unable to verify an RS256 <code>id_token</code> at all, so even
 a synchronous token fetch would hand PHP something it could not check -- and an unverified
-<code>id_token</code> is an unauthenticated login. Both halves have since moved. <code>src/drupal/openssl-fix.ts</code>
+<code>id_token</code> is an unauthenticated login. Both halves have since moved. <code>src/site/shims/openssl-fix.ts</code>
 bridges <code>openssl_sign</code> / <code>openssl_verify</code> / <code>openssl_pkey_get_public</code> over <code>node:crypto</code>, and the
 park carries the token POST and the userinfo GET, so <strong><code>drupal/openid_connect</code> completes a login
 through its OWN client</strong>: <code>park-oidc.spec.ts</code> drives a real authorization code from the rig Keycloak
@@ -2055,7 +2064,7 @@ boot has no such seam, because the thing being built IS the in-memory state.</p>
 points, and was researched and closed: zero of 62 surveyed modules needs one. <strong>One of its two
 refusals has since expired and is recorded here so it is not cited again.</strong> The closure also said
 <code>WITH_OPENSSL=0</code> meant JSPI could not have fixed the module that motivated it, because PHP could not
-verify an RS256 <code>id_token</code> even if handed one synchronously. <code>src/drupal/openssl-fix.ts</code> now bridges
+verify an RS256 <code>id_token</code> even if handed one synchronously. <code>src/site/shims/openssl-fix.ts</code> now bridges
 <code>openssl_sign()</code>, <code>openssl_verify()</code> and <code>openssl_pkey_get_public()</code> over <code>node:crypto</code>, all
 synchronous, so PHP can take a JWKS entry and check a token. What survives is the rest: billed
 duration is wall clock, a suspension trips two hibernation disqualifiers, and one object per site
@@ -4116,7 +4125,7 @@ edit, since a page cached before an invalidation is what a stale entry hides beh
 site; the share of real sites and real cold boots that match an image; the claimed image on a site
 with content, installed modules or a changed theme beyond the five edit classes above; and the memory
 charge of the larger boot memory on a fresh isolate (a deployed memory is charged in full, and folio
-measured the 1,322-page memory at 40 MiB less headroom than the 1,024-page one). The <code>docs/configuration.md</code> section carries the keys
+measured the 1,322-page memory at 40 MiB less headroom than the 1,024-page one). The <code>docs/configuration/index.md</code> section carries the keys
 and the refusals.</p>
 <h3 id="the-warm-authenticated-render-measured-on-a-deployed-worker">The Warm Authenticated Render, Measured on a Deployed Worker</h3>
 <p>The 467 ms this report scored the architecture against was derived across instruments. This is the
@@ -5227,7 +5236,7 @@ way a migration would (a native install, the database landed through <code>drang
 locked packages through <code>/install</code>, the custom code through <code>drangler modify</code>) and scores 13
 capabilities: install, container build, anonymous and authenticated render, entity CRUD, form submit,
 file read and write, queue and cron, outbound HTTP, update, cache rebuild, config import and module
-workflow. <code>docs/compatibility.md</code> is the rendered result and the website&#39;s fixtures page reads the same
+workflow. <code>docs/architecture/compatibility.md</code> is the rendered result and the website&#39;s fixtures page reads the same
 file.</p>
 <p>On 2026-09-29, 15 of the 27 passed all 13 rows on a local runtime, and farmOS, GovCMS and Thunder passed all 13 on
 a deployed Worker. Getting there found 104 defects: 46 in the product, 39 in the lane, its probes and the tests, 16 in the native
@@ -5729,8 +5738,8 @@ wrong, not the system.</p>
 <p>Four sibling repositories hold the rest: <code>drupflare</code> (the capability module), <code>rom</code> (the
 <code>cfw_do_sqlite</code> driver), <code>phasm</code> (the wasm build toolchain), and <code>cartridge</code> / <code>durabledb</code> /
 <code>stream-http</code> as packages.</p>
-<p><code>docs/repository-layout.md</code> is the account of how every path arrives on a clean clone;
-<code>docs/building-from-source.md</code> is the release and build procedure; <code>docs/configuration.md</code> is every
+<p><code>docs/getting-started/repository-layout/index.md</code> is the account of how every path arrives on a clean clone;
+<code>docs/getting-started/building-from-source/index.md</code> is the release and build procedure; <code>docs/configuration/index.md</code> is every
 var and binding.</p>
 <p><code>src/probes/**</code> are cited by figure in this document. Moving one does not change what it measures;
 rewriting one might.</p>
@@ -5745,7 +5754,7 @@ paragraph above are left as written. <code>src/drupal/*-php.ts</code> still hold
 the PHP fragments are real files under <code>src/site/php/</code>, packed by <code>scripts/gen-assets.ts</code> into
 <code>src/site/generated/assets.ts</code>. <code>src/site-do.ts</code> was split by concern into <code>src/do/</code> and the front
 worker into <code>src/site/</code>. The build has no decoder step (<code>LOCAL_STEPS</code> in <code>scripts/build-local.ts</code> has 17 steps, none of them a decoder).
-<code>assets/drupal/site.sqlite</code> has a producer, <code>scripts/drupal/install-site-db.php</code> (<code>bun run build:site-db</code>, <code>docs/database.md</code>), and is 5,832,704 bytes. The rig in Verifying the Tree below is
+<code>assets/drupal/site.sqlite</code> has a producer, <code>scripts/drupal/install-site-db.php</code> (<code>bun run build:site-db</code>, <code>docs/architecture/database.md</code>), and is 5,832,704 bytes. The rig in Verifying the Tree below is
 nine services, not seven: GreenMail, Postgres, MySQL, Redis, syslog, Gitea, Forgejo, Keycloak and
 GitLab CE (<code>docker/compose.yml</code>).</p>
 <hr>
@@ -6600,7 +6609,7 @@ because the refusal answered 503 before a render could report anything.</p>
 boundary as arbitrary JSON whose shape depends on which fragment ran, several call sites ADD
 fields to one after the fact (<code>out.continuation</code>, <code>result.prefilled</code>), and <code>unknown</code> would turn
 roughly forty guarded reads into casts without making one of them safer.</p>
-<h3 id="srcdrupalargon2-fixts"><code>src/drupal/argon2-fix.ts</code></h3>
+<h3 id="srcsiteshimsargon2-fixts"><code>src/site/shims/argon2-fix.ts</code></h3>
 <h4 id="module-overview-and-argon2_bridge">Module overview and <code>ARGON2_BRIDGE</code></h4>
 <p>argon2id password hashing, computed on the HOST side.</p>
 <h5 id="the-blocker-that-was-recorded-and-the-one-that-is-real">The blocker that was recorded, and the one that is real</h5>
@@ -6663,7 +6672,7 @@ Drupal&#39;s <code>password</code> service is the seam instead.</p>
 <p>The encoded form is PHP&#39;s own, <code>$argon2id$v=19$m=..,t=..,p=..$salt$tag</code> with unpadded base64, so a
 hash written here verifies on any ordinary PHP with ext-argon2 and a site can migrate off this
 platform without every password becoming unverifiable.</p>
-<h3 id="srcdrupaliconv-fixts"><code>src/drupal/iconv-fix.ts</code></h3>
+<h3 id="srcsiteshimsiconv-fixts"><code>src/site/shims/iconv-fix.ts</code></h3>
 <h4 id="iconv_strrpos"><code>ICONV_STRRPOS</code></h4>
 <p>Corrects <code>iconv_strrpos()</code> in symfony/polyfill-iconv, which returns the wrong index whenever the
 last match sits at the start of the string.</p>
@@ -6682,7 +6691,7 @@ correct, which is what makes this a slip rather than a policy. Present on upstre
 <code>iconv_strrpos()</code>, so all four are wrong at index 0. No Drupal core path calls them -- the only
 non-test caller in the tree is <code>symfony/string</code>&#39;s <code>CodePointString::indexOfLast()</code>, which core does
 not reach -- so this is a correctness fix for contrib rather than a live defect.</p>
-<h3 id="srcdrupalmb-fixts"><code>src/drupal/mb-fix.ts</code></h3>
+<h3 id="srcsiteshimsmb-fixts"><code>src/site/shims/mb-fix.ts</code></h3>
 <h4 id="mb_sanitize"><code>MB_SANITIZE</code></h4>
 <p>The bug. Without the mbstring extension, Symfony&#39;s polyfill provides mb_*. Its mb_substr() is
 <code>return (string) iconv_substr(...)</code>, its mb_strlen() is <code>if (false !== $len = @iconv_strlen(...))</code>,
@@ -6719,7 +6728,7 @@ word-final capital sigma must give U+03C2, and the polyfill&#39;s flat table giv
 title produces a different search key, sort order and URL alias in wasm than on a normal host. The
 rule is contextual rather than per-codepoint, which is why a table cannot express it: sigma is final
 when a letter precedes it and none follows.</p>
-<h3 id="srcdrupalopenssl-fixts"><code>src/drupal/openssl-fix.ts</code></h3>
+<h3 id="srcsiteshimsopenssl-fixts"><code>src/site/shims/openssl-fix.ts</code></h3>
 <h4 id="module-overview-and-sign_bridge">Module overview and <code>SIGN_BRIDGE</code></h4>
 <p><code>openssl_sign()</code> and <code>openssl_verify()</code> over <code>node:crypto</code>, synchronously.</p>
 <p>The premise this was scoped under was wrong. It read &quot;crypto.subtle covers RS256/ES256 but is
@@ -6743,6 +6752,11 @@ real sites needs them: <code>openssl_encrypt</code>/<code>openssl_decrypt</code>
 defuse/php-encryption and xmlseclibs, <code>openssl_pkey_get_details</code> for league/oauth2-server and
 lcobucci/jwt, <code>openssl_x509_*</code> for php-saml, OAEP <code>openssl_public_encrypt</code> for XML encryption, and
 <code>openssl_pkey_derive</code> (ECDH) for web push. Each is one synchronous <code>node:crypto</code> call.</p>
+<p>Two values had to match PHP and did not. <code>workerd</code>&#39;s OAEP digest defaults to SHA-256, while ext-openssl
+is SHA-1, so OAEP pins <code>oaepHash: &#39;sha1&#39;</code> in both directions. The <code>OPENSSL_ALGO_*</code> numbers were shifted
+(SHA-256 is 7, not 6), and <code>openssl_sign()</code> and <code>openssl_verify()</code> default to SHA-1. The SAML path
+(<code>tests/e2e/saml.spec.ts</code>) runs signing and encryption against Keycloak; the differential spec
+<code>tests/node/openssl-conformance.spec.ts</code> checks the same primitives against native PHP.</p>
 <p>What is still not here. <code>openssl_csr_new</code> and the PKCS#7/CMS family. <code>node:crypto</code> has no
 certificate-request primitive at all, so that one is absent rather than unimplemented, and it stays
 refused with the reason named. <code>openssl_x509_checkpurpose</code> needs a trust store and purpose table this
@@ -6828,74 +6842,107 @@ here, <code>Request::create()</code> fills in its own default of
 <code>Drupal.AjaxError</code> fired on every one. Measured on Add field, where picking a field type is an
 AJAX POST: the admin got &quot;Oops, something went wrong&quot; and no field could be created.
 A browser asking for JSON sends <code>application/json, text/javascript</code>, which does not match.</p>
-<h3 id="srcdrupalsodium-fixts"><code>src/drupal/sodium-fix.ts</code></h3>
-<h4 id="module-overview-3">Module overview</h4>
-<p>Replaces the <code>sodium_crypto_generichash*</code> family, which no build here can provide.</p>
-<p>BLAKE2b IS ABSENT FROM EVERY LAYER, MEASURED RATHER THAN ASSUMED. The shipping binary
-loads 25 extensions and <code>sodium</code> is not one of them, so <code>sodium_crypto_generichash()</code> is an
-undefined function. <code>ext-hash</code> IS loaded and offers 62 algorithms with no <code>blake*</code> among them --
-and that is a property of PHP rather than of this build, since native 8.5.7 with the full
-extension reports the same 0. workerd has none either: <code>node:crypto</code> answers &quot;Digest method not
-supported&quot; for <code>blake2b512</code> and <code>crypto.subtle</code> answers &quot;Unrecognized or unimplemented digest
-algorithm&quot;. So there is nothing to fall back to and the digest has to be computed in JavaScript.</p>
-<p>WHY IT BLOCKS AN INSTALL RATHER THAN A FEATURE. A content-addressed store writes the digest into
-every frame header, so it IS the address: substituting sha256 is a different store rather than a
-downgrade, and a module of that shape does not install at all without this.</p>
-<p><code>blakejs</code> is 12 KB of pure JavaScript with no dependencies, and synchronous -- the constraint
-<code>zlib-fix</code> names applies unchanged: the shipping build sets <code>ASYNCIFY=0</code>, so a host function
-that returned a Promise would hand PHP an object it can only stringify.</p>
-<p>THE AEAD IS THE OTHER HALF AND IT IS HERE TOO, over a different library for a reason. It is a
-CIPHER rather than a digest, so it shares no mechanism with the above: <code>crypto.subtle</code> offers
-AES-GCM and no XChaCha20-Poly1305, and the extended 24-byte nonce is what such a store picks
-the construction for. <code>@noble/ciphers</code> is the library <code>edgeport</code> assembles SSH&#39;s
-chacha20-poly1305 from, and it is synchronous.</p>
-<p><code>extension_loaded(&#39;sodium&#39;)</code> stays FALSE either way, because the rest of the extension is not
-here and a stub extension entry is the shape that took the isolate down at exit 139.</p>
-<p>The Module key the PHP half resolves through <code>vrzno_env()</code>.</p>
-<h4 id="aeadhostcall"><code>aeadHostCall()</code></h4>
-<p>One AEAD operation.</p>
-<p>THE TWO FAILURE MODES ARE KEPT APART AND THAT IS THE WHOLE CONTRACT. ext-sodium&#39;s <code>_decrypt()</code>
-returns FALSE when the tag does not verify and THROWS <code>SodiumException</code> when an argument is the
-wrong size, and a caller reads the difference: a FALSE means the frame failed authentication and
-should be swept, while a throw is a programming error. Collapsing them would make
-a mis-sized key look like a tampered frame and sweep a healthy store.</p>
-<h4 id="max_open_states"><code>MAX_OPEN_STATES</code></h4>
-<p>How many incremental digests may be open at once.</p>
-<p>A state that is never finalised leaks its context for the life of the object, and a Durable
-Object outlives many requests. It refuses past the cap rather than evicting the oldest: an
-evicted context would make a later <code>final()</code> answer a digest computed over part of the message,
-and a wrong content address is worse than a failed one.</p>
-<h4 id="blake2bhostcall"><code>blake2bHostCall()</code></h4>
-<p>One BLAKE2b operation, decoded.</p>
-<p>Four ops rather than one, because <code>Hash::ofStream()</code> digests a 256 MiB object a megabyte at a
-time and must never hold the whole thing: <code>hash</code> is the one-shot, and <code>init</code>/<code>update</code>/<code>final</code>
-are the streaming form. The context stays here behind an integer handle for the reason
-<code>CurlShim</code> keeps a handle at all -- there is nothing for PHP to hold. Unlike CurlShim&#39;s array,
-this one cannot usefully be a PHP value: a BLAKE2b context is eight 64-bit words plus a 128-byte
-buffer, and crossing it through the codec on every 1 MiB chunk would encode and decode ~192 bytes
-of state per chunk to gain nothing PHP can read.</p>
-<p>A failure is a reply rather than a throw; the PHP half turns it into the <code>SodiumException</code>
-ext-sodium raises.</p>
-<h5 id="inside-blake2bhostcall-the-final-length-comment">inside blake2bHostCall(), the final-length comment</h5>
-<p>libsodium fixes the digest length in the parameter block at init, so a different
-length here cannot produce that digest. ext-sodium answers 64 bytes anyway -- measured
-on 8.5.7, final($state, 64) on a state inited at 32 returns the 32-byte digest
-followed by 32 bytes of adjacent memory -- so this REFUSES where native leaks</p>
-<h4 id="sodium_fix"><code>SODIUM_FIX</code></h4>
-<p>The PHP half: the four functions, the six constants and <code>SodiumException</code>.</p>
-<p>Which functions: the <code>sodium_*</code> surface a content-addressed store reaches for. Six calls
-to <code>sodium_crypto_generichash()</code> and one each to <code>_init</code>, <code>_update</code> and <code>_final</code> -- so the
-one-shot and the streaming form are both reached, and <code>Hash::ofFile()</code> reaches the streaming one
-on every captured file.</p>
-<p><code>extension_loaded(&#39;sodium&#39;)</code> STAYS FALSE. It is the guard this fragment is itself
-written under, and a stub extension entry is the exact shape that took the isolate down at exit
-139 when it was tried for mbstring. A caller testing for the extension gets an honest no; a
-caller calling the function gets a digest.</p>
-<p>NO <code>eval()</code>, following <code>zlib-fix</code> and <code>curl-fix</code>: a conditional declaration colliding with an
-internal function is deferred to runtime, so this compiles clean on a build that HAS ext-sodium
-and the branch never runs. That is what lets <code>tests/node/php-fragments.spec.ts</code> run <code>php -l</code> over
-the body rather than over a string literal.</p>
-<h3 id="srcdrupalzlib-fixts"><code>src/drupal/zlib-fix.ts</code></h3>
+<h3 id="srcsiteshimssodium-fixts-sodium-libts-extension-tablets"><code>src/site/shims/sodium-fix.ts</code>, <code>sodium-lib.ts</code>, <code>extension-table.ts</code></h3>
+<h4 id="the-rule-for-extension_loaded">The rule for <code>extension_loaded()</code></h4>
+<p><code>extension_loaded(x)</code> may answer true when a shim covers the entire API of extension x and the
+covering is held by a gate. Partial shims stay false: <code>gd</code>, <code>curl</code>, <code>openssl</code>, <code>exif</code>, <code>fileinfo</code>,
+<code>zip</code> and <code>xmlwriter</code> are not in the table. A stub extension entry in the engine is not used; one
+crashed the isolate (exit 139) when tried for mbstring.</p>
+<p>The mechanism is <code>disable_functions</code>, which removes <code>extension_loaded</code>, <code>get_loaded_extensions</code> and
+<code>get_extension_funcs</code> at boot. <code>EXTENSIONS_FIX</code> runs before every other fragment and rebinds them in
+userland. A name in <code>EXTENSION_TABLE</code> answers true; any other name asks <code>ReflectionExtension</code>, so a
+real extension still answers natively. <code>get_loaded_extensions()</code> cannot enumerate once the built-in
+is gone, so it filters a catalog of names (the 27 the binary reports, measured 2026-11-02, plus
+common candidates).</p>
+<h4 id="the-gate">The gate</h4>
+<p><code>tests/node/sodium-conformance.spec.ts</code> runs the shim and native PHP 8.5.7 (libsodium 1.0.22) over
+the same cases: 7,253 generated and flow cases, 2,969 random-input cases, and the produce-on-one-side,
+consume-on-the-other crosses (10,180 in the run). Every one of the 110 functions agrees on return
+value, exception class and exception message, including TypeError text, &quot;must be ... bytes long&quot;
+messages and php-src&#39;s own quirks. Each of the 102 constants and <code>SodiumException</code> is checked too.
+<code>bun run gen:sodium-manifest</code> writes the passing names to <code>generated/sodium-manifest.ts</code>; the table
+is computed from it, so deleting any one name turns <code>extension_loaded(&#39;sodium&#39;)</code> false (tested for
+all 110 functions, one constant and the class). The inventory is <code>generated/sodium-api.ts</code>, dumped
+from native PHP by <code>bun run gen:sodium-api</code>.</p>
+<h4 id="backing-sources">Backing sources</h4>
+<p>Synchronous only: the build has no Asyncify and <code>crypto.subtle</code> is Promise-based, so it would cost
+one Zend park per call. <code>@noble/ciphers</code> backs xsalsa20, secretbox, chacha20 (original and IETF),
+xchacha20, AES-256-GCM and Poly1305. <code>@noble/hashes</code> backs sha512, hmac, blake2b (kdf, kx, seal
+nonces), argon2i/id and scrypt. <code>blakejs</code> backs generichash. <code>@noble/curves</code> 2.4.0 backs Ed25519,
+X25519 and ristretto255 (<code>sodium-curve.ts</code>); only the 256-bit wrap in the ed25519 scalar add and
+subtract stays BigInt, over public values. Written here because no installed library has them:
+SipHash-2-4 and AEGIS-128L/256 (<code>sodium-aegis.ts</code>), and no constant-time claim is made for either.
+Randomness is <code>crypto.getRandomValues</code>.</p>
+<h4 id="known-differences">Known differences</h4>
+<ul>
+<li><code>ReflectionExtension(&#39;sodium&#39;)</code> throws and <code>phpinfo()</code> does not list it.</li>
+<li>A generichash state is 384 bytes like native but carries the BLAKE2b context in its own layout,
+so a state is not interchangeable with native&#39;s. Secretstream states are byte-identical.</li>
+<li>Password hashing refuses memory above 64 MiB and work above 4 passes over 64 MiB (scrypt: N<em>r</em>p
+above 2^21) with &quot;internal error&quot;, the message libsodium gives for a failed allocation.
+<code>crypto_pwhash_str_verify</code> returns false past the cap. This is the one exception to the stand-in
+covering the whole API. The cap follows the Thunder budget, about 20 MiB spare on a large site, so
+<code>SODIUM_CRYPTO_PWHASH_MEMLIMIT_MODERATE</code> (256 MiB), <code>MEMLIMIT_SENSITIVE</code> (1 GiB) and the
+moderate and sensitive <code>OPSLIMIT</code> values are refused. The measured constants are in
+<code>sodium-lib.ts</code> at lines 58 to 71.</li>
+<li>XChaCha20 counters at or above 2^32 use a local ChaCha block function, because noble stops at 32 bits.</li>
+<li><code>crypto_aead_aes256gcm_is_available()</code> is always true; native depends on the CPU.</li>
+<li>Ed25519, X25519 and ristretto255 are noble&#39;s. AEGIS and SipHash are written here, and no
+constant-time claim is made for them or for the JavaScript AES in <code>@noble/ciphers</code>.</li>
+</ul>
+<h4 id="costs">Costs</h4>
+<p>Measured 2026-11-02. Minified bundle for the sodium module: 34.7 KB before the stand-in, 105.1 KB
+with BigInt curves and 135.0 KB over <code>@noble/curves</code> (the inventory table is part of it); the
+main worker&#39;s <code>wrangler deploy --dry-run</code> moved from 17,683.55 KiB to 17,714.98 KiB (gzip 5,699.31
+to 5,711.14). Import heap in node with <code>--expose-gc</code>, five fresh processes per arm: 203,800 to
+204,128 bytes for the BigInt curves, 854,696 to 855,368 for noble (+0.62 MiB), 3,280 below to
+13,656 above zero for a control with no import. Noble&#39;s <code>ed25519.js</code> alone is about 768 KB, from an
+eager <code>Point.BASE.precompute(6)</code> at module evaluation. A deferred load is not possible: wrangler
+bundles one file, the PHP bridge is synchronous and cannot await <code>import()</code>, and
+<code>extension_loaded(&#39;sodium&#39;)</code> is true for every run, so any run can reach any <code>sodium_*</code> function.
+Measured on the platform, two deploys of the same probe worker at 64 MiB linear memory with the stock pack,
+per-isolate <code>max memoryUsageBytes</code> once a booted interpreter was idle: 101.1 MiB without the sodium module
+(two steady rows) and 102.1 and 102.3 with it, so +1.0 to +1.2 MiB, n=2 steady rows per arm and one deploy
+per arm; boot-minute rows read 121 to 139 MiB in both. The PHP fragment is 54 KB; running a renamed copy on a booted
+interpreter moved neither <code>linear</code> (89,653,248) nor <code>total</code> isolate bytes at page granularity.
+<code>extension_loaded</code> calls: 12 at boot, 1 on an anonymous <code>/</code> render, 1 on a cold <code>/user/login</code>, 0 on
+a warm one; the authenticated render is not traced. Native PHP: built-in 19 ns, userland cached
+54 ns, first miss 346 ns (relative only; the wasm clock is frozen). Boot <code>cpuTime</code> is not measured; the
+platform delta above is one pair of deploys, so repeat it with more isolates before quoting it as a spread.</p>
+<h3 id="srcsiteshimsbrotli-fixts-zstd-fixts"><code>src/site/shims/brotli-fix.ts</code>, <code>zstd-fix.ts</code></h3>
+<p>Strata gates its codecs on <code>function_exists(&#39;zstd_compress&#39;)</code> and <code>function_exists(&#39;brotli_compress&#39;)</code>,
+and neither extension is loaded here. Both host halves sit over <code>node:zlib</code>, which workerd provides
+synchronously with <code>brotliCompressSync</code>, <code>brotliDecompressSync</code>, <code>zstdCompressSync</code> and
+<code>zstdDecompressSync</code>, so no dependency was added. The PHP fragments define <code>brotli_compress</code>,
+<code>brotli_uncompress</code>, <code>zstd_compress</code>, <code>zstd_uncompress</code>, <code>zstd_decompress</code>, <code>zstd_compress_dict</code>,
+<code>zstd_uncompress_dict</code> and the constants; names and signatures were read by reflection from native PHP
+8.5.7 with ext-brotli 0.21.0 and ext-zstd 0.18.0.</p>
+<p><code>extension_loaded(&#39;brotli&#39;)</code> and <code>extension_loaded(&#39;zstd&#39;)</code> stay false, because the streaming API and
+the extension&#39;s classes are not shimmed (the rule in the sodium section). <code>function_exists</code> is true.</p>
+<p>Measured 2026-11-02. A host differential against the <code>brotli</code> 1.2.1 and <code>zstd</code> 1.5.7 command line tools
+passes 30 cases, and the PHP half agrees with the native extensions with no mismatch. The main
+worker&#39;s dry-run upload grew 9.68 KiB (17,715.32 to 17,725.00). In a strata clone,
+<code>strata.engine-&gt;codecs()-&gt;available()</code> lists both, and a 310 KB, 19-frame corpus of plaintext
+configuration entities measured: zstd level 1 4.52, zstd 19 5.24, brotli 4 4.92, brotli 11 5.88 and
+gzip 9 4.99, every frame round-tripping. Strata seals encrypted frames, so these ratios are not the
+ratios on sealed bytes.</p>
+<p>Known differences: <code>node:zlib</code> takes no brotli dictionary, so the shim refuses one. Native ext-brotli
+0.21.0 does take one (the fourth argument of <code>brotli_compress</code>, the second of <code>brotli_uncompress</code>), so
+this is a gap against native, and a strata brotli write with a dictionary fails here. Strata prefers
+zstd, so it is reached only when brotli is pinned.</p>
+<p>workerd&#39;s <code>node:zlib</code> zstd refuses incompressible input above 4 KiB with &quot;Unexpected end of file&quot;, and
+Node 24 does not, which is why the node tests passed first. Measured in workerd: random input of 4,096
+and 16,384 bytes compresses, 65,536 and up is refused, text up to 2 MiB compresses, and neither
+<code>chunkSize</code> nor level 19 helps. Strata&#39;s seal then failed with &quot;zstd compression failed&quot; on a
+463,035-byte call at level 3. On a refusal <code>zstd-fix.ts</code> now emits a stored frame (a single-segment
+zstd frame of raw blocks, RFC 8878, no entropy coding), which native <code>zstd</code> and workerd both read. The
+native matrix (levels 0, -5, 1, 3, 19 and 22, empty input and dictionary calls, same PHP script on the
+shim and on ext-zstd 0.18.0) matches, and level 23 is refused by both. Brotli has no such refusal in
+workerd: random input at 0, 1, 4,096, 16,384, 65,536 bytes, 1 MiB and 4 MiB at qualities 0, 4 and 11 (11 up to
+64 KiB), text at 2 MiB, empty input, modes 0 to 2 and window bits 10, 16, 22 and 24 all round-trip, and
+the native CLI and ext-brotli decode every frame. The gzip path (fflate) round-trips 4 MiB of random
+input too. Not verified: a deployed run.</p>
+<h3 id="srcsiteshimszlib-fixts"><code>src/site/shims/zlib-fix.ts</code></h3>
 <h4 id="dictionary_ops"><code>DICTIONARY_OPS</code></h4>
 <p>The two ops a preset dictionary may be used with, and it is TWO rather than six.</p>
 <p>MEASURED, and the measurement chose the implementation. <code>node:zlib</code> honours <code>{ dictionary }</code>
@@ -6933,7 +6980,7 @@ function, and none of the three runs while a page is being served.</p>
 not something ext-zlib provides at any version, so a capability declared under that guard would have
 been a function nothing could ever reach.</p>
 <h3 id="srcopsadmin-sessionts"><code>src/ops/admin-session.ts</code></h3>
-<h4 id="module-overview-4">Module overview</h4>
+<h4 id="module-overview-3">Module overview</h4>
 <p>The browser&#39;s way of presenting the owner token.</p>
 <p>A page cannot set an <code>Authorization</code> header on its own navigation, so the admin surface had two
 states and both were wrong: behind <code>PW_DIAGNOSTICS</code> it was reachable by anybody who could reach
@@ -6961,7 +7008,7 @@ this exists to protect -- the same self-defeating shape as the daily counters th
 they counted. An isolate-local bound does not stop a distributed attacker and is not meant to; it
 removes the amplification, which is the part that was free.</p>
 <h3 id="srcopsaggregatests"><code>src/ops/aggregates.ts</code></h3>
-<h4 id="module-overview-5">Module overview</h4>
+<h4 id="module-overview-4">Module overview</h4>
 <h5 id="why-the-page-rather-than-the-library-list">Why the page rather than the library list</h5>
 <p>The obvious input is the render array&#39;s <code>#attached[library]</code>, and by the time a RESPONSE exists it
 is gone -- so the host cannot ask which libraries a page used. The page itself names every file,
@@ -6972,7 +7019,7 @@ declaration order. Anything else leaves that library&#39;s tags alone. That is w
 mode &quot;fewer libraries aggregated&quot; rather than &quot;a page missing rules&quot;: a partial replacement is
 exactly the broken-CSS page the last attempt at this shipped, and it looked faster.</p>
 <h3 id="srcopsaits"><code>src/ops/ai.ts</code></h3>
-<h4 id="module-overview-6">Module overview</h4>
+<h4 id="module-overview-5">Module overview</h4>
 <p>Workers AI as a QUEUED tier, over the same queue the HTTP and TCP tiers already use.</p>
 <p>An inference call has the same shape every outbound call here has: PHP names the whole operation,
 the host runs it between invocations, and the answer is read on a later one. <code>drupal/ai</code>&#39;s
@@ -6998,7 +7045,7 @@ ship before any account has enabled Workers AI.</p>
 500 tokens each is 538 neurons, about 5% of a day. A <code>llama-3.3-70b</code> completion is 129 neurons, so the
 same allocation buys 77 of them.</p>
 <h3 id="srcopsauth-budgetts"><code>src/ops/auth-budget.ts</code></h3>
-<h4 id="module-overview-7">Module overview</h4>
+<h4 id="module-overview-6">Module overview</h4>
 <p>A bounded daily allowance for AUTHENTICATED traffic, and a degrade ladder for past it.</p>
 <p>MEASURED WITH <code>bun scripts/measure/free-envelope.ts --visits=3000000 --dynamic=0.01</code>, and every
 number below is from that run rather than from arithmetic done here:</p>
@@ -7148,7 +7195,7 @@ entirely its own escaping</p>
 <span class="line"><span> * RUNTIME declares cron to PHP, which it does not, while this flag means "the alarm exists and drives</span></span>
 <span class="line"><span> * Drupal's cron", which it does. Two different questions with two different answers; collapsing them</span></span>
 <span class="line"><span> * would refuse every cron module on a site where cron demonstrably runs.</span></span></code></pre><h3 id="srcopscf-oauthts"><code>src/ops/cf-oauth.ts</code></h3>
-<h4 id="module-overview-8">Module overview</h4>
+<h4 id="module-overview-7">Module overview</h4>
 <p>Attached to: the module overview (<code>@module</code>).</p>
 <p>Cloudflare OAuth 2.0, so an operator can grant drupflare access without pasting a long-lived token.</p>
 <p>Self-managed OAuth clients shipped 2026-06-03. Before that the only option was an API token, which
@@ -7186,7 +7233,7 @@ have to paste an account id alongside, and the two email scopes are what
 human sees the setup page, so a token that could rewrite the Worker buys nothing and would make a
 stolen token a remote-code-execution rather than a mail problem.</p>
 <h3 id="srcopscore-versionts"><code>src/ops/core-version.ts</code></h3>
-<h4 id="module-overview-9">Module overview</h4>
+<h4 id="module-overview-8">Module overview</h4>
 <p>Invalidates the cache rows that embed the Drupal core version, when that version changes.</p>
 <p>Two rows in the shipped database hard-code the core version as the <code>?v=</code> cache-buster on every asset
 URL, and both are permanent (<code>expire = -1</code>), so nothing evicts them:</p>
@@ -7227,7 +7274,7 @@ correctly on the next request, which is what its cache API is for.</p>
 treating that as a change would make every site rebuild its library cache once on the deploy that
 introduced this. The first read records the shipped version and invalidates nothing.</p>
 <h3 id="srcopscrossingsts"><code>src/ops/crossings.ts</code></h3>
-<h4 id="module-overview-10">Module overview</h4>
+<h4 id="module-overview-9">Module overview</h4>
 <p>WHY IT EXISTS: the docs say an RPC method call on a Durable Object stub is its own RPC session
 and is BILLED AS A DO REQUEST. This project reaches the object through <code>stub.fetch()</code>, so one
 request is one billed request today -- but the PHP-to-host bridge INSIDE the object is a
@@ -7325,7 +7372,7 @@ the alarm drains (impossible, the run is synchronous), (3) re-submit once automa
 The token survives the round trip because the SAME token is re-posted; a shim that minted a new token
 on re-submit would miss the cache every time and loop forever.</p>
 <h3 id="srcopsfanoutts"><code>src/ops/fanout.ts</code></h3>
-<h4 id="module-overview-11">Module overview</h4>
+<h4 id="module-overview-10">Module overview</h4>
 <p>How a content change is scheduled, from how many pages it invalidated.</p>
 <p>Once the dependency closure of a write is known, the expensive work can happen DURING the editorial
 operation rather than on the next visitor. For a CMS that is the right place to spend CPU: the write
@@ -7361,7 +7408,7 @@ branch degraded every invalidated page to a cold render or a <code>503 warming</
 more than FANOUT_MEDIUM pages. With no stale tier the honest answer is one tier down: queue them and
 let the ordinary alarm chain drain them.</p>
 <h3 id="srcopsfragment-indexts"><code>src/ops/fragment-index.ts</code></h3>
-<h4 id="module-overview-12">Module overview</h4>
+<h4 id="module-overview-11">Module overview</h4>
 <p>Which fragment a cache tag reaches, and whether a fragment has changed at all.</p>
 <p>The <code>tag -&gt; paths</code> index answers &quot;which stored pages does this save invalidate&quot;. One level down
 sits the question it cannot: most of a page is unchanged by most saves, and on an authenticated
@@ -7414,7 +7461,7 @@ the page row at fill time and compared at serve time, it replaces a WRITE per af
 a READ per served page -- and the free plan allows 5,000,000 rows read a day against 100,000
 written.</p>
 <h3 id="srcopsimage-transformts"><code>src/ops/image-transform.ts</code></h3>
-<h4 id="module-overview-13">Module overview</h4>
+<h4 id="module-overview-12">Module overview</h4>
 <p>Image derivatives, produced in the front worker rather than bought from a delivery product.</p>
 <h5 id="why-the-toolkit-exists-at-all">Why the toolkit exists at all</h5>
 <p>gd is not compiled in: it measured 684,821 bytes against a 3 MB gzipped bundle ceiling. So a
@@ -7463,7 +7510,7 @@ from the module itself (<code>TinyImgModule.features</code>), so the answer cann
 from <code>image-runtime.ts</code>, which is the only file that holds the module.</p>
 <p>@param features - what the loaded engine reports it can encode; the pre-1.1 set when omitted.</p>
 <h3 id="srcopsmail-onboardts"><code>src/ops/mail-onboard.ts</code></h3>
-<h4 id="module-overview-14">Module overview</h4>
+<h4 id="module-overview-13">Module overview</h4>
 <p>Onboards a sending domain, which is the whole gap between &quot;mail refuses&quot; and &quot;mail works&quot;.</p>
 <p><code>src/ops/mail.ts</code> picks a transport; every transport then fails the same way if the domain was
 never onboarded with Cloudflare. That is a DNS and account-state problem rather than a code one,
@@ -7534,7 +7581,7 @@ is not. Twelve rows here are in the second class -- see {@link SHIPPING_PACK_CON
 FILES, so a <code>verified</code> row needed a run behind it and the published table needed nothing. Three
 rows were edited by hand on the strength of the guard described here. The comparison exists now.</p>
 <h3 id="srcopspackage-installts"><code>src/ops/package-install.ts</code></h3>
-<h4 id="module-overview-15">Module overview</h4>
+<h4 id="module-overview-14">Module overview</h4>
 <p>Resolving a package name to source, and turning that source into files the mount can serve.</p>
 <h5 id="one-pipeline-three-callers">One pipeline, three callers</h5>
 <p><code>composer require</code>, a git-delivered custom module and <code>npm install</code> all want the same
@@ -7597,7 +7644,7 @@ opcache&#39;s optimizer carries a <code>func_info</code> table naming functions 
 <code>ext-mbstring</code> was listed while <code>mb-fix.ts</code> existed because the build had no mbstring; it moved
 here on 2026-09-08 when the long64 build carried the real extension (<code>--enable-mbstring --disable-mbregex</code>; <code>mb_ereg*</code> still absent, needs oniguruma, core calls none of it).</p>
 <h3 id="srcopspage-memots"><code>src/ops/page-memo.ts</code></h3>
-<h4 id="module-overview-16">Module overview</h4>
+<h4 id="module-overview-15">Module overview</h4>
 <p>Anonymous pages held in the isolate that is already answering the request.</p>
 <h5 id="why-this-tier-exists">Why this tier exists</h5>
 <p><code>anon-cached</code> is 0.82 of the traffic weight and is answered by <code>caches.default</code>, which is the cheapest
@@ -7645,7 +7692,7 @@ and the caller must not be able to mutate what the memo holds (it is handed a cl
 <span class="line"><span> * handler a yield point, and that handler is plain userland, which is what makes the park safe</span></span>
 <span class="line"><span> * there.</span></span>
 <span class="line"><span> */</span></span></code></pre><h3 id="srcopsplan-profilets"><code>src/ops/plan-profile.ts</code></h3>
-<h4 id="module-overview-17">Module overview</h4>
+<h4 id="module-overview-16">Module overview</h4>
 <p>Before this, <code>PLAN=paid</code> reached exactly two decisions -- the migration slicer
 (<code>chunksPerInvocation</code>) and the prefill default -- while five others were flat constants chosen
 for a 10 ms cap. So a paid site paid for headroom and then behaved like a free one: batches of
@@ -7756,7 +7803,7 @@ topology where a fill does not occupy the serving object has a measured reason t
 reads instead of one per lever, and gives an operator one place to see every override in
 force. Counted nowhere in prose: this docblock said seven while the list held eighteen.</p>
 <h3 id="srcopsplatform-limitsts"><code>src/ops/platform-limits.ts</code></h3>
-<h4 id="module-overview-18">Module overview</h4>
+<h4 id="module-overview-17">Module overview</h4>
 <p>Dynamic Worker concurrency is not among these, and the reason is worth keeping. Cloudflare
 raised the number of distinct Dynamic Workers one Durable Object may run concurrently, which would
 matter to a design that loaded code per request. This one has no worker-loader binding and no
@@ -7860,12 +7907,12 @@ other -- opaque, and every form page carrying a view has that shape.</p>
 <pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span> * `sql.exec()` runs every statement in the string it is handed, and every classifier below reads the</span></span>
 <span class="line"><span> * LEADING keyword -- so a compound describes only its first statement. `SELECT 1; DELETE FROM users`</span></span>
 <span class="line"><span> * is a proven read and `INSERT INTO cache_render (...); DELETE FROM users` attributes to a</span></span>
-<span class="line"><span> * replica-local table, and both then mutate authoritative state on a lane.</span></span></code></pre><h4 id="module-overview-19">Module overview</h4>
+<span class="line"><span> * replica-local table, and both then mutate authoritative state on a lane.</span></span></code></pre><h4 id="module-overview-18">Module overview</h4>
 <pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span> * The bridge surface is the reason this cannot enumerate: `CROSSING_NAMES` in `crossings.ts` is a</span></span>
 <span class="line"><span> * hand-maintained list whose own docblock says a new capability should show up rather than be</span></span>
 <span class="line"><span> * "counted by accident", and TWO have been added since without joining it -- `cfwOidcClaims`, which</span></span>
 <span class="line"><span> * deletes a durable ticket, and `cfwTcp`, which queues an outbound exchange. Both mutate.</span></span></code></pre><h3 id="srcopsreplication-logts"><code>src/ops/replication-log.ts</code></h3>
-<h4 id="module-overview-20">Module overview</h4>
+<h4 id="module-overview-19">Module overview</h4>
 <p>How authoritative state reaches a replica, and why an interrupted delivery cannot be mistaken for
 a complete one.</p>
 <p>THE INVARIANT IS THAT A REPLICA IS FULLY VALID AT G OR KNOWN TO BE BELOW G, NEVER IN BETWEEN. A
@@ -7947,7 +7994,7 @@ replica able to receive only the writes it could have made itself.</p>
   interruption roll back cleanly. Pass a smaller number only when a record is too large to apply in
   one invocation, and accept that an interruption then costs a restore.</p>
 <h3 id="srcopsshell-assemblyts"><code>src/ops/shell-assembly.ts</code></h3>
-<h4 id="module-overview-21">Module overview</h4>
+<h4 id="module-overview-20">Module overview</h4>
 <p>Fragment assembly: an anonymous shell from cache, personalised holes filled at the edge.</p>
 <p>Authenticated HTML is never cached and must not be. What CAN be cached is the part of the page
 that is identical for everyone, with the per-user parts left as holes -- which is exactly the
@@ -7990,7 +8037,7 @@ was being locked out by the more expensive one.</p>
 yields nothing rather than a guess: a partial role set would compile a plan for the wrong
 audience, which is strictly worse than compiling none.</p>
 <h3 id="srcopssite-idts"><code>src/ops/site-id.ts</code></h3>
-<h4 id="module-overview-22">Module overview</h4>
+<h4 id="module-overview-21">Module overview</h4>
 <p>Which site a request belongs to, when the caller did not say.</p>
 <p><code>/serve?site=X</code> names the site explicitly and always wins. Everything else -- a visitor asking for
 <code>/about</code> on a real domain -- has to be resolved, and this is the only place that decides it. One
@@ -8057,7 +8104,7 @@ measurement deploy in this repo sets <code>PW_DIAGNOSTICS=1</code> and calls <co
 <p>A THROWN READ IS NOT MEMOISED. A KV blip must cost the next request a retry rather than pin
 derivation for a minute.</p>
 <h3 id="srcopssite-origints"><code>src/ops/site-origin.ts</code></h3>
-<h4 id="module-overview-23">Module overview</h4>
+<h4 id="module-overview-22">Module overview</h4>
 <p>The origin Drupal renders against, and why it is not simply the <code>Host</code> header.</p>
 <p>Every absolute URL Drupal emits -- the canonical tag, a form action, a <code>Location:</code>, the link in a
 password-reset mail -- is built from the request&#39;s scheme and host. The render fragments hardcoded
@@ -8092,7 +8139,7 @@ which a browser refuses from any other host -- so a login on an alias never held
 NAME stays the canonical one, which is what the next render looks for, so one session works on every
 alias. The body is rewritten as a stream, so a BigPipe response still arrives progressively.</p>
 <h3 id="srcopssite-secretsts"><code>src/ops/site-secrets.ts</code></h3>
-<h4 id="module-overview-24">Module overview</h4>
+<h4 id="module-overview-23">Module overview</h4>
 <p>Per-site secrets, minted in the Durable Object and never in the shipped payload.</p>
 <p>Workers assets are served PUBLICLY, and <code>.assetsignore</code> un-ignores the packs, so anything
 secret that ships in <code>assets/</code> is fetchable at a guessable URL by anyone -- and identical on
@@ -8138,7 +8185,7 @@ supported way to leave was to expose a remote shell to the internet first. Expor
 operation, not a diagnostic, and it needs a credential rather than a mode.</p>
 <p>Same mint and same storage as {@link ensureHashSalt}: per site, persisted, never in the payload.</p>
 <h3 id="srcopsstate-fingerprintts"><code>src/ops/state-fingerprint.ts</code></h3>
-<h4 id="module-overview-25">Module overview</h4>
+<h4 id="module-overview-24">Module overview</h4>
 <p>Admission compares a replica&#39;s fingerprint against the primary&#39;s for the generation the primary
 advertises. That comparison is a validation invariant rather than an optimisation: without it, &quot;the
 replica applied every generation up to G&quot; rests on the log having been complete and correctly applied,
@@ -8169,7 +8216,7 @@ it is most often asked about. A missing table is reported rather than swallowed:
 table is empty and zero rows because it does not exist are different facts, and only the caller knows
 which of them should refuse.</p>
 <h3 id="srcopsstate-inventoryts"><code>src/ops/state-inventory.ts</code></h3>
-<h4 id="module-overview-26">Module overview</h4>
+<h4 id="module-overview-25">Module overview</h4>
 <p>Which persistent state a replica may hold, at the granularity the state actually has.</p>
 <p>A TABLE IS NOT AN EFFECT, and this module exists because that was measured twice. <code>key_value</code>
 holds the disposable <code>update_fetch_task:*</code> queue in the same table as <code>state:system.private_key</code>,
@@ -8212,7 +8259,7 @@ an allow-list rather than by being absent from a deny-list.</p>
 <p>What survives is <code>classifyState()</code>, which both were thin wrappers over and which
 <code>hazardClass()</code> in write-forwarding.ts does call.</p>
 <h3 id="srcopssupervisorts"><code>src/ops/supervisor.ts</code></h3>
-<h4 id="module-overview-27">Module overview</h4>
+<h4 id="module-overview-26">Module overview</h4>
 <p>The host half of the health layer: tripwires, the ledger, the breaker, quarantine.</p>
 <p>Half of this has to be JavaScript, for one reason:
 <strong>a repair path must not depend on the subsystem it repairs.</strong> PHP cannot observe a JS throw
@@ -8269,7 +8316,7 @@ trades a leak nobody has noticed for a 4,019 ms boot every waiting request pays 
 severity is <code>warn</code>: <code>initialRung(&#39;warn&#39;)</code> is <code>observe</code>, which schedules rather than
 resets.</p>
 <h3 id="srcopssweepts"><code>src/ops/sweep.ts</code></h3>
-<h4 id="module-overview-28">Module overview</h4>
+<h4 id="module-overview-27">Module overview</h4>
 <p>The addressable sweep: pre-render the tail on a declared budget instead of billing a visitor for it.</p>
 <p>Page coverage is demand-driven today. A URL renders when somebody asks, that visitor waits, and
 nothing knows what fraction of the site is covered or bounds what a crawler can make the site
@@ -8316,7 +8363,7 @@ against <code>rowsLimit</code> and <code>doToday</code> against <code>doLimit</c
 rather than firing per alarm, and a site with nothing uncovered does nothing at all.
 <code>src/ops/fleet.ts</code> remains the inventory that would let the full share be safe by default.</p>
 <h3 id="srcopstcpts"><code>src/ops/tcp.ts</code></h3>
-<h4 id="module-overview-29">Module overview</h4>
+<h4 id="module-overview-28">Module overview</h4>
 <p>The TCP tier of the CFW network capability: deferred, scripted, operator-scoped.</p>
 <p><strong>Imported from <code>edgeport/core</code>, not the package root</strong>, which re-exports 20 namespaces it never
 imports: esbuild refuses that and vite tolerates it, so the gate stayed green while wrangler could
@@ -8349,7 +8396,7 @@ registry entry.</p>
 non-idempotent operation gets one attempt, and a Redis <code>INCR</code> replayed after a timeout is the same
 defect as a captcha token replayed -- the first attempt may have landed and only failed to return.</p>
 <h3 id="srcopsthermalts"><code>src/ops/thermal.ts</code></h3>
-<h4 id="module-overview-30">Module overview</h4>
+<h4 id="module-overview-29">Module overview</h4>
 <p>Whether to keep an object resident, decided from arrivals rather than from a constant.</p>
 <h5 id="what-the-flat-interval-costs-and-what-it-buys">What the flat interval costs and what it buys</h5>
 <p><code>WARM_INTERVAL_MS</code> is 8,000 because a Durable Object hibernates at 10 s of idle -- measured on a
@@ -8438,7 +8485,7 @@ on the URL and the OBJECT is what was cold. The family is the first path segment
 Drupal&#39;s own routes are grouped by, so warming one member warms the interpreter every other member
 needs.</p>
 <h3 id="srcopsupdbts"><code>src/ops/updb.ts</code></h3>
-<h4 id="module-overview-31">Module overview</h4>
+<h4 id="module-overview-30">Module overview</h4>
 <p><code>updb</code> sliced across Durable Object invocations: the plan, the cursor, and the
 contract that makes a half-applied update impossible to produce silently.</p>
 <p><strong>The problem, in measured numbers.</strong></p>
@@ -8699,7 +8746,7 @@ non-zero residues however many exist. Nothing has to be told the count, which is
 lane cannot read the primary&#39;s <code>lanes_provisioned</code> at all, because <code>cfw_meta</code> is replica-local by
 design and is deliberately not copied.</p>
 <blockquote>
-<p><strong>Superseded:</strong> the ceiling is 256 in the code and in docs/configuration.md; the 33 and 1..32 figures are stale.</p>
+<p><strong>Superseded:</strong> the ceiling is 256 in the code and in docs/configuration/index.md; the 33 and 1..32 figures are stale.</p>
 </blockquote>
 <h4 id="originable"><code>originable()</code></h4>
 <p>Whether a reported table may stand on the allow-list at all; the primary re-applies this.</p>
@@ -8719,7 +8766,7 @@ lane was never allowed to perform.</p>
 object the pool exists to relieve keeps every form submission, and the lanes idle through exactly
 the load that made the operator add them.</p>
 <h3 id="srcruntimephp-binary-85ts"><code>src/runtime/php-binary-85.ts</code></h3>
-<h4 id="module-overview-32">Module overview</h4>
+<h4 id="module-overview-31">Module overview</h4>
 <p>PHP 8.5, carrying every extension, reached through a brotli frame.</p>
 <p>NOT THE SHIPPING SEAM since 2026-09-04. Cloudflare removed the compressed size limit this frame
 existed to fit, so <code>php-binary-raw.ts</code> imports the binary uncompressed and startup fell from
@@ -8778,7 +8825,7 @@ deploy is the instrument. Measured on a FREE throwaway carrying this seam and no
 zstd-through-wasm path it replaces read 233/234/246 (n=3), so native brotli is about half of it
 and spends a tenth of the budget.</p>
 <h3 id="srcruntimephp-binary-o2ts"><code>src/runtime/php-binary-o2.ts</code></h3>
-<h4 id="module-overview-33">Module overview</h4>
+<h4 id="module-overview-32">Module overview</h4>
 <blockquote>
 <p><strong>Superseded:</strong> the shipping seam is <code>php-binary-raw.ts</code>; this one is an alias target for the -O2 experiment configs.</p>
 </blockquote>

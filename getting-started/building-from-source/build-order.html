@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Build Order and Caching - Drupflare</title>
+		<meta
+			name="description"
+			content="Why the steps run in the order they do, what the build caches, how a step is judged by the artifact it leaves, and how to rebuild only part of the tree."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Build Order and Caching - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Why the steps run in the order they do, what the build caches, how a step is judged by the artifact it leaves, and how to rebuild only part of the tree."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html" aria-current="page">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Getting Started</a> / <a href="index.html">Building From Source</a></p>
+<h1 id="build-order-and-caching">Build Order and Caching</h1>
+<p>Why the steps run in the order they do, what the build caches, how a step is judged by the artifact it leaves, and how to rebuild only part of the tree.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#why-the-order-is-the-order">Why The Order Is The Order</a></li><li><a href="#caching">Caching</a></li><li><a href="#a-step-is-judged-by-its-artifact">A Step Is Judged By Its Artifact</a></li><li><a href="#rebuilding-only-part-of-it">Rebuilding Only Part Of It</a></li></ol></nav><h2 id="why-the-order-is-the-order">Why The Order Is The Order</h2>
+<p>These orderings fail silently when reversed, which is why
+<code>tests/node/build-from-source.spec.ts</code> asserts them. <code>agg</code> is absent from the list because it reads
+<code>drupal-src</code> and nothing else, so it has no ordering constraint against the rest.</p>
+<ul>
+<li><strong><code>site</code> before <code>patch</code>.</strong> The settings half of the patch appends to a file the installer creates.
+On a tree with no <code>settings.php</code> the patch reports it skipped and the build continues.</li>
+<li><strong><code>patch</code> before <code>twig</code>.</strong> The bake boots a kernel that must already resolve <code>PhpWasmSyncFiber</code>,
+and reads the <code>php_storage</code> pin that decides whether the bake is reachable. Baking first writes
+files at paths the runtime never asks for.</li>
+<li><strong><code>bootstrap</code> before <code>twig</code>.</strong> The bake derives its list from an existing <code>core.json</code>, and exits
+naming the file it could not find when there is none.</li>
+<li><strong><code>twig</code> before <code>core</code>.</strong> <code>assets:twig</code> writes <code>core.list.json</code> and <code>PACK_INDEX=1 assets:core</code>
+takes it verbatim, so on a tree with no list there is no file set at all.</li>
+<li><strong><code>core</code> before <code>pack</code>.</strong> <code>pack-perfile.ts</code> reuses <code>core.json</code> and never re-globs, which keeps a
+repack a change of format and leaves the set of shipped files alone.</li>
+<li><strong><code>pack</code> before <code>container</code>.</strong> The row is keyed to the hash the pack carries, so there has to be a
+pack to read it from.</li>
+<li><strong><code>container</code> before <code>sql</code>.</strong> <code>sql</code> chunks the database into the migration the Durable Object
+replays, so a rekey after it would ship the old row.</li>
+</ul>
+<h3 id="15-the-container-row">15, The Container Row</h3>
+<p><code>container</code> rewrites one row of <code>assets/drupal/site.sqlite</code> and produces no file of its own.</p>
+<p><code>DrupalKernel::getContainerCacheKey()</code> folds <code>DrupalInstalled::VERSIONS_HASH</code> into the cache id, and
+that hash covers every installed composer package. Any change in <code>drupal-src</code> moves it, including
+<code>composer require --dev drupal/&lt;module&gt;</code>, which is how the contrib lane gets its fixture. When the
+packed row and the pack disagree, the first <code>$kernel-&gt;boot()</code> on every site misses and rebuilds a
+482 KB container, which took 1,024 ms against 86 ms for a boot that hits.</p>
+<p>The row cannot be retargeted by editing its key. A compiled container embeds the absolute root it was
+built against, so it has to come from a boot where the root is <code>/drupal</code>. The step runs <code>wrangler dev --local</code>, migrates a throwaway site, renders the paths in
+<code>RENDER_PATHS</code> until the row appears, and reads back the row that boot rebuilt.</p>
+<p><code>tests/node/container-cid.spec.ts</code> compares the pack against the database and fails when they
+disagree. Run the step on its own with <code>bun run assets:container</code>, which re-chunks afterwards.</p>
+<h3 id="17-the-prefill">17, The Prefill</h3>
+<p><code>prefill</code> produces <code>assets/prefill.json</code>, which holds the bytes the site returns for five paths. A
+prefilled path is a hit on its first ever request, so whatever is in that file is the page a
+visitor sees.</p>
+<p>The bytes depend on the runtime, so native PHP cannot produce them. Native PHP returns suffixed block
+ids, because <code>Html::$seenIds</code> is a static that <code>drupal_static_reset()</code> does not clear. It also
+returns a different favicon path, because the packer drops <code>.ico</code> and wasm&#39;s <code>file_exists()</code> answers
+differently. Both renders are valid pages that do not match what the site serves.</p>
+<p>The step needs the runtime, and it does not need a deploy. <code>scripts/bake-prefill.ts</code> boots
+<code>wrangler dev</code> locally (workerd, with its own Durable Object, no Cloudflare login), drives
+<code>/migrate</code> to completion, renders the five paths through <code>/serve</code>, and tears the worker down. The
+state directory is a fresh <code>--persist-to</code> under the system temp directory each time, so a run cannot
+lift a page from a Durable Object left behind by an earlier run.</p>
+<p>The migration runs with <code>prefill=0</code>, which is what makes it a bake. <code>/migrate</code> seeds the serving
+table from the shipped <code>assets/prefill.json</code>, so with it on every <code>/serve</code> is a hit of the file being
+rebuilt. <code>migrateSite()</code> asks for an unseeded site and throws if the route prefills anyway.</p>
+<p>It is the only optional step. It binds a port and boots an interpreter, and a busy port must not
+discard sixteen finished steps: a failure here is reported, the build continues, and the run ends
+naming the file and the command that retries it. An absent <code>prefill.json</code> is normal at runtime; the
+first request to each path renders, and misses the prefill hit.</p>
+<p>To produce or refresh it on its own:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:local</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --only=prefill</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/bake-prefill.ts</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --port=8802</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --keep</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # or drive it directly</span></span></code></pre><h2 id="caching">Caching</h2>
+<p>Every step&#39;s cache key is the artifact it produces. There are no stamp files, so a rebuilt tree cannot
+keep a stale record of a patch that is gone.</p>
+<p>The three expensive steps cache individually as well, and each takes <code>--force</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>artifact</th>
+<th>cached on</th>
+<th>rebuild with</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>.interp/php8.5.wasm</code></td>
+<td>sha256 in <code>cdn-manifest.json</code></td>
+<td><code>bun run restore:artifacts -- --force</code></td>
+</tr>
+<tr>
+<td><code>.interp/php8.5.wasm.br</code></td>
+<td>mtime against the binary it was packed from</td>
+<td><code>bun scripts/pack-wasm-brotli.ts &lt;wasm&gt; --force</code></td>
+</tr>
+<tr>
+<td><code>drupal-src/</code></td>
+<td>installed core version matches the requested one</td>
+<td><code>bun run fetch:drupal -- --force</code></td>
+</tr>
+</tbody></table></div>
+<p>The <code>tree</code> step is satisfied only when the installed core version matches <code>DRUPAL_VERSION</code>, or
+<code>SHIPPED_CORE_VERSION</code> when it is unset. A different version runs <code>fetch:drupal</code>, which refuses to
+replace the tree without <code>--force</code>. See <a href="upgrading-core.html#upgrading-drupal-core">Upgrading Drupal Core</a>.</p>
+<h2 id="a-step-is-judged-by-its-artifact">A Step Is Judged By Its Artifact</h2>
+<p><code>runLocalBuild()</code> decides success from the files a step produces, not from its exit code.
+<code>restore-artifacts.ts</code> exits 0 when a fetch fails, because it runs as a postinstall. A step that
+trusted the exit code would report success with no output, and the failure would surface later as
+<code>frame needs .interp/php8.5.wasm</code>.</p>
+<h2 id="rebuilding-only-part-of-it">Rebuilding Only Part Of It</h2>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:local</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --only=twig,core,pack</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # after editing the Drupal tree</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:local</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --skip=prefill</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">        # skip the step that needs a free port</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:local</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --force</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">               # rebuild everything</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:local</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --json</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">                # the plan and the preflight, as one object</span></span></code></pre><p><code>--only</code> and <code>--skip</code> reject a name that is not a step, by name and out loud. A step whose inputs are
+not on disk fails by name before it runs.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

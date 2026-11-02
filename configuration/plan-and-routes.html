@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Plan and Extensibility Routes - Drupflare</title>
+		<meta
+			name="description"
+			content="How the plan selects a limits profile, and which routes extend a site."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Plan and Extensibility Routes - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="How the plan selects a limits profile, and which routes extend a site."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Configuration</a></p>
+<h1 id="plan-and-extensibility-routes">Plan and Extensibility Routes</h1>
+<p>How the plan selects a limits profile, and which routes extend a site.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#plan">Plan</a></li><li><a href="#extensibility-routes">Extensibility Routes</a></li></ol></nav><h2 id="plan">Plan</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>PLAN</code></td>
+<td><code>free</code></td>
+<td>selects the whole per-invocation budget profile</td>
+</tr>
+</tbody></table></div>
+<p><code>paid</code> and <code>free</code> are the only recognised values, and anything unrecognised is free: every limit
+in this project is a free-plan limit, and a typo must not silently grant a 30 s CPU budget to
+something that has 10 ms.</p>
+<p>The plan sets five defaults in <code>src/ops/plan-profile.ts</code>. Four are numbers, and each has its own var,
+so a paid profile can run on free or the reverse. The fifth, <code>bootInline</code>, is not configurable.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>profile field</th>
+<th>var</th>
+<th>free</th>
+<th>paid</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>fillBatchSize</code></td>
+<td><code>FILL_BATCH_SIZE</code></td>
+<td>5</td>
+<td>8</td>
+</tr>
+<tr>
+<td><code>httpDrainLimit</code></td>
+<td><code>HTTP_DRAIN_LIMIT</code></td>
+<td>3</td>
+<td>15</td>
+</tr>
+<tr>
+<td><code>mirrorLimit</code></td>
+<td><code>MIRROR_LIMIT</code></td>
+<td>2</td>
+<td>10</td>
+</tr>
+<tr>
+<td><code>inlineBudgetMs</code></td>
+<td><code>RENDER_BUDGET_MS</code></td>
+<td>10,000</td>
+<td>10,000</td>
+</tr>
+<tr>
+<td><code>bootInline</code></td>
+<td>none</td>
+<td>on</td>
+<td>on</td>
+</tr>
+</tbody></table></div>
+<p><code>bootInline</code> decides whether a MISS on a cold object may boot the interpreter and render inline, or
+answer 503 and hand the path to the alarm chain. It is on for both plans.</p>
+<p>The plan override lives in <code>CONFIG_KV</code>. The deployment-wide key <code>plan</code> applies to every site, and
+<code>plan:&lt;site&gt;</code> overlays it for one site. Both are read at most once per isolate per minute, so an
+account upgrade takes effect without a redeploy. A missing binding, a KV error and an unrecognised
+value all fall through to the var.</p>
+<h2 id="extensibility-routes">Extensibility Routes</h2>
+<p><code>/installable</code>, <code>/install</code> and <code>/enable</code> take the owner token, the one <code>/firstrun</code> mints when the
+site is claimed.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>route</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/installable?module=X</code></td>
+<td>resolves the package and names any conflict with the shipped lock</td>
+</tr>
+<tr>
+<td><code>/install?module=X</code></td>
+<td>fetches it and writes its files; runs the check first unless <code>force=1</code></td>
+</tr>
+<tr>
+<td><code>/enable?module=X</code></td>
+<td>installs it through Drupal&#39;s own module installer</td>
+</tr>
+</tbody></table></div>
+<p>Separate steps, because a package that has landed is not yet a module Drupal knows about and the two
+have different failure modes. <code>/install</code> also accepts <code>version=&lt;constraint&gt;</code> and <code>registry=npm</code>;
+<code>drupal/*</code> resolves against <code>packages.drupal.org/8</code> and everything else against
+<code>repo.packagist.org</code>.</p>
+<p>A config import and a queue drain run in steps. <code>POST /ops?op=cim&amp;drive=1</code> with the config objects as the
+body, or <code>POST /ops?op=queue-drain&amp;drive=1&amp;arg=&lt;queue&gt;&amp;limit=&lt;n&gt;</code>, runs the first step in the request and
+leaves the rest to the alarm, one step per firing, until a step reports <code>done</code> or fails. A failed step
+ends the job and stays failed. <code>cim</code> also takes <code>collections=a,b</code> and <code>budget=&lt;units&gt;</code>, which ride on
+every step. <code>/serve-stats</code> reports the last step under <code>lastOpsJob</code> and the exec router&#39;s per-program
+counters under <code>exec</code> on <code>/serve-stats?exec=1</code>.</p>
+<p>A module you wrote yourself arrives through a git remote, or through <code>/modify</code> when it is not on a
+host at all. <code>/enable</code> is the same next step either way.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

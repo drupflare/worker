@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Verification and Output - Drupflare</title>
+		<meta
+			name="description"
+			content="What is proved about a new interpreter before anything consumes it, what the pipeline produces, how to run it by hand, and the credentials it needs."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Verification and Output - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="What is proved about a new interpreter before anything consumes it, what the pipeline produces, how to run it by hand, and the credentials it needs."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html" aria-current="page">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Operating</a> / <a href="index.html">PHP Interpreter Update Delivery</a></p>
+<h1 id="verification-and-output">Verification and Output</h1>
+<p>What is proved about a new interpreter before anything consumes it, what the pipeline produces, how to run it by hand, and the credentials it needs.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#verification">Verification</a></li><li><a href="#output">Output</a></li><li><a href="#manual-runs">Manual Runs</a></li><li><a href="#credentials">Credentials</a></li></ol></nav><h2 id="verification">Verification</h2>
+<p><code>interpreter.yml</code> accepts <code>repository_dispatch</code> and <code>workflow_dispatch</code>. Both resolve to the same
+three values, and the workflow refuses a variant that is not a phasm rc name, a PHP version that is
+not <code>&lt;major&gt;.&lt;minor&gt;</code>, and a non-numeric artifact id.</p>
+<p>The run hydrates the current release payload first. That supplies <code>assets/</code> and the incumbent
+interpreter, so the bundle is measured against the tree that ships, and the incumbent figure
+is recorded before the swap.</p>
+<p>Two checks stand between the download and the pull request. Each throws, each fails its step, and
+a failed step ends the run: no payload is uploaded and no branch is pushed.</p>
+<ol>
+<li><strong>The seam imports what was fetched.</strong> <code>assertSeamImports()</code> in <code>scripts/fetch-interpreter.ts</code>
+reads the interpreter imports out of the seam <code>wrangler.jsonc</code> aliases and requires the fetched
+frame and glue to be among them. On a hydrated tree a fetch for the wrong PHP version otherwise
+builds cleanly, passes the size gate, and measures the incumbent.</li>
+<li><strong>The bundle fits the Worker size limit.</strong> <code>bun run release:check</code> dry-runs the canonical config,
+parses the uncompressed <code>Total Upload</code> figure wrangler prints, and throws above 67,108,864 bytes.
+The dry run also proves the entrypoint and the binary alias still resolve.</li>
+</ol>
+<p><code>tests/node/interp-fetch.spec.ts</code> covers the first directly.
+<code>tests/node/release-payload.spec.ts</code> covers the KiB-to-bytes conversion and the ceiling arithmetic.</p>
+<h2 id="output">Output</h2>
+<p>A run that passes produces two things and deploys neither.</p>
+<ul>
+<li><strong>A payload artifact</strong>, <code>drupflare-worker-payload-&lt;variant&gt;-php&lt;version&gt;</code>, holding the tarball,
+<code>SHA256SUMS</code>, <code>manifest.json</code> and the pin. It is a complete hydrate input, retained 30 days.</li>
+<li><strong>A pull request</strong> carrying <code>interp.lock.json</code>, which records the variant, the PHP version, the
+phasm artifact id, the frame&#39;s raw, packed and declared sizes, and a sha256 per file. The binaries
+are 9-12 MB and gitignored, so the pin is the reviewable part of an interpreter bump. The body
+carries the incumbent and proposed bundle figures side by side.</li>
+</ul>
+<p>The branch is <code>interp/&lt;variant&gt;-php&lt;version&gt;-&lt;artifact id&gt;</code>, so a re-run for the same artifact finds
+the branch on the remote and opens nothing. A pin byte-identical to the one already on the base
+branch opens nothing either.</p>
+<p>The pull request touches one tracked file, so <code>build.yml</code> and <code>coverage.yml</code> run the full code gate
+on it. <code>interpreter.yml</code> gates the bytes and the bundle.</p>
+<p>To reproduce a pinned interpreter by hand, pass the recorded artifact id:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/fetch-interpreter.ts</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> long64</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> 8.5</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> 4102938475</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --pin</span></span></code></pre><h2 id="manual-runs">Manual Runs</h2>
+<p><code>workflow_dispatch</code> takes <code>variant</code>, <code>php_version</code>, <code>artifact_id</code> and <code>payload_tag</code>. An empty
+<code>artifact_id</code> takes the newest unexpired artifact for the variant. An empty <code>payload_tag</code> hydrates
+the payload for <code>package.json</code>&#39;s version.</p>
+<h2 id="credentials">Credentials</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>what</th>
+<th>where</th>
+<th>scope</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>PHASM_TOKEN</code></td>
+<td>organization secret, both</td>
+<td>Actions: read on <code>phasm</code>; Contents: write on <code>worker</code></td>
+</tr>
+<tr>
+<td><code>GITHUB_TOKEN</code></td>
+<td>default, per job</td>
+<td><code>contents: write</code>, <code>pull-requests: write</code> on <code>worker</code></td>
+</tr>
+<tr>
+<td><code>CLOUDFLARE_API_TOKEN</code></td>
+<td>not held by either workflow</td>
+<td>deploys are manual</td>
+</tr>
+</tbody></table></div>
+<p><code>PHASM_TOKEN</code> authenticates two hops: phasm&#39;s dispatch into <code>worker</code>, and <code>worker</code>&#39;s read of phasm&#39;s
+Actions artifacts API. Contents: write is what the <code>repository_dispatch</code> endpoint requires; with
+Actions: write alone the pipeline runs on the <code>workflow_dispatch</code> fallback.</p>
+<p>Opening the pull request also requires &quot;Allow GitHub Actions to create and approve pull requests&quot; in
+the repository&#39;s Actions settings. A pull request opened with <code>GITHUB_TOKEN</code> does not trigger
+workflows that a <code>pull_request</code> event would otherwise start.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

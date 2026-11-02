@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Outbound TCP - Drupflare</title>
+		<meta
+			name="description"
+			content="Drupal reaches TCP through Drupal\drupflare\Network\CfwTcp, which declares a whole exchange and reads the answer on a later invocation. src/ops/tcp.ts runs it between PHP invocations, over edgeport."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Outbound TCP - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Drupal reaches TCP through Drupal\drupflare\Network\CfwTcp, which declares a whole exchange and reads the answer on a later invocation. src/ops/tcp.ts runs it between PHP invocations, over edgeport."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Integration Settings</a></p>
+<h1 id="outbound-tcp">Outbound TCP</h1>
+<p>Drupal reaches TCP through <code>Drupal\drupflare\Network\CfwTcp</code>, which declares a whole exchange and
+reads the answer on a later invocation. <code>src/ops/tcp.ts</code> runs it between PHP invocations, over
+<a href="https://github.com/gmitch215/edgeport">edgeport</a>. It shares the deferred HTTP tier&#39;s queue, cache
+and retry budget.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>REDIS_URL</code></td>
+<td>none</td>
+<td><code>redis://user:pass@host:6379/0</code>, or <code>rediss://</code> for TLS</td>
+</tr>
+<tr>
+<td><code>SYSLOG_URL</code></td>
+<td>none</td>
+<td><code>syslog://collector:514</code>, or <code>syslogs://</code> for RFC 5425</td>
+</tr>
+<tr>
+<td><code>SYSLOG_APP_NAME</code></td>
+<td><code>drupal</code></td>
+<td>APP-NAME on every record this site ships</td>
+</tr>
+</tbody></table></div>
+<p>Both carry credentials, so both are secrets and neither is a <code>vars</code> entry, and neither can be set
+from KV. A KV writer who could set <code>REDIS_URL</code> would receive whatever the site writes to it.</p>
+<p>The endpoint belongs to the deployment, and never to the caller. Module code names a protocol and
+an operation; the host supplies the host, port and credentials. Arbitrary <code>host:port</code> TCP behind any
+code that can call a host function would be a port scanner and a protocol-smuggling surface.
+Administrative Redis commands (<code>FLUSHALL</code>, <code>CONFIG</code>, <code>EVAL</code>, <code>SCRIPT</code>, <code>SHUTDOWN</code> and the rest of the
+list in <code>src/ops/tcp.ts</code>) are refused before anything is dialled.</p>
+<p><strong>A Redis cache backend cannot be built on this tier</strong>, and it is served by a second one. A cache get
+has to answer inside the request that asked, and a deferred exchange always misses the first time.
+What this tier reaches is the deferrable half: a publish, a counter, a write nobody blocks on, or a
+read a later request can use.</p>
+<p><code>syslog</code> is the shape this tier serves without compromise, because syslog over TCP never replies.</p>
+<h2 id="the-parked-tier">The Parked Tier</h2>
+<p><code>drupal/redis</code> works unmodified, over a second mechanism. A trapped socket call freezes PHP where it
+stands, the Worker performs the exchange, and the call returns with the answer inside the same
+request. Predis speaks RESP over <code>stream_socket_client</code>, and that is the shape the park suspends
+under.</p>
+<p>It arms only when <code>REDIS_URL</code> is set, and it dials that endpoint and no other: the host and port the
+module asks for are checked for shape and then discarded, so a module that can build a string cannot
+choose a destination. A request naming a port other than the configured one is refused. Any stream
+the Worker did not open is handed back to PHP untouched, so arming does not disturb file writes in a
+render.</p>
+<p>The Durable Object&#39;s own SQLite is still the faster cache backend and the recommended one. A
+parked get is a network round trip; a SQLite read is local. Measured from a Durable Object, a round
+trip is 1 ms to a same-region server and 53 ms to a distant one, and every cache operation pays one.
+Redis is here for a deployment that already has a server and wants Drupal pointed at it, not because
+it is quicker. The status report says so on any site that enables the module.</p>
+<p>A blocking outbound call over HTTP is served by replacing the transport rather than trapping it.
+PHP reaches HTTPS through a stream wrapper the runtime invokes from inside a C frame, and a park under
+one cannot resume, so Guzzle and Symfony&#39;s HTTP client are given a handler that yields from userland
+instead. <code>drupal/openid_connect</code> completes a login through its own client that way. A call made from
+inside an internal function such as <code>array_map</code> cannot park; it falls back to the deferred transport
+rather than failing.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>PARK</code></td>
+<td>on</td>
+<td>whether the park may arm at all; anything but <code>1</code> routes renders around it</td>
+</tr>
+<tr>
+<td><code>SLEEP_BUDGET_MS</code></td>
+<td>2,000</td>
+<td>total ms PHP may wait through the park per request; an alarm gets 15x</td>
+</tr>
+</tbody></table></div>
+<p><code>sleep()</code>, <code>usleep()</code> and a Guzzle <code>delay</code> park for real, up to the budget. Past it, a sleep returns at
+once and records how much it was short, so a retry loop never holds a visitor longer than a slow render.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

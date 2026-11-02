@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Operations Settings - Drupflare</title>
+		<meta
+			name="description"
+			content="Settings for maintenance, owner access, audit, runtime overrides, database updates and pack reconciliation. The index of every variable is on Configuration."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Operations Settings - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Settings for maintenance, owner access, audit, runtime overrides, database updates and pack reconciliation. The index of every variable is on Configuration."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Configuration</a></p>
+<h1 id="operations-settings">Operations Settings</h1>
+<p>Settings for maintenance, owner access, audit, runtime overrides, database updates and pack reconciliation. The index of every variable is on <a href="../index.html">Configuration</a>.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#site-maintenance">Site Maintenance</a></li><li><a href="#the-admin-surface">The Admin Surface</a></li></ol></nav><h2 id="pages">Pages</h2>
+<ul>
+<li><a href="owner-access.html">Owner Access and Audit</a>: owner token recovery and the audit log.</li>
+<li><a href="updates.html">Updates and Reconciliation</a>: database updates, pack reconciliation and the addressable sweep.</li>
+<li><a href="overrides.html">Runtime Overrides</a>: reading and writing overrides, and the three permissions.</li>
+</ul>
+<h2 id="site-maintenance">Site Maintenance</h2>
+<p><code>/armfill</code>, <code>/invalidate</code>, <code>/bump</code>, <code>/migrate</code> and <code>/updb</code> take the owner token. Purging your own page
+cache does not expose arbitrary SQL or a whole-database overwrite, which are separate routes.</p>
+<p><code>/updb</code> drives a database update run. <code>GET</code> reports the run and its units; <code>POST</code> advances exactly
+one beat and re-arms nothing, so a caller that wants the chain finished polls. The alarm chain drives
+the same step.</p>
+<p><code>POST</code> takes an <code>action</code>, which is what starts a run rather than advancing one. Without it a beat has
+nothing to advance and answers <code>{&quot;beat&quot;:&quot;none&quot;,&quot;reason&quot;:&quot;no-run&quot;}</code>.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>action</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>none, <code>run</code>, <code>beat</code></td>
+<td>advances one beat, which is what the Operate page sends</td>
+</tr>
+<tr>
+<td><code>prepare</code></td>
+<td>raises the maintenance fence, snapshots the bookkeeping and plans the units</td>
+</tr>
+<tr>
+<td><code>drain</code></td>
+<td>runs up to <code>maxBeats</code> beats in this invocation; keep it at 1 on free</td>
+</tr>
+<tr>
+<td><code>rollback</code></td>
+<td>restores what the snapshot covers; legal only from a halted run</td>
+</tr>
+<tr>
+<td><code>abandon</code></td>
+<td>accepts a halted run as-is; requires a written <code>reason</code></td>
+</tr>
+</tbody></table></div>
+<p><code>abandon</code> will not take a default reason. The next person reading the run has to see that a human
+decided, and a generated string would forge that signature.</p>
+<h3 id="the-repair-surface">The Repair Surface</h3>
+<p>What an owner token can fix, and what each one costs. The class decides whether a tool may run it
+unattended: <code>safe</code> changes nothing a visitor sees, <code>rebuild</code> discards derived state that comes back
+on its own, and <code>stateful</code> changes what the site serves.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>route</th>
+<th>class</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/health</code></td>
+<td>safe</td>
+<td>reads the repair state, the ledger and the worker version</td>
+</tr>
+<tr>
+<td><code>/health?clear=1</code></td>
+<td>stateful</td>
+<td>releases a quarantine, so the site serves again</td>
+</tr>
+<tr>
+<td><code>/updb</code></td>
+<td>safe</td>
+<td>reads the update run</td>
+</tr>
+<tr>
+<td><code>/updb</code> (POST)</td>
+<td>stateful</td>
+<td>advances one beat of a database update</td>
+</tr>
+<tr>
+<td><code>/updb?action=prepare</code></td>
+<td>stateful</td>
+<td>starts an update run, fence and snapshot included</td>
+</tr>
+<tr>
+<td><code>/updb?action=rollback</code></td>
+<td>stateful</td>
+<td>restores the bookkeeping a halted run snapshotted</td>
+</tr>
+<tr>
+<td><code>/armfill</code></td>
+<td>rebuild</td>
+<td>queues a fill, so cold paths warm without a visitor</td>
+</tr>
+<tr>
+<td><code>/invalidate</code></td>
+<td>rebuild</td>
+<td>drops stored pages for a path or a tag</td>
+</tr>
+<tr>
+<td><code>/bump</code></td>
+<td>rebuild</td>
+<td>advances the generation, retiring every stored page</td>
+</tr>
+<tr>
+<td><code>/migrate</code></td>
+<td>stateful</td>
+<td>resumes first-run migration on a site that stalled</td>
+</tr>
+<tr>
+<td><code>/git?action=unpin</code></td>
+<td>stateful</td>
+<td>releases a preview pin without reaching the remote</td>
+</tr>
+</tbody></table></div>
+<p><code>/git?action=unpin</code> exists because <code>unpreview</code> cannot help here: it re-syncs to the branch head, so it
+needs the remote to answer, and a pin held against a remote that is down is exactly what an operator
+is trying to release. Releasing without a sync leaves the site serving what it already serves and
+gives the poller the branch back, so the next successful poll converges it.</p>
+<p>A quarantine is released rather than prevented. <code>/health</code> reports what tripped it and the ledger
+entry that recorded it; clearing without reading that first is how the same fault comes back.</p>
+<p>A withdrawn replica lane is not a repair target. It asks the primary for a fresh copy itself, and the
+primary queues that copy and arms an alarm to perform it. <code>/replica</code> is diagnostic only: it also
+carries the path a lane uses to commit a batch it executed speculatively, which belongs to the pool
+rather than to the owner token. Read the state through <code>/health</code> and <code>/serve-stats</code>. The pool itself
+is on <a href="../../operating/replica-lanes.html">Replica Lanes</a>.</p>
+<h3 id="the-degradation-band">The Degradation Band</h3>
+<p>Once a site leaves <code>normal</code>, every response it serves carries these headers:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>header</th>
+<th>value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>x-cfw-degrade</code></td>
+<td><code>reduced</code> or <code>read-only</code></td>
+</tr>
+<tr>
+<td><code>x-cfw-degrade-driver</code></td>
+<td>which meter drove it: <code>rows</code> or <code>do</code></td>
+</tr>
+<tr>
+<td><code>x-cfw-degrade-at</code></td>
+<td>the fraction of that meter&#39;s daily budget already spent</td>
+</tr>
+</tbody></table></div>
+<p>A <code>normal</code> site carries none of them, so their presence is the signal and no parsing is needed to
+tell the two states apart.</p>
+<p>The band is reported on every response from <code>reduced</code> onward, not only on a refusal. The level is
+not persisted: the counter is keyed per UTC day, so midnight clears it.</p>
+<p><code>/serve-stats</code> reports <code>lastGitPoll</code>, <code>lastMirrorDrain</code> and <code>lastPageMirrorDrain</code>, each with its
+<code>*At</code>. Every alarm unit catches its own error so one failure cannot stop the chain, so these
+timestamps are the way to see a unit that has been failing.</p>
+<h2 id="the-admin-surface">The Admin Surface</h2>
+<p>The seven <code>/_cfw</code> pages take the same owner token. A browser cannot put a header on its own navigation,
+so <code>/_cfw/login</code> exchanges the token for a cookie: <code>HttpOnly</code>, <code>SameSite=Strict</code>, twelve hours,
+cleared by <code>/_cfw/logout</code>. A page reached without it redirects to the sign-in form and returns
+afterwards. A bearer header reaches the same pages, so a script needs no browser.</p>
+<p><strong><code>PW_DIAGNOSTICS</code> does not open these pages.</strong> It opens the other owner routes. These pages install
+code and run privileged operations, so they take the owner token only.
+<code>SameSite=Strict</code> is what stands in for a CSRF token: several owner routes act on a GET, so a
+cross-site request carrying the cookie would be enough to install a module. Strict means no
+cross-site request carries it, including a top-level link.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

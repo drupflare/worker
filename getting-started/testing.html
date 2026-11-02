@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Testing - Drupflare</title>
+		<meta
+			name="description"
+			content="The test lanes, what each one can and cannot see, and how to add a test."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Testing - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The test lanes, what each one can and cannot see, and how to add a test."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html" aria-current="page">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Getting Started</a></p>
+<h1 id="testing">Testing</h1>
+<p>The test lanes, what each one can and cannot see, and how to add a test.</p>
+<p>Three vitest projects, plus PHP suites in the sibling repositories and an end-to-end lane that needs
+a running server.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>lane</th>
+<th>command</th>
+<th>runs in</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>vitest <code>workers</code></td>
+<td><code>bun run test:workers</code></td>
+<td>workerd, via <code>@cloudflare/vitest-pool-workers</code></td>
+</tr>
+<tr>
+<td>vitest <code>node</code></td>
+<td><code>bun run test:node</code></td>
+<td>Node, for oracles workerd cannot host</td>
+</tr>
+<tr>
+<td>both, merged coverage</td>
+<td><code>bun run test</code></td>
+<td>one invocation; this is the commit gate</td>
+</tr>
+<tr>
+<td>PHP suites</td>
+<td>see below</td>
+<td>real PHP, in the sibling repos</td>
+</tr>
+<tr>
+<td>e2e</td>
+<td><code>bun run test:e2e</code></td>
+<td>needs a running server</td>
+</tr>
+<tr>
+<td>browser</td>
+<td><code>bun run test:browser</code></td>
+<td>Playwright, against a <code>wrangler dev</code> it starts</td>
+</tr>
+</tbody></table></div>
+<p>The e2e lane talks to real servers, not mocks: Keycloak for single sign-on, Gitea, Forgejo and
+GitLab for git, GreenMail for SMTP, Redis and a syslog collector for the TCP tier, and Postgres and
+MySQL as external databases. <code>docker/compose.yml</code> carries all of them pinned by digest, with GitLab
+behind <code>--profile heavy</code>, and <code>tests/e2e/README.md</code> has the commands.</p>
+<p><code>bun run test</code> runs the two vitest projects in one invocation. The other lanes are separate commands,
+and the flowchart shows what each one runs in.</p>
+<pre><code class="mermaid">flowchart TD
+    A[&quot;bun run test&quot;] --> B[&quot;workers project, in workerd&quot;]
+    A --> C[&quot;node project, in Node&quot;]
+    B --> D[&quot;merged lcov, bun run test:coverage&quot;]
+    C --> D
+    E[&quot;bun run test:e2e&quot;] --> F[&quot;servers from docker/compose.yml&quot;]
+    G[&quot;bun run test:browser&quot;] --> H[&quot;Playwright specs in tests/e2e/browser&quot;]
+    I[&quot;PHP suites in sibling repos&quot;] --> J[&quot;bun run test:health, test:php, test:solarium&quot;]</code></pre><p>The PHP suites live in the sibling repositories, which are the authority on their own module. Three
+have a script here. Where the table says <code>with the var</code>, set <code>DRUPAL_ROOT</code> to this repository&#39;s
+<code>drupal-src/</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>suite</th>
+<th>repo</th>
+<th>run from here</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>tests/health-suite.php</code></td>
+<td><code>drupflare</code></td>
+<td><code>bun run test:health</code></td>
+</tr>
+<tr>
+<td><code>tests/run-driver-suite.php</code></td>
+<td><code>rom</code></td>
+<td><code>bun run test:php</code></td>
+</tr>
+<tr>
+<td><code>tests/load-classes.php</code></td>
+<td><code>drupflare</code></td>
+<td><code>php</code>, with the var</td>
+</tr>
+<tr>
+<td><code>tests/pdo-shim.php</code></td>
+<td><code>rom</code></td>
+<td><code>php</code>, with the var</td>
+</tr>
+<tr>
+<td><code>tests/cfw-tcp.php</code></td>
+<td><code>drupflare</code></td>
+<td><code>php</code></td>
+</tr>
+<tr>
+<td><code>tests/solarium-transport.php</code></td>
+<td><code>drupflare</code></td>
+<td><code>bun run test:solarium</code></td>
+</tr>
+<tr>
+<td><code>tests/run-installer.php</code></td>
+<td><code>rom</code></td>
+<td><code>php</code>, with the var</td>
+</tr>
+</tbody></table></div>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">DRUPAL_ROOT</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">=</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$PWD</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">/drupal-src</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> php</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> ../rom/tests/run-installer.php</span></span></code></pre><p><code>run-installer.php</code> drives Drupal&#39;s own installer against the driver with core&#39;s sqlite driver as a
+child-process control. It needs a real filesystem, so it has no counterpart here.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#three-vitest-projects">Three Vitest Projects</a></li><li><a href="#the-integration-lane">The Integration Lane</a></li><li><a href="#the-contrib-lane">The Contrib Lane</a></li><li><a href="#testing-inside-workerd">Testing Inside workerd</a></li><li><a href="#coverage">Coverage</a></li><li><a href="#rules-for-a-new-test">Rules for a New Test</a></li></ol></nav><h2 id="three-vitest-projects">Three Vitest Projects</h2>
+<p><code>workers</code> is the default lane and where most of the subject lives. <code>node</code> exists because workerd
+cannot host two things the suite needs:</p>
+<ul>
+<li><code>node:child_process</code> is not implemented. A probe calling <code>execFileSync(&#39;php&#39;, ...)</code> fails with
+&quot;The child_process.execFileSync method is not implemented&quot;, so any suite whose oracle is a real
+PHP process cannot run in the workers project at all.</li>
+<li><code>node:sqlite</code> is not available under workerd, and <code>tests/node/migrate-sql.spec.ts</code> needs it to diff
+a replayed database against its source.</li>
+</ul>
+<p>Without that second project a PHP-oracle suite has to either transliterate the PHP and test the
+copy, or stay outside vitest. <code>tests/node/mb-fix-iconv.spec.ts</code> is the first occupant: it recovers
+two platform controls that had to be dropped when <code>mb-fix</code> moved into workerd, and it skips when no
+<code>php</code> is on PATH.</p>
+<p><code>e2e</code> is the third and is excluded from <code>bun run test</code>: it needs a running worker and, for most of
+its specs, a running server to talk to. It skips when nothing is reachable and fails when <code>CI</code> is
+set, so a lane that quietly stopped running is distinguishable from one that passed.</p>
+<p>Coverage from the two gate projects is merged into one lcov by <code>bun run test:coverage</code>; Codecov gets
+a <code>coverage</code> flag for the merged report and <code>workers</code> / <code>node</code> flags for per-lane test results, all
+with <code>carryforward: true</code>.</p>
+<h2 id="the-integration-lane">The Integration Lane</h2>
+<p>Specs under <code>tests/integration/</code> use <code>ctx.storage.sql</code>, <code>transactionSync()</code>, <code>setAlarm()</code> and
+<code>caches.default</code>. A mock of any of those would be testing the mock, and <code>runInDurableObject</code> from
+<code>cloudflare:test</code> gives the real thing without a manually started server.</p>
+<h2 id="the-contrib-lane">The Contrib Lane</h2>
+<p><code>contrib-verify.spec.ts</code> and <code>contrib-generic.spec.ts</code> re-establish the <code>verified</code> rows for contributed
+modules, and only against a pack that carries them. <code>bun scripts/install-census.ts</code> puts the census
+into <code>drupal-src</code> and <code>bun run test:contrib</code> builds that pack, runs both specs, runs one phase per
+module that cannot share a composer lock, and puts the shipping pack back.</p>
+<p>A run that mounts the fixture sets <code>CONTRIB_FIXTURE=1</code>, which turns every module the pack lacks into
+a failure. Without it the specs skip such a module, so a census that failed to install passed with
+every row skipped. The run ends by counting both reports into <code>.contrib-fixture/summary.md</code> and exits
+1 on any failed row or any row nothing reached. If <code>config/contrib-usage.json</code> exists as
+<code>{ &quot;counts&quot;: { &quot;&lt;machine name&gt;&quot;: &lt;weekly installs&gt; } }</code>, the summary adds the usage-weighted share of
+the modules that passed.</p>
+<p><code>.github/workflows/contrib.yml</code> runs this weekly and on demand. It restores the other lanes&#39; caches
+and never saves one, because the census install rewrites <code>drupal-src</code>.</p>
+<h2 id="testing-inside-workerd">Testing Inside workerd</h2>
+<p>Every one of these has already produced a defect that a Node-hosted mock passed:</p>
+<ul>
+<li><code>ctx.storage.sql</code> is synchronous only from inside a Durable Object.</li>
+<li><code>transactionSync()</code> has no Node equivalent; <code>BEGIN</code> as SQL is refused outright.</li>
+<li>The host caps a statement at 100 bound parameters; local PDO allows 32,766. That gap hid a live
+cache-write defect behind a green suite.</li>
+<li>Neither clock advances across a synchronous <code>php._run()</code>, so a duration taken by subtracting two
+readings either side of one is 0. A <code>Date.now()</code> delta that spans I/O is usable, because the
+clock updates on I/O completion.</li>
+</ul>
+<h2 id="coverage">Coverage</h2>
+<p>Coverage uses <code>provider: &#39;istanbul&#39;</code>, not <code>v8</code>. The v8 provider reads coverage off the Node
+inspector and these tests run inside workerd&#39;s isolate, so it instruments every statement and
+attributes none of them while the suite passes. istanbul instruments at transform time, so it
+travels into the isolate with the code.</p>
+<p>The sibling repos split on the same axis: <code>earth-app/cloud</code> and <code>js/edgeport</code> are workerd and use
+istanbul; <code>earth-app/crust</code> and <code>earth-app/sky</code> are happy-dom and use v8.</p>
+<p>Thresholds sit just under the current measured figure and are ratcheted upward as coverage lands.</p>
+<h2 id="rules-for-a-new-test">Rules for a New Test</h2>
+<p>Assert on behaviour or a counter, never on timing, except where timing is the claim. Name which
+cache bins were emptied for every render figure. An absolute CPU number comes only from a deployed
+worker; nothing in <code>tests/</code> can produce one. <a href="../architecture/measurement-classes.html">Measurement Classes</a> is the full rule: which
+instrument may produce which class of number, and which class is banned outright.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

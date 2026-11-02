@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Energy - Drupflare</title>
+		<meta
+			name="description"
+			content="How much electricity a Drupflare site uses against the hosting it replaces, and where the saving comes from."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Energy - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="How much electricity a Drupflare site uses against the hosting it replaces, and where the saving comes from."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html" aria-current="page">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Impact</a></p>
+<h1 id="energy">Energy</h1>
+<p>How much electricity a Drupflare site uses against the hosting it replaces, and where the saving comes from. <a href="views.html">Energy Per View</a> and <a href="fleet.html">Fleet Energy</a> extend the model; <a href="../carbon.html">Environment</a> turns the totals into carbon and water, and <a href="../economics/index.html">Economics</a> prices them. Every figure carries a label defined on <a href="../index.html#measurement-labels">Impact</a>. Numbered citations such as <a href="../references.html">[1]</a> refer to the <a href="../references.html#references">References</a> list on Impact.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#energy-savings">Energy Savings</a></li></ol></nav><h2 id="pages">Pages</h2>
+<ul>
+<li><a href="production-baseline.html">Production Baseline</a>: the conventional host the saving is measured against.</li>
+<li><a href="operating-states.html">Operating States and Where the Saving Comes From</a>: operating states and where the saving comes from.</li>
+<li><a href="inputs.html">Where The Figures Come From</a>: model inputs and the two hosts.</li>
+<li><a href="per-request.html">Energy Per Request</a>: the per-request figure, the two runtimes at matched load, logged-in views, bindings and the idle floor.</li>
+</ul>
+<h2 id="energy-savings">Energy Savings</h2>
+<p>Total energy of one site over a year, idle included, for drupflare and for a production deployment. A
+conventional deployment draws power whether or not anyone visits; drupflare&#39;s figure is the CPU time
+its views use, logged-in views included. Every cell is <code>derived (modelled)</code>: no source sizes a
+production node, so the production shapes are modelled, and drupflare&#39;s energy is derived from
+measured CPU time on the traffic mix. A month is a twelfth of each figure. Generated by
+<code>bun scripts/economics/perview.ts</code>.</p>
+<p>This is the sleeping state, a site that holds nothing between requests. A site kept warm, or one that
+wakes cold, draws more. <a href="operating-states.html#operating-states">Operating States</a> prices both, and the saving against
+production stays above 99.5% in every state.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">views a month</th>
+<th align="right">drupflare, energy a year</th>
+<th align="right">production, energy a year</th>
+<th align="right">energy saved a year</th>
+<th align="right">saving against production</th>
+<th align="right">saving against peak-sized</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">10,000</td>
+<td align="right">0.525 Wh</td>
+<td align="right">224 kWh</td>
+<td align="right">224 kWh</td>
+<td align="right">426,766x, 99.9998%</td>
+<td align="right">742,503x, 99.9999%</td>
+</tr>
+<tr>
+<td align="right">100,000</td>
+<td align="right">2.14 Wh</td>
+<td align="right">224 kWh</td>
+<td align="right">224 kWh</td>
+<td align="right">104,856x, 99.9990%</td>
+<td align="right">182,432x, 99.9995%</td>
+</tr>
+<tr>
+<td align="right">1,000,000</td>
+<td align="right">18.3 Wh</td>
+<td align="right">224 kWh</td>
+<td align="right">224 kWh</td>
+<td align="right">12,274x, 99.9919%</td>
+<td align="right">21,355x, 99.9953%</td>
+</tr>
+<tr>
+<td align="right">10,000,000</td>
+<td align="right">180 Wh</td>
+<td align="right">224 kWh</td>
+<td align="right">224 kWh</td>
+<td align="right">1,249x, 99.9199%</td>
+<td align="right">2,173x, 99.9540%</td>
+</tr>
+<tr>
+<td align="right">30,000,000</td>
+<td align="right">538 Wh</td>
+<td align="right">224 kWh</td>
+<td align="right">224 kWh</td>
+<td align="right">417x, 99.7601%</td>
+<td align="right">725x, 99.8621%</td>
+</tr>
+</tbody></table></div>
+<p>Production is three regions with a high-availability web pair and database pair in each, sized at 15%
+utilisation. Peak-sized is the same three regions with 8-vCPU nodes at 10%, 390 kWh a year. The
+multiple is the ratio of the two totals. It grows as traffic falls because drupflare&#39;s total has no
+idle term, so quote the percentage.</p>
+<p>What those savings compare to, at 10,000,000 views per site per month, <code>derived</code> from the same totals
+by <code>bun scripts/economics/comparison.ts --md</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>sites</th>
+<th>against</th>
+<th>electricity</th>
+<th>carbon</th>
+<th>servers not built</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>production</td>
+<td>one US home for 7 days</td>
+<td>180 lb CO2e</td>
+<td>1/14 of one server not built</td>
+</tr>
+<tr>
+<td>1</td>
+<td>peak-sized production</td>
+<td>one US home for 13 days</td>
+<td>330 lb CO2e</td>
+<td>a seventh of one server not built</td>
+</tr>
+<tr>
+<td>10</td>
+<td>production</td>
+<td>one US home for 75 days</td>
+<td>1,800 lb CO2e</td>
+<td>a half of one server not built</td>
+</tr>
+<tr>
+<td>10</td>
+<td>peak-sized production</td>
+<td>one US home for 131 days</td>
+<td>3,300 lb CO2e</td>
+<td>1 server not built</td>
+</tr>
+<tr>
+<td>100</td>
+<td>production</td>
+<td>2 US homes for a year</td>
+<td>1 car off the road</td>
+<td>7 servers not built</td>
+</tr>
+<tr>
+<td>100</td>
+<td>peak-sized production</td>
+<td>3 US homes for a year</td>
+<td>3 cars off the road</td>
+<td>15 servers not built</td>
+</tr>
+<tr>
+<td>1,000</td>
+<td>production</td>
+<td>20 US homes for a year</td>
+<td>18 cars off the road</td>
+<td>75 servers not built</td>
+</tr>
+<tr>
+<td>1,000</td>
+<td>peak-sized production</td>
+<td>36 US homes for a year</td>
+<td>32 cars off the road</td>
+<td>150 servers not built</td>
+</tr>
+</tbody></table></div>
+<p>Every figure is rounded down, so each is a floor. A server is the share of one 640-thread host the
+model assigns to the deployment: 12 nodes at 4 or 8 vCPU each, counted in whole servers and, below
+one, as the largest unit fraction that fits, <code>derived (modelled)</code>. The host is the SPECpower result
+for a Dell PowerEdge R6725 with two AMD EPYC 9845 chips, 320 cores and 640 hardware threads, which
+idles at 135 W and draws 711 W at 100% load [1]. A US home is the EIA&#39;s 2022 average of 10,791 kWh
+a year [2], and a passenger vehicle emits about 4.6 t of CO2 a year [3].</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

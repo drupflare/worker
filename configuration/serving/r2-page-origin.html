@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>R2 Page Origin Caching - Drupflare</title>
+		<meta
+			name="description"
+			content="Mirroring pages to R2 moves them off the Worker, and an R2 public bucket on a custom domain serves them."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="R2 Page Origin Caching - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Mirroring pages to R2 moves them off the Worker, and an R2 public bucket on a custom domain serves them."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Serving and Caching Settings</a></p>
+<h1 id="r2-page-origin-caching">R2 Page Origin Caching</h1>
+<p>Mirroring pages to R2 moves them off the Worker, and an R2 public bucket on a custom domain serves
+them. How much of that traffic Cloudflare&#39;s CDN absorbs in front of the bucket decides whether the
+off-Worker lever is worth anything: an absorbed read costs neither a Worker request nor an R2 Class B
+operation.</p>
+<p>Absorption is 0 without a Cache Rule and about 7/8 with one. Measured with GET against
+a cold object each time:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Condition</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Cache Rule on, cold object</td>
+<td>MISS, then 7 / 7 HIT</td>
+</tr>
+<tr>
+<td>Cache Rule off, cold object</td>
+<td>MISS, then 7 / 7 DYNAMIC</td>
+</tr>
+</tbody></table></div>
+<p>A second object under the same rule read 1 MISS, 7 HIT and 2 DYNAMIC across 10 requests, which is the
+same picture with two requests landing at a PoP that had not filled yet.</p>
+<p><strong>Measure with GET, never <code>curl -I</code>.</strong> HEAD is what <code>curl -I</code> sends, Cloudflare does not populate its
+cache from a HEAD, and every reading comes back <code>DYNAMIC</code>.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-cache-rule">The Cache Rule</a></li><li><a href="#smart-tiered-cache">Smart Tiered Cache</a></li><li><a href="#absorption-in-the-model">Absorption in the Model</a></li></ol></nav><h2 id="the-cache-rule">The Cache Rule</h2>
+<p>One rule, scoped to the CDN hostname and nothing else:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span>expression:        (http.host eq "drupflare-cdn.example.com")</span></span>
+<span class="line"><span>action:            set_cache_settings</span></span>
+<span class="line"><span>action_parameters: { "cache": true, "edge_ttl": { "mode": "override_origin", "default": 3600 } }</span></span></code></pre><p>In the dashboard it is Caching &gt; Cache Rules &gt; Create rule, with the hostname as the only
+condition and &quot;Eligible for cache&quot; plus an edge TTL override. Over the API it is
+<code>PUT /zones/{ZONE_ID}/rulesets/phases/http_request_cache_settings/entrypoint</code>.</p>
+<p><strong>A PUT to an entrypoint replaces every rule in it.</strong> Read the entrypoint first and merge; on a zone
+that has never had a cache-phase ruleset the entrypoint does not exist yet and creating it destroys
+nothing.</p>
+<p>One zone-scoped permission creates it: <code>Zone &gt; Cache Rules &gt; Edit</code>. Cloudflare&#39;s documentation
+also lists the account-scoped <code>Account Rulesets: Edit</code> and <code>Account Filter Lists: Edit</code>. This rule
+shape needs neither.</p>
+<h2 id="smart-tiered-cache">Smart Tiered Cache</h2>
+<p>Every PoP fills independently, so a request reaching a cold PoP is a MISS and an R2 Class B read.
+Tiering routes a PoP miss through an upper tier instead of to the bucket, which changes absorption
+from per-PoP to hierarchical.</p>
+<p>Enable it at Caching &gt; Tiered Cache, or with the API:</p>
+<details>
+<summary>Tiered Cache API command</summary><pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "https://api.cloudflare.com/client/v4/zones/</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$ZONE_ID</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">/cache/tiered_cache_smart_topology_enable"</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  --request</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> PATCH</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  --header</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "Authorization: Bearer </span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$CLOUDFLARE_API_TOKEN</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  --json</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> '{ "value": "on" }'</span></span></code></pre></details><p>The token needs <code>Zone Settings Write</code> or <code>Zone Write</code>. Tiered Cache and Smart Topology are both
+available on the Free plan; Generic Global, Regional and Custom topologies are Enterprise only.
+Cloudflare selects the upper tier automatically for a zone using R2 as an origin.</p>
+<h2 id="absorption-in-the-model">Absorption in the Model</h2>
+<p><code>cdnAbsorption</code> in <code>scripts/measure/free-envelope.ts</code> defaults to 0.</p>
+<p>Absorption follows the traffic. It depends on reads per colo per TTL window, so a site with few views
+spread over many PoPs absorbs almost nothing, and the same site at high traffic absorbs nearly
+everything. Zero is the floor for a low-traffic site and for any site with no rule.</p>
+<p><code>cdnAbsorption</code> is a code-level option. The command line takes <code>--visits</code>, <code>--dynamic</code> and <code>--warmth</code>
+only; absorption is passed to <code>envelope()</code>, <code>optimalOffWorker()</code> and <code>scoreWorkload()</code> in
+<code>scripts/measure/free-envelope.ts</code>.</p>
+<p>Drupflare does not create the Cache Rule. It changes a zone the operator owns, and the model&#39;s default
+stays at 0 until an operator applies the rule.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

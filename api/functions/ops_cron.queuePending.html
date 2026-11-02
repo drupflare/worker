@@ -18,7 +18,9 @@
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>The queue with the most items waiting, or null with the reason why not.</p>
 <p>Pure SQL: asking PHP which queues have work costs a kernel boot to be told &quot;none&quot;. <code>expire = 0</code>
-is the unclaimed condition, so an item under another invocation's lease is not waiting.</p>
+is the unclaimed condition, so an item under another invocation's lease is not waiting.
+<code>update_fetch_tasks</code> has no worker plugin and drains inside <code>hook_cron</code>, so picking it boots a
+kernel to learn nothing and starves the queues that do have one.</p>
 <p><code>exclude</code> stops the deepest queue starving the others; <code>prefer</code> keeps a repeating (mid-drain)
 unit on the queue it started.</p>
 </div>
@@ -29,7 +31,7 @@ unit on the queue it started.</p>
 <li><span><span class="tsd-kind-parameter">options</span>: <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">exclude</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">prefer</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol"> = {}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../interfaces/ops_cron.QueuePending.html" class="tsd-signature-type tsd-kind-interface">QueuePending</a></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/c1ac1f3886d03300945c6aa521ef4e9b30088e0b/src/ops/cron.ts#L1036">src/ops/cron.ts:1036</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/cccc9886047794a49657ceb07070d6711a1a6ddc/src/ops/cron.ts#L1055">src/ops/cron.ts:1055</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

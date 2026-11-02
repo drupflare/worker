@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Energy Per Request - Drupflare</title>
+		<meta
+			name="description"
+			content="measured. RAPL package and core domains on a bare-metal AMD Ryzen 9 9900X, load generated off-box, arms rotated per round, idle subtracted, n=5 per rung with no sample discarded."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Energy Per Request - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="measured. RAPL package and core domains on a bare-metal AMD Ryzen 9 9900X, load generated off-box, arms rotated per round, idle subtracted, n=5 per rung with no sample discarded."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html" aria-current="page">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Impact</a> / <a href="index.html">Energy</a></p>
+<h1 id="energy-per-request">Energy Per Request</h1>
+<p><code>measured</code>. RAPL package and core domains on a bare-metal AMD Ryzen 9 9900X, load generated off-box,
+arms rotated per round, idle subtracted, n=5 per rung with no sample discarded. Both stacks run on
+the same machine against the same counter in one interleaved run: the shipped <code>docker/vps.yml</code>
+(nginx plus PHP 8.5 FPM with opcache and JIT) and drupflare under standalone <code>workerd serve</code>, each
+capped at 3 CPUs by cgroup.</p>
+<p>The cap is the VPS stack&#39;s total, <code>vps-php</code> at 2 plus <code>vps-web</code> at 1. It is read back from the running
+containers as a <code>cpu.max</code> of <code>200000 100000</code> and <code>100000 100000</code>, because a <code>deploy.resources</code> block
+is honoured by some Compose versions and ignored by others.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#a-per-request-figure-needs-its-rate">A Per-Request Figure Needs Its Rate</a></li><li><a href="#the-two-runtimes-at-matched-load">The Two Runtimes At Matched Load</a></li><li><a href="#logged-in-views">Logged-In Views</a></li><li><a href="#service-bindings-and-r2">Service Bindings And R2</a></li><li><a href="#what-the-idle-floor-costs">What The Idle Floor Costs</a></li></ol></nav><h2 id="a-per-request-figure-needs-its-rate">A Per-Request Figure Needs Its Rate</h2>
+<p>The same arm reads 279, 202 and 131 mJ per request at 29, 57 and 114 requests per second. The decline
+is the processor package leaving its idle C-states, a step that costs the same whether the window
+carried 300 requests or 1,100. Idle subtraction cannot remove it, because it is absent from the idle
+arm by definition. A per-request figure quoted without its rate is that fixed cost divided by
+whatever throughput the run reached.</p>
+<p>A fixed-plus-marginal fit does not fix this. The marginal cost itself falls with rate, 123 mJ per
+additional request between 29 and 57 per second against 60 mJ between 57 and 114, so the curve is
+concave and a fitted slope describes the spacing of the rungs. Both arms are compared at the same
+request count instead, interpolating between measured rungs.</p>
+<h2 id="the-two-runtimes-at-matched-load">The Two Runtimes At Matched Load</h2>
+<p><code>measured</code>. Package energy over idle per 10-second window, drupflare against the VPS stack at the same
+request count. Two independent runs, n=5 and n=3 per rung, 104 samples with zero failed requests. The
+second ran on a freshly provisioned site.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>tier</th>
+<th align="right">requests per window</th>
+<th align="right">drupflare (J per window)</th>
+<th align="right">VPS (J per window)</th>
+<th align="right">ratio</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>cached</td>
+<td align="right">565</td>
+<td align="right">114.62</td>
+<td align="right">114.72</td>
+<td align="right">0.999x</td>
+</tr>
+<tr>
+<td>cached</td>
+<td align="right">1,101</td>
+<td align="right">154.60</td>
+<td align="right">147.28</td>
+<td align="right">1.050x</td>
+</tr>
+<tr>
+<td>cached</td>
+<td align="right">532</td>
+<td align="right">105.53</td>
+<td align="right">100.68</td>
+<td align="right">1.048x</td>
+</tr>
+<tr>
+<td>cached</td>
+<td align="right">1,043</td>
+<td align="right">145.51</td>
+<td align="right">144.62</td>
+<td align="right">1.006x</td>
+</tr>
+<tr>
+<td>render</td>
+<td align="right">332</td>
+<td align="right">248.63</td>
+<td align="right">220.80</td>
+<td align="right">1.126x</td>
+</tr>
+<tr>
+<td>render</td>
+<td align="right">409</td>
+<td align="right">253.31</td>
+<td align="right">252.27</td>
+<td align="right">1.004x</td>
+</tr>
+<tr>
+<td>render</td>
+<td align="right">342</td>
+<td align="right">247.23</td>
+<td align="right">218.48</td>
+<td align="right">1.132x</td>
+</tr>
+<tr>
+<td>render</td>
+<td align="right">408</td>
+<td align="right">255.39</td>
+<td align="right">241.69</td>
+<td align="right">1.057x</td>
+</tr>
+</tbody></table></div>
+<p>The two runtimes cost the same energy per request to within about 13%, on identical hardware, on both
+the cached tier and a full render. PHP compiled to wasm and executed inside a Durable Object is
+neither cheaper nor meaningfully dearer per unit of work than native PHP-FPM.</p>
+<p>That agrees with the same-machine timing: a re-render on a tag-invalidated page is 24 ms on the VPS
+against 30 on drupflare, and a page whose dynamic page cache is still warm is 24 against 22.</p>
+<p>Throughput differs. On this host the VPS stack saturates near 525 requests per second and the
+drupflare arm near 220, because a site is one single-threaded Durable Object while the VPS has 32
+PHP-FPM children. The <a href="../../operating/replica-lanes.html">replica pool</a> addresses that and was not enabled for this run. Both arms were
+driven well below their ceilings, so the energy figures measure work and not queueing.</p>
+<h2 id="logged-in-views">Logged-In Views</h2>
+<p><code>measured</code>. A logged-in administrator&#39;s view of <code>/admin/content</code> is answered by the compiled-plan tier
+at 2.1 ms of CPU against 19.9 ms natively, and costs 503 mJ against 751 mJ per view on the same
+machine, 33% less. Conditions: RAPL package on <code>paisley-park</code>, idle subtracted, 40 offered views a
+second, n=6 to 7 rounds per cell, drupflare on a <code>bastion</code> node under a 3-CPU cgroup against the
+shipped nginx and PHP-FPM stack at 3 CPUs.</p>
+<h2 id="service-bindings-and-r2">Service Bindings And R2</h2>
+<p>The shipped model charges a cached view 1.8 ms of CPU, which is a front-worker reading plus an object
+reading (<code>measured</code>, 2026-09-14). A Worker-to-Worker call is its own invocation with its own CPU and no
+request fee (<code>published</code>). An R2 binding read is a subrequest of the invocation that makes it, and a
+public R2 bucket on a custom domain runs no Worker. R2 exposes no CPU and no energy counter, so the energy
+bracket runs from zero to one extra Worker invocation a view:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">views a month</th>
+<th align="right">shipped, Wh a year</th>
+<th align="right">+1 Worker invocation a view, Wh a year</th>
+<th align="right">multiple, shipped</th>
+<th align="right">multiple, +1 invocation</th>
+<th align="right">saving, shipped</th>
+<th align="right">saving, +1 invocation</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">10,000</td>
+<td align="right">0.53</td>
+<td align="right">0.62</td>
+<td align="right">426,766</td>
+<td align="right">362,167</td>
+<td align="right">99.9998%</td>
+<td align="right">99.9997%</td>
+</tr>
+<tr>
+<td align="right">100,000</td>
+<td align="right">2.14</td>
+<td align="right">3.07</td>
+<td align="right">104,856</td>
+<td align="right">72,905</td>
+<td align="right">99.9990%</td>
+<td align="right">99.9986%</td>
+</tr>
+<tr>
+<td align="right">1,000,000</td>
+<td align="right">18.26</td>
+<td align="right">27.63</td>
+<td align="right">12,274</td>
+<td align="right">8,112</td>
+<td align="right">99.9919%</td>
+<td align="right">99.9877%</td>
+</tr>
+<tr>
+<td align="right">10,000,000</td>
+<td align="right">179.52</td>
+<td align="right">273.21</td>
+<td align="right">1,249</td>
+<td align="right">820</td>
+<td align="right">99.9199%</td>
+<td align="right">99.8781%</td>
+</tr>
+<tr>
+<td align="right">30,000,000</td>
+<td align="right">537.86</td>
+<td align="right">818.93</td>
+<td align="right">417</td>
+<td align="right">274</td>
+<td align="right">99.7601%</td>
+<td align="right">99.6347%</td>
+</tr>
+</tbody></table></div>
+<p>The extra invocation is charged 1.10 ms a view, the front-worker reading (<code>measured</code>, n not recorded),
+or 2.81 mJ at the model&#39;s watts and PUE (<code>derived (modelled)</code>). It is a bound for a path the shipped
+product does not take. The shipped headline already prices a Worker-to-object hop on every cached view, so
+adding a hop to the shipped default moves nothing beyond that. Two terms do not move the headline by
+their own measure:</p>
+<ul>
+<li><strong>Front worker on a render.</strong> The 60.2 ms render is Durable Object CPU only. Adding 1.10 ms of
+front-worker CPU a render moves 1M views a month by 0.0071 Wh a year, 0.039% of the shipped figure
+(<code>derived (modelled)</code>).</li>
+<li><strong>R2 public bucket.</strong> No Worker runs, so the energy term is zero. Its operations carry no wattage.</li>
+</ul>
+<p>The term that moves the shipped figure is the cached-serve constant, not a binding. The 1.8 ms is charged
+to every cached view, but 82% of views are answered by the edge cache in the front worker and never reach
+the object. The measured whole-request p50 on that edge tier is 0.703 ms (<code>measured</code>, deployed free worker,
+2026-09-10, reading taken before the in-isolate page memo). Re-basing to 0.703 ms would lower the 1M figure
+by 7.66 Wh a year, from 18.26 to about 10.6 Wh (<code>derived (modelled)</code>). That is a decision about the
+constant, not a result of this section, so the shipped figures are unchanged.</p>
+<h2 id="what-the-idle-floor-costs">What The Idle Floor Costs</h2>
+<p>Idle power of the processor package and cores, <code>measured</code> by RAPL with idle windows interleaved with
+the load windows of each run:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>run</th>
+<th>package (W)</th>
+<th align="right">core (W)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>per-request run</td>
+<td>18.17</td>
+<td align="right">0.15</td>
+</tr>
+<tr>
+<td>per-view run</td>
+<td>20.65 (19.65-21.85, n=15)</td>
+<td align="right">0.23</td>
+</tr>
+</tbody></table></div>
+<p>RAPL covers the processor package only. PSU loss, the VRM, the GPU, drives, DRAM, the chipset and
+fans sit outside its domains, so these are a floor on machine energy. The whole machine is modelled
+component by component below. No wall meter reading was taken, because that needs physical access to
+the host.</p>
+<details>
+<summary>Idle power by component</summary><p>Each component of the host&#39;s idle power, with its label:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>component</th>
+<th>power</th>
+<th>label</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>CPU package at idle</td>
+<td>20.65 W</td>
+<td><code>measured</code>, RAPL</td>
+</tr>
+<tr>
+<td>CPU at idle, published</td>
+<td>about 40 W</td>
+<td><code>published</code>, PC Gamer 9900X review, another board</td>
+</tr>
+<tr>
+<td>CPU VRM loss</td>
+<td>12% of package</td>
+<td><code>derived (modelled)</code></td>
+</tr>
+<tr>
+<td>RTX 4070 at idle</td>
+<td>11 W</td>
+<td><code>measured</code>, <code>nvidia-smi</code></td>
+</tr>
+<tr>
+<td>WD2003FZEX hard drive</td>
+<td>8.1 W idle, 1.3 W standby</td>
+<td><code>published</code>, datasheet, not checked on the drive</td>
+</tr>
+<tr>
+<td>NVMe SSD</td>
+<td>0.05 W in its idle state</td>
+<td><code>measured</code>, NVMe Identify power states</td>
+</tr>
+<tr>
+<td>DDR5, chipset, board, fans</td>
+<td>modelled per part</td>
+<td><code>derived (modelled)</code></td>
+</tr>
+<tr>
+<td>PSU efficiency, 20 W to 80 W DC</td>
+<td>62.9% rising to 81.3%</td>
+<td><code>published</code>, Tom&#39;s Hardware, a sibling 750 W unit</td>
+</tr>
+</tbody></table></div>
+</details><p><code>derived (modelled)</code> from those parts, idle at the wall:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>case</th>
+<th>DC</th>
+<th>AC (wall)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>floor from measured RAPL, disks parked</td>
+<td>46 W</td>
+<td>62 W</td>
+</tr>
+<tr>
+<td>floor from measured RAPL, one disk spun</td>
+<td>53 W</td>
+<td>69 W</td>
+</tr>
+<tr>
+<td>floor at the published 40 W CPU</td>
+<td>69 W</td>
+<td>87 W</td>
+</tr>
+<tr>
+<td>reasonable, disks parked</td>
+<td>75 W</td>
+<td>94 W</td>
+</tr>
+<tr>
+<td>reasonable, every disk spinning</td>
+<td>87 W</td>
+<td>107 W</td>
+</tr>
+</tbody></table></div>
+<p>Disk spin state during the runs is unknown, so both cases are carried. Under load, marginal wall
+energy is about 1.22 times the RAPL figure (PSU 1.09 between 60 and 80 W DC, VRM 1.12).</p>
+<p>The idle figure does not transfer to a production server, and the direction favours the conventional
+host. This is a desktop: 62 to 107 W at the wall for 24 threads, or 2.6 to 4.5 W per thread, with a
+discrete GPU, two hard drives and a desktop chipset. A production server idles at 135 W for 640
+threads, 0.21 W per thread for the whole machine (SPECpower <a href="../references.html">[1]</a>). The idle-charged figures on this
+host therefore overstate a production host&#39;s idle per view, and the energy model uses the
+server figure. Ratios between arms do transfer, because both stacks run on the same processor. The
+same wasm render takes 1.85 times longer on a deployed EPYC core than on this machine&#39;s cores, so
+every Cloudflare figure is priced from <code>cpuTime</code> and not from these joules.</p>
+<p>On Cloudflare the equivalent readings are CPU time rather than joules, taken from <code>cpuTime</code> on a
+deployed worker: 60.2 ms for a re-render on a page a content change invalidated, and 0.42 ms
+of Durable Object time for a cached serve. A page served from the previous generation at the edge
+answers in 12 ms at the median and costs no Durable Object invocation at all.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

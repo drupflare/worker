@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Static Asset Settings - Drupflare</title>
+		<meta
+			name="description"
+			content="Cache lifetimes for static assets, the response headers a request carries, and asset aggregation."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Static Asset Settings - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Cache lifetimes for static assets, the response headers a request carries, and asset aggregation."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Serving and Caching Settings</a></p>
+<h1 id="static-asset-settings">Static Asset Settings</h1>
+<p>Cache lifetimes for static assets, the response headers a request carries, and asset aggregation.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#static-asset-cache-lifetimes">Static Asset Cache Lifetimes</a></li><li><a href="#request-headers">Request Headers</a></li><li><a href="#asset_aggregates"><code>ASSET_AGGREGATES</code></a></li></ol></nav><h2 id="static-asset-cache-lifetimes">Static Asset Cache Lifetimes</h2>
+<p><code>assets/_headers</code> sets <code>Cache-Control</code> on the files the asset layer serves. Without it every asset
+answers <code>public, max-age=0, must-revalidate</code>, so a repeat view revalidates each stylesheet, script
+and font.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>path</th>
+<th><code>Cache-Control</code></th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/agg/*.css</code>, <code>/agg/*.js</code></td>
+<td><code>public, max-age=31536000, immutable</code></td>
+</tr>
+<tr>
+<td><code>/core/*</code>, <code>/modules/*</code>, <code>/themes/*</code></td>
+<td><code>public, max-age=31536000</code></td>
+</tr>
+</tbody></table></div>
+<p>An aggregate&#39;s file name is the first 16 hex characters of the SHA-256 of its body
+(<code>scripts/pack-aggregates.ts</code>), so a changed file gets a new URL and a year is safe. <code>/agg/manifest.json</code>
+has no hash in its name and keeps the default.</p>
+<p>The three Drupal prefixes get a year, which is what Drupal&#39;s own <code>.htaccess</code> allows
+(<code>drupal-src/.htaccess:42</code>). The <code>?token</code> Drupal appends to those URLs is not tied to the shipped
+files. It comes from <code>state</code> key <code>asset.css_js_query_string</code>, and only <code>drupal_flush_all_caches()</code>, a
+site install and the <code>assets</code> flush step of the update chain reset it (<code>drupal-src/core/includes/common.inc:429</code>,
+<code>src/site/php/updb/unit.php:252</code>). Reconciliation does not, so a pack update that changes a <code>/core</code>
+file leaves an existing site&#39;s URLs the same, and a visitor keeps the old copy until it expires or
+the token changes.</p>
+<p><code>_headers</code> has no allow line in <code>assets/.assetsignore</code> and must not get one. Wrangler ignores it by
+default and reads the rules from the directory; an allow line uploads it as an ordinary asset, and a
+deployed worker then answers <code>/_headers</code> with the file (200, 282 bytes, measured on a deployed worker).</p>
+<p>HTML comes from the Worker and is not affected. <code>/robots.txt</code>, <code>/driver.json</code>, <code>/prefill.json</code>,
+<code>/drupal-pf/*</code> and <code>/drupal-sql/*</code> have no rule.</p>
+<h2 id="request-headers">Request Headers</h2>
+<p>Drupal receives the request&#39;s headers, not only its cookie. <code>Authorization</code>, <code>X-Api-Key</code>, <code>Origin</code>,
+<code>User-Agent</code> and any other header an API reads reach <code>$request-&gt;headers</code> and <code>$_SERVER</code>. Before this
+the render was handed the cookie, <code>Accept</code>, the content type and the client address and nothing
+else, so every bearer-token route on a headless site answered as anonymous.</p>
+<p>Three rules keep that safe. A request that carries <code>Authorization</code> is treated like one that carries
+a session: it is rendered per caller and never read from or written to the stored page, the KV tier or
+the edge cache. An <code>Authorization</code> that is this deployment&#39;s owner token is dropped before PHP sees
+it. <code>cf-*</code>, <code>x-cfw-*</code> and the hop-by-hop headers are dropped too, and at most 64 headers and 16 KiB
+are forwarded, whole or not at all. The previous request&#39;s headers are removed from <code>$_SERVER</code> before
+the next is built, so a token never outlives the request that carried it.</p>
+<h2 id="asset_aggregates"><code>ASSET_AGGREGATES</code></h2>
+<p>Drupal&#39;s own <code>css.preprocess</code> and <code>js.preprocess</code> ship off, because the source CSS and JS files are not
+in the interpreter&#39;s filesystem and its aggregate route answers a licence header alone. <code>bun run assets:agg</code> reads the library definitions at build time, where the files do exist, and emits immutable
+per-library aggregates plus a file-to-library index. With <code>ASSET_AGGREGATES=1</code>, a page&#39;s contiguous run
+of tags for a library is replaced by that library&#39;s single aggregate tag as the page is stored.</p>
+<p>The substitution is all or nothing per library: either every tag in the run is replaced or none is.
+A partial replacement would store a page that references an aggregate for some of its CSS and not
+the rest.</p>
+<p>It is on <code>KV_OVERRIDABLE</code>, so turning it on needs no redeploy.</p>
+<p><strong>The aggregates have to be published as well as built, or the lever cannot work at any setting.</strong>
+<code>assets/.assetsignore</code> denies by default, so it must carry <code>!/agg/</code>. Without that the substitution
+rewrites every asset tag to a URL the asset layer does not publish, the Worker answers it as a Drupal
+path, and the page renders with no CSS. That is the same failure the all-or-nothing rule above exists
+to prevent, arriving from the other side.
+<code>tests/unit/runtime/assets-ignore.spec.ts</code> resolves every URL the substitution emits, so a page whose
+stylesheets 404 fails the test suite.</p>
+<p>Turning it on without running <code>assets:agg</code> changes nothing rather than breaking a page: an absent
+manifest means no library matches.</p>
+<p>What it buys is render time and stored bytes, not Worker requests. An individual core stylesheet,
+such as <code>/core/themes/olivero/css/base/base.css</code>, is answered by the asset layer without running the
+Worker, so the individual files already cost no Worker request.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

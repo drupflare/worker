@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Fleet Energy - Drupflare</title>
+		<meta
+			name="description"
+			content="The energy of many sites at once: a fleet against shared hosting, institutional workloads priced from published case studies, and the saving as the site count grows. The per-site model is on Energy."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Fleet Energy - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The energy of many sites at once: a fleet against shared hosting, institutional workloads priced from published case studies, and the saving as the site count grows. The per-site model is on Energy."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html" aria-current="page">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Impact</a> / <a href="index.html">Energy</a></p>
+<h1 id="fleet-energy">Fleet Energy</h1>
+<p>The energy of many sites at once: a fleet against shared hosting, institutional workloads priced from published case studies, and the saving as the site count grows. The per-site model is on <a href="index.html">Energy</a>. Numbered citations on this page, such as <a href="../references.html">[9]</a>, refer to the <a href="../references.html#references">references on Impact</a>.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#fleet-energy-1">Fleet Energy</a></li><li><a href="#real-institutional-workloads">Real Institutional Workloads</a></li><li><a href="#energy-avoided-by-site-count">Energy Avoided By Site Count</a></li><li><a href="#how-these-figures-are-computed">How These Figures Are Computed</a></li></ol></nav><h2 id="fleet-energy-1">Fleet Energy</h2>
+<p><code>derived</code>, from the measured inputs above. The <a href="production-baseline.html#production-baseline">production baseline</a> sets one site against a dedicated deployment. This section sets a thousand sites against consolidated shared hosting behind a CDN, which has already captured most of the multi-tenancy saving. The savings are therefore smaller, and the two sets of percentages do not combine. Each arm is on its own render fraction, and drupflare is on the traffic mix with logged-in views included. Every drupflare site here is asleep. <a href="#the-fleet-at-different-residency">The Fleet At Different Residency</a> charges the warm bounds. Generated by <code>bun scripts/economics/fleet.ts</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">views/site/month</th>
+<th align="right">shared hosting renders</th>
+<th align="right">drupflare renders</th>
+<th align="right">total energy saving</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">10,000</td>
+<td align="right">100.00%</td>
+<td align="right">7.60%</td>
+<td align="right">99.97%</td>
+</tr>
+<tr>
+<td align="right">100,000</td>
+<td align="right">100.00%</td>
+<td align="right">0.760%</td>
+<td align="right">99.88%</td>
+</tr>
+<tr>
+<td align="right">1,000,000</td>
+<td align="right">83.36%</td>
+<td align="right">0.0760%</td>
+<td align="right">99.13%</td>
+</tr>
+<tr>
+<td align="right">20,000,000</td>
+<td align="right">28.34%</td>
+<td align="right">0.00380%</td>
+<td align="right">91.21%</td>
+</tr>
+<tr>
+<td align="right">50,000,000</td>
+<td align="right">13.32%</td>
+<td align="right">0.00152%</td>
+<td align="right">82.78%</td>
+</tr>
+<tr>
+<td align="right">100,000,000</td>
+<td align="right">6.99%</td>
+<td align="right">0.000760%</td>
+<td align="right">73.16%</td>
+</tr>
+<tr>
+<td align="right">250,000,000</td>
+<td align="right">2.81%</td>
+<td align="right">0.000304%</td>
+<td align="right">56.39%</td>
+</tr>
+<tr>
+<td align="right">500,000,000</td>
+<td align="right">1.40%</td>
+<td align="right">0.000152%</td>
+<td align="right">44.94%</td>
+</tr>
+<tr>
+<td align="right">1,000,000,000</td>
+<td align="right">0.70%</td>
+<td align="right">0.0000760%</td>
+<td align="right">36.62%</td>
+</tr>
+</tbody></table></div>
+<p>The total energy saving is one minus drupflare&#39;s annual energy over the shared host&#39;s, for the same fleet. With <code>S</code> the saving, <code>E_drupflare</code> the fleet&#39;s energy in kWh a year and <code>E_shared</code> the shared-hosting energy under the published arm:</p>
+<pre><code class="math">S = 1 - \frac{E_{\text{drupflare}}}{E_{\text{shared}}}</code></pre><p>The saving narrows as the shared host&#39;s processors fill. At 20 million views a site the host runs at 29% utilisation and drupflare still uses 91% less energy.</p>
+<p>The fleet model charges shared hosting under three arms and quotes the one with the smallest saving. <code>same-cost</code> charges it drupflare&#39;s per-request CPU, so only idle, PUE and the render fraction differ. <code>native-nginx</code> and <code>native-fpm</code> charge it the measured native costs from the per-view run, logged-in views included: a native render at 92.9 mJ, an nginx hit at 1.9 mJ, or a PHP-FPM page-cache hit at 10.7 mJ where there is no nginx. Native renders are cheaper than wasm ones, so those arms lower the saving where renders dominate. Through 150 million views per site per month the quoted arm is <code>native-nginx</code>; at higher traffic it is <code>same-cost</code>. The first four rows read 99.971%, 99.886%, 99.190% and 92.841% on <code>same-cost</code> and 99.971%, 99.885%, 99.131% and 91.210% on <code>native-nginx</code>, at 10,000, 100,000, 1,000,000 and 20,000,000 views.</p>
+<p>Rows past 20 million run the same model at hostile traffic levels. Solved on a 1% ladder, the saving first falls below 90% at 23.9 million views per site per month, below 75% at 88.7 million and below 50% at 364.4 million.</p>
+<p>The saving never reaches zero in this model, and the floor comes from an assumption. Once both arms are CPU-bound, per-request energy is at parity, so the remaining gap is the facility overhead the model assumes: 1.15 PUE for a hyperscale operator against 1.54 for colocation. That holds the saving near 1 - 1.15 / 1.54, or 25.3%, and the model reaches 25.34% at a trillion views. An opponent hosted at hyperscale PUE would lose that floor, leaving only the render-fraction difference.</p>
+<h3 id="fleet-sensitivities">Fleet Sensitivities</h3>
+<p>Three assumptions of the fleet model move without a new measurement. <code>derived (modelled)</code>, from <code>bun scripts/economics/fleet.ts</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Cloudflare PUE</th>
+<th align="right">saving at 1,000,000 views</th>
+<th align="right">saving at 20,000,000 views</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1.15, the modelled hyperscale</td>
+<td align="right">99.13%</td>
+<td align="right">91.21%</td>
+</tr>
+<tr>
+<td>1.30</td>
+<td align="right">99.02%</td>
+<td align="right">90.06%</td>
+</tr>
+<tr>
+<td>1.54, the colocation figure</td>
+<td align="right">98.84%</td>
+<td align="right">88.23%</td>
+</tr>
+</tbody></table></div>
+<ul>
+<li><strong>PUE:</strong> charging Cloudflare the colocation PUE the opponent carries takes the 20 million row from 91.21% to 88.23%, so a saving above 90% at that traffic holds only at the modelled PUE. The 1.54 is an industry average [6] and says nothing about Cloudflare&#39;s facilities.</li>
+<li><strong>Omitted energy:</strong> Cloudflare&#39;s networking, storage and idle hardware are not attributed to a site. Spread over the fleet&#39;s views, the 20 million row falls to 90% if that energy is 0.74 mJ a view and to no saving at 55.8 mJ a view. At a million views the same two thresholds are 57.6 and 624.9 mJ.</li>
+<li><strong>Host memory:</strong> the shared host is packed at 1 GB a site onto 1,536 GB, while its power comes from the SPECpower result, a 384 GiB host. On 384 GiB, 1,000 sites need 2.6 hosts and not one, and the saving is 99.64% at a million views and 94.88% at 20 million. The tables keep the 1,536 GB host because it is the arm less favourable to drupflare. <code>--ram-gb-host=384</code> runs the other.</li>
+</ul>
+<h3 id="the-fleet-at-different-residency">The Fleet At Different Residency</h3>
+<p>The table above is the sleeping arm: every drupflare site holds nothing between requests. That is where a fleet of mostly idle sites sits on the free plan or with <code>SITE_WARM=0</code>. The next table keeps the same thousand sites and the same shared-hosting arm, and applies the warm charges from <a href="operating-states.html#operating-states">Operating States</a> to every drupflare site. <code>derived (modelled)</code>, from <code>bun scripts/economics/states.ts</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">views/site/month</th>
+<th align="right">sleeping</th>
+<th align="right">warming CPU at the wall time</th>
+<th align="right">170 MiB held all year</th>
+<th align="right">195 MiB held all year</th>
+<th align="right">compound adversarial bound</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">10,000</td>
+<td align="right">99.97%</td>
+<td align="right">96.40%</td>
+<td align="right">67.74%</td>
+<td align="right">63.01%</td>
+<td align="right">59.19%</td>
+</tr>
+<tr>
+<td align="right">1,000,000</td>
+<td align="right">99.13%</td>
+<td align="right">96.03%</td>
+<td align="right">71.13%</td>
+<td align="right">67.01%</td>
+<td align="right">63.70%</td>
+</tr>
+<tr>
+<td align="right">20,000,000</td>
+<td align="right">91.21%</td>
+<td align="right">89.61%</td>
+<td align="right">76.79%</td>
+<td align="right">74.67%</td>
+<td align="right">72.97%</td>
+</tr>
+</tbody></table></div>
+<p>The warming CPU moves the fleet by a few points, so memory accounts for nearly all of the difference between the columns. In the memory columns each drupflare site is charged its memory share, while shared hosting is charged the whole host its sites fill at 1 GB each. Every site holds its memory all year, which is where a paid fleet that keeps every site warm sits. A site that holds it for part of the year is charged for that part. The memory a warm object holds is a plateau, so the charge depends on how much it holds and for how much of the year. The saving by each, at 10,000 views a site and at a million:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>memory held, 10,000 views</th>
+<th align="right">held 100% of the year</th>
+<th align="right">held 50%</th>
+<th align="right">held 25%</th>
+<th align="right">held 10%</th>
+<th align="right">held 1%</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>170 MiB</td>
+<td align="right">67.74%</td>
+<td align="right">83.86%</td>
+<td align="right">91.91%</td>
+<td align="right">96.75%</td>
+<td align="right">99.65%</td>
+</tr>
+<tr>
+<td>195 MiB</td>
+<td align="right">63.01%</td>
+<td align="right">81.49%</td>
+<td align="right">90.73%</td>
+<td align="right">96.27%</td>
+<td align="right">99.60%</td>
+</tr>
+</tbody></table></div>
+<div class="table"><table>
+<thead>
+<tr>
+<th>memory held, 1,000,000 views</th>
+<th align="right">held 100% of the year</th>
+<th align="right">held 50%</th>
+<th align="right">held 25%</th>
+<th align="right">held 10%</th>
+<th align="right">held 1%</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>170 MiB</td>
+<td align="right">71.13%</td>
+<td align="right">85.13%</td>
+<td align="right">92.13%</td>
+<td align="right">96.33%</td>
+<td align="right">98.85%</td>
+</tr>
+<tr>
+<td>195 MiB</td>
+<td align="right">67.01%</td>
+<td align="right">83.07%</td>
+<td align="right">91.10%</td>
+<td align="right">95.92%</td>
+<td align="right">98.81%</td>
+</tr>
+</tbody></table></div>
+<p>A booted interpreter&#39;s linear memory starts at 64 MiB, and a site&#39;s workload only raises it. The range for a Drupal site is therefore roughly 100 MiB for the interpreter alone to 200 MiB for a large distribution. The platform meters more than the linear memory. The share of the year is what differs between sites. A site that is awake only while it renders holds the interpreter&#39;s memory for a small share of the year, and a cached anonymous page is served without booting it. If object memory sits in DRAM that is powered whether or not it is used, the charge is zero for every cell and the saving is the sleeping column. The carbon and water figures on <a href="../carbon.html">Environment</a> follow the sleeping arm.</p>
+<h2 id="real-institutional-workloads">Real Institutional Workloads</h2>
+<p><code>published</code> traffic from named case studies, run through the <a href="#fleet-energy">fleet model</a> at each estate&#39;s own average per-site traffic. The model is the 1,000-site consolidated opponent, the least favourable arrangement for drupflare.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>workload</th>
+<th align="right">sites</th>
+<th>traffic, as published</th>
+<th align="right">per site per month</th>
+<th align="right">total energy saving</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Arizona State University [9]</td>
+<td align="right">426</td>
+<td>35 M monthly page views</td>
+<td align="right">82,160 (derived)</td>
+<td align="right">99.90%</td>
+</tr>
+<tr>
+<td>Mass.gov [10]</td>
+<td align="right">1</td>
+<td>upward of 15 million page views a month</td>
+<td align="right">15,000,000</td>
+<td align="right">92.85%</td>
+</tr>
+<tr>
+<td>NASA (nasa.gov) [11]</td>
+<td align="right">1</td>
+<td>averaging 1,000,000 page views a day</td>
+<td align="right">30,440,000 (derived)</td>
+<td align="right">87.97%</td>
+</tr>
+<tr>
+<td>a U.S. government news agency [12]</td>
+<td align="right">47</td>
+<td>1 to 2 billion monthly pageviews</td>
+<td align="right">21.3 to 42.6 million (derived)</td>
+<td align="right">90.80% to 84.62%</td>
+</tr>
+</tbody></table></div>
+<p>The traffic column quotes each source. Mass.gov is one site that &quot;hosts over 400+ government agencies&quot; [10]. NASA&#39;s peak was &quot;over 40,000,000 page views in a single day&quot; during the 2017 eclipse [11]. The news agency serves &quot;1 to 2 billion monthly pageviews across dozens of Drupal sites&quot;, a main English site and 46 language sites, and is not named in the source [12].</p>
+<p>Each figure is a vendor case study from its own year, not a measurement taken for this page, and each is an estate average. Traffic inside an estate is skewed, so its busiest site sits well above the mean and its long tail well below it.</p>
+<p>Every estate lands where the saving stays above 84%. NASA&#39;s ordinary traffic saves 87.97%, and no published figure reaches the 88.7 million views where the saving falls below 75%. A university estate is two to three orders of magnitude below it.</p>
+<p>What the same shapes cost on your own account, from <code>comparison.ts</code> at each estate&#39;s site count and per-site traffic:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>workload</th>
+<th align="right">drupflare, per month</th>
+<th align="right">against the cheapest VPS</th>
+<th align="right">against the most popular cloud</th>
+<th align="right">against a latency-matched VPS</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Arizona State University</td>
+<td align="right">$14.44</td>
+<td align="right">309.8x cheaper</td>
+<td align="right">368.8x cheaper</td>
+<td align="right">1717.2x cheaper</td>
+</tr>
+<tr>
+<td>Mass.gov</td>
+<td align="right">$6.80</td>
+<td align="right">1.8x cheaper</td>
+<td align="right">1.8x cheaper</td>
+<td align="right">8.6x cheaper</td>
+</tr>
+<tr>
+<td>NASA (nasa.gov)</td>
+<td align="right">$12.38</td>
+<td align="right">2.0x cheaper</td>
+<td align="right">2.0x cheaper</td>
+<td align="right">6.4x cheaper</td>
+</tr>
+<tr>
+<td>a U.S. government news agency</td>
+<td align="right">$364.81 to $728.18</td>
+<td align="right">3.2x to 2.4x cheaper</td>
+<td align="right">3.2x to 2.4x cheaper</td>
+<td align="right">7.5x to 5.2x cheaper</td>
+</tr>
+</tbody></table></div>
+<p>Every estate costs less on drupflare than on every conventional host priced. <a href="../economics/index.html#where-the-curves-meet">Where The Curves Meet</a> gives the general crossing. Kept warm, as a paid plan does by default, Arizona State&#39;s 426 sites cost $139.80 a month, 32.0 times under the cheapest VPS and 127 times under the managed floor. The other three estates have few sites, so the warming chain adds under $3 a month to each.</p>
+<h2 id="energy-avoided-by-site-count">Energy Avoided By Site Count</h2>
+<p>Energy avoided per year against the <a href="production-baseline.html#the-worst-case">worst case</a>, one small VPS, <code>derived</code>: its idle and work energy minus drupflare&#39;s energy on the traffic mix.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>9.3 kWh</td>
+<td>93.4 kWh</td>
+<td>934.0 kWh</td>
+<td>9.34 MWh</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>9.3 kWh</td>
+<td>93.5 kWh</td>
+<td>934.7 kWh</td>
+<td>9.35 MWh</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>9.4 kWh</td>
+<td>94.1 kWh</td>
+<td>941.1 kWh</td>
+<td>9.41 MWh</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>10.1 kWh</td>
+<td>100.5 kWh</td>
+<td>1.01 MWh</td>
+<td>10.05 MWh</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>16.5 kWh</td>
+<td>164.7 kWh</td>
+<td>1.65 MWh</td>
+<td>16.47 MWh</td>
+</tr>
+</tbody></table></div>
+<p>What that is comparable to, at 10,000,000 views per site per month:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>sites</th>
+<th>electricity</th>
+<th>carbon</th>
+<th>servers not built</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>one US home for 13 hours</td>
+<td>13 lb CO2e</td>
+<td>1/320 of one server not built</td>
+</tr>
+<tr>
+<td>10</td>
+<td>one US home for 5 days</td>
+<td>130 lb CO2e</td>
+<td>1/32 of one server not built</td>
+</tr>
+<tr>
+<td>100</td>
+<td>one US home for 55 days</td>
+<td>1,300 lb CO2e</td>
+<td>a quarter of one server not built</td>
+</tr>
+<tr>
+<td>1,000</td>
+<td>one US home for a year</td>
+<td>1 car off the road</td>
+<td>3 servers not built</td>
+</tr>
+</tbody></table></div>
+<p>Energy avoided per year against production, <code>derived</code>: the production baseline&#39;s idle energy (three regions with a high-availability web pair and database pair in each, 4-vCPU nodes at 15%) minus drupflare&#39;s energy on the traffic mix. The analogies for these savings are in the <a href="index.html#energy-savings">Energy Savings</a> table.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>224.2 kWh</td>
+<td>2.24 MWh</td>
+<td>22.42 MWh</td>
+<td>224.16 MWh</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>224.2 kWh</td>
+<td>2.24 MWh</td>
+<td>22.42 MWh</td>
+<td>224.16 MWh</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>224.2 kWh</td>
+<td>2.24 MWh</td>
+<td>22.42 MWh</td>
+<td>224.16 MWh</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>224.1 kWh</td>
+<td>2.24 MWh</td>
+<td>22.41 MWh</td>
+<td>224.14 MWh</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>224.0 kWh</td>
+<td>2.24 MWh</td>
+<td>22.40 MWh</td>
+<td>223.98 MWh</td>
+</tr>
+</tbody></table></div>
+<p>All figures are rounded down. A server is a 320th of a 640-thread host per site, two vCPUs, with the power from SPECpower [1]. A US home is the EIA&#39;s 2022 average of 10,791 kWh a year [2], and a passenger vehicle emits about 4.6 t of CO2 a year [3].</p>
+<p>Energy moves far less than cost does across these tables. The conventional arm is charged both its idle allocation and the marginal joules of its work. Across a ten-thousandfold range of traffic the total moves by under a factor of two, 9.3 to 16.5 kWh a site, because the idle term dominates everywhere below the top of the range. <a href="index.html">Energy</a> reaches the same result from the other direction.</p>
+<h2 id="how-these-figures-are-computed">How These Figures Are Computed</h2>
+<p><code>bun scripts/economics/fleet.ts</code> produces the fleet energy table, the arm comparison, the sensitivities, the solved thresholds and the institutional saving column. <code>bun scripts/economics/fleet.ts --ram-gb-host=384</code> runs the 384 GiB host arm. <code>bun scripts/economics/states.ts</code> produces the residency table and the memory-held tables. <code>bun scripts/economics/comparison.ts</code> produces the institutional cost table and the energy-avoided tables, at each estate&#39;s site count and traffic or across the site counts shown. The estate traffic figures are the published numbers in the table, cited in the references on Impact.
+</content></p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

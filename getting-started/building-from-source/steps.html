@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>The Steps - Drupflare</title>
+		<meta
+			name="description"
+			content="bun run build:local runs these in order. Each is skipped when what it produces is already on disk, so a re-run after a failure resumes rather than restarting."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="The Steps - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="bun run build:local runs these in order. Each is skipped when what it produces is already on disk, so a re-run after a failure resumes rather than restarting."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html" aria-current="page">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Getting Started</a> / <a href="index.html">Building From Source</a></p>
+<h1 id="the-steps">The Steps</h1>
+<p><code>bun run build:local</code> runs these in order. Each is skipped when what it produces is already on disk,
+so a re-run after a failure resumes rather than restarting. Together they produce <strong>every artifact a
+release payload carries</strong>, which <code>tests/node/build-from-source.spec.ts</code> asserts against the payload&#39;s
+own manifest rather than against a list.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>#</th>
+<th>step</th>
+<th>produces</th>
+<th>needs</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td><code>interpreter</code></td>
+<td><code>.interp/php8.5.wasm</code>, <code>.interp/php8.5-worker.mjs</code></td>
+<td>network</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>frame</code></td>
+<td><code>.interp/php8.5.wasm.br</code></td>
+<td>-</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>siblings</code></td>
+<td><code>.siblings/{drupflare,rom,stream-http}</code></td>
+<td><code>git</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>driver</code></td>
+<td><code>assets/driver.json</code></td>
+<td>step 3</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>tree</code></td>
+<td><code>drupal-src/</code></td>
+<td><code>composer</code>, <code>tar</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>mount</code></td>
+<td>the driver modules, inside <code>drupal-src/</code></td>
+<td><code>bun</code>, step 5</td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>site</code></td>
+<td><code>drupal-src/sites/default/settings.php</code></td>
+<td><code>php</code>, step 6</td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>patch</code></td>
+<td>the wasm-runtime patches, in place</td>
+<td><code>node</code>, step 7</td>
+</tr>
+<tr>
+<td>9</td>
+<td><code>bootstrap</code></td>
+<td>a first <code>assets/drupal/core.json</code>, <code>core.bin.gz</code></td>
+<td><code>node</code>, step 5</td>
+</tr>
+<tr>
+<td>10</td>
+<td><code>twig</code></td>
+<td><code>assets/drupal/twig-bake.json</code>, <code>core.list.json</code></td>
+<td><code>php</code>, steps 8 and 9</td>
+</tr>
+<tr>
+<td>11</td>
+<td><code>core</code></td>
+<td>the same two, repacked from the list</td>
+<td><code>node</code>, step 10</td>
+</tr>
+<tr>
+<td>12</td>
+<td><code>pack</code></td>
+<td><code>assets/drupal-pf/core.pf.json</code>, <code>core.pf.bin</code></td>
+<td>step 11</td>
+</tr>
+<tr>
+<td>13</td>
+<td><code>static</code></td>
+<td><code>assets/core/</code></td>
+<td>step 5</td>
+</tr>
+<tr>
+<td>14</td>
+<td><code>agg</code></td>
+<td><code>assets/agg/</code></td>
+<td><code>bun</code>, step 5</td>
+</tr>
+<tr>
+<td>15</td>
+<td><code>container</code></td>
+<td>the packed <code>cache_container</code> row, rekeyed</td>
+<td>a free port, step 12</td>
+</tr>
+<tr>
+<td>16</td>
+<td><code>sql</code></td>
+<td><code>assets/drupal-sql/</code></td>
+<td><code>node</code>, <code>site.sqlite</code></td>
+</tr>
+<tr>
+<td>17</td>
+<td><code>prefill</code></td>
+<td><code>assets/prefill.json</code></td>
+<td>a free port, 1-16</td>
+</tr>
+</tbody></table></div>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#1-2-the-interpreter">1-2, The Interpreter</a></li><li><a href="#3-4-the-driver-pack">3-4, The Driver Pack</a></li><li><a href="#5-8-the-drupal-tree">5-8, The Drupal Tree</a></li><li><a href="#9-16-the-assets">9-16, The Assets</a></li><li><a href="#14-the-aggregates">14, The Aggregates</a></li></ol></nav><h2 id="1-2-the-interpreter">1-2, The Interpreter</h2>
+<p>The shipping seam <code>src/runtime/php-binary-raw.ts</code> imports two files, and both have to exist before the
+bundle builds: the glue and the interpreter itself.</p>
+<p><code>interpreter</code> restores the binary and its glue from the public CDN, verified by sha256 against
+<code>cdn-manifest.json</code>, needing no credential. <code>bun install</code> already did this as a postinstall, so on a
+normal clone the step is a no-op. When the CDN cannot be reached the step falls back to phasm&#39;s
+workflow artifacts over <code>gh</code>: a different host on a different domain, so it is a second source and
+never a retry.</p>
+<p><code>frame</code> compresses the binary to <code>.interp/php8.5.wasm.br</code>, and <strong>the shipping bundle does not need
+it.</strong> The Worker size limit is 64 MiB uncompressed, with no compressed limit. <code>bun run release:check</code>
+prints the current uncompressed figure. The interpreter travels as a raw <code>CompiledWasm</code> import, which
+took startup from 106 ms to 5 ms on a deployed free worker.</p>
+<p>The step stays because three configs under <code>experiments/wrangler/</code> still name the brotli seam, and it
+is the rollback path if the raw import has to be reverted. It is brotli at quality 11 and window 22,
+packed and inflated by <code>node:zlib</code>, so producer and consumer are the same implementation. The frame
+is cached on mtime; pass <code>--force</code> to repack.</p>
+<p>The build has no decoder step and needs no Docker.</p>
+<h2 id="3-4-the-driver-pack">3-4, The Driver Pack</h2>
+<p>Composer never runs on the edge, so a <code>require</code> in a manifest ships nothing. The Durable Object
+mounts <code>assets/driver.json</code> into its in-memory filesystem, and that packed copy is what executes.</p>
+<p>The two Drupal modules and the stream wrapper live in sibling repositories, which are the source of
+truth. <code>siblings</code> resolves each one in this order and clones only what is missing:</p>
+<ol>
+<li><code>DRUPFLARE_SRC</code> / <code>ROM_SRC</code> / <code>STREAM_HTTP_SRC</code>, when set</li>
+<li><code>../drupflare</code>, <code>../rom</code>, <code>../stream-http</code> (the developer layout)</li>
+<li><code>.siblings/&lt;name&gt;</code> (this build&#39;s own clone)</li>
+</ol>
+<p>An explicit environment setting outranks an inference from the layout, and the developer layout
+outranks a private clone, so a checkout you are editing is never shadowed by a clone of master.</p>
+<h2 id="5-8-the-drupal-tree">5-8, The Drupal Tree</h2>
+<p><code>tree</code> downloads the pinned core tarball from ftp.drupal.org and completes it with the four
+contributed modules the tarball does not carry. It is ~180 MB. A tree already at the requested
+version is left alone, because re-extracting it rewrites every mtime, and mtime decides behaviour
+here: Drupal&#39;s <code>MTimeProtectedFastFileStorage</code> hashes it into the compiled-Twig directory name.</p>
+<p><code>site</code> installs a Drupal site into <code>sites/build</code>, then points <code>sites/default/settings.php</code> at the
+database it created. Nothing downstream reads that database as content; it exists so <code>bake-twig.php</code>
+has a kernel to boot. A release tarball ships <code>default.settings.php</code> and no <code>settings.php</code> at all, so
+without this step there is no site to boot.</p>
+<p><strong>This step&#39;s database is a throwaway; the shipping one is built by the same script.</strong> Both come from
+<code>scripts/drupal/install-site-db.php</code>, and it refuses to write <code>assets/drupal/site.sqlite</code> without
+<code>--allow-shipping-pack</code>, so the normal loop is build elsewhere and compare with
+<code>node scripts/diff-site-db.ts</code>. <a href="../../architecture/database.html">Site Database</a> is the recipe and lists every value the shipped
+database disagrees with a stock install about.</p>
+<p><code>patch</code> rewrites the tree for the wasm runtime, and is idempotent. Drupal 11 uses <code>new \Fiber()</code> in
+five places; PHP builds Fibers on ucontext, emscripten provides none, and the first Fiber aborts the
+runtime. The patch swaps the class for a synchronous stand-in with the same surface. It also pins the
+<code>twig</code> PHP-code bin to plain <code>FileStorage</code>, without which no precompiled Twig cache is reachable at
+all: the default storage hashes the containing directory&#39;s mtime into the filename, and a mounted
+MEMFS directory&#39;s mtime is mount time.</p>
+<h2 id="9-16-the-assets">9-16, The Assets</h2>
+<p><code>bootstrap</code> exists because the packers and the bake read each other&#39;s output. <code>bake-twig.php</code> builds
+<code>core.list.json</code> as <em>the previous <code>core.json</code>, minus the compiled-Twig paths, plus the ones it just
+compiled</em>, so on a checkout with no pack there is no list to build, and <code>PACK_INDEX=1</code> has no file
+set. The bootstrap breaks that cycle by globbing the tree under <code>FULL=1</code> instead. It is skipped
+entirely on a hydrated tree, which already has a <code>core.json</code>.</p>
+<p>This is the one place where a source-built tree and a shipped one differ in content. The shipping
+pack&#39;s file list came from a traced run that a checkout cannot repeat, so the bootstrap globs every
+non-test file instead, and the bake derives its list from that. The difference is small, because the
+profiled set is completed by rules that already reach most of the tree.</p>
+<p>Measured on Drupal 11.4.5, a clean clone against the shipping artifacts. The shipped core version is
+<code>SHIPPED_CORE_VERSION</code> in <code>src/ops/shipped-lock.ts</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>artifact</th>
+<th>shipped</th>
+<th>source-built</th>
+<th>delta</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>pack entries</td>
+<td>11,444</td>
+<td>11,446</td>
+<td>+2</td>
+</tr>
+<tr>
+<td><code>core.pf.bin</code></td>
+<td>11,992,672</td>
+<td>12,457,108</td>
+<td>+464,436 (+3.9%)</td>
+</tr>
+<tr>
+<td><code>core.bin.gz</code></td>
+<td>8,126,017</td>
+<td>8,588,601</td>
+<td>+462,584 (+5.7%)</td>
+</tr>
+</tbody></table></div>
+<p>The Worker bundle is unaffected; the packs are Workers assets and carry no bundle bytes.</p>
+<p><code>twig</code> bakes the precompiled Twig cache and writes two records: <code>twig-bake.json</code>, which the gate
+reads, and <code>core.list.json</code>, the file list both packers then read.</p>
+<p><code>core</code> repacks the tree from that list. It runs under <code>PACK_INDEX=1</code>, which takes <code>core.list.json</code>
+verbatim with no re-globbing, so a repack measures the tree and never the completion rules. It
+rewrites the two files <code>bootstrap</code> wrote, and it is skipped only when they are NEWER than the list;
+a presence check would skip the repack and ship a pack missing every template the bake just compiled.</p>
+<p><code>pack</code> rewrites that blob with every file compressed independently, which is what lets a file be
+materialised when PHP opens it instead of inflating 11,447 files at boot. It then scrubs the pack:
+<code>core.pf.bin</code> carries <code>settings.php</code> with a real <code>hash_salt</code>, Workers assets are served publicly, and
+a packed-but-unscrubbed pack is the state <code>release-payload.ts</code> refuses to publish.</p>
+<p><code>static</code> copies the browser-fetchable half of the tree (<code>css</code>, <code>js</code>, fonts and images under
+<code>core/</code>) into <code>assets/core/</code>, where the Workers Assets layer serves it at the <code>/core/**</code> URLs
+Drupal already emits. Every pack skips those extensions because PHP never opens them, and nothing
+serves a file out of the PHP MEMFS over HTTP, so this is the only thing that answers them. It copies
+where the other steps pack: Workers Assets content-hashes and compresses what it serves, and a hit
+never reaches the Worker. 4,028 files on the current tree, with
+<code>core/profiles/demo_umami</code>, <code>tests/</code>, <code>node_modules/</code> and <code>.pcss.css</code> sources left out.</p>
+<p><code>sql</code> chunks the committed <code>site.sqlite</code> into the JSON the Durable Object replays in JavaScript. It
+reads a tracked file, so it is the one step that works on a clone with nothing else built.</p>
+<p>It also drops the bake&#39;s own history on the way through: <code>dropBakeHistory()</code> empties <code>watchdog</code> and
+removes <code>state:install_time</code>. Without that, a new site inherits the bake&#39;s log dates and an install
+time that makes the Cron requirement read as overdue. This is a build step rather than a hand edit,
+because <code>bun install</code> restores the tracked database from the CDN and would revert a hand edit.</p>
+<h2 id="14-the-aggregates">14, The Aggregates</h2>
+<p><code>agg</code> reads the <code>*.libraries.yml</code> definitions out of <code>drupal-src</code> and emits immutable per-library CSS
+and JS aggregates into <code>assets/agg/</code>, plus a file-to-library index. The output is not committed. The
+serving side is off unless <code>ASSET_AGGREGATES=1</code>, and with no manifest present it changes nothing.</p>
+<p><strong>It belongs in the numbered sequence, because <code>wrangler.jsonc</code> sets <code>ASSET_AGGREGATES: &quot;1&quot;</code>.</strong> A
+tree that builds the pack without it runs the lever with nothing to substitute, and the lever
+degrades quietly by design, so nothing reports it. The symptom is <code>/agg/manifest.json</code> answering 404.</p>
+<p>The output has to be published as well as built. <code>assets/.assetsignore</code> denies by default, so it
+needs <code>!/agg/</code>; without that line the aggregates upload nowhere and a page with the lever on has no
+CSS. The aggregates count against the Workers Assets store, not the 64 MiB bundle.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

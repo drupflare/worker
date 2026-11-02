@@ -1,0 +1,1159 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Configuration - Drupflare</title>
+		<meta
+			name="description"
+			content="Every setting is a vars entry or a binding in wrangler.jsonc, and every one has a working default. A deploy that sets nothing beyond what the canonical config already carries serves a site."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Configuration - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Every setting is a vars entry or a binding in wrangler.jsonc, and every one has a working default. A deploy that sets nothing beyond what the canonical config already carries serves a site."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="configuration">Configuration</h1>
+<p>Every setting is a <code>vars</code> entry or a binding in <code>wrangler.jsonc</code>, and every one has a working
+default. A deploy that sets nothing beyond what the canonical config already carries serves a site.</p>
+<p>Values arrive from wrangler as strings, so a boolean is <code>&quot;1&quot;</code> or <code>&quot;0&quot;</code> and a number is a decimal
+string. An unparseable value falls back to the default and never throws: these are read on the
+serving path, and a typo must not take a site down.</p>
+<p>Three layers decide what a value is, most specific first:</p>
+<ol>
+<li><strong>A request parameter</strong>, where the route exposes one (<code>?prefill=</code>, <code>?all=1</code>).</li>
+<li><strong>The <code>CONFIG_KV</code> namespace</strong>, for the plan and the runtime levers on
+<a href="operations/overrides.html#runtime-overrides">Runtime Overrides</a>. No redeploy needed.</li>
+<li><strong>The <code>vars</code> entry</strong>, then the per-plan default in <code>src/ops/plan-profile.ts</code>, then the constant.</li>
+</ol>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#variable-index">Variable Index</a></li><li><a href="#bindings">Bindings</a></li><li><a href="#related">Related</a></li></ol></nav><h2 id="pages">Pages</h2>
+<ul>
+<li><a href="site-identity.html">Site Identity and Origin Settings</a>: the CMS selector, site id, location hint and origin.</li>
+<li><a href="plan-and-routes.html">Plan and Extensibility Routes</a>: the plan variable and the extensibility routes.</li>
+<li><a href="migrated-settings.html">Migrated Project Settings</a>: settings a migrated project carries over from its old host.</li>
+<li><a href="diagnostics.html">Diagnostics</a>: diagnostic variables and logging.</li>
+<li><a href="serving/index.html">Serving and Caching</a>: page tiers, static assets, limits, prefill, files and images.</li>
+<li><a href="runtime.html">Runtime</a>: cron, warming, the interpreter lifecycle, boot and storage.</li>
+<li><a href="replicas.html">Replicas</a>: replica lanes and pool sizing.</li>
+<li><a href="operations/index.html">Operations</a>: maintenance, owner access, database updates, reconciliation and runtime overrides.</li>
+<li><a href="integrations/index.html">Integrations</a>: mail, outbound TCP, Workers AI, OIDC login and Spool.</li>
+</ul>
+<h2 id="variable-index">Variable Index</h2>
+<p>Every variable and binding on the configuration pages, once each.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Page</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>SITE</code></td>
+<td>binding</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>ASSETS</code></td>
+<td>binding</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>CONFIG_KV</code></td>
+<td>binding</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>FLEET_DB</code></td>
+<td>binding</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>FILES</code></td>
+<td>binding</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>CF_VERSION_METADATA</code></td>
+<td>binding</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>PAGE_KV</code></td>
+<td>binding</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>RENDER_LANES</code></td>
+<td>binding</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>SEND_EMAIL</code></td>
+<td>binding</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>CMS</code></td>
+<td>none, required at build</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>SITE_ID</code></td>
+<td>derived, then <code>site</code></td>
+<td><a href="site-identity.html#site_id">Configuration</a></td>
+</tr>
+<tr>
+<td><code>SITE_ID_PORTS</code></td>
+<td><code>keep</code></td>
+<td><a href="site-identity.html#site_id_ports">Configuration</a></td>
+</tr>
+<tr>
+<td><code>SITE_ORIGIN</code></td>
+<td>pinned on first use</td>
+<td><a href="site-identity.html#site_origin">Configuration</a></td>
+</tr>
+<tr>
+<td><code>SITE_LOCATION_HINT</code></td>
+<td>unset</td>
+<td><a href="site-identity.html#site_location_hint">Configuration</a></td>
+</tr>
+<tr>
+<td><code>PLAN</code></td>
+<td><code>free</code></td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>DRUPAL_ENV_&lt;NAME&gt;</code></td>
+<td>unset</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>DRUPAL_CONFIG</code></td>
+<td>unset</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>DRUPAL_SETTINGS</code></td>
+<td>unset</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>RESPONSE_HEADERS</code></td>
+<td>unset</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>REDIRECTS</code></td>
+<td>unset</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>PW_DIAGNOSTICS</code></td>
+<td>off</td>
+<td><a href="diagnostics.html#pw_diagnostics">Configuration</a></td>
+</tr>
+<tr>
+<td><code>PHP_LOG_LEVEL</code></td>
+<td><code>info</code></td>
+<td><a href="diagnostics.html#php_log_level">Configuration</a></td>
+</tr>
+<tr>
+<td><code>PW_SQL_TRACE</code></td>
+<td>off</td>
+<td><a href="diagnostics.html#pw_sql_trace">Configuration</a></td>
+</tr>
+<tr>
+<td><code>PW_SQL_TRACE_FROM</code></td>
+<td>0</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>MEMORY_TRACE</code></td>
+<td>off</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
+<td><code>GEN_BUCKET_MS</code></td>
+<td>5,000</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>MAX_BODY_BYTES</code></td>
+<td>2 MiB</td>
+<td><a href="serving/request-limits.html#max_body_bytes">Serving</a></td>
+</tr>
+<tr>
+<td><code>MAX_UPLOAD_BYTES</code></td>
+<td>100 MiB</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>OUTBOUND_GUARD</code></td>
+<td>on</td>
+<td><a href="serving/request-limits.html#outbound_guard">Serving</a></td>
+</tr>
+<tr>
+<td><code>PAGE_KV_ENABLED</code></td>
+<td>on</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>PAGE_KV_TTL</code></td>
+<td>86,400</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>KV_WRITES_PER_DAY</code></td>
+<td>per plan</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>EDGE_PLAN</code></td>
+<td>on</td>
+<td><a href="serving/page-cache.html#edge_plan">Serving</a></td>
+</tr>
+<tr>
+<td><code>CSP_MODE</code></td>
+<td>per plan</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>SPOOL</code></td>
+<td>per plan</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>SPOOL_IMAGES</code></td>
+<td>on</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>SPOOL_VIDEO</code></td>
+<td>on</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>SPOOL_EMBEDS</code></td>
+<td>on</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>NEVER_STALE</code></td>
+<td>unset</td>
+<td><a href="serving/page-cache.html#never_stale">Serving</a></td>
+</tr>
+<tr>
+<td><code>AGED_SERVE_MAX_MS</code></td>
+<td>60,000</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>ASSET_AGGREGATES</code></td>
+<td>unset</td>
+<td><a href="serving/static-assets.html#asset_aggregates">Serving</a></td>
+</tr>
+<tr>
+<td><code>MEMORY_CACHE_BINS</code></td>
+<td>unset</td>
+<td><a href="serving/page-cache.html#memory_cache_bins">Serving</a></td>
+</tr>
+<tr>
+<td><code>MEMORY_CACHE_MAX_ITEMS</code></td>
+<td>64</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>RENDER_BUDGET_MS</code></td>
+<td>per plan</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>FILL_BATCH_SIZE</code></td>
+<td>per plan</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>WINDOW_SITES</code></td>
+<td>unset</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>WINDOW_MAX_FILLS</code></td>
+<td>50</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>WINDOW_WALL_MS</code></td>
+<td>60,000</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>PREFILL</code></td>
+<td>on for free, off for paid</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>PREFILL_ON_SAVE</code></td>
+<td>on</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>PREFILL_ON_SAVE_LIMIT</code></td>
+<td>25</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>SAVE_DEBOUNCE_MS</code></td>
+<td>2000</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>MIRROR_LIMIT</code></td>
+<td>per plan</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>R2_WRITES_PER_MONTH</code></td>
+<td>900000</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>HTTP_DRAIN_ON_ALARM</code></td>
+<td>on</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>HTTP_DRAIN_LIMIT</code></td>
+<td>per plan</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>FILES_PUBLIC_URL</code></td>
+<td>unset</td>
+<td><a href="serving/files-and-images.html#files_public_url">Serving</a></td>
+</tr>
+<tr>
+<td><code>IMAGE_ENGINE</code></td>
+<td><code>tinyimg</code></td>
+<td><a href="serving/files-and-images.html#image_engine">Serving</a></td>
+</tr>
+<tr>
+<td><code>EAGER_DERIVATIVES</code></td>
+<td>on</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>DRUPAL_CRON</code></td>
+<td>on</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>CRON_INTERVAL_MS</code></td>
+<td>900,000</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>CRON_MAX_UNITS</code></td>
+<td>6</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>CRON_MAX_ROWS</code></td>
+<td>500</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>CRON_MAX_MS</code></td>
+<td>500</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>CRON_QUEUE_BATCH_SIZE</code></td>
+<td>5</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>UPDATE_FETCH_URL</code></td>
+<td>unset</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>GC_INTERVAL_MS</code></td>
+<td>3,600,000</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>CACHE_DATA_MAX_ROWS</code></td>
+<td>5,000</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>WATCHDOG_ROW_LIMIT</code></td>
+<td>unset</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>KEEP_WARM_MS</code></td>
+<td>240,000</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>SITE_WARM</code></td>
+<td>by plan</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>WARM_INTERVAL_MS</code></td>
+<td>8,000</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>WARM_CEILING_MS</code></td>
+<td>unset</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>IDLE_CEILING_MS</code></td>
+<td>unset</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>RECYCLE_ABOVE_BYTES</code></td>
+<td>117440512</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>ISOLATE_ABOVE_BYTES</code></td>
+<td>130023424</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>FILL_SETTLE_MS</code></td>
+<td>60,000</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>RETAIN_INTERPRETER</code></td>
+<td>on</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>HEAP_SNAPSHOT</code></td>
+<td>on</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>HEAP_IMAGE</code></td>
+<td>off</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>BOOT_IMAGE</code></td>
+<td>off</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>BOOT_IMAGE_BAKE</code></td>
+<td>off</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>HEAP_RESTORE_CHUNKS</code></td>
+<td>all at once</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>LAZY_MOUNT</code></td>
+<td><code>1</code> in the canonical config</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>LAZY_FS_BUDGET_BYTES</code></td>
+<td>20 MiB, 4 MiB in the canonical config</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>SITE_DB_PREFIX</code></td>
+<td>the packed default</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>SQL_CHUNK_PREFIX</code></td>
+<td><code>drupal-sql</code></td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>MIGRATE_ENGINE</code></td>
+<td><code>sql</code></td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>MIGRATE_SELF_DRIVE</code></td>
+<td>on</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>MIGRATE_CHUNKS_PER_INVOCATION</code></td>
+<td>40 on free, all on paid</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>OPCACHE_MODE</code></td>
+<td>off</td>
+<td><a href="runtime.html#opcache_mode">Runtime</a></td>
+</tr>
+<tr>
+<td><code>ARGON2</code></td>
+<td>off</td>
+<td><a href="runtime.html#argon2">Runtime</a></td>
+</tr>
+<tr>
+<td><code>SHELL_ASSEMBLY</code></td>
+<td>on</td>
+<td><a href="runtime.html#shell_assembly">Runtime</a></td>
+</tr>
+<tr>
+<td><code>REPLICA_COUNT</code></td>
+<td>0</td>
+<td><a href="replicas.html#replica_count">Replicas</a></td>
+</tr>
+<tr>
+<td><code>REPLICA_AUTOSCALE</code></td>
+<td>on</td>
+<td><a href="replicas.html#replica_autoscale">Replicas</a></td>
+</tr>
+<tr>
+<td><code>REPLICA_MAX_LANES</code></td>
+<td>32</td>
+<td><a href="replicas.html#replica_max_lanes">Replicas</a></td>
+</tr>
+<tr>
+<td><code>WRITE_FORWARD</code></td>
+<td>on</td>
+<td><a href="replicas.html#write_forward">Replicas</a></td>
+</tr>
+<tr>
+<td><code>REPLICA_LAG_MS</code></td>
+<td>30,000</td>
+<td><a href="replicas.html#replica_lag_ms">Replicas</a></td>
+</tr>
+<tr>
+<td><code>REPLICA_READ_ONLY</code></td>
+<td>off</td>
+<td><a href="replicas.html">Replicas</a></td>
+</tr>
+<tr>
+<td><code>UPDB_FLUSH_SPLIT</code></td>
+<td>on</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>UPDB_ALLOW_UNBOUNDED</code></td>
+<td>off</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>UPDB_SNAPSHOT_MAX_ROWS</code></td>
+<td>none</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>UPDB_RETRY_POLICY</code></td>
+<td>none</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>UPDB_ON_ABORT</code></td>
+<td>none</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>UPDB_MAX_ATTEMPTS</code></td>
+<td>none</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>UPDB_MAX_PASSES</code></td>
+<td>none</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>UPDB_MAX_COLD_WAITS</code></td>
+<td>none</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>UPDB_MAX_BEATS</code></td>
+<td>none</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>UPDB_CHECK_REQUIREMENTS</code></td>
+<td>none</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>RECONCILE</code></td>
+<td>on</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>SWEEP</code></td>
+<td>off</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>SWEEP_ROWS_FRACTION</code></td>
+<td>0.25</td>
+<td><a href="operations/index.html">Operations</a></td>
+</tr>
+<tr>
+<td><code>MAIL_TRANSPORT</code></td>
+<td><code>auto</code></td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>MAIL_FROM</code></td>
+<td>none</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>MAIL_DRAIN_ON_ALARM</code></td>
+<td>on</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>MAIL_DRAIN_LIMIT</code></td>
+<td>5</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>CF_EMAIL_ACCOUNT_ID</code></td>
+<td>none</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>CF_EMAIL_TOKEN</code></td>
+<td>none</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>SMTP_HOST</code></td>
+<td>none</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>SMTP_PORT</code></td>
+<td>587/465</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>SMTP_TLS</code></td>
+<td>starttls</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>SMTP_USER</code></td>
+<td>none</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>SMTP_PASS</code></td>
+<td>none</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>SMTP_AUTH</code></td>
+<td><code>PLAIN</code></td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>REDIS_URL</code></td>
+<td>none</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>SYSLOG_URL</code></td>
+<td>none</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>SYSLOG_APP_NAME</code></td>
+<td><code>drupal</code></td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>PARK</code></td>
+<td>on</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>SLEEP_BUDGET_MS</code></td>
+<td>2,000</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>AI</code></td>
+<td>none</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>AI_MODELS</code></td>
+<td>four model ids</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+<tr>
+<td><code>OIDC_CLIENT_SECRET</code></td>
+<td>binding</td>
+<td><a href="integrations/index.html">Integrations</a></td>
+</tr>
+</tbody></table></div>
+<h2 id="bindings">Bindings</h2>
+<p><code>wrangler.jsonc</code> is the canonical config and declares seven of the nine. <code>FILES</code> and <code>SEND_EMAIL</code> are
+the two it leaves out.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>binding</th>
+<th>kind</th>
+<th>canonical config</th>
+<th>what breaks without it</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>SITE</code></td>
+<td>Durable Object</td>
+<td>declared</td>
+<td>the Worker has nothing to proxy to; every request fails</td>
+</tr>
+<tr>
+<td><code>ASSETS</code></td>
+<td>Workers Assets</td>
+<td>declared</td>
+<td>no pack, no driver, no <code>/core/**</code>; an object cannot boot</td>
+</tr>
+<tr>
+<td><code>CONFIG_KV</code></td>
+<td>KV</td>
+<td>declared</td>
+<td>the plan override and the runtime levers are absent; the deployed vars stay in force</td>
+</tr>
+<tr>
+<td><code>FLEET_DB</code></td>
+<td>D1</td>
+<td>declared</td>
+<td>the cross-site inventory is absent; a single site does not need one</td>
+</tr>
+<tr>
+<td><code>FILES</code></td>
+<td>R2</td>
+<td>not declared</td>
+<td>the page and file mirror drains nothing; the off-Worker serving path is unavailable</td>
+</tr>
+<tr>
+<td><code>CF_VERSION_METADATA</code></td>
+<td>version metadata</td>
+<td>declared</td>
+<td>the fleet row records <code>workerVersion: &quot;unknown&quot;</code></td>
+</tr>
+<tr>
+<td><code>PAGE_KV</code></td>
+<td>KV</td>
+<td>declared</td>
+<td>the cross-colo page tier is absent, and so is the stale-generation serve</td>
+</tr>
+<tr>
+<td><code>RENDER_LANES</code></td>
+<td>Durable Object</td>
+<td>declared</td>
+<td>image styles render on first view instead of on upload</td>
+</tr>
+<tr>
+<td><code>SEND_EMAIL</code></td>
+<td><code>send_email</code></td>
+<td>not declared</td>
+<td>the credential-free mail transport is absent; <code>api</code> or <code>smtp</code> still work</td>
+</tr>
+</tbody></table></div>
+<p><strong><code>FILES</code> is left out of the shipping config because naming it breaks the deploy button.</strong> R2 has to be enabled from the Cloudflare dashboard before any bucket can exist, so a
+config that names one is refused with <em>&quot;Please enable R2 through the Cloudflare Dashboard.
+[code: 10042]&quot;</em> on every account that has not done that. Enabling R2 requires a payment card on
+either Workers plan, even when usage stays inside the monthly allocation. KV and D1 have no such
+requirement: wrangler creates <code>CONFIG_KV</code> and <code>FLEET_DB</code> on first deploy.</p>
+<p>Once R2 is enabled, wrangler creates the named bucket on deploy as it does for KV and D1. Add the
+binding when you want the mirror:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"r2_buckets"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: [{ </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">"binding"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"FILES"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">"bucket_name"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"drupflare-files"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8"> }]</span></span></code></pre><h3 id="the-managed-config">The managed config</h3>
+<p><code>wrangler.managed.jsonc</code> is the canonical config plus the two bindings it leaves out, <code>FILES</code> and
+<code>SEND_EMAIL</code>. It is what a managed deployment deploys with, where the control plane has enabled R2 on
+the account and set up Email Routing, which a deploy button cannot do:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bunx</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> wrangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> deploy</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -c</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> wrangler.managed.jsonc</span></span></code></pre><p><code>tests/node/oneclick-config.spec.ts</code> holds the two files together. It fails when the managed config
+differs from the canonical one in any key but those two, and when the canonical config names a binding
+that needs an account resource it cannot create. <code>bun run release:check</code> dry-runs both configs and
+prices each bundle against the 64 MiB limit, and the release workflow bundles both before it
+publishes. Whether a deploy that names <code>send_email</code> is refused on an account without Email Routing has
+not been measured, so the managed config assumes the control plane has set it up.</p>
+<p>A binding goes into this file when the code that reads it lands, not before. Service bindings,
+<code>worker_loaders</code> and a facade Worker are listed in the roadmap as managed-only and are not here yet,
+because nothing in <code>src/</code> reads them and a binding nothing reads fails a deploy for no gain.</p>
+<p>An unbound optional binding always wins over the var that would enable the feature. Asking for a tier
+that is not bound is a configuration error, and answering it with a crash on the serving path would
+be the wrong trade.</p>
+<h2 id="related">Related</h2>
+<ul>
+<li><a href="../getting-started/repository-layout/index.html">Repository layout</a>: every path outside <code>src/</code> and how it arrives</li>
+<li><a href="../getting-started/building-from-source/index.html">Building from source</a>: how a source build runs</li>
+<li><a href="../architecture/measurement-classes.html">Measurement classes</a>: which instrument may produce which class of number</li>
+<li><a href="../operating/recovery.html">Recovery</a>: which primitive answers which failure</li>
+<li><a href="../operating/external-database/index.html">External database</a>: why the site database lives in the Durable Object</li>
+</ul>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

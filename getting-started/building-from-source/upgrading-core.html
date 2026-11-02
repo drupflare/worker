@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Upgrading Drupal Core - Drupflare</title>
+		<meta
+			name="description"
+			content="Changing the core version means replacing the Drupal tree, then rebuilding every artifact made from it."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Upgrading Drupal Core - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Changing the core version means replacing the Drupal tree, then rebuilding every artifact made from it."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html" aria-current="page">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Getting Started</a> / <a href="index.html">Building From Source</a></p>
+<h1 id="upgrading-drupal-core">Upgrading Drupal Core</h1>
+<p>Changing the core version means replacing the Drupal tree, then rebuilding every artifact made from
+it. A plain <code>DRUPAL_VERSION=&lt;version&gt; bun run build:local</code> re-runs the <code>tree</code> step, which refuses to
+replace a tree at another version without <code>--force</code>. The steps after <code>tree</code> are keyed on their own
+outputs, so they keep what is on disk unless <code>--force</code> or <code>--only</code> says otherwise.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-sequence">The Sequence</a></li><li><a href="#what-a-patch-release-moves">What A Patch Release Moves</a></li><li><a href="#the-two-rows-nothing-regenerates">The Two Rows Nothing Regenerates</a></li></ol></nav><h2 id="the-sequence">The Sequence</h2>
+<p><code>DRUPAL_VERSION</code> must be set on both commands, or on neither. A forced build runs <code>fetch:drupal</code>
+again, and that script reads the version from its own environment.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">DRUPAL_VERSION</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">=</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">11.4.5</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/fetch-drupal-tree.ts</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --force</span></span>
+<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">DRUPAL_VERSION</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">=</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">11.4.5</span><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0"> bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:local</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --force</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  --skip=interpreter,frame,siblings,driver,prefill</span></span></code></pre><p>Four of the five skipped steps do not depend on the core version: two are the interpreter, one is
+the sibling checkouts and one is the driver pack. The fifth, <code>prefill</code>, does; drop it from that list
+on a real upgrade, since it re-renders the prefilled pages and a core patch can change them.</p>
+<p>Wall clock on one development machine, six core-version swaps (median in the first row):</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>measure</th>
+<th align="center">n</th>
+<th>wall clock</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>a core-version swap, end to end</td>
+<td align="center">6</td>
+<td>23-27 s, median 25 s</td>
+</tr>
+<tr>
+<td>of which: tarball fetch, extract, contrib install</td>
+<td align="center">6</td>
+<td>8-11 s</td>
+</tr>
+<tr>
+<td>of which: reinstall, rebake, repack, recopy</td>
+<td align="center">6</td>
+<td>15-16 s</td>
+</tr>
+<tr>
+<td>a from-scratch build, same steps plus <code>driver</code></td>
+<td align="center">1</td>
+<td>23 s</td>
+</tr>
+</tbody></table></div>
+<p>A swap replaces about 167 MB of tree, reinstalls the build site, rebakes 23 Twig templates, repacks
+11,675 files and recopies 4,028 static assets.</p>
+<p><strong>Verified by artifact.</strong> A rebuilt <code>assets/core/misc/ajax.js</code> hashed identically to the 11.4.5
+reference tree and differently from 11.4.4. <code>assets/drupal/core.bin.gz</code> carried <code>const VERSION = &#39;11.4.5&#39;</code> and no other version string.</p>
+<h2 id="what-a-patch-release-moves">What A Patch Release Moves</h2>
+<p><code>scripts/tree-diff.mjs</code> hashes a tree and plans the objects a rollout has to move. Example, 11.4.4
+to 11.4.5:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>set</th>
+<th>count</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>pack objects to upload</td>
+<td>209</td>
+</tr>
+<tr>
+<td>pack objects to delete</td>
+<td>0</td>
+</tr>
+<tr>
+<td>fraction of the 11,024-file pack set</td>
+<td>1.90%</td>
+</tr>
+<tr>
+<td>static assets that also change</td>
+<td>2</td>
+</tr>
+</tbody></table></div>
+<p>The 209 are 93 <code>.info.yml</code> version stamps, 86 files under <code>vendor/</code>, 28 PHP classes under <code>core/</code>
+and two <code>core/*.json</code>. <strong>Zero <code>*.routing.yml</code>, zero <code>.install</code>, zero <code>config/schema/*.yml</code>, zero
+<code>config/{install,optional}/*.yml</code>, zero <code>*.post_update.php</code> and zero <code>*.services.yml</code></strong>, so this
+release is the code-only case, and no route, schema or config default moved.</p>
+<p><strong><code>tree-diff.mjs</code> cannot see the static half.</strong> Its <code>SHIPPED</code> regex matches the extensions the PHP
+packs carry, which leaves out <code>css</code> and <code>js</code>, because <code>assets:static</code> serves those. Diffed
+separately, 11 browser-fetchable files changed, of which two match <code>pack-static.ts</code>&#39;s own <code>SERVED</code>
+set and therefore ship: <code>core/misc/ajax.js</code> and <code>core/misc/details.js</code>. Read <code>objectsToUpload</code> as the
+pack half of a rollout, with the static half counted separately.</p>
+<h2 id="the-two-rows-nothing-regenerates">The Two Rows Nothing Regenerates</h2>
+<p><code>sql</code> reads <code>assets/drupal/site.sqlite</code> verbatim. Two of its prefilled rows embed the core version,
+both at <code>expire = -1</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>bin</th>
+<th>cid</th>
+<th>bytes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>cache_discovery</code></td>
+<td><code>library_info:olivero</code></td>
+<td>89,184</td>
+</tr>
+<tr>
+<td><code>cache_data</code></td>
+<td><code>fonts:olivero:...</code></td>
+<td>630</td>
+</tr>
+</tbody></table></div>
+<p>The version in them is the <code>?v=</code> cache-buster Drupal appends to every asset URL. Across repeated
+core swaps, <code>site.sqlite</code> came out byte-identical to the committed one. <strong>A core upgrade does not
+change these rows</strong>, so after a patch that changes <code>core/misc/ajax.js</code>, the site serves new bytes at
+<code>/core/misc/ajax.js</code> while the query string still carries the old version.</p>
+<p>The correction is a cache invalidation: delete both rows and Drupal rebuilds them, at the cost of one
+discovery pass on the first render. <code>scripts/bake-collectors.php</code> produced them, and it is not
+wired into <code>build:local</code>. It reads <code>&lt;root&gt;/sites/default/files/.sqlite</code>, which the <code>site</code> step does
+not create (that step writes <code>sites/build/files/build-site.sqlite</code>), and it writes into the build
+database, from which the rows were copied by hand into <code>site.sqlite</code>.</p>
+<p><code>bun run release:payload</code> builds the payload the fast route downloads and <code>bun run release:check</code>
+prices the canonical config against the 64 MiB ceiling.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

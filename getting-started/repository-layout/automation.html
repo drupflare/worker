@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Scripts and Automation - Drupflare</title>
+		<meta
+			name="description"
+			content="Scripts nothing calls, the tests behind the headline claims, and the nightly jobs."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Scripts and Automation - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Scripts nothing calls, the tests behind the headline claims, and the nightly jobs."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html" aria-current="page">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Getting Started</a> / <a href="index.html">Repository Layout</a></p>
+<h1 id="scripts-and-automation">Scripts and Automation</h1>
+<p>Scripts nothing calls, the tests behind the headline claims, and the nightly jobs.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#unwired-scripts">Unwired Scripts</a></li><li><a href="#test-coverage-of-headline-claims">Test Coverage of Headline Claims</a></li><li><a href="#nightly-automation">Nightly Automation</a></li></ol></nav><h2 id="unwired-scripts">Unwired Scripts</h2>
+<p>Reference counts across <code>package.json</code>, <code>scripts/</code>, <code>src/</code>, <code>tests/</code>, <code>docs/</code> and the READMEs.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>script</th>
+<th>refs</th>
+<th>state</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>scripts/bake-container.php</code></td>
+<td>0</td>
+<td>superseded. <code>bake-pack.ts</code> records that rewriting the container key by hand produced a byte-identical render that still missed, which is what this script does.</td>
+</tr>
+<tr>
+<td><code>scripts/stage-edge-assets.sh</code></td>
+<td>1</td>
+<td>superseded by <code>assets/.assetsignore</code> for the canonical config, still used by <code>experiments/wrangler/*</code>. Keep.</td>
+</tr>
+</tbody></table></div>
+<p><code>scripts/</code> is grouped by role, as described in <code>scripts/README.md</code>: the live pipeline in TypeScript,
+<code>bench/</code> PHP for the native half of a ratio, <code>probe/</code> shell pairs, and <code>measure/</code> instruments.
+<code>src/probes/**</code> holds measurement instruments on the same terms. <code>release-payload.ts</code>, <code>hydrate.ts</code>
+and <code>backup-cdn.ts</code> sit flat alongside <code>pack-*.ts</code> and <code>gen-driver-assets.ts</code>. <code>experiments/</code> holds
+configs kept for reproduction and excluded from prettier.</p>
+<h2 id="test-coverage-of-headline-claims">Test Coverage of Headline Claims</h2>
+<p>Thirteen headline claims from the summary in <code>TECHNICAL_REPORT.md</code>, classed by what can check them:</p>
+<ul>
+<li><strong>(a) arithmetic or model</strong>: hermetic, free, in the gate.</li>
+<li><strong>(b) artifact</strong>: needs bytes on disk; runs in the release lane, which hydrates the payload.</li>
+<li><strong>(c) edge</strong>: needs a deployed worker. An absolute CPU figure comes only from <code>cpuTime</code> on one.</li>
+</ul>
+<div class="table"><table>
+<thead>
+<tr>
+<th>#</th>
+<th>claim</th>
+<th>class</th>
+<th>caught?</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>the bundle fits the 64 MiB Worker size limit</td>
+<td>b</td>
+<td><strong>yes.</strong> <code>bun run release:check</code> parses wrangler&#39;s printed uncompressed figure and fails over the limit; the release lane runs it. <code>tests/unit/bundle-size.spec.ts</code> covers the arithmetic.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>PHP 8.5 ships with nothing dropped to fit</td>
+<td>b</td>
+<td><strong>yes, both halves.</strong> <code>interp.lock.json</code> and the payload manifest pin the frame&#39;s sha256; <code>tests/integration/loaded-extensions.spec.ts</code> reads <code>get_loaded_extensions()</code> out of the running binary and asserts opcache and lexbor by name, plus the platform map both ways.</td>
+</tr>
+<tr>
+<td>3</td>
+<td>serving 3.0M visits/month, regeneration 50,916 renders/day</td>
+<td>a</td>
+<td><strong>yes.</strong> <code>tests/unit/free-envelope.spec.ts</code> over <code>scripts/measure/free-envelope.ts</code>.</td>
+</tr>
+<tr>
+<td>4</td>
+<td>the per-class row cost of a fill</td>
+<td>a</td>
+<td><strong>yes.</strong> <code>tests/integration/rows-per-fill-audit.spec.ts</code> drives every class on one object and pins it.</td>
+</tr>
+<tr>
+<td>5</td>
+<td>the first-run migration chunk count</td>
+<td>a</td>
+<td><strong>yes.</strong> <code>assets/drupal-sql/manifest.json</code> reports it. The count moves with the packed database, so read the manifest rather than a document.</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>assets/driver.json</code> is the code that executes, and is current</td>
+<td>b</td>
+<td><strong>yes.</strong> <code>tests/node/driver-pack.spec.ts</code>, byte for byte.</td>
+</tr>
+<tr>
+<td>7</td>
+<td>the canonical config reaches its own code</td>
+<td>a</td>
+<td><strong>yes.</strong> <code>tests/node/wrangler-reachability.spec.ts</code>, including the binary alias.</td>
+</tr>
+<tr>
+<td>8</td>
+<td>the compiled Twig cache is reachable at the key the runtime asks for</td>
+<td>b</td>
+<td><strong>yes, in the release lane.</strong> <code>tests/node/twig-bake.spec.ts</code> with <code>REQUIRE_ARTIFACTS=1</code>.</td>
+</tr>
+<tr>
+<td>9</td>
+<td>DO SQLite: 100 bound params, 50-byte LIKE, lossy above 2^53</td>
+<td>a</td>
+<td><strong>yes.</strong> <code>tests/unit/db/do-sqlite.spec.ts</code> and <code>tests/unit/db/file-store.spec.ts</code>, inside workerd against the real limits.</td>
+</tr>
+<tr>
+<td>10</td>
+<td>cold boot 1,398 ms, <code>page_cache</code> hit 1 ms, render 2,127 ms, startup 5 ms</td>
+<td>c</td>
+<td><strong>no.</strong> PHP clocks do not advance across a synchronous PHP run on the edge, so a duration read inside PHP is 0. The absolute time is a real epoch. Durations need a deployed worker&#39;s <code>cpuTime</code>.</td>
+</tr>
+<tr>
+<td>11</td>
+<td>the shipping asset set is exactly what the runtime fetches</td>
+<td>a</td>
+<td><strong>yes.</strong> <code>tests/unit/runtime/assets-ignore.spec.ts</code> through the real <code>ASSETS</code> binding, plus the payload&#39;s bidirectional check against the same file.</td>
+</tr>
+<tr>
+<td>12</td>
+<td>19 tripwires, and the repair ladder fails closed mid-transaction</td>
+<td>a</td>
+<td><strong>yes.</strong> <code>tests/unit/ops/repair.spec.ts</code>. 12 in <code>HOST_TRIPWIRES</code>, 7 under <code>drupflare/src/Health/Tripwire/</code>.</td>
+</tr>
+<tr>
+<td>13</td>
+<td>the render origin is a property of the site, not of the request</td>
+<td>a</td>
+<td><strong>yes.</strong> <code>tests/unit/ops/site-origin.spec.ts</code> and <code>tests/integration/render-origin.spec.ts</code>.</td>
+</tr>
+</tbody></table></div>
+<h2 id="nightly-automation">Nightly Automation</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>lane</th>
+<th>asserts</th>
+<th>cost</th>
+<th>verdict</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>model figures: free envelope, ceiling arithmetic, rows-per-fill classes</td>
+<td>every (a) row</td>
+<td>seconds, hermetic</td>
+<td>already in the gate; a nightly adds nothing a push does not</td>
+</tr>
+<tr>
+<td>artifact figures: payload manifest, frame sizes, chunk count, Twig keys</td>
+<td>the (b) rows</td>
+<td>one payload download plus a dry-run, ~3 minutes</td>
+<td>built, in the release lane. Not scheduled; a nightly run against the latest release would catch a deleted or replaced asset</td>
+</tr>
+<tr>
+<td>CDN backup intact</td>
+<td>35 live + 15 archived keys</td>
+<td>one HEAD per key, no credentials</td>
+<td>built. <code>.github/workflows/backup.yml</code>, daily at 05:20 UTC</td>
+</tr>
+<tr>
+<td>edge figures: <code>cpuTime</code>, cold boot, render cost</td>
+<td>the (c) rows</td>
+<td>a deploy, a tail and a teardown per run</td>
+<td>no. One nightly sample carries no spread</td>
+</tr>
+</tbody></table></div>
+<p>Push checks the model, and the release checks the artifact. Nothing scheduled checks the edge. The
+release workflow runs on <code>workflow_dispatch</code> only.</p>
+<p>Tracking edge figures needs a <code>workflow_dispatch</code> job that deploys a <code>cfw-*</code> worker, reads <code>cpuTime</code>
+from the Observability API at n &gt;= 5, tears the worker down, and reports the spread.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

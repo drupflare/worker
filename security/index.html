@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Security - Drupflare</title>
+		<meta
+			name="description"
+			content="Drupflare runs unmodified Drupal 11 on PHP 8.5 compiled to WebAssembly, inside a Durable Object on Cloudflare Workers."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Security - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Drupflare runs unmodified Drupal 11 on PHP 8.5 compiled to WebAssembly, inside a Durable Object on Cloudflare Workers."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html">Configuration</a>
+				<a href="../security/index.html" aria-current="page">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="security">Security</h1>
+<p>Drupflare runs unmodified Drupal 11 on PHP 8.5 compiled to WebAssembly, inside a Durable Object on
+Cloudflare Workers. This page says what that changes about the attacks a Drupal site faces, what it
+leaves alone, and how each statement was established. It is written for a security reviewer, and the
+weak points sit beside the strong ones.</p>
+<p>The short version: a bug in Drupal, a contributed module or PHP still compromises the site. What
+changes is the next step. On a conventional host an attacker who can run code gets a process on an
+operating system, with a shell, a filesystem, a network, neighbouring services and a kernel to
+attack. Here the attacker gets a PHP interpreter inside two sandboxes with a fixed list of host
+functions and no operating system to enumerate. Several well-known classes of server takeover have
+no path left to run. Application-layer bugs, and the data inside the same object, are exposed
+exactly as they were.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#how-to-read-the-claims">How to Read the Claims</a></li><li><a href="#what-is-claimed-and-what-is-not">What Is Claimed and What Is Not</a></li><li><a href="#the-layers">The Layers</a></li><li><a href="#what-the-architecture-removes">What the Architecture Removes</a></li></ol></nav><h2 id="pages">Pages</h2>
+<ul>
+<li><a href="not-removed.html">What It Does Not Remove</a>: application bugs, sandbox escapes, side channels, supply chain and the other risks that remain.</li>
+<li><a href="how-much-safer.html">How Much Safer</a>: the comparison against a conventional host and its references.</li>
+</ul>
+<h2 id="how-to-read-the-claims">How to Read the Claims</h2>
+<p>Every statement carries a tag for how it was established.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Tag</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Read</td>
+<td>The source file or the primary document was read, and the line or quote is cited</td>
+</tr>
+<tr>
+<td>Measured</td>
+<td>A command or a test was run, and the command or the spec is named</td>
+</tr>
+<tr>
+<td>Inferred</td>
+<td>It follows from the architecture and nothing was run against it</td>
+</tr>
+</tbody></table></div>
+<p>Every row is closed to one of three verdicts. There is no fourth.</p>
+<ul>
+<li><code>removed</code>: the attack path needs a component the object does not have.</li>
+<li><code>contained</code>: the flaw or the attacker&#39;s foothold exists, and a control limits what it reaches or
+what it keeps. The control and its residual are named.</li>
+<li><code>open</code>: the flaw works as it does on any host, or it could not be established either way. A claim
+that could not be established counts as <code>open</code> at full capacity, and the row says what would
+settle it.</li>
+</ul>
+<p>A measurement taken on a local <code>workerd</code> is labelled that way. It runs the same runtime code as the
+platform and not the platform&#39;s extra protections, so it never upgrades a row to <code>removed</code> by
+itself.</p>
+<p>No study measures how much a serverless or sandboxed runtime lowers breach probability. The page
+does not put a percentage on safety. It counts attack classes instead, and the count is only as good
+as the inference behind each row (see <a href="how-much-safer.html#how-much-safer">How Much Safer</a>).</p>
+<p>Sources were read through a page extractor. The quotes from Cloudflare&#39;s security model and Spectre
+post, SA-CORE-2026-014, the Lehmann and Stiévenart abstracts and the GTIG report were also checked
+against the live page. Check the live page before quoting any source to a third party, because
+Cloudflare&#39;s pages and the PHP and Drupal advisories change.</p>
+<h2 id="what-is-claimed-and-what-is-not">What Is Claimed and What Is Not</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Claim</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>There is no operating system, shell, web server or PHP-FPM pool in the site&#39;s trust boundary</td>
+<td>Read: <a href="#the-layers">layers</a></td>
+</tr>
+<tr>
+<td>A PHP exploit runs inside WebAssembly linear memory and reaches the host only through imports</td>
+<td>Read: webassembly.org security page</td>
+</tr>
+<tr>
+<td>Cloudflare states a V8 patch gap under 24 hours</td>
+<td>Read: Cloudflare security model</td>
+</tr>
+<tr>
+<td>Server-takeover classes (FPM, CGI, Shellshock, Apache, container and kernel escapes) are gone</td>
+<td>Inferred: <a href="incidents.html#the-cve-and-incident-map">map</a></td>
+</tr>
+<tr>
+<td>PHP in the interpreter cannot open a socket, call a JavaScript global or spawn a process</td>
+<td>Measured: control 3 recorded calls, shipping glue 0; see <a href="controls/index.html#host-surface">Host Surface</a></td>
+</tr>
+<tr>
+<td>An owner token stored by Drupflare can be read by code with SQL access</td>
+<td>False since v1.0.4. Only its hash is kept, outside SQL: <a href="controls/credentials.html#credentials-and-persistence">Credentials</a></td>
+</tr>
+<tr>
+<td>Arbitrary code execution is impossible</td>
+<td>False. Any Drupal RCE runs PHP in the sandbox</td>
+</tr>
+<tr>
+<td>A compromised PHP cannot read the site&#39;s own data</td>
+<td>False. The database sits in the same object</td>
+</tr>
+<tr>
+<td>WebAssembly makes memory corruption harder to exploit than native</td>
+<td>False. See <a href="not-removed.html#memory-corruption-inside-the-sandbox">Memory Corruption</a></td>
+</tr>
+<tr>
+<td>A published PHP2Shell chain works against a Drupflare site</td>
+<td>No. Each needs a per-request startup and shutdown cycle that does not exist here; see <a href="incidents.html#php2shell">PHP2Shell</a></td>
+</tr>
+<tr>
+<td>Drupflare is safer than a VPS</td>
+<td>Inferred, per attack class, and unmeasured as a whole: <a href="how-much-safer.html#how-much-safer">How Much Safer</a></td>
+</tr>
+</tbody></table></div>
+<h2 id="the-layers">The Layers</h2>
+<p>A request passes through these layers, from the attacker&#39;s side inward.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>What it is</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Drupal and contributed code</td>
+<td>Application authorization, SQL, templates</td>
+<td>the site itself</td>
+</tr>
+<tr>
+<td>PHP, compiled to wasm</td>
+<td>The interpreter in WebAssembly linear memory, built by <code>phasm</code></td>
+<td><code>interp.lock.json</code></td>
+</tr>
+<tr>
+<td>Glue and host functions</td>
+<td>102 JavaScript imports from the module, plus 31 <code>cfw*</code> functions</td>
+<td><a href="controls/index.html#host-surface">Host Surface</a></td>
+</tr>
+<tr>
+<td>V8 isolate in workerd</td>
+<td>The JavaScript sandbox that holds the module and the glue</td>
+<td>Cloudflare docs</td>
+</tr>
+<tr>
+<td>Cloudflare process sandbox</td>
+<td>Linux namespaces and seccomp around the process</td>
+<td>Cloudflare docs</td>
+</tr>
+<tr>
+<td>Cloudflare&#39;s hosts</td>
+<td>The machine, which belongs to the platform</td>
+<td>not in scope</td>
+</tr>
+</tbody></table></div>
+<p>The same stack as a diagram:</p>
+<pre><code class="mermaid">flowchart TD
+    A[&quot;Drupal and contributed code&quot;] --> B[&quot;PHP, compiled to wasm&quot;]
+    B --> C[&quot;Glue and host functions&quot;]
+    C --> D[&quot;V8 isolate in workerd&quot;]
+    D --> E[&quot;Cloudflare process sandbox&quot;]
+    E --> F[&quot;Cloudflare's hosts&quot;]</code></pre><p>Cloudflare&#39;s security model page describes the last two. &quot;The layer 2 sandbox uses Linux namespaces
+and seccomp to prohibit all access to the filesystem and network.&quot; It also says that &quot;Workers does
+not allow our customers to upload native-code binaries to run on the Cloudflare network&quot; and that
+&quot;the Workers patch gap is now under 24 hours&quot;, where the patch gap is the time between publishing a
+V8 fix and deploying it (<a href="https://developers.cloudflare.com/workers/reference/security-model/">Cloudflare</a>).
+All three are Cloudflare&#39;s statements about its own platform. None was
+independently measured here.</p>
+<p>The same page carries two cautions. It says &quot;Local <code>workerd</code> processes do not include every
+defense-in-depth protection described here&quot;, and the workerd README is headed &quot;WARNING: <code>workerd</code>
+is not a hardened sandbox.&quot; The protections above belong to hosted Workers. A self-hosted <code>workerd</code>
+needs a microVM or equivalent boundary around it, which is what the <code>isolated</code> mode of
+<a href="https://github.com/drupflare/bastion">bastion</a> provides.</p>
+<p>The database sits inside the same object as PHP, with no boundary between the interpreter and the
+site&#39;s own SQLite file. See <a href="not-removed.html#data-in-the-same-object">Data in the Same Object</a>.</p>
+<h2 id="what-the-architecture-removes">What the Architecture Removes</h2>
+<p>These classes need a component the object does not have.</p>
+<ul>
+<li><strong>A server process to take over.</strong> There is no PHP-FPM pool, CGI handler, web server, SSH daemon
+or inbound socket. CVE-2019-11043 (PHP-FPM behind nginx), CVE-2024-4577 (PHP-CGI on Windows),
+CVE-2021-41773 (Apache path traversal) and CVE-2014-6271 (Shellshock through CGI) each need one.</li>
+<li><strong>A shell and delegates.</strong> <code>posix_spawnp</code> aborts and the module has no process table, so
+command-injection classes such as ImageMagick delegates (CVE-2016-3714) have nothing to run.
+GD is not compiled in, and image operations run as JavaScript.</li>
+<li><strong>A kernel and a container runtime in the tenant&#39;s boundary.</strong> Container and kernel escapes,
+including runc CVE-2019-5736, runc CVE-2024-21626, Dirty Pipe CVE-2022-0847 and Dirty COW
+CVE-2016-5195, start from a process on a shared Linux kernel. That kernel is Cloudflare&#39;s, and an
+attacker here needs a vulnerability in Cloudflare&#39;s runtime first.</li>
+<li><strong>An appliance in front of the application.</strong> The CitrixBleed class (CVE-2023-4966) is a memory
+disclosure on an edge appliance. TLS ends at Cloudflare&#39;s edge, and PHP has no OpenSSL (<code>WITH_OPENSSL=0</code>).</li>
+<li><strong>A native binary upload.</strong> Cloudflare accepts only JavaScript and WebAssembly.</li>
+<li><strong>A writable server filesystem that persists.</strong> The in-memory filesystem is rebuilt on a new
+instance, and uploads live in the site&#39;s own file tables. The rebuild reads <code>cfw_module_file</code>, so
+a planted module row was a way back in; see <a href="controls/credentials.html#credentials-and-persistence">Credentials and Persistence</a>
+for what now holds it.</li>
+</ul>
+<p>Google&#39;s Threat Intelligence Group counted 90 zero-days exploited in the wild in 2025, with 43
+(48%) in enterprise software and appliances and browsers under 10% of the total
+(<a href="https://cloud.google.com/blog/topics/threat-intelligence/2025-zero-day-review/">GTIG</a>). The count is about products in general. It shows where attackers spend zero-days, and
+it does not measure Drupflare.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

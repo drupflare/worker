@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Page Cache Settings - Drupflare</title>
+		<meta
+			name="description"
+			content="Settings for the KV page tier, stale serving, the in-memory cache bins and the compiled plan tier."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Page Cache Settings - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Settings for the KV page tier, stale serving, the in-memory cache bins and the compiled plan tier."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Serving and Caching Settings</a></p>
+<h1 id="page-cache-settings">Page Cache Settings</h1>
+<p>Settings for the KV page tier, stale serving, the in-memory cache bins and the compiled plan tier.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-kv-page-tier">The KV Page Tier</a></li><li><a href="#never_stale"><code>NEVER_STALE</code></a></li><li><a href="#memory_cache_bins"><code>MEMORY_CACHE_BINS</code></a></li><li><a href="#edge_plan"><code>EDGE_PLAN</code></a></li></ol></nav><h2 id="the-kv-page-tier">The KV Page Tier</h2>
+<p><code>PAGE_KV</code> is a cross-colo tier between the edge cache and the Durable Object, on for both plans
+whenever the namespace is bound. It still costs one Worker request, since the Worker has to run to
+consult it, so what it buys is latency and never serving ceiling. A missing binding always wins over
+<code>PAGE_KV_ENABLED</code>.</p>
+<p>Free KV allows 1,000 writes a day for the whole account, and <code>CONFIG_KV</code> draws on the same allowance.
+So the object grants each page write: an answer that may be stored carries <code>x-cfw-kv-grant</code>, and the
+front worker stores nothing without it. The object counts its grants in its daily meter row and stops
+at <code>KV_WRITES_PER_DAY</code>, 800 on free. Past that, the site keeps serving from what it already stored
+and from the object. Only the primary grants, so replica lanes do not multiply the budget.
+<code>/serve-stats</code> reports <code>pageKv.writesToday</code> against <code>pageKv.budget</code>. Compiled plans share the namespace
+and carry no budget, so on free they are written only when <code>PAGE_KV_ENABLED</code> is <code>1</code>.</p>
+<p>Stored pages are keyed by site, generation and path, so a generation bump invalidates every one of
+them without enumerating or deleting anything. KV has no bulk delete, so a scheme needing one would
+be uninvalidatable in practice. <code>PAGE_KV_TTL</code> is therefore a floor on garbage, and no kind of
+freshness knob.</p>
+<h2 id="never_stale"><code>NEVER_STALE</code></h2>
+<p>Because the previous generation&#39;s entries are still in KV after a bump, a miss at generation <code>N</code> can
+be answered from <code>N-1</code> or <code>N-2</code> while the current one regenerates on the alarm chain. The response
+carries <code>x-cfw-edge: STALE</code> and <code>x-cfw-stale-behind</code>, and the regeneration is queued rather than run
+inline, so the visitor never waits for a render on a path that has been rendered before.</p>
+<p>Two bounds apply together. The generation depth is 2, so a stale answer is at most two content changes
+behind; a 24 hour wall-clock bound on top of it stops an abandoned site serving last month&#39;s page.</p>
+<p>A session-carrying response can never be served stale, and that is structural rather than a check: the
+stale read sits behind the same <code>edgeWanted</code> gate that requires a non-personalised response. On top of
+it, a built-in deny-list refuses <code>/user</code>, <code>/admin</code>, <code>/cart</code>, <code>/checkout</code> and the other paths where a
+one-change-old answer is wrong rather than merely old. <code>NEVER_STALE</code> is a comma-separated list of extra
+prefixes and is added to that list rather than replacing it, so a site cannot make its own login
+page staleable by configuring badly.</p>
+<p>Consumers: <code>staleAllowed()</code> and <code>readStalePage()</code> in <code>src/ops/page-store.ts</code>.</p>
+<h2 id="memory_cache_bins"><code>MEMORY_CACHE_BINS</code></h2>
+<p>A cache bin named here is held in the interpreter&#39;s memory for the life of the incarnation instead of
+in the tenant&#39;s SQLite. <code>pib_run</code> performs no request shutdown, so a class static survives from one
+Worker invocation to the next, which is what makes this a real tier here and a test double on an
+ordinary PHP host.</p>
+<p>The default is <code>dynamic_page_cache</code> and <code>menu</code>. <code>MEMORY_CACHE_BINS=none</code> turns the tier off, and a
+variable set to an empty string takes the default, the same as an unset one.</p>
+<p>In a measured re-render after a tag invalidation, the bin in memory charged 4 rows where the bin in
+SQL charged 8, for a byte-identical page (workerd, shipping pack, the two arms differing by this
+variable only). This is a tag-invalidated re-render, not the <code>realRender</code> class. That class, a
+first render of <code>/user/login</code> with both bins empty, charges 1 row in memory and 8 in SQL
+(<code>tests/integration/rows-per-fill-audit.spec.ts</code>, 2026-11-02). Rows written is the meter that bounds regeneration.</p>
+<p>After an interpreter drop the in-memory bin is empty, and the next render rebuilds it. Across a drop,
+the in-memory setting charged 2 rows against 6 for the SQL bin. The cost is isolate memory for the
+entries held and CPU on the rebuilding render.</p>
+<p>Bin names are bare, without the <code>cache_</code> prefix: <code>MEMORY_CACHE_BINS=dynamic_page_cache,render</code>.</p>
+<p>An entry is validated against the cache-tag checksum on every read, the same test the database
+backend applies, so an invalidation that arrives as replicated SQL rather than as a PHP call still
+refuses it. That is the property a read replica depends on and the reason this is not core&#39;s
+<code>MemoryBackend</code>.</p>
+<p><code>MEMORY_CACHE_MAX_ITEMS</code> bounds each bin. It is a count rather than a byte budget because measuring
+bytes means serialising the value, which is the cost moving the bin out of SQL removes; the isolate&#39;s
+own 112 MiB recycle is the backstop underneath it.</p>
+<p>Both are on <code>KV_OVERRIDABLE</code>. The value is read when <code>settings.php</code> is composed, which happens on
+every boot because the pack&#39;s filesystem is remounted each time, so a change takes effect on the
+next interpreter boot rather than needing a redeploy. Source: <code>memoryCacheBins()</code> in
+<code>src/do/levers.ts</code>, and <code>CfwCacheBackendFactory</code> in the <code>drupflare</code> module.</p>
+<h2 id="edge_plan"><code>EDGE_PLAN</code></h2>
+<p>The compiled-plan tier in the front worker. On by default on both plans; <code>0</code> opts out, and an empty
+value is treated as unset. It is the only tier that answers an authenticated page without a
+Durable Object hop, because it is the only one whose key is per-visitor: the shared page tiers are
+keyed without a user and must never hold one.</p>
+<p>Three renders of the same page compile a plan; the first is discarded, because it warms Drupal&#39;s
+asset library cache and its stylesheet list differs from every later render. The plan must reproduce
+both remaining renders byte for byte, hold no slot it cannot generate, and survive a re-diff against
+a freshly generated one. Anything else falls through to an ordinary render.</p>
+<p>The key is the site, the generation, the path and the visitor&#39;s role set. Two properties make
+that narrow key safe. A plan is compiled only from renders by two DIFFERENT sessions of the role set,
+so anything constant for one user and different for another shows up as a region the compiler cannot
+name and the plan is refused; and it is served to a session only once that session&#39;s own render has
+agreed with it.</p>
+<p>A site with a single editor never produces a second session, so a plan is also compiled under a key
+that names the session and is served to nobody else. It is held in isolate memory and never mirrored
+to <code>PAGE_KV</code>. The shared plan is preferred whenever one exists.</p>
+<p>Slots are the values that differ per request or per visitor: <code>form_build_id</code>, a view&#39;s DOM id, and
+the session CSRF token in the logout link. The first two are generated fresh; the token is
+substituted from what the visitor&#39;s own last render carried, so a plan holding one refuses to run for
+a visitor whose token this isolate has not seen.</p>
+<p>A response that rotates the session is never compiled: a <code>Set-Cookie</code> that sets a value the request
+did not already hold. Drupal re-sends the session cookie unchanged on every request when
+<code>session.cookie_lifetime</code> is non-zero (its default is 2000000), so a <code>Set-Cookie</code> header alone does
+not mean rotation.</p>
+<p>Served responses carry <code>x-cfw-cache: PLAN</code> and <code>x-cfw-plan: mem</code>, <code>private</code> or <code>kv</code>; everything else
+reports on <code>x-cfw-plan</code> why it did not.</p>
+<p><code>x-cfw-plan</code> is the edge plan and nothing else. The Cloudflare account plan is <code>x-cfw-account-plan</code>.
+<code>x-cfw-v</code> carries the header contract version, and a client checks it before reading either.</p>
+<p>An isolate serves against the last generation it learned from the object, and stops after 10 seconds
+without re-learning one. That is the staleness bound, and it is the same two-window lag the shared
+generation pointer already carries. A write by the visitor moves the generation on its own response,
+so their own save is visible immediately.</p>
+<p>Compiled plans are mirrored into <code>PAGE_KV</code> so a second isolate does not have to compile them again.
+That read is bounded at 8 ms: a KV key a colo already holds answers in 4-5 ms, and one it has not
+seen costs 46-140 ms whether it exists or not, which is more than the object hop it would replace.</p>
+<p>Measured on a deployed paid worker, one session, one 100,748-byte authenticated page:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>where the answer came from</th>
+<th align="right">ms to response</th>
+<th align="right">cpuTimeMs</th>
+<th align="right">wallTimeMs</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>EDGE_PLAN=0</code>, the object hop</td>
+<td align="right">10 median, 7 min (n=40)</td>
+<td align="right">1</td>
+<td align="right">18</td>
+</tr>
+<tr>
+<td>a plan in this isolate&#39;s memory</td>
+<td align="right">0 median and max, n=57</td>
+<td align="right">0</td>
+<td align="right">1</td>
+</tr>
+</tbody></table></div>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

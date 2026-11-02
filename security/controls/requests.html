@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Request Controls - Drupflare</title>
+		<meta
+			name="description"
+			content="The controls on the request path, outbound requests, uploads and request parsing, and response headers."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Request Controls - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The controls on the request path, outbound requests, uploads and request parsing, and response headers."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html" aria-current="page">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Security</a> / <a href="index.html">Security Controls</a></p>
+<h1 id="request-controls">Request Controls</h1>
+<p>The controls on the request path, outbound requests, uploads and request parsing, and response headers.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#request-path">Request Path</a></li><li><a href="#outbound-requests">Outbound Requests</a></li><li><a href="#uploads-and-request-parsing">Uploads and Request Parsing</a></li><li><a href="#response-headers">Response Headers</a></li></ol></nav><h2 id="request-path">Request Path</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Where it is enforced</th>
+<th>Strength</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>__</code> object routes answer 404 from outside</td>
+<td>front worker, <code>src/site/entry.ts:174</code></td>
+<td>route table</td>
+</tr>
+<tr>
+<td>Owner routes need the owner token</td>
+<td>front worker, <code>src/site/owner.ts</code>; object check in <code>src/do/routes/auth.ts</code></td>
+<td>policy check, against a stored hash</td>
+</tr>
+<tr>
+<td>Failed-token budget, 12 per 60 s per IP</td>
+<td>front worker, <code>src/ops/admin-session.ts</code></td>
+<td>policy check; in memory, not a brute-force defence</td>
+</tr>
+<tr>
+<td><code>?site=</code> ignored on visitor routes</td>
+<td>front worker, <code>src/site.ts</code></td>
+<td>policy check</td>
+</tr>
+<tr>
+<td>Forged <code>x-cfw-*</code> headers stripped</td>
+<td><code>src/ops/forwarded-headers.ts</code></td>
+<td>policy check</td>
+</tr>
+<tr>
+<td>Request body capped at 2 MiB, multipart at 100 MiB</td>
+<td><code>src/site/guards.ts</code>, <code>src/ops/body-limit.ts</code>; a chunked body is read under the cap</td>
+<td>policy check</td>
+</tr>
+<tr>
+<td><code>PLAN</code> and <code>CSP_MODE</code> cannot be written by PHP</td>
+<td><code>src/ops/plan.ts</code>, <code>src/do/capabilities.ts</code></td>
+<td>policy check at the writer</td>
+</tr>
+<tr>
+<td>The outbound guard has no lever</td>
+<td><code>src/ops/outbound-guard.ts</code>; four spellings tried in <code>settings-capability.spec.ts</code></td>
+<td>read from the operator&#39;s environment only</td>
+</tr>
+<tr>
+<td>One Durable Object per site, id from host</td>
+<td><code>src/ops/site-id.ts</code></td>
+<td>naming convention plus the platform&#39;s per-object storage</td>
+</tr>
+</tbody></table></div>
+<p>A hard boundary is one where the host has no such function. A policy check is one where the
+function exists and a list or a flag decides. The distinction matters for an attacker who can
+change what PHP asks for, because a policy check is a decision about that request and a missing
+function is not.</p>
+<p>Before v1.0.4 the request cap exempted multipart bodies and nothing counted a chunked body while it
+streamed, so the only bound was the platform&#39;s 100 MB request limit. A declared length is now
+checked up front and a chunked body is read under the cap (<code>tests/integration/serve-edge.spec.ts</code>,
+falsified).</p>
+<h2 id="outbound-requests">Outbound Requests</h2>
+<p>The guard in <code>src/ops/outbound-guard.ts</code> refuses private, link-local, metadata and credentialed
+hosts, and <code>fetchGuarded</code> re-checks every redirect hop. Both fetch paths, the queue and the park,
+call the same function. v1.0.4 closed four spellings that passed the string checks: a trailing dot
+(<code>metadata.google.internal.</code>), the NAT64 prefix <code>64:ff9b::/96</code> and <code>64:ff9b:1::/48</code>, site-local
+<code>fec0::/10</code> and multicast <code>ff00::/8</code> (<code>tests/unit/ops/outbound-guard.spec.ts</code>, falsified). 6to4
+(<code>2002::/16</code>) and Teredo also embed a v4 address and are not matched.</p>
+<p>The guard judges a string. A public name that resolves to a private address cannot be refused by it,
+and whether a hosted Worker&#39;s <code>fetch</code> reaches link-local addresses was not measured. Both stay
+<code>open</code>, and a deployed probe against a name with an A record of 169.254.169.254 would settle the
+second. Egress to public hosts is open by design (see
+<a href="../not-removed.html#data-in-the-same-object">Data in the Same Object</a>).</p>
+<h2 id="uploads-and-request-parsing">Uploads and Request Parsing</h2>
+<p>PHP&#39;s multipart handling is not entered for an inbound request. No SAPI delivers the request: the
+render fragment receives the method, body and cookies as arguments, parses multipart by hand and
+builds <code>UploadedFile</code> objects in userland (<code>src/site/php/pw-serve-inline.php</code>), and <code>$_FILES</code> is
+empty. Nothing in <code>worker/src</code> or <code>phasm/src</code> calls <code>php_request_startup</code>, <code>sapi_activate</code> or
+<code>php_default_treat_data</code>, and <code>pib_run</code> runs no request-startup cycle (Read).</p>
+<p>Measured since v1.0.4: <code>tests/integration/multipart-submit.spec.ts</code> posts a multipart body with a
+file and asserts from inside PHP that <code>$_FILES</code> is <code>[]</code>, that <code>is_uploaded_file()</code> is false on the
+userland path, that the file arrived as a Symfony <code>UploadedFile</code> built by the render fragment, and
+that its bytes match. Removing the fragment&#39;s record of the temp path fails it. The C-level claim
+that PHP&#39;s own upload handler never runs stays Inferred, because php-src is fetched at build time.</p>
+<p>The boot ini also sets <code>session.upload_progress.enabled=0</code>, <code>file_uploads=0</code>, <code>expose_php=0</code> and
+<code>allow_url_include=0</code> (<code>PhpStatic</code> in <code>src/site-do.ts</code>). <code>session.upload_progress.enabled</code> is
+<code>PHP_INI_PERDIR</code>, so boot is the only place to change it. Each value is read back from the running
+interpreter in <code>interpreter-lifecycle.spec.ts</code>, and <code>disable_functions</code> is unchanged.</p>
+<h2 id="response-headers">Response Headers</h2>
+<p>Until v1.0.3, the front worker sent none of <code>X-Content-Type-Options</code>, <code>X-Frame-Options</code>,
+<code>Referrer-Policy</code>, <code>Strict-Transport-Security</code> or <code>Content-Security-Policy</code> on a Drupal page. The
+render fragment forwarded only <code>x-drupal-*</code> headers, so core&#39;s own <code>X-Content-Type-Options</code> and
+<code>X-Frame-Options</code> never reached a browser.</p>
+<p>The v1.0.4 line sends three defaults on every response the Worker answers, and
+<code>Strict-Transport-Security: max-age=31536000</code> over https (<code>src/ops/edge-rules.ts</code>):</p>
+<ul>
+<li><code>X-Content-Type-Options: nosniff</code></li>
+<li><code>X-Frame-Options: SAMEORIGIN</code></li>
+<li><code>Referrer-Policy: strict-origin-when-cross-origin</code></li>
+</ul>
+<p>It also stores eleven allow-listed headers a module sets, such as Security Kit&#39;s, with the page and
+replays them on every tier: the object, <code>caches.default</code>, the isolate memo, KV, the stale answer
+and the compiled plan. Precedence is the default, then the module&#39;s header, then an operator
+<code>RESPONSE_HEADERS</code> rule, and a rule value of <code>&quot;&quot;</code> removes a header. <code>set-cookie</code>, <code>location</code>,
+<code>link</code>, <code>content-*</code> and <code>access-control-*</code> are never replayed, and a stored value is re-checked on
+read, so a row written through SQL cannot replay a cookie
+(<code>tests/unit/ops/module-headers.spec.ts</code> and the tier cases in <code>serve-chain.spec.ts</code>,
+<code>serve-edge.spec.ts</code> and <code>edge-read.spec.ts</code>, falsified).</p>
+<p><code>CSP_MODE</code> sets a baseline <code>Content-Security-Policy</code> on HTML that carries none:
+<code>object-src &#39;none&#39;; base-uri &#39;self&#39;; frame-ancestors &#39;self&#39;; report-uri /csp-report</code>. The default is
+<code>report-only</code> on paid plans and <code>off</code> on free. A page that already carries an enforcing policy keeps
+only its own. The baseline constrains <code>&lt;object&gt;</code>, <code>&lt;embed&gt;</code>, <code>&lt;base&gt;</code> and framing, and nothing else.
+It sets no <code>script-src</code>, so it does not stop injected script (a strict nonce policy is <code>L</code>).
+<code>form-action</code> is out of the baseline: a form that posts here and redirects to an identity provider
+would break, and the OIDC and git-provider flows were not driven in a browser. <code>POST /csp-report</code>
+answers in the front worker, rate limited, and logs one line per report. A real browser has not
+loaded a core page under the header; the workers-pool check shows only that <code>/</code>, <code>/user/login</code> and
+<code>/user/password</code> contain none of the four elements the baseline constrains. Verdict: <code>contained</code>
+for plugin embedding and clickjacking, <code>open</code> for script injection.</p>
+<p>A compromised Drupal administrator can still remove the baseline, because <code>RESPONSE_HEADERS</code> is
+writable from Drupal&#39;s settings form and <code>{&quot;path&quot;:&quot;/*&quot;,&quot;set&quot;:{&quot;Content-Security-Policy&quot;:&quot;&quot;}}</code>
+removes it. Refusing <code>CSP_MODE</code> from PHP closes only the direct switch. This is <code>open</code>, and
+whether the form should lose <code>RESPONSE_HEADERS</code> is a decision the page leaves to the maintainer.</p>
+<p>Two limits remain. Pages mirrored to R2 carry none of these headers (<code>L</code>: R2 serves a fixed header
+set), and static files served by the asset layer carry cache rules and none of them.</p>
+<p>A page whose response varies by <code>Accept</code>, <code>Origin</code>, <code>User-Agent</code> or <code>*</code> is not stored. The page
+key holds no request header, so storing such a page would hand one visitor&#39;s variant to everyone.
+On the stock pack nothing varies: <code>/</code> and <code>/user/login</code> rendered the same under five header sets,
+and four requests through the front worker with different headers got one body
+(<code>forwarded-headers.spec.ts</code>, <code>serve-edge.spec.ts</code>, Measured). The refusal is for modules that vary.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

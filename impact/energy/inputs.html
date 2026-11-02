@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Where The Figures Come From - Drupflare</title>
+		<meta
+			name="description"
+			content="Three deployments appear on this page, and they are not equally observable."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Where The Figures Come From - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Three deployments appear on this page, and they are not equally observable."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html" aria-current="page">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Impact</a> / <a href="index.html">Energy</a></p>
+<h1 id="where-the-figures-come-from">Where The Figures Come From</h1>
+<p>Three deployments appear on this page, and they are not equally observable.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>deployment</th>
+<th>label</th>
+<th>what it answers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>conventional VPS, nginx plus PHP-FPM</td>
+<td><code>measured</code></td>
+<td>joules per cached serve and per render</td>
+</tr>
+<tr>
+<td>drupflare on standalone <code>workerd</code></td>
+<td><code>measured</code></td>
+<td>the same, for this runtime, on one counter</td>
+</tr>
+<tr>
+<td>drupflare on Cloudflare</td>
+<td>measured CPU, <code>derived</code> joules</td>
+<td>the workload; joules need published W/core</td>
+</tr>
+</tbody></table></div>
+<p>Rows one and two run on the same machine against the same RAPL counter, so the runtime comparison
+under <a href="per-request.html#energy-per-request">Energy Per Request</a> is a measurement. Row three stays derived: Cloudflare exposes no energy
+counter to a container and no energy field in its analytics, so its CPU time is read and its wattage
+is an allocation.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#model-inputs">Model Inputs</a></li><li><a href="#the-two-hosts">The Two Hosts</a></li></ol></nav><h2 id="model-inputs">Model Inputs</h2>
+<p>Each input to the model, with the file that holds it in <code>scripts/economics/</code> or <code>scripts/measure/</code>
+and its reference on <a href="../references.html#references">Impact</a> where one exists.</p>
+<ul>
+<li><strong>Server power.</strong> The 135 W idle draw and 711 W full-load draw, with the 256 W at 10% load and 466 W
+at 50%, are the SPECpower result <a href="../references.html">[1]</a>. <code>scripts/economics/energy.ts</code> holds them as <code>IDLE_W</code>,
+<code>PEAK_W</code> and <code>SPEC_LOAD_POINTS</code>.</li>
+<li><strong>Cores and memory.</strong> 320 cores, 640 hardware threads and 384 GiB of memory come from the same
+result [1], held as <code>CORES</code>, <code>THREADS_PER_HOST</code> and <code>HOST_MEMORY_GIB</code> in <code>scripts/economics/energy.ts</code>.</li>
+<li><strong>PUE.</strong> <code>PUE_COLO</code> is 1.54, the Uptime Institute 2025 weighted average [6]. <code>PUE_HYPER</code> is 1.15, the
+worse end of Uptime&#39;s 1.10 to 1.15 hyperscale band [6], and it prices drupflare&#39;s Cloudflare side.
+Both are in <code>scripts/economics/energy.ts</code>.</li>
+<li><strong>Per-core charge.</strong> <code>W_PER_CORE</code> in <code>scripts/economics/energy.ts</code> is computed from the server power
+and core count above. It has no source of its own.</li>
+<li><strong>Traffic mix.</strong> The share of views in each class is in <code>config/traffic.yml</code>: 82% anonymous cached,
+9.5% anonymous miss, 3% each for signed-in front-end and editor views, and 2.5% for a signed-in
+user&#39;s own page. <code>scripts/measure/verdict-math.ts</code> loads it as <code>TRAFFIC_MIX</code>. The file gives a reason
+for each class, not a source for the weights.</li>
+<li><strong>Render fraction.</strong> <code>pageStoreFraction</code> in <code>scripts/measure/render-fraction.ts</code> takes the monthly view
+count, with the save rate and pages per save as defaults. <code>scripts/economics/perview.ts</code> calls it for
+drupflare. The file marks the result <code>derived (modelled)</code>.</li>
+<li><strong>CPU per view.</strong> A warm-bin render is 60.2 ms and a cached serve is 1.8 ms, front worker plus object,
+both in <code>scripts/economics/measured.ts</code>. The render figure is Durable Object <code>cpuTime</code> on a deployed
+paid worker, per the comment on <code>RENDER_WARM_BIN_MS</code>.</li>
+</ul>
+<h2 id="the-two-hosts">The Two Hosts</h2>
+<p>Joules come from one machine and Cloudflare CPU time from another, because only one of the two can
+report energy at all. Both were probed before either was used.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th></th>
+<th>Cloudflare Container</th>
+<th><code>paisley-park</code></th>
+</tr>
+</thead>
+<tbody><tr>
+<td>kind</td>
+<td>Firecracker microVM</td>
+<td>bare metal</td>
+</tr>
+<tr>
+<td>processor</td>
+<td>AMD EPYC, Zen 4</td>
+<td>AMD Ryzen 9 9900X, Zen 5</td>
+</tr>
+<tr>
+<td>cores visible</td>
+<td>1 vCPU</td>
+<td>12 cores, 24 threads</td>
+</tr>
+<tr>
+<td>cores enforced</td>
+<td>1/16 vCPU on the <code>lite</code> type</td>
+<td>all</td>
+</tr>
+<tr>
+<td>memory</td>
+<td>256 MiB</td>
+<td>30 GB</td>
+</tr>
+<tr>
+<td>kernel</td>
+<td><code>6.18.36-cloudflare-firecracker</code></td>
+<td>Ubuntu 24.04, 6.8</td>
+</tr>
+<tr>
+<td>discrete GPU</td>
+<td>none</td>
+<td>RTX 4070, 11.1 W idle</td>
+</tr>
+<tr>
+<td>power supply</td>
+<td>not visible</td>
+<td>750 W, 80 Plus Bronze</td>
+</tr>
+</tbody></table></div>
+<p>The container runs as root with the full capability set, no seccomp filter, a writable <code>/sys</code> and
+<code>/dev/cpu/0/msr</code> present, and still has no energy counter: <code>/sys/class/powercap</code> is absent, no
+<code>power</code> PMU is registered, the AMD RAPL MSRs answer <code>I/O error</code> and the Intel ones return a constant
+zero. <code>nomodule</code> on the kernel command line means no driver can be inserted to change that.</p>
+<p><code>paisley-park</code> has the counter the comparison needs. <code>/sys/class/powercap/intel-rapl:0</code> exposes
+<code>package-0</code> and <code>core</code> domains with a 65,532,610,987 uJ range. The file is root-only by default
+under the Platypus mitigation, and a session-scoped permission change makes it readable.</p>
+<p>Two readings from the container. Its <code>lite</code> instance type is enforced outside the guest&#39;s view: the
+guest sees one full vCPU and <code>nr_throttled</code> stays at zero, while <code>/proc/stat</code> reports 48% of wall
+clock as steal time, which is how the 1/16 share arrives. And its own accounting sits between
+Cloudflare&#39;s two published datasets for the same run, at 11.06 CPU-seconds against 5.59 reported for
+the workload and 22.10 for the workload plus its micro-VM sandbox.</p>
+<p>The container measures CPU time, memory, disk and network, and can never measure joules.
+<code>paisley-park</code> measures processor-package joules for both runtimes, drupflare under standalone
+<code>workerd</code> and the VPS stack, and cannot measure the wall, because a wall meter needs physical access.
+Neither host can measure drupflare on Cloudflare&#39;s own hardware. That side is <code>cpuTime</code> from a
+deployed worker priced at watts per core, and the per-view figures price both arms from CPU time at
+the same watts, so a measured joule is never set against a derived one.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

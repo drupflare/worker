@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>How Much Safer - Drupflare</title>
+		<meta
+			name="description"
+			content="A comparison of exposure against a conventional host, and the sources it rests on."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="How Much Safer - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="A comparison of exposure against a conventional host, and the sources it rests on."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html">Configuration</a>
+				<a href="../security/index.html" aria-current="page">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Security</a></p>
+<h1 id="how-much-safer">How Much Safer</h1>
+<p>A comparison of exposure against a conventional host, and the sources it rests on.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#how-much-safer-1">How Much Safer</a></li><li><a href="#references">References</a></li></ol></nav><h2 id="how-much-safer-1">How Much Safer</h2>
+<p>No study compares breach outcomes for serverless and server hosting. The attack-surface literature
+(Manadhata and Wing, IEEE TSE 2011, and Howard&#39;s relative attack surface quotient) defines how to
+count entry points and capabilities, and neither measures this pair. The vendor surveys searched
+quote percentages that were read only through summaries, so none is repeated here.</p>
+<p>What can be counted is the two tables above. Every sentence on this page that says Drupflare is more
+resistant than a VPS to a class is Inferred from the architecture until the three-arm comparison
+below has a result.</p>
+<p>The 24 rows of the <a href="incidents.html#the-cve-and-incident-map">incident map</a> carry these verdicts:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Verdict</th>
+<th>Rows</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>removed</td>
+<td>12</td>
+<td>The attack path needs a component the object lacks</td>
+</tr>
+<tr>
+<td>contained</td>
+<td>4</td>
+<td>The flaw runs; the sandbox limits the reach</td>
+</tr>
+<tr>
+<td>open</td>
+<td>8</td>
+<td>The flaw works as it does anywhere, or it could not be established either way</td>
+</tr>
+</tbody></table></div>
+<p>The <a href="incidents.html#classes-addressed-in-v104">v1.0.4 class table</a> has 19 rows: 4 move from <code>open</code> to <code>removed</code>, 13 to <code>contained</code>, and 2 stay
+<code>open</code>. Read the <code>removed</code> counts as statements about classes of server takeover and published exploit chains, and do not read
+them as a breach probability. The incident rows were chosen from incidents that reached the attacker&#39;s goal on conventional
+PHP hosting, so the selection favours the classes this architecture removes. None of the six Drupal
+advisories in the map is <code>removed</code>: each is <code>contained</code> or <code>open</code>, because Drupal&#39;s own bugs
+run inside the sandbox. Sophos&#39;s 2025 education survey reports that higher education providers were
+more likely to be attacked through exploited vulnerabilities (35%), from 441 respondents across
+lower and higher education
+(<a href="https://www.sophos.com/en-us/blog/the-state-of-ransomware-in-education-2025">Sophos</a>). The
+figure concerns the entry vector and says nothing about the host.</p>
+<p>The measurable form of the claim is a comparison of authority retained after the same exploit. The
+planned experiment runs one pinned vulnerable Drupal against three arms (a minimally configured
+VPS, a hardened container and Drupflare) with a fixed list of post-exploitation actions, and
+publishes how many each arm blocked.</p>
+<h2 id="references">References</h2>
+<p>Each source was read through a page extractor unless its entry says abstract or extract.</p>
+<ol>
+<li>Cloudflare, Workers security model: <a href="https://developers.cloudflare.com/workers/reference/security-model/">https://developers.cloudflare.com/workers/reference/security-model/</a></li>
+<li>Cloudflare, &quot;A revisit of remote Spectre attacks on Cloudflare Workers&quot;, 2026-08-19: <a href="https://blog.cloudflare.com/revisiting-spectre-attacks-on-workers/">https://blog.cloudflare.com/revisiting-spectre-attacks-on-workers/</a></li>
+<li>Schwarzl et al., &quot;Remote-Timer-as-a-Service&quot;, arXiv:2608.17043 (abstract only): <a href="https://arxiv.org/abs/2608.17043">https://arxiv.org/abs/2608.17043</a></li>
+<li>Cloudflare, Cloudbleed incident report, 2017-02-23: <a href="https://blog.cloudflare.com/incident-report-on-memory-leak-caused-by-cloudflare-parser-bug/">https://blog.cloudflare.com/incident-report-on-memory-leak-caused-by-cloudflare-parser-bug/</a></li>
+<li>Cloudflare, 12 June 2025 service outage: <a href="https://blog.cloudflare.com/cloudflare-service-outage-june-12-2025/">https://blog.cloudflare.com/cloudflare-service-outage-june-12-2025/</a></li>
+<li>Cloudflare, 18 November 2025 outage: <a href="https://blog.cloudflare.com/18-november-2025-outage/">https://blog.cloudflare.com/18-november-2025-outage/</a></li>
+<li>Lehmann, Kinder and Pradel, &quot;Everything Old is New Again: Binary Security of WebAssembly&quot;, USENIX Security 2020 (abstract): <a href="https://www.usenix.org/conference/usenixsecurity20/presentation/lehmann">https://www.usenix.org/conference/usenixsecurity20/presentation/lehmann</a></li>
+<li>Stiévenart, De Roover and Ghafari, &quot;The Security Risk of Lacking Compiler Protection in WebAssembly&quot;, arXiv:2111.01421 (abstract): <a href="https://arxiv.org/abs/2111.01421">https://arxiv.org/abs/2111.01421</a></li>
+<li>WebAssembly security documentation: <a href="https://webassembly.org/docs/security/">https://webassembly.org/docs/security/</a></li>
+<li>Google Threat Intelligence Group, &quot;2025 Zero-Days in Review&quot;, 2026-03-05: <a href="https://cloud.google.com/blog/topics/threat-intelligence/2025-zero-day-review/">https://cloud.google.com/blog/topics/threat-intelligence/2025-zero-day-review/</a></li>
+<li>PHP project, security advisory 2026-10-21 (CVE-2026-109618, CVE-2026-109619) and the two php-src advisories GHSA-w8hw-w9fx-j79w and GHSA-6wmf-4rv5-p3rp: <a href="https://www.php.net/archive/2026.php#2026-10-21-5">https://www.php.net/archive/2026.php#2026-10-21-5</a></li>
+<li>Wiz, &quot;PHP2Shell: AI uncovers critical RCE vulnerabilities&quot; (read once through a page extractor): <a href="https://www.wiz.io/blog/php2shell-php-rce">https://www.wiz.io/blog/php2shell-php-rce</a></li>
+<li>Drupal security advisories SA-CORE-2014-005, 2018-002, 2018-004, 2019-003, 2020-004 and 2026-014: <a href="https://www.drupal.org/security">https://www.drupal.org/security</a></li>
+<li>NVD records for the CVE identifiers in the map: <a href="https://nvd.nist.gov/">https://nvd.nist.gov/</a></li>
+<li>PHP project, 2021 archive (malicious commits, 2021-03-30): <a href="https://www.php.net/archive/2021.php">https://www.php.net/archive/2021.php</a></li>
+<li>Sophos, &quot;The State of Ransomware in Education 2025&quot;: <a href="https://www.sophos.com/en-us/blog/the-state-of-ransomware-in-education-2025">https://www.sophos.com/en-us/blog/the-state-of-ransomware-in-education-2025</a></li>
+<li>workerd README, &quot;WARNING: workerd is not a hardened sandbox&quot;: <a href="https://github.com/cloudflare/workerd">https://github.com/cloudflare/workerd</a></li>
+<li>Check Point Research, workerd and Code Mode research, 2026-08-07 (read as an extract): <a href="https://research.checkpoint.com/2026/when-agentic-glue-melts/">https://research.checkpoint.com/2026/when-agentic-glue-melts/</a></li>
+<li>CISA, &quot;Widespread supply chain compromise impacting npm ecosystem&quot;, 2025-09-23 (extract): <a href="https://www.cisa.gov/news-events/alerts/2025/09/23/widespread-supply-chain-compromise-impacting-npm-ecosystem">https://www.cisa.gov/news-events/alerts/2025/09/23/widespread-supply-chain-compromise-impacting-npm-ecosystem</a></li>
+<li>Cloudflare, Durable Object platform limits (key and value size): <a href="https://developers.cloudflare.com/durable-objects/platform/limits">https://developers.cloudflare.com/durable-objects/platform/limits</a></li>
+</ol>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Build and Patching Controls - Drupflare</title>
+		<meta
+			name="description"
+			content="The controls on how the interpreter is built and how patches reach a site."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Build and Patching Controls - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The controls on how the interpreter is built and how patches reach a site."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html" aria-current="page">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Security</a> / <a href="index.html">Security Controls</a></p>
+<h1 id="build-and-patching-controls">Build and Patching Controls</h1>
+<p>The controls on how the interpreter is built and how patches reach a site.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-build">The Build</a></li><li><a href="#patching">Patching</a></li></ol></nav><h2 id="the-build">The Build</h2>
+<p>The shipping interpreter is built by <code>phasm</code>, which drives <code>seanmorris/php-wasm</code>&#39;s Makefile with an
+rc file per variant. The Makefile sets <code>TOTAL_STACK=32MB</code>. The extension list is short. <code>soap</code>,
+<code>phar</code>, <code>intl</code>, <code>gd</code>, <code>openssl</code>, <code>exif</code> and <code>sqlite</code> are not compiled in (<code>WITH_*</code> settings in
+<code>long64.rc</code>; the binary contains no <code>SoapServer</code> string, Measured with <code>grep -a -c</code>). Every extension
+left out is an extension its bugs cannot reach.</p>
+<p><code>phasm</code> now pins the PHP patch release (<code>src/php-versions.lock</code>, 8.5.12) and the php-wasm commit.
+php-wasm&#39;s Makefile hardcodes 8.5.2, and an rc cannot move it, so the pinned release arrives as make
+variables, <code>build-variant.sh</code> refuses a php-src tree that disagrees with the pin, and
+<code>inspect-build.sh</code> fails a binary that reports a PHP below the pin. The worker&#39;s <code>interpreter.yml</code>
+now runs <code>gh attestation verify</code> on the fetched files before it prices or pins them, against the
+phasm build workflow&#39;s identity. That verification was written and tested for its position in the
+workflow. The workflow step itself has not run against a real attestation; the one real artifact checked with the command is under <a href="#patching">Patching</a>.</p>
+<p>Stack protection is not in the shipping build. A rebuilt baseline and two candidate flags were measured on <code>paisley-park</code> (<code>results/84-s12-builds.md</code>). <code>-fstack-protector-strong</code> added 0.545% to the wasm and left a 4-byte guard that is a constant zero: every access to it is a load, no data segment writes it, so it catches a non-zero overwrite of that slot and nothing else. <code>-sSTACK_OVERFLOW_CHECK=2</code> cost 6.3% of the blended median (range 4.9% to 9.7% over eight processes) and added 3.4% to the wasm. <code>-sSTACK_OVERFLOW_CHECK=1</code> changes only the glue and cost nothing the harness could resolve. Neither check was adopted. Unmeasured: whether a real PHP stack overflow reaches either trap. The open objective for v1.1 is a canary that is not constant. Nothing in the build writes the guard slot before the first PHP call, so a randomised canary needs a writer for that slot and its own cost measurement; that is an inference from the wasm dump, not a tested design.</p>
+<h2 id="patching">Patching</h2>
+<p>Cloudflare patches V8 and the platform. Drupal core and the PHP interpreter are the project&#39;s to
+patch, and that path has a manual step. A new interpreter build travels from <code>phasm</code> to a pull
+request in this repository and ends there. The workflow has no deploy step, and a person merges,
+releases and deploys (<code>docs/operating/php-update-delivery/index.md</code>). The pin records <code>.interp/php8.5.wasm</code> with its
+sha256.</p>
+<p>The interpreter in the tree reports PHP 8.5.12, the first 8.5 release that carries the PHP2Shell
+fixes (Measured: <code>interpreter-lifecycle.spec.ts</code> asserts <code>PHP_VERSION &gt;= 8.5.12</code>). The advisory was
+published 2026-10-21 13:34 UTC. A local rig build that passes the park, heap and static-sweep specs
+finished 31 hours 39 minutes after it, and the attested CI artifact (phasm run 39876497434, artifact
+12463245201, <code>gh attestation verify</code> exit 0) was created 32 hours 35 minutes after it. (Corrected 2026-11-02: this paragraph first cited run 39861586180. The pin record in <code>DRUPFLARE_ROADMAP.md</code> S11 and commit <code>0ee10e9db</code> name 39876497434. The 32 hours 35 minutes figure was not re-derived from the run record; it ends at 22:09 UTC, which is the pin commit&#39;s 22:09 EDT clock time read as UTC, so treat it as unverified.) The advisory
+time is read from the PHP announcement; the build times come from the rig log and the workflow run
+record. That is one interval on one build, not a rate. Deployed sites move only when someone
+publishes the artifact, merges the pin and deploys. The root <code>composer.lock</code> pins Drupal core 11.4.11, which includes the 11.4.10 fix for the 11.4 line of SA-CORE-2026-014.</p>
+<p>Rebuilding found a defect in <code>phasm</code>&#39;s own park extension. When a parked chain completes after a
+resume, the root frame&#39;s <code>return_value</code> still pointed at a C local of <code>zend_eval_stringl</code> that the
+<code>longjmp</code> had destroyed, so the final <code>ZEND_RETURN</code> wrote a 16-byte zval onto whatever the resuming
+stack held. On 8.5.2 the bytes were dead and nothing showed. On 8.5.12 the write corrupted the
+dispatch state and the next call trapped. The extension now points the root at a slot it owns
+(<code>park_pin_root()</code> in <code>cfwpark.c</code>). The fix is covered natively (22 pass with the fix; 21 pass and
+1 fail without it) and by <code>park-interpreter.spec.ts</code>. It matters here because it is a memory-safety bug in
+code the project wrote, reachable only on a site that arms the park (<code>REDIS_URL</code> set, or an OIDC or
+other outbound fetch that parks).</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Tracked and Generated Paths - Drupflare</title>
+		<meta
+			name="description"
+			content="Which paths the repository tracks, which it generates, and what each top-level directory holds."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Tracked and Generated Paths - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Which paths the repository tracks, which it generates, and what each top-level directory holds."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html" aria-current="page">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Getting Started</a> / <a href="index.html">Repository Layout</a></p>
+<h1 id="tracked-and-generated-paths">Tracked and Generated Paths</h1>
+<p>Which paths the repository tracks, which it generates, and what each top-level directory holds.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#tracked-against-untracked">Tracked Against Untracked</a></li><li><a href="#docs"><code>docs/</code></a></li><li><a href="#experiments"><code>experiments/</code></a></li><li><a href="#assetscore"><code>assets/core/</code></a></li><li><a href="#vendor"><code>vendor/</code></a></li><li><a href="#drupal-src"><code>drupal-src/</code></a></li><li><a href="#siblings"><code>.siblings/</code></a></li></ol></nav><h2 id="tracked-against-untracked">Tracked Against Untracked</h2>
+<p>A deploy reads <code>src/</code>, <code>assets/</code> and <code>.interp/</code>. The rest of the untracked bulk is build input,
+measurement state, or regenerable output.</p>
+<p><strong>Measure the counts rather than reading them here.</strong> <code>git ls-files | wc -l</code> and <code>du -sh</code> are the
+instruments. The shape of the table is what is meant to last; the numbers in it go stale.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>path</th>
+<th>size</th>
+<th>tracked</th>
+<th>how it arrives on a clean clone</th>
+<th>delete?</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>src/</code></td>
+<td>4.5M</td>
+<td>yes</td>
+<td>committed</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>tests/</code></td>
+<td>6.0M</td>
+<td>yes</td>
+<td>committed</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>scripts/</code></td>
+<td>17M</td>
+<td>yes</td>
+<td>committed</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>docs/</code></td>
+<td>1.1M</td>
+<td>yes</td>
+<td>committed</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>assets/</code></td>
+<td>207M</td>
+<td>5 files</td>
+<td><code>bun run hydrate</code>; <code>bun run build:local</code> in full</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>.interp/</code></td>
+<td>251M</td>
+<td>no</td>
+<td><code>bun install</code> restores 2 of 3; <code>bun run hydrate</code> or <code>build:local</code> the rest</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>.siblings/</code></td>
+<td>--</td>
+<td>no</td>
+<td><code>bun run build:local</code>, only when the modules are not checked out beside this</td>
+<td>yes, regenerable</td>
+</tr>
+<tr>
+<td><code>vendor/</code></td>
+<td>198M</td>
+<td>no</td>
+<td>not reproducible; restored from <code>drupflare-cdn/vendor/</code>. Not a deploy input</td>
+<td>never</td>
+</tr>
+<tr>
+<td><code>drupal-src/</code></td>
+<td>173M</td>
+<td>no</td>
+<td><code>bun run fetch:drupal</code>, which <code>build.yml</code> also calls</td>
+<td>yes, regenerable</td>
+</tr>
+<tr>
+<td><code>experiments/</code></td>
+<td>340K</td>
+<td>yes</td>
+<td>committed</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>.pack-backup/</code></td>
+<td>7.2M</td>
+<td>no</td>
+<td><code>bun run bake:pack</code></td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>.contrib-fixture/</code></td>
+<td>38M</td>
+<td>no</td>
+<td><code>bun run test:contrib</code>, and only while it is running</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>.trim-assets/</code></td>
+<td>37M</td>
+<td>no</td>
+<td><code>bash scripts/stage-edge-assets.sh</code></td>
+<td>yes, regenerable</td>
+</tr>
+<tr>
+<td><code>typedoc/</code></td>
+<td>37M</td>
+<td>no</td>
+<td><code>bun run docs:build</code></td>
+<td>yes, regenerable</td>
+</tr>
+<tr>
+<td><code>coverage/</code></td>
+<td>--</td>
+<td>no</td>
+<td><code>bun run test:coverage</code></td>
+<td>yes, regenerable</td>
+</tr>
+<tr>
+<td><code>dist/</code></td>
+<td>74M</td>
+<td>no</td>
+<td><code>bun run release:payload</code></td>
+<td>yes, regenerable</td>
+</tr>
+<tr>
+<td><code>.wrangler/</code></td>
+<td>209M</td>
+<td>no</td>
+<td>any <code>wrangler dev</code> or vitest run</td>
+<td>yes, regenerable</td>
+</tr>
+<tr>
+<td><code>node_modules/</code></td>
+<td>950M</td>
+<td>no</td>
+<td><code>bun install</code></td>
+<td>yes, regenerable</td>
+</tr>
+</tbody></table></div>
+<p><code>.wrangler/</code> grows with every <code>wrangler dev</code> session and vitest run, and nothing prunes it. Delete it
+when disk space matters.</p>
+<p><code>docker/</code> holds two rigs, which are unrelated. <code>compose.yml</code> is the nine-service integration rig
+(GreenMail, Postgres, MySQL, Redis, syslog, Gitea, Forgejo, Keycloak, GitLab). <code>vps.yml</code> with
+<code>docker/vps/</code> is the comparison arm: nginx and PHP 8.5 FPM running the same <code>drupal-src</code> tree and the
+same <code>assets/drupal/site.sqlite</code> this project serves, so a measurement isolates the runtime. The arm
+mounts the tracked database read-only and copies it, because SQLite writes to the file it reads.</p>
+<h2 id="docs"><code>docs/</code></h2>
+<p><code>docs/</code> holds seven folders: <code>getting-started/</code>, <code>operating/</code>, <code>architecture/</code>, <code>configuration/</code>,
+<code>security/</code>, <code>impact/</code> and <code>audiences/</code>. Each has an <code>index.md</code> that lists its pages, and a page
+longer than about 250 lines becomes a folder of its own with an <code>index.md</code> and sibling pages.
+<code>docs/operating/recovery.md</code> publishes as <code>operating/recovery.html</code>, and a folder&#39;s index publishes
+as <code>&lt;folder&gt;/index.html</code>. <code>docs/README.md</code> is a map for the repository and is not published.</p>
+<p>The published navigation lists only the top-level entries, which are each folder&#39;s index and the
+technical report, and each page&#39;s contents list holds its <code>##</code> headings only. A page is reached from
+its folder&#39;s index and from links in the text. A new page goes in the folder it belongs to and needs
+a <code># </code> title and a lead paragraph, which becomes its description. A new folder needs an <code>index.md</code>
+and an entry in <code>TOP</code> in <code>scripts/docs/pages.ts</code>.</p>
+<p>Moving or splitting a page means adding its old name to <code>scripts/docs/moves.json</code>, which writes a
+redirect page at the old URL. An entry is a new page name, or <code>{ &quot;to&quot;: ..., &quot;anchors&quot;: { ... } }</code>
+where <code>anchors</code> sends a heading that moved to another page to that page, so a link to the heading
+keeps working. Fix every link to the old path as well.
+<code>tests/node/docs-site.spec.ts</code> fails on a folder with no index, a page with no lead or title, a moved
+page with no redirect, a redirect or anchor that does not resolve, and a relative link that does not
+resolve.</p>
+<h2 id="experiments"><code>experiments/</code></h2>
+<p>73 files, 112,477 bytes, all committed, per <code>git ls-files experiments</code>: <strong>63 wrangler configs</strong> (61
+under <code>experiments/wrangler/</code>, including the old rig and bench configs moved there from the repo
+root, and one each in <code>arena/</code> and <code>duration/</code>), plus the
+<code>experiments/wrangler/README.md</code>, the probe seams those directories pair with their configs, two
+binary seams under <code>binary/</code>, a loose <code>probe-o3mbsjlj.ts</code> at the top, and the data files from the
+boot-phase sweeps. They are kept for reproduction and are not maintained. <code>.prettierignore</code> excludes
+the directory from formatting.</p>
+<h2 id="assetscore"><code>assets/core/</code></h2>
+<p>24 MB, 4,028 files, produced by <code>bun run assets:static</code> from step 13 of the source build. It is the
+browser-fetchable half of the Drupal tree (<code>css</code>, <code>js</code>, fonts and images under <code>core/</code>) copied to
+where Workers Assets serves it at the <code>/core/**</code> URLs Drupal already emits.</p>
+<p>All three PHP packers skip those extensions, because PHP never opens them. Nothing serves a file out
+of the PHP MEMFS over HTTP, so these files reach the browser only through this directory. Workers
+Assets content-hashes, caches and compresses what it serves, and a cache hit never reaches the Worker.</p>
+<p><code>assets/.assetsignore</code> denies by default and negates <code>/core/</code>. <code>tests/unit/runtime/assets-ignore.spec.ts</code>
+asserts that the negation reaches into the directory and that every <code>/core/**</code> URL a prefilled page
+references answers 200. The tracked <code>assets/_headers</code> sets the cache lifetimes of that tree; see
+Static Asset Cache Lifetimes in <code>docs/configuration/index.md</code>.</p>
+<h2 id="vendor"><code>vendor/</code></h2>
+<p><code>wrangler deploy</code> does not read it. The canonical config aliases <code>./runtime/php-binary.js</code> to
+<code>src/runtime/php-binary-raw.ts</code>, which imports the interpreter from <code>.interp/</code>. <code>vendor/</code> reaches a
+bundle only through the unaliased default seam <code>src/runtime/php-binary.ts</code> and the <code>src/probes/**</code>
+configs, so it is a local store of hand-built binaries kept for reproducing past measurements.</p>
+<p>Never delete, move or overwrite anything under it. A local deletion is recoverable, but the
+recovery is not free. <strong>All 34 vendor files are in <code>drupflare-cdn</code></strong>, each matching on size and on
+ETag-against-md5. They are 34 of the manifest&#39;s 35 <code>keys</code>; the 35th is <code>assets/drupal/site.sqlite</code>.
+Four retired <code>vendor/</code> keys sit in the manifest&#39;s <code>archived</code> list.</p>
+<p><code>vendor/php8.3.wasm</code>, <code>vendor/php8.4.wasm</code> and their <code>-web.mjs</code> glue are the only reproducible entries:
+<code>bun run vendor</code> copies them out of the <code>php-wasm</code> npm package. They cost 27 MB and are backed up, and
+no change is recommended.</p>
+<h2 id="drupal-src"><code>drupal-src/</code></h2>
+<p>The Drupal tree the packers read, and the only path that satisfies <code>DRUPAL_ROOT</code>. <code>bun run fetch:drupal</code>
+produces it: the release tarball for <code>SHIPPED_CORE_VERSION</code> from <code>ftp.drupal.org</code>, extracted with the
+<code>drupal-&lt;version&gt;/</code> wrapper stripped, then completed with the four contributed modules the tarball does
+not carry. <code>DRUPAL_VERSION</code> overrides the version; <code>--force</code> replaces a tree that is present at a
+different one. A second run on a satisfied tree downloads nothing.</p>
+<p><code>.github/workflows/build.yml</code> calls the same script, resolving the version with
+<code>bun scripts/fetch-drupal-tree.ts --print-version</code>, so a developer and the gate lane hold the same tree.
+<code>tests/node/drupal-tree.spec.ts</code> fails if the workflow grows a second producer.</p>
+<p>The tarball is core only. <code>SHIPPED_LOCK_VERSIONS</code> names <code>admin_toolbar</code>, <code>ctools</code>, <code>pathauto</code> and
+<code>token</code> beyond it, so the script installs those four at their pinned versions with composer;
+<code>tests/node/shipped-lock.spec.ts</code> compares the resulting <code>composer.lock</code> against the baked map.</p>
+<p>Four things need it. <code>assets:twig</code>, <code>assets:core</code>, <code>assets:pack</code> and <code>assets:static</code> read it as their
+build input. <code>bun run test:php</code> and the sibling PHP suites in <code>../drupflare</code> and <code>../rom</code> take it as
+<code>DRUPAL_ROOT</code>.
+<code>composer analyze</code> resolves <code>\Drupal\Core\...</code> against it through <code>phpstan.neon</code>. An IDE indexes it for
+the same reason. Everything except the packers degrades to skipped or unresolved without it, and none
+of them fails loudly, so the tree being absent is quiet.</p>
+<h2 id="siblings"><code>.siblings/</code></h2>
+<p><code>bun run assets:driver</code> reads the sibling checkouts of <code>drupflare/drupflare</code>, <code>drupflare/rom</code> and
+<code>drupflare/stream-http</code> directly and packs them into <code>assets/driver.json</code>. <strong>The repository keeps no
+copy of the modules.</strong></p>
+<p>Composer never runs on the edge, so a <code>composer require</code> ships nothing: the packed tree is the vendor
+directory, and the packed copy is what executes. <code>composer.json</code> records provenance and lets a
+developer resolve the packages normally. Both packages are on Packagist as <code>drupflare/rom</code> and
+<code>drupflare/drupflare</code>.
+<code>tests/node/driver-pack.spec.ts</code> rebuilds <code>assets/driver.json</code> from the modules on disk and compares byte
+for byte, so a stale pack fails the gate.</p>
+<p>The packer takes an allow-list of module-shaped paths (<code>src</code>, <code>.info.yml</code>, <code>.install</code>, <code>.module</code>,
+<code>.services.yml</code>), because a module repository is not a module and walking a checkout wholesale would
+pull <code>node_modules/</code>, <code>vendor/</code> and <code>coverage/</code> into the bundle. The machine name comes from the
+mount rather than the directory: <code>../rom</code> provides <code>cfw_do_sqlite</code>.</p>
+<p>Each of the three is resolved as <code>DRUPFLARE_SRC</code> / <code>ROM_SRC</code> / <code>STREAM_HTTP_SRC</code>, then <code>../&lt;name&gt;</code>, then
+<code>.siblings/&lt;name&gt;</code>. CI sets the environment variables and checks the repositories out under <code>.siblings/</code>;
+<code>bun run build:local</code> clones into the same paths, and only the ones that are not already there.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

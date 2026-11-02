@@ -213,6 +213,11 @@
 				border-radius: 0.8rem;
 				background: var(--card);
 			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
 			.readme .toc ol {
 				columns: 2 15rem;
 				margin: 0.5rem 0 0;
@@ -331,11 +336,13 @@
 					/>
 					Drupflare
 				</a>
-				<a href="getting-started.html">Getting Started</a>
-				<a href="architecture.html">Architecture</a>
-				<a href="configuration.html">Configuration</a>
-				<a href="security.html">Security</a>
-				<a href="impact.html">Impact</a>
+				<a href="getting-started/index.html">Getting Started</a>
+				<a href="operating/index.html">Operating</a>
+				<a href="architecture/index.html">Architecture</a>
+				<a href="configuration/index.html">Configuration</a>
+				<a href="security/index.html">Security</a>
+				<a href="impact/index.html">Impact</a>
+				<a href="audiences/index.html">Audiences</a>
 				<a href="technical-report.html">Technical Report</a>
 				<a href="api/index.html">API</a>
 				<a href="php/index.html">PHP</a>
@@ -346,51 +353,15 @@
 			<h1>Drupflare</h1>
 <p class="lead">Drupal 11 on Cloudflare Workers</p>
 <p class="badges"><img src="https://img.shields.io/github/v/release/drupflare/worker" alt="release"> <img src="https://img.shields.io/github/license/drupflare/worker" alt="license"> <img src="https://img.shields.io/github/stars/drupflare/worker?style=flat" alt="stars"> <img src="https://img.shields.io/github/commit-activity/t/drupflare/worker?color=violet" alt="commit activity"> <img src="https://img.shields.io/github/actions/workflow/status/drupflare/worker/build.yml?label=build" alt="build"> <img src="https://img.shields.io/github/actions/workflow/status/drupflare/worker/prettier.yml?label=prettier" alt="prettier"> <img src="https://img.shields.io/codecov/c/github/drupflare/worker" alt="codecov"></p>
-<h2 class="group">Start</h2>
+<h2 class="group">Documentation</h2>
 <div class="links">
-<a class="card" href="getting-started.html"><strong>Getting Started</strong><span>From a clean clone to a running site, claimed, and moving an existing one in.</span></a>
-<a class="card" href="architecture.html"><strong>Architecture</strong><span>How a request is answered, what the build packs, and how a site repairs itself.</span></a>
-<a class="card" href="free-vs-paid.html"><strong>Free vs Paid</strong><span>What each Cloudflare plan allows a site, and which limit binds first.</span></a>
-<a class="card" href="vps-comparison.html"><strong>Drupflare vs a Traditional VPS</strong><span>Latency, throughput and cost against nginx and PHP-FPM on the same tree.</span></a>
-<a class="card" href="limitations.html"><strong>Limitations</strong><span>What does not run, what runs differently, and the limit behind each.</span></a>
-</div>
-<h2 class="group">Operate</h2>
-<div class="links">
-<a class="card" href="administration.html"><strong>Administration</strong><span>The surfaces an owner operates a site from, and how each is authorised.</span></a>
-<a class="card" href="configuration.html"><strong>Configuration</strong><span>Every variable and binding in wrangler.jsonc, and the page each lives on.</span></a>
-<a class="card" href="configuration-serving.html"><strong>Serving and Caching Settings</strong><span>Page caching, static assets, prefill, files and images.</span></a>
-<a class="card" href="configuration-runtime.html"><strong>Runtime Settings</strong><span>Cron, warming, the interpreter lifecycle, boot and storage.</span></a>
-<a class="card" href="configuration-replicas.html"><strong>Replica Settings</strong><span>Lane count, autoscaling, write forwarding and lag.</span></a>
-<a class="card" href="configuration-operations.html"><strong>Operations Settings</strong><span>Maintenance, owner access, audit, overrides, updates and reconciliation.</span></a>
-<a class="card" href="configuration-integrations.html"><strong>Integration Settings</strong><span>Mail, TCP, Workers AI, OIDC login and Spool.</span></a>
-<a class="card" href="replica-lanes.html"><strong>Replica Lanes</strong><span>Read replicas for a site: what a lane buys, how it scales, how it is built.</span></a>
-<a class="card" href="git-remotes.html"><strong>Git Remotes</strong><span>Delivering modules and themes from a git host.</span></a>
-<a class="card" href="modules.html"><strong>Modules</strong><span>Contributed modules, module revisions, and which modules have run on a real site.</span></a>
-<a class="card" href="recovery.html"><strong>Recovery</strong><span>The four ways a site moves backwards and how to come back.</span></a>
-<a class="card" href="external-database.html"><strong>External Databases and Hyperdrive</strong><span>Hyperdrive and external databases, and what they change.</span></a>
-</div>
-<h2 class="group">Measure</h2>
-<div class="links">
-<a class="card" href="impact.html"><strong>Impact</strong><span>The labels, limits and references behind every energy, carbon and cost figure.</span></a>
-<a class="card" href="energy.html"><strong>Energy</strong><span>The saving against conventional hosting, operating states and the per-request model.</span></a>
-<a class="card" href="energy-views.html"><strong>Energy Per View</strong><span>The energy of one view, the traffic mix, visitor devices and Spool.</span></a>
-<a class="card" href="energy-fleet.html"><strong>Fleet Energy</strong><span>Many sites at once, institutional workloads and the saving by site count.</span></a>
-<a class="card" href="economics.html"><strong>Economics</strong><span>What each host costs at each traffic level.</span></a>
-<a class="card" href="environment.html"><strong>Environment</strong><span>Carbon, water and embodied carbon.</span></a>
-<a class="card" href="measurement-classes.html"><strong>Measurement Classes</strong><span>The four classes a number belongs to, and which instrument each allows.</span></a>
-</div>
-<h2 class="group">Reference</h2>
-<div class="links">
-<a class="card" href="security.html"><strong>Security</strong><span>What the architecture removes and what it leaves, with the label on every claim.</span></a>
-<a class="card" href="security-controls.html"><strong>Security Controls</strong><span>The controls in place today, from the host surface to patching.</span></a>
-<a class="card" href="security-incidents.html"><strong>Security Incidents and Planned Work</strong><span>The CVE and incident map, PHP2Shell, and the work still planned.</span></a>
-<a class="card" href="government.html"><strong>Federal Sites</strong><span>OMB M-23-22 and the 21st Century IDEA for US federal sites.</span></a>
-<a class="card" href="compatibility.html"><strong>Compatibility</strong><span>Which Drupal codebases run, per codebase, from the corpus lane.</span></a>
-<a class="card" href="building-from-source.html"><strong>Building From Source</strong><span>From a clean clone to a deployable tree, and the release payload.</span></a>
-<a class="card" href="repository-layout.html"><strong>Repository Layout</strong><span>Every path outside src/ and how it arrives on a clean clone.</span></a>
-<a class="card" href="database.html"><strong>The Site Database</strong><span>How the site database every new site starts from is built.</span></a>
-<a class="card" href="php-update-delivery.html"><strong>PHP Interpreter Update Delivery</strong><span>How a new PHP interpreter build reaches a deployed site.</span></a>
-<a class="card" href="testing.html"><strong>Testing</strong><span>The test lanes, what each can see, and how to add a test.</span></a>
+<a class="card" href="getting-started/index.html"><strong>Getting Started</strong><span>From a clean clone to a running site, claiming it, updating it, and building from source.</span></a>
+<a class="card" href="operating/index.html"><strong>Operating</strong><span>Administration, recovery, git remotes, external databases, interpreter updates and replica lanes.</span></a>
+<a class="card" href="architecture/index.html"><strong>Architecture</strong><span>How a request is answered, what the build packs, measurement classes, compatibility and limits.</span></a>
+<a class="card" href="configuration/index.html"><strong>Configuration</strong><span>Every variable and binding in the two wrangler configs, and the page each lives on.</span></a>
+<a class="card" href="security/index.html"><strong>Security</strong><span>What the architecture removes and what it leaves, the controls in place, and incidents.</span></a>
+<a class="card" href="impact/index.html"><strong>Impact</strong><span>Energy, carbon, water and cost, with the label and reference behind every figure.</span></a>
+<a class="card" href="audiences/index.html"><strong>Audiences</strong><span>Pages for a specific procurement or compliance reader.</span></a>
 <a class="card" href="technical-report.html"><strong>Technical Report: Drupal on Cloudflare Workers</strong><span>The engineering record: architecture, platform limits, costs and measurements.</span></a>
 </div>
 <h2 class="group">Code</h2>
@@ -405,10 +376,10 @@ executes as WebAssembly inside a Durable Object, with the Durable Object&#39;s o
 database. PHP 8.5 is what ships, with no extension dropped to fit.</p>
 <p>The interpreter ships as a raw WebAssembly module that the platform compiles ahead of time, so
 startup costs a few milliseconds. A paid site holds its interpreter warm between requests; a quiet
-free site pays a cold boot unless it opts into warming. See <a href="free-vs-paid.html">Free vs Paid</a>.</p>
+free site pays a cold boot unless it opts into warming. See <a href="impact/economics/free-vs-paid/index.html">Free vs Paid</a>.</p>
 <p>A site is one Durable Object by default and does not have to be. <code>REPLICA_COUNT</code> gives it read
 replica lanes, each a separate object filled from the primary and kept current by a replication log,
-so an authenticated read workload scales past one thread. See <a href="replica-lanes.html">Replica Lanes</a>.</p>
+so an authenticated read workload scales past one thread. See <a href="operating/replica-lanes.html">Replica Lanes</a>.</p>
 <hr>
 <h2 id="-table-of-contents">📋 Table of Contents</h2>
 <ul>
@@ -457,19 +428,19 @@ replaces everything in Drupal&#39;s database layer that assumed PDO and a file o
 <li><strong>Divisibility.</strong> First-run migration runs in JavaScript, in chunks that each finish inside one
 invocation.</li>
 </ul>
-<p><a href="architecture.html">Architecture</a> covers static assets, self-repair and each layer in detail.</p>
+<p><a href="architecture/index.html">Architecture</a> covers static assets, self-repair and each layer in detail.</p>
 <hr>
 <h2 id="-what-it-runs">🧩 What It Runs</h2>
 <ul>
 <li><strong>Drupal core</strong>, at the version <code>composer.lock</code> pins, with four contributed modules in the pack: <code>admin_toolbar</code>, <code>ctools</code>, <code>pathauto</code> and <code>token</code>.</li>
 <li><strong>PHP 8.5</strong> with 27 loaded extensions and stand-ins for curl, openssl, zip, exif, fileinfo and
-xmlwriter; see <a href="limitations.html">Limitations</a>. The interpreter starts at 64 MiB of linear
+xmlwriter; see <a href="architecture/limitations.html">Limitations</a>. The interpreter starts at 64 MiB of linear
 memory, and a boot after a dropped interpreter reuses its memory instead of allocating a second
 heap.</li>
 <li><strong>A database</strong> in the object&#39;s own SQLite, created at first boot by replaying the packed
 <code>assets/drupal/site.sqlite</code> through the <code>cfw_do_sqlite</code> driver.</li>
 <li><strong>Real codebases.</strong> 27 production Drupal codebases pinned in <code>config/corpus.yml</code> are scored on 13
-capabilities; see <a href="compatibility.html">Compatibility</a>.</li>
+capabilities; see <a href="architecture/compatibility.html">Compatibility</a>.</li>
 </ul>
 <hr>
 <h2 id="-getting-started">🚀 Getting Started</h2>
@@ -486,8 +457,12 @@ self-refreshing page while the packed database replays.</p>
 token, each shown once:</p>
 <pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -X</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> POST</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "localhost:8787/firstrun"</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  -H</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> 'content-type: application/json'</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
-<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  -d</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> '{"siteName":"My Site","adminMail":"you@example.com"}'</span></span></code></pre><p><a href="getting-started.html">Getting Started</a> covers first boot, claiming, logging in, deploying and
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  -d</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> '{"siteName":"My Site","adminMail":"you@example.com"}'</span></span></code></pre><p><a href="getting-started/index.html">Getting Started</a> covers first boot, claiming, logging in, deploying and
 updating a worker, and moving an existing site in with <a href="https://github.com/drupflare/drangler"><code>drangler</code></a>.</p>
+<p>Two deploy configs ship. <code>wrangler.jsonc</code> is the open-source one: every binding in it is created on
+the first deploy, so the button needs no account setup. <code>wrangler.managed.jsonc</code> is the same file plus
+the R2 and <code>send_email</code> bindings, which need account state a button cannot create, and it is what a
+managed deployment uses. <a href="configuration/index.html#bindings">Configuration</a> has the table.</p>
 <hr>
 <h2 id="-impact">📊 Impact</h2>
 <p>The saving is a total: it compares a deployment&#39;s whole year of energy, idle included, with
@@ -499,9 +474,9 @@ year where the baseline draws 224 kWh, a total saving of 99.99%. The smallest co
 deployment, one small VPS, still saves 99.80% at that traffic and 94.24% at 30 million views a
 month. Per request the two runtimes are at parity, so the saving comes from idle nodes and not from
 PHP running faster.</p>
-<p>Every figure is derived and modelled, because no source sizes a production node. <a href="impact.html">Impact</a>
-labels each one; <a href="energy.html">Energy</a>, <a href="economics.html">Economics</a> and
-<a href="environment.html">Environment</a> hold the detail.</p>
+<p>Every figure is derived and modelled, because no source sizes a production node. <a href="impact/index.html">Impact</a>
+labels each one; <a href="impact/energy/index.html">Energy</a>, <a href="impact/economics/index.html">Economics</a> and
+<a href="impact/carbon.html">Carbon</a> hold the detail.</p>
 <hr>
 <h2 id="-documentation">📚 Documentation</h2>
 <h3 id="start">Start</h3>
@@ -513,23 +488,23 @@ labels each one; <a href="energy.html">Energy</a>, <a href="economics.html">Econ
 </tr>
 </thead>
 <tbody><tr>
-<td><a href="getting-started.html">Getting Started</a></td>
+<td><a href="getting-started/index.html">Getting Started</a></td>
 <td>first boot, claiming a site, deploying, and moving an existing site in</td>
 </tr>
 <tr>
-<td><a href="architecture.html">Architecture</a></td>
+<td><a href="architecture/index.html">Architecture</a></td>
 <td>how a request is answered, static assets, and self-repair</td>
 </tr>
 <tr>
-<td><a href="free-vs-paid.html">Free vs Paid</a></td>
+<td><a href="impact/economics/free-vs-paid/index.html">Free vs Paid</a></td>
 <td>what each Cloudflare plan allows a site, and which limit binds first</td>
 </tr>
 <tr>
-<td><a href="vps-comparison.html">VPS Comparison</a></td>
+<td><a href="impact/economics/vps-comparison.html">VPS Comparison</a></td>
 <td>latency, throughput and cost against nginx and PHP-FPM on the same tree</td>
 </tr>
 <tr>
-<td><a href="limitations.html">Limitations</a></td>
+<td><a href="architecture/limitations.html">Limitations</a></td>
 <td>what does not run, what runs differently, and the limit behind each</td>
 </tr>
 </tbody></table></div>
@@ -542,31 +517,31 @@ labels each one; <a href="energy.html">Energy</a>, <a href="economics.html">Econ
 </tr>
 </thead>
 <tbody><tr>
-<td><a href="administration.html">Administration</a></td>
+<td><a href="operating/administration.html">Administration</a></td>
 <td>the surfaces an owner operates a site from</td>
 </tr>
 <tr>
-<td><a href="configuration.html">Configuration</a></td>
+<td><a href="configuration/index.html">Configuration</a></td>
 <td>every variable and binding, and the page each one lives on</td>
 </tr>
 <tr>
-<td><a href="replica-lanes.html">Replica Lanes</a></td>
+<td><a href="operating/replica-lanes.html">Replica Lanes</a></td>
 <td>read replicas: what a lane buys, how it scales, how it is built</td>
 </tr>
 <tr>
-<td><a href="git-remotes.html">Git Remotes</a></td>
+<td><a href="operating/git-remotes.html">Git Remotes</a></td>
 <td>delivering modules and themes from a git host</td>
 </tr>
 <tr>
-<td><a href="modules.html">Modules</a></td>
+<td><a href="architecture/modules.html">Modules</a></td>
 <td>contributed modules, revisions, and which have run on a real site</td>
 </tr>
 <tr>
-<td><a href="recovery.html">Recovery</a></td>
+<td><a href="operating/recovery.html">Recovery</a></td>
 <td>point-in-time recovery, export, restore</td>
 </tr>
 <tr>
-<td><a href="external-database.html">External Database</a></td>
+<td><a href="operating/external-database/index.html">External Database</a></td>
 <td>Hyperdrive and external databases</td>
 </tr>
 </tbody></table></div>
@@ -579,31 +554,31 @@ labels each one; <a href="energy.html">Energy</a>, <a href="economics.html">Econ
 </tr>
 </thead>
 <tbody><tr>
-<td><a href="impact.html">Impact</a></td>
+<td><a href="impact/index.html">Impact</a></td>
 <td>the labels, limits and references behind every figure</td>
 </tr>
 <tr>
-<td><a href="energy.html">Energy</a></td>
+<td><a href="impact/energy/index.html">Energy</a></td>
 <td>the saving against conventional hosting and the per-request model</td>
 </tr>
 <tr>
-<td><a href="energy-views.html">Energy Per View</a></td>
+<td><a href="impact/energy/views.html">Energy Per View</a></td>
 <td>one view, the traffic mix, visitor devices and Spool</td>
 </tr>
 <tr>
-<td><a href="energy-fleet.html">Fleet Energy</a></td>
+<td><a href="impact/energy/fleet.html">Fleet Energy</a></td>
 <td>many sites at once and institutional workloads</td>
 </tr>
 <tr>
-<td><a href="economics.html">Economics</a></td>
+<td><a href="impact/economics/index.html">Economics</a></td>
 <td>what each host costs at each traffic level</td>
 </tr>
 <tr>
-<td><a href="environment.html">Environment</a></td>
+<td><a href="impact/carbon.html">Carbon</a></td>
 <td>carbon, water and embodied carbon</td>
 </tr>
 <tr>
-<td><a href="measurement-classes.html">Measurement Classes</a></td>
+<td><a href="architecture/measurement-classes.html">Measurement Classes</a></td>
 <td>which instrument may produce which class of number</td>
 </tr>
 </tbody></table></div>
@@ -616,43 +591,43 @@ labels each one; <a href="energy.html">Energy</a>, <a href="economics.html">Econ
 </tr>
 </thead>
 <tbody><tr>
-<td><a href="security.html">Security</a></td>
+<td><a href="security/index.html">Security</a></td>
 <td>what the architecture removes and what it leaves</td>
 </tr>
 <tr>
-<td><a href="security-controls.html">Security Controls</a></td>
+<td><a href="security/controls/index.html">Security Controls</a></td>
 <td>the controls in place today</td>
 </tr>
 <tr>
-<td><a href="security-incidents.html">Security Incidents</a></td>
+<td><a href="security/incidents.html">Security Incidents</a></td>
 <td>the CVE and incident map, PHP2Shell, planned work</td>
 </tr>
 <tr>
-<td><a href="government.html">Government</a></td>
+<td><a href="audiences/government.html">Government</a></td>
 <td>what a US federal site owner owns and what the host owns</td>
 </tr>
 <tr>
-<td><a href="compatibility.html">Compatibility</a></td>
+<td><a href="architecture/compatibility.html">Compatibility</a></td>
 <td>per-codebase results for the 27 production codebases</td>
 </tr>
 <tr>
-<td><a href="building-from-source.html">Building From Source</a></td>
+<td><a href="getting-started/building-from-source/index.html">Building From Source</a></td>
 <td>the payload and source routes, and upgrading Drupal core</td>
 </tr>
 <tr>
-<td><a href="repository-layout.html">Repository Layout</a></td>
+<td><a href="getting-started/repository-layout/index.html">Repository Layout</a></td>
 <td>every path outside <code>src/</code> and how it arrives on a clean clone</td>
 </tr>
 <tr>
-<td><a href="database.html">Database</a></td>
+<td><a href="architecture/database.html">Database</a></td>
 <td>how <code>assets/drupal/site.sqlite</code> is built</td>
 </tr>
 <tr>
-<td><a href="php-update-delivery.html">PHP Update Delivery</a></td>
+<td><a href="operating/php-update-delivery/index.html">PHP Update Delivery</a></td>
 <td>how a new PHP interpreter reaches this repository</td>
 </tr>
 <tr>
-<td><a href="testing.html">Testing</a></td>
+<td><a href="getting-started/testing.html">Testing</a></td>
 <td>the test lanes and how to add a test</td>
 </tr>
 </tbody></table></div>

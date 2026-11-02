@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Outbound Mail - Drupflare</title>
+		<meta
+			name="description"
+			content="Drupal's mail plugin is cfwmail, and it hands the message to the Worker. The Worker resolves one of three transports and commits the message to cfwmailqueue; the alarm sends it."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Outbound Mail - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Drupal's mail plugin is cfwmail, and it hands the message to the Worker. The Worker resolves one of three transports and commits the message to cfwmailqueue; the alarm sends it."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../../getting-started/index.html">Getting Started</a>
+				<a href="../../operating/index.html">Operating</a>
+				<a href="../../architecture/index.html">Architecture</a>
+				<a href="../../configuration/index.html" aria-current="page">Configuration</a>
+				<a href="../../security/index.html">Security</a>
+				<a href="../../impact/index.html">Impact</a>
+				<a href="../../audiences/index.html">Audiences</a>
+				<a href="../../technical-report.html">Technical Report</a>
+				<a href="../../api/index.html">API</a>
+				<a href="../../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Integration Settings</a></p>
+<h1 id="outbound-mail">Outbound Mail</h1>
+<p>Drupal&#39;s mail plugin is <code>cfw_mail</code>, and it hands the message to the Worker. The Worker resolves one
+of three transports and commits the message to <code>cfw_mail_queue</code>; the alarm sends it. <code>src/ops/mail.ts</code>
+is the implementation.</p>
+<p>The plugin is claimed by a config override that the module registers, not by <code>settings.php</code>.
+Assigning <code>system.mail:interface.default = cfw_mail</code> from <code>settings.php</code> would name a plugin of a
+module the site may not have installed, and <code>MailManager</code> throws <code>PluginNotFoundException</code> for an id it
+cannot resolve. <code>MailInterfaceOverride</code> runs only when <code>drupflare</code> is installed, and it yields to <code>smtp</code>
+on a site that has <code>smtp</code>.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>MAIL_TRANSPORT</code></td>
+<td><code>auto</code></td>
+<td><code>auto</code>, <code>binding</code>, <code>api</code>, <code>smtp</code> or <code>off</code></td>
+</tr>
+<tr>
+<td><code>MAIL_FROM</code></td>
+<td>none</td>
+<td>the From for a message that carries none</td>
+</tr>
+<tr>
+<td><code>MAIL_DRAIN_ON_ALARM</code></td>
+<td>on</td>
+<td>send queued mail from the alarm</td>
+</tr>
+<tr>
+<td><code>MAIL_DRAIN_LIMIT</code></td>
+<td>5</td>
+<td>messages one firing may send; capped at 25</td>
+</tr>
+<tr>
+<td><code>CF_EMAIL_ACCOUNT_ID</code></td>
+<td>none</td>
+<td>the account the Email Sending REST API posts under</td>
+</tr>
+<tr>
+<td><code>CF_EMAIL_TOKEN</code></td>
+<td>none</td>
+<td>an API token with Email Sending: Edit; a secret, not a var</td>
+</tr>
+<tr>
+<td><code>SMTP_HOST</code></td>
+<td>none</td>
+<td>submission host for the third-party lane</td>
+</tr>
+<tr>
+<td><code>SMTP_PORT</code></td>
+<td>587/465</td>
+<td>587 for STARTTLS, 465 for implicit TLS</td>
+</tr>
+<tr>
+<td><code>SMTP_TLS</code></td>
+<td>starttls</td>
+<td><code>starttls</code>, <code>implicit</code> or <code>off</code></td>
+</tr>
+<tr>
+<td><code>SMTP_USER</code></td>
+<td>none</td>
+<td>submission user; omit for an unauthenticated relay</td>
+</tr>
+<tr>
+<td><code>SMTP_PASS</code></td>
+<td>none</td>
+<td>submission password; a secret</td>
+</tr>
+<tr>
+<td><code>SMTP_AUTH</code></td>
+<td><code>PLAIN</code></td>
+<td><code>PLAIN</code> or <code>LOGIN</code></td>
+</tr>
+</tbody></table></div>
+<p><code>auto</code> takes the first transport that is configured, in the order binding, api, smtp. The binding
+leads because it spends no credential. The api transport is selected by either of its two variables,
+and when only one is set the send is refused rather than falling through to smtp. The choice runs as
+follows.</p>
+<pre><code class="mermaid">flowchart TD
+    A[&quot;MAIL_TRANSPORT&quot;] --> B{&quot;selected value&quot;}
+    B -- &quot;auto&quot; --> C{&quot;send_email binding bound as SEND_EMAIL?&quot;}
+    C -- yes --> T1[&quot;binding&quot;]
+    C -- no --> D{&quot;CF_EMAIL_ACCOUNT_ID or CF_EMAIL_TOKEN set?&quot;}
+    D -- yes --> T2[&quot;api&quot;]
+    D -- no --> E{&quot;SMTP_HOST set?&quot;}
+    E -- yes --> T3[&quot;smtp&quot;]
+    E -- no --> R1[&quot;refused: no transport configured&quot;]
+    B -- &quot;binding&quot; --> T1
+    B -- &quot;api&quot; --> T2
+    B -- &quot;smtp&quot; --> T3
+    B -- &quot;off&quot; --> R2[&quot;refused: mail switched off&quot;]</code></pre><nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-smtp-modules-own-settings">The <code>smtp</code> Module&#39;s Own Settings</a></li><li><a href="#what-each-transport-reaches">What Each Transport Reaches</a></li><li><a href="#the-send_email-binding">The <code>send_email</code> Binding</a></li><li><a href="#smtp">SMTP</a></li><li><a href="#limits-and-what-a-refusal-means">Limits and What a Refusal Means</a></li><li><a href="#connecting-a-cloudflare-account">Connecting a Cloudflare Account</a></li><li><a href="#onboarding-a-sending-domain">Onboarding a Sending Domain</a></li></ol></nav><h2 id="the-smtp-modules-own-settings">The <code>smtp</code> Module&#39;s Own Settings</h2>
+<p>A site with <code>drupal/smtp</code> installed and configured needs none of the <code>SMTP_*</code> vars. The module
+installs on this runtime and its socket never runs, so its settings would otherwise sit unread while
+an operator typed the same relay a second time. Its
+<code>smtp.settings</code> is read and mapped onto the transport: <code>smtp_host</code>, <code>smtp_port</code>, <code>smtp_username</code>,
+<code>smtp_password</code> and <code>smtp_from</code> map across directly, and <code>smtp_protocol</code> maps <code>ssl</code> to implicit TLS,
+<code>tls</code> to STARTTLS and <code>standard</code> to no encryption. <code>smtp_on</code> turned off is honoured.</p>
+<p>A var always wins over the setting it corresponds to. A var is set by whoever can deploy the
+Worker; the settings form is reachable by anyone who can get to a Drupal admin page. So the settings
+fill gaps only, and setting <code>SMTP_HOST</code> pins the relay regardless of what the site is configured
+with.</p>
+<h2 id="what-each-transport-reaches">What Each Transport Reaches</h2>
+<p><code>binding</code> uses a <code>send_email</code> binding named <code>SEND_EMAIL</code>, declared in your own Wrangler config. <code>api</code>
+uses the Email Sending REST API. Cloudflare applies the same limits to both, and to its own SMTP
+endpoint, so the choice between them comes down to credentials. Two account-level facts decide what
+either can reach:</p>
+<ul>
+<li><strong>A sending domain that is not onboarded</strong> reaches verified destination addresses only: the 200
+per account that somebody confirmed by clicking a link. Onboarding the domain with SPF and DKIM on
+Cloudflare DNS lifts that immediately.</li>
+<li><strong>Workers Free has no outbound Email Sending.</strong> The one carve-out is that sends to verified
+destination addresses are free on every plan, from your routing domains, against no quota.</li>
+</ul>
+<p>So a free site can mail its owner and cannot mail a visitor who just registered. Third-party SMTP is
+the only general answer on free, and a rejected Cloudflare send says so in its error text, with no
+status code to read.</p>
+<h2 id="the-send_email-binding">The <code>send_email</code> Binding</h2>
+<p>The canonical config does not declare <code>send_email</code>. It is an ordinary Wrangler binding, so adding
+one is a redeploy, and <code>allowed_destination_addresses</code> / <code>destination_address</code> narrow what it may reach.
+Its prerequisites are account state the deploy button cannot provision: Email Routing enabled, at least
+one verified destination address, and an onboarded sending domain. <code>api</code> needs only the token that
+<code>/setup/cf</code> grants, so it is the transport the product provisions, and the binding is an opt-in.</p>
+<h2 id="smtp">SMTP</h2>
+<p>SMTP is the only transport that opens an outbound TCP socket, and an outbound socket is on
+Cloudflare&#39;s list of conditions that prevent a Durable Object from hibernating. The object is
+therefore billed for compute duration for the length of the send, and the queue drains sequentially,
+so a batch is billed for the whole batch. The socket is closed in a <code>finally</code>, which caps the
+exposure at the send itself, well under the 15-minute maximum a connection can defer eviction by.
+The <code>api</code> and <code>binding</code> transports use <code>fetch</code>, which never holds an object in memory.</p>
+<details>
+<summary>Port and TLS refusals</summary><p>Port 25 is blocked on Workers; <code>MAIL_TRANSPORT=smtp</code> with <code>SMTP_PORT=25</code> is refused by name, before
+any attempt. <code>smtp.mx.cloudflare.net</code> is refused too: it resolves inside <code>162.158.0.0/15</code>, a
+published Cloudflare range, and outbound TCP to those is blocked. Use <code>MAIL_TRANSPORT=api</code> or the
+binding for Cloudflare mail. <code>SMTP_TLS=off</code> together with <code>SMTP_USER</code> is refused, because it would
+put the relay password on the wire.</p>
+</details><h2 id="limits-and-what-a-refusal-means">Limits and What a Refusal Means</h2>
+<p>A message is refused at commit, where <code>CfwMail</code> logs the reason next to the operation that produced
+it, for: no recipient, no From, more than 50 recipients across To/Cc/Bcc, a subject over 998
+characters, headers over 16 KB, or a payload over 1,000,000 bytes. That last one derives from the
+Durable Object record ceiling of 2,199,995 bytes; Cloudflare&#39;s own 5 MiB is the looser of the two and
+never fires first.</p>
+<p>A failure after commit is only visible on <code>/serve-stats</code>, under <code>mailQueue</code>, <code>lastMailDrain</code> and
+<code>lastMailDrainAt</code>. A failed send is not retried: a send is not idempotent, and a password reset
+delivered twice with two different one-time links is worse than one that did not arrive.</p>
+<p>Mail sent through the <code>send_email</code> binding shows as dropped in the Email Routing summary even
+when it was delivered. Read Email Sending metrics instead.</p>
+<h2 id="connecting-a-cloudflare-account">Connecting a Cloudflare Account</h2>
+<p>Two ways, both owner-authenticated. Pasting <code>CF_EMAIL_ACCOUNT_ID</code> and <code>CF_EMAIL_TOKEN</code> needs no
+setup. OAuth issues a short-lived scoped grant instead, revocable from the Cloudflare dashboard.</p>
+<p>Owner-authenticated means <code>Authorization: Bearer &lt;ownerToken&gt;</code>, the token <code>/firstrun</code> returns once
+when the site is claimed. Without it these routes answer 401 with a <code>WWW-Authenticate: Bearer</code>
+challenge. <code>README.md</code> covers claiming.</p>
+<p><code>GET /setup/cf?action=connect&amp;client_id=&lt;id&gt;</code> starts the flow and returns an authorize URL;
+<code>/setup/cf/callback</code> completes it; <code>?action=status</code> reports whether an account is connected and
+<code>?action=disconnect</code> revokes the grant at Cloudflare as well as forgetting it locally.</p>
+<details>
+<summary>Registering the OAuth client</summary><p>OAuth needs a client the operator registers once, under Manage account &gt; OAuth clients, with
+<code>https://&lt;your-site&gt;/setup/cf/callback</code> as its redirect URI and <code>private</code> visibility. A redirect URI
+is registered against the client and every deployment answers on a different origin, so there is no
+shared client that could serve all of them. The flow is Authorization Code with PKCE (S256) and
+carries no client secret.</p>
+<p>The client ID is stored in the site&#39;s own database, away from KV. It carries no secret, and a KV
+writer who could change it would point the consent screen at an application they control.</p>
+</details><p>Scopes requested: <code>user:read</code>, <code>account:read</code>, <code>email:read</code>, <code>email:write</code>. Onboarding a sending
+domain additionally needs zone DNS write, which is why it is a separate opt-in step.</p>
+<h2 id="onboarding-a-sending-domain">Onboarding a Sending Domain</h2>
+<p><code>GET /setup/mail?zone=&lt;zone-id&gt;</code> reports which step the domain is waiting on;
+<code>?action=apply</code> creates the sending subdomain and writes the DNS records. Owner-authenticated, and
+safe to re-run: a settled zone costs zero API calls.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>stage</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>no-zone</code></td>
+<td>pick the zone this site sends from</td>
+</tr>
+<tr>
+<td><code>needs-subdomain</code></td>
+<td>create the sending subdomain on that zone</td>
+</tr>
+<tr>
+<td><code>needs-dns</code></td>
+<td>records still to write, counted in <code>waitingOn</code></td>
+</tr>
+<tr>
+<td><code>awaiting-verification</code></td>
+<td>click the link Cloudflare emailed to the destination address</td>
+</tr>
+<tr>
+<td><code>ready</code></td>
+<td>mail can send</td>
+</tr>
+</tbody></table></div>
+<p><code>settled</code> means re-running changes nothing; onboarding may still be unfinished.
+<code>awaiting-verification</code> is settled, because nothing more can be done from this side.</p>
+<p>A sending subdomain is zone-scoped. Six records are written: three MX and an SPF TXT on the
+return-path host, a DKIM TXT at <code>&lt;selector&gt;._domainkey</code>, and a DMARC TXT on the apex.</p>
+<p><strong>An existing DMARC record is reported, never overwritten.</strong> It states a policy for every mail
+stream on the domain, so replacing <code>p=none</code> with <code>p=reject</code> would tell receivers to bounce
+unauthenticated mail from senders that have nothing to do with this site. It appears under
+<code>advisories</code> with both values, and the flow still reaches <code>ready</code>.</p>
+<p>Destination-address verification is pollable: the address carries <code>status</code> and a <code>verified</code>
+timestamp, so the surface updates on its own.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

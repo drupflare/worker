@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Updating a Site - Drupflare</title>
+		<meta
+			name="description"
+			content="How a deployed worker takes a new release, how an existing site keeps current, and which parts of the site an update does not cover."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Updating a Site - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="How a deployed worker takes a new release, how an existing site keeps current, and which parts of the site an update does not cover."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="../getting-started/index.html" aria-current="page">Getting Started</a>
+				<a href="../operating/index.html">Operating</a>
+				<a href="../architecture/index.html">Architecture</a>
+				<a href="../configuration/index.html">Configuration</a>
+				<a href="../security/index.html">Security</a>
+				<a href="../impact/index.html">Impact</a>
+				<a href="../audiences/index.html">Audiences</a>
+				<a href="../technical-report.html">Technical Report</a>
+				<a href="../api/index.html">API</a>
+				<a href="../php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="index.html">Getting Started</a></p>
+<h1 id="updating-a-site">Updating a Site</h1>
+<p>How a deployed worker takes a new release, how an existing site keeps current, and which parts of the site an update does not cover.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#updating-a-deployed-worker">Updating a Deployed Worker</a></li><li><a href="#keeping-an-existing-site-current">Keeping an Existing Site Current</a></li><li><a href="#covering-the-rest-of-the-site">Covering the Rest of the Site</a></li></ol></nav><h2 id="updating-a-deployed-worker">Updating a Deployed Worker</h2>
+<p>The deploy button creates a repository from this one, so your worker is a copy and not a fork, and
+the two share no history. Adding this repository as a remote lets you merge later releases into it.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"># one time</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> remote</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> add</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> template</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://github.com/drupflare/worker</span></span>
+<span class="line"></span>
+<span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"># to install an update</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> switch</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> master</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> fetch</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --all</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> merge</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> template</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --allow-unrelated-histories</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -m</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "chore: merge upstream"</span></span></code></pre><p>Pushing the result deploys it, if you connected the repository to Cloudflare when you created it.
+Otherwise run <code>bunx wrangler deploy</code>, or <code>drangler update my-site</code> to update the checkout and deploy
+in one step.</p>
+<ul>
+<li>The <code>git remote add</code> runs once per clone.</li>
+<li>Switch to the branch you want to update before merging.</li>
+<li><code>--allow-unrelated-histories</code> is what lets two repositories with no common commit merge at all.</li>
+<li>Take a backup branch first, so a merge you dislike costs nothing:</li>
+</ul>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> switch</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -c</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> before-template-merge</span></span></code></pre><p>To take a specific release instead of the tip:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> fetch</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --tags</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> template</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> switch</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> master</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> merge</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> v1.0.4</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --allow-unrelated-histories</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -m</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "chore: merge template v1.0.4"</span></span></code></pre><p>Your own changes are the ones that conflict, and <code>wrangler.jsonc</code> is the usual place: it carries the
+worker name and the bindings you added. Resolve it in favour of your values and take the template&#39;s
+side elsewhere. <code>-X theirs</code> does that in one pass when you have made no changes worth keeping.</p>
+<p>A merge that changes <code>src/</code> or the packed modules needs a deploy to take effect. A merge that changes
+the pack reaches existing sites through reconciliation, described next.</p>
+<h2 id="keeping-an-existing-site-current">Keeping an Existing Site Current</h2>
+<p>The pack is delivered when a site is provisioned, so a fix that lands inside it reaches new sites on
+its own. Reconciliation carries the same fix to sites that already exist. Each step is an
+observation of the site&#39;s end state, not a script: it is checked before the step runs and again
+afterwards, so a site that already matches is marked done without doing any work, and a step that
+ran without converging is reported and not assumed.</p>
+<p>The alarm chain drives one step per firing. <code>drangler reconcile</code> shows where a site stands and which
+step is stuck, and <code>--run</code> takes a step now instead of at the next firing.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> reconcile</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">       # version, every step, and its standing</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> reconcile</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --all</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # drive steps until the version stops moving</span></span></code></pre><p>Steps that change configuration or state go through Drupal&#39;s own writers, so every cached copy of a
+value is invalidated by the code that owns it. A step that changes what the compiled container holds
+drops the container and any stored heap image, and the next boot rebuilds it.</p>
+<h2 id="covering-the-rest-of-the-site">Covering the Rest of the Site</h2>
+<p>A page is rendered when a visitor asks for it, and that visitor waits. The sweep enumerates the URLs
+a site actually has, from its router table and its entity tables, ranks them by observed views then
+recency then depth, and queues the top of the list for the same fill batch a visitor&#39;s request would
+use. It never renders, so it cannot compete with a request for the interpreter.</p>
+<p>It runs by default and is bounded: it refuses below a remaining-budget floor, spends at most a
+declared share of the day&#39;s writes, and resumes the next day when that share is gone. Left unasked it
+takes the smaller share; <code>SWEEP</code> sets it explicitly in both directions, and <code>SWEEP=0</code> turns it off.
+The sweep&#39;s settings are listed in <a href="../configuration/operations/updates.html#the-addressable-sweep">The Addressable Sweep</a>.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> sweep</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">       # coverage, and what bounded the last step</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">drangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> sweep</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> my-site.example</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --run</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # take a step now</span></span></code></pre>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

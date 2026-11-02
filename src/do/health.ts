@@ -118,6 +118,7 @@ export function supervise(
 		];
 		return site.lastFindings;
 	}
+	const repeating = new Set((site.lastFindings ?? []).map((f) => `${f.code}|${f.severity}`));
 	site.lastFindings = findings;
 
 	const before = parseState(site.metaGet('repair_state'));
@@ -135,6 +136,9 @@ export function supervise(
 			: recordOutcome(before, { ok: true }, site.nowMs());
 
 	for (const f of findings) {
+		// a warn that stays true is one row, not one per alarm; error and above move the ladder
+		if (SEVERITY[f.severity] < SEVERITY.error && repeating.has(`${f.code}|${f.severity}`))
+			continue;
 		recordFinding(site.sql, f, site.nowMs(), after.rung, decision.reason, after.strikes);
 	}
 	const serialised = serialiseState(after);

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { warmCeilingMs, warmIntervalMs } from '../../../src/ops/cron';
+import { idleBounds, keepWarmMs, warmCeilingMs, warmIntervalMs } from '../../../src/ops/cron';
 import {
 	canWriteKv,
 	isPaid,
@@ -318,6 +318,25 @@ describe('writing the levers', () => {
 		expect(await resolvePlan({ PLAN: 'paid' }, kv)).toEqual({ plan: 'paid', source: 'var' });
 	});
 
+	it('refuses an idle bound outside its domain at the writer, and stores an in-domain pair', async () => {
+		const { held, kv } = kvStore({
+			[SETTINGS_KV_KEY]: JSON.stringify({ KEEP_WARM_MS: '240000' })
+		});
+		const out = await writeSettings(kv, {
+			KEEP_WARM_MS: '1000',
+			IDLE_CEILING_MS: '7200000'
+		});
+		expect(out.invalid.map((i) => i.name).sort()).toEqual(['IDLE_CEILING_MS', 'KEEP_WARM_MS']);
+		expect(out.invalid.find((i) => i.name === 'KEEP_WARM_MS')?.reason).toContain(
+			'between 10000 and 3600000'
+		);
+		expect(stored(held).KEEP_WARM_MS).toBe('240000');
+		expect(stored(held).IDLE_CEILING_MS).toBeUndefined();
+		const ok = await writeSettings(kv, { KEEP_WARM_MS: '240000', IDLE_CEILING_MS: '3600000' });
+		expect(ok.invalid).toEqual([]);
+		expect(stored(held).IDLE_CEILING_MS).toBe('3600000');
+	});
+
 	it('refuses a value outside its lever domain and leaves the stored one alone', async () => {
 		const { held, kv } = kvStore({ [SETTINGS_KV_KEY]: JSON.stringify({ MIRROR_LIMIT: '9' }) });
 		const out = await writeSettings(kv, {
@@ -417,23 +436,33 @@ describe('the marks and defaults the settings form reads', () => {
 		}
 	});
 
-	it('puts each default inside the range, on a mark, for exactly the two warm levers', () => {
+	it('puts each default inside the range, and on a mark wherever there are marks', () => {
 		const withDefault = intDomains.filter(([, d]) => d.default !== undefined);
 		expect(withDefault.map(([name]) => name).sort()).toEqual([
+			'IDLE_CEILING_MS',
+			'KEEP_WARM_MS',
 			'WARM_CEILING_MS',
 			'WARM_INTERVAL_MS'
 		]);
 		for (const [name, d] of withDefault) {
 			expect(d.default!, name).toBeGreaterThanOrEqual(d.min);
 			expect(d.default!, name).toBeLessThanOrEqual(d.max);
+			if (d.marks === undefined) continue;
 			expect(
-				d.marks?.map((m) => m.value),
+				d.marks.map((m) => m.value),
 				name
 			).toContain(d.default);
 		}
 	});
 
+	it('leaves the idle levers unmarked, because no deployed run measures them', () => {
+		expect(LEVER_DOMAINS.KEEP_WARM_MS).not.toHaveProperty('marks');
+		expect(LEVER_DOMAINS.IDLE_CEILING_MS).not.toHaveProperty('marks');
+	});
+
 	it('agrees with the readers the defaults describe', () => {
+		expect(LEVER_DOMAINS.KEEP_WARM_MS).toMatchObject({ default: keepWarmMs({}) });
+		expect(LEVER_DOMAINS.IDLE_CEILING_MS).toMatchObject({ default: idleBounds({}).ceilingMs });
 		expect(LEVER_DOMAINS.WARM_INTERVAL_MS).toMatchObject({ default: warmIntervalMs({}) });
 		expect(LEVER_DOMAINS.WARM_CEILING_MS).toMatchObject({ default: warmCeilingMs({}) });
 	});

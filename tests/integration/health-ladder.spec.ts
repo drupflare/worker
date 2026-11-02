@@ -186,6 +186,35 @@ describe('the health layer is reachable from the object, not only from its own s
 		});
 	});
 
+	it('a warn that stays true writes one ledger row, not one per alarm', async () => {
+		await inObject(freshSite(), (site) => {
+			const h = health(site);
+			h.ensureServeTables();
+			h.env.PLAN = 'free';
+			for (let i = 0; i < 5; i++) {
+				seedDailyRows(h, 95_000 + i);
+				h.supervise([{ filled: '/a', bytes: 4096, remaining: 0 }]);
+			}
+			const n = h.sql
+				.exec(`SELECT COUNT(*) AS n FROM cfw_health WHERE code = 'budget.rows_written'`)
+				.toArray()[0] as { n: number };
+			expect(n.n).toBe(1);
+		});
+	});
+
+	it('an error finding still writes a row on every pass, because each one moves the ladder', async () => {
+		await inObject(freshSite(), (site) => {
+			const h = health(site);
+			h.ensureServeTables();
+			for (let i = 0; i < 4; i++) h.supervise([{ filled: '/a', bytes: 4096, remaining: 0 }]);
+			for (let i = 0; i < 3; i++) h.supervise([{ filled: '/a', bytes: 90038, remaining: 0 }]);
+			const n = h.sql
+				.exec(`SELECT COUNT(*) AS n FROM cfw_health WHERE code = 'render.size_anomaly'`)
+				.toArray()[0] as { n: number };
+			expect(n.n).toBe(3);
+		});
+	});
+
 	it('a quarantined alarm stops filling and re-arms slowly, instead of spinning at +1 ms', async () => {
 		const stub = freshSite();
 		await inObject(stub, (site) => {

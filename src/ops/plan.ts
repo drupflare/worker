@@ -216,6 +216,10 @@ export const KV_OVERRIDABLE = [
 	'WARM_INTERVAL_MS',
 	// how far the solver may climb past hibernation; each object retreats on its first cold boot
 	'WARM_CEILING_MS',
+	// the idle re-arm, and the floor of the idle fade; a wrong value is more or fewer idle firings
+	'KEEP_WARM_MS',
+	// how far an idle site's re-arm may grow from the floor; unset keeps it fixed at the floor
+	'IDLE_CEILING_MS',
 	// how long PHP may wait through the park per visitor request (an alarm gets fifteen times it)
 	'SLEEP_BUDGET_MS',
 	// off costs the object hop it always paid
@@ -363,6 +367,8 @@ export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
 			}
 		]
 	},
+	KEEP_WARM_MS: { kind: 'int', min: 10_000, max: 3_600_000, unit: 'ms', default: 240_000 },
+	IDLE_CEILING_MS: { kind: 'int', min: 10_000, max: 3_600_000, unit: 'ms', default: 240_000 },
 	SLEEP_BUDGET_MS: { kind: 'int', min: 0, max: 60_000, unit: 'ms' },
 	EDGE_PLAN: { kind: 'flag' },
 	ASSET_AGGREGATES: { kind: 'flag' },

@@ -32,10 +32,15 @@ export interface FillWindowReply {
 	error?: string;
 }
 
-/** A window that ran. */
+/** the header an object answers a window request with when it declined to open one */
+export const WINDOW_HEADER = 'x-cfw-window';
+
+/** A window that ran, or one the object skipped because it had nothing to fill. */
 export interface FillWindowResult {
 	ok: true;
 	site: string;
+	/** why no socket was opened; absent for a window that ran */
+	skipped?: 'empty-queue';
 	fills: number;
 	drained: boolean;
 	stopped: 'wall-budget' | 'error' | null;
@@ -75,6 +80,18 @@ export async function runFillWindow(
 		headers: { Upgrade: 'websocket' }
 	});
 	const ws = res.webSocket;
+	if (res.headers.get(WINDOW_HEADER) === 'skipped:empty-queue') {
+		return {
+			ok: true,
+			site,
+			skipped: 'empty-queue',
+			fills: 0,
+			drained: true,
+			stopped: null,
+			wallMs: Date.now() - startedAt,
+			outcomes: []
+		};
+	}
 	if (!ws) {
 		return { ok: false, error: `no socket: ${res.status}`, fills: 0 };
 	}

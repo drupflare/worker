@@ -23,13 +23,14 @@ export async function rearmPhase({ site, outcomes, held, hold }: AlarmContext): 
 	const mailRemaining = mailDrainEnabled(site.env ?? {})
 		? (site.countOrNull('cfw_mail_queue') ?? 0)
 		: 0;
+	const queued = remaining > 0 || httpRemaining > 0 || mailRemaining > 0;
 	const cls = classifyAlarmOutcome(outcomes);
 	// supervise() ran after the fills, so a site that just quarantined must not re-arm at +1 ms
 	const quarantined = isQuarantined(parseState(site.metaGet('repair_state')));
 	const delayMs = quarantined
 		? 60_000
 		: alarmRearmDelayMs(cls, {
-				queueNonEmpty: remaining > 0 || httpRemaining > 0 || mailRemaining > 0,
+				queueNonEmpty: queued,
 				failures: site.consecutiveFillFailures ?? 0,
 				// a lane nobody routes to must hibernate, since warming is per object and a pool
 				// multiplies it; otherwise the predictor decides, never overriding SITE_WARM
@@ -38,7 +39,7 @@ export async function rearmPhase({ site, outcomes, held, hold }: AlarmContext): 
 							idleRearmMs(site.env, site.degradation().cron, isPaid(site.env)),
 							240_000
 						)
-					: site.thermalRearmMs()
+					: site.thermalRearmMs(queued)
 			});
 	const heldDelayMs = held && hold !== undefined ? Math.max(1, hold - site.nowMs()) : Infinity;
 	site.consecutiveFillFailures = cls === 'failure' ? (site.consecutiveFillFailures ?? 0) + 1 : 0;

@@ -14,9 +14,9 @@ export const GENERATED_FREE_QUOTAS = {
 	doRequestsPerDay: 100000,
 	/** the regeneration meter, and the tighter of the two ceilings */
 	rowsWrittenPerDay: 100000,
-	/** 50x the write allowance and a SEPARATE meter */
+	/** 50x the write allowance and a separate meter */
 	rowsReadPerDay: 5000000,
-	/** what ONE idle warming tick charges, measured. It charged three until the daily meters were rate-limited, which was 32.4% of the row budget to count almost nothing; warm-alarm-cost.spec.ts pins it at 1 */
+	/** what one idle warming tick charges, measured. It charged three until the daily meters were rate-limited, which was 32.4% of the row budget to count almost nothing; warm-alarm-cost.spec.ts pins it at 1 */
 	rowsPerAlarmArm: 1,
 	/** the packed daily-meter row, charged once per METER_FLUSH_SECONDS rather than per tick. It was 2, and 4 on a trafficked site, because each counter had a cfw_meta key of its own; src/ops/day-meters.ts packs them and cold-encounter-wire.spec.ts pins the flush at one row */
 	rowsPerMeterFlush: 1,
@@ -26,30 +26,30 @@ export const GENERATED_FREE_QUOTAS = {
 	queueOperationsPerMessage: 3,
 	/** the read side, a hundred times the write side */
 	kvReadsPerDay: 100000,
-	/** THE TIGHTEST METER IN THIS OBJECT. At the alarm chain 2,777 fills/day, one KV write per fill is 2.8x over on its own */
+	/** The tightest meter in this object. At the alarm chain's 2,777 fills/day, one KV write per fill is 2.8x over on its own */
 	kvWritesPerDay: 1000,
 	/** same bucket as writes */
 	kvDeletesPerDay: 1000,
 	/** same bucket as writes */
 	kvListsPerDay: 1000,
-	/** ACCOUNT-WIDE and always metered at the free rate, whatever plan the account is on. A rate-limited purge answers success:false rather than throwing, so exceeding it is silent */
+	/** Account-wide and always metered at the free rate, whatever plan the account is on. A rate-limited purge answers success:false rather than throwing, so exceeding it is silent */
 	cachePurgeCallsPerMinute: 5,
 	/** the token bucket the per-minute rate refills */
 	cachePurgeBurst: 25,
-	/** why a purge driven per SAVE fits and one driven per invalidated TAG starves the fleet */
+	/** A purge driven per save fits, and one driven per invalidated tag starves the fleet */
 	cachePurgeTagsPerCall: 100,
-	/** per MONTH; a read, so this is the serving side */
+	/** per month; a read, so this is the serving side */
 	r2ClassBPerMonth: 10000000,
-	/** per MONTH; a write, so this is the regeneration side */
+	/** per month; a write, so this is the regeneration side */
 	r2ClassAPerMonth: 1000000,
-	/** per MONTH, and a HARD CAP rather than a bill: an image style is a transformation, so 10 styles over 2,000 images is 4x over */
+	/** per month, and a hard cap rather than a bill: an image style is a transformation, so 10 styles over 2,000 images is 4x over */
 	imageTransformsPerMonth: 5000,
-	/** the free per-day figure; the "25,000 separately-budgeted steps" number is the PAID per-instance one */
+	/** the free per-day figure; the "25,000 separately-budgeted steps" number is the paid per-instance one */
 	workflowStepsPerDay: 3000,
-	/** steps in ONE instance on free; paid defaults to 10,000 */
+	/** steps in one instance on free; paid defaults to 10,000 */
 	workflowStepsPerInstance: 1024,
-	/** billed on WALL CLOCK against the 128 MB an object holds whatever it uses, so every cpuTime-derived figure understates it */
+	/** billed on wall clock against the 128 MB an object holds whatever it uses, so every cpuTime-derived figure understates it */
 	durationGbSPerDay: 13000,
-	/** the only line here that is not a daily rate: it caps how many SITES an account holds at all */
+	/** the only line here that is not a daily rate: it caps how many sites an account holds at all */
 	storageBytes: 5000000000
 } as const;

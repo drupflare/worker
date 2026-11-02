@@ -15,6 +15,7 @@ import {
 	arrivalProbability,
 	clampWarmInterval,
 	foldRenderWindow,
+	idleRearm,
 	readRenderWindow,
 	recordArrival,
 	renderRate,
@@ -585,5 +586,83 @@ describe('the warm interval past hibernation', () => {
 			CEILING
 		);
 		expect(open).toMatchObject({ renders: 43, colds: 2, intervalMs: 20_000 });
+	});
+});
+
+describe('the idle re-arm fades with idle time', () => {
+	const FLOOR = 240_000;
+	const CEILING = 3_600_000;
+
+	it('re-arms at the idle time, so each wake lands twice as far from the last activity', () => {
+		let idleFor = FLOOR;
+		const seen: number[] = [];
+		for (let i = 0; i < 6; i++) {
+			const { ms } = idleRearm(idleFor, FLOOR, CEILING);
+			seen.push(ms);
+			idleFor += ms;
+		}
+		expect(seen).toEqual([240_000, 480_000, 960_000, 1_920_000, 3_600_000, 3_600_000]);
+	});
+
+	it('clamps both ways and names the reason', () => {
+		expect(idleRearm(10_000, FLOOR, CEILING)).toEqual({ ms: FLOOR, reason: 'floor' });
+		expect(idleRearm(900_000, FLOOR, CEILING)).toEqual({ ms: 900_000, reason: 'fade' });
+		expect(idleRearm(86_400_000, FLOOR, CEILING)).toEqual({ ms: CEILING, reason: 'ceiling' });
+	});
+
+	it('holds the floor while work is queued or running, however long the site has idled', () => {
+		expect(idleRearm(86_400_000, FLOOR, CEILING, 'queue')).toEqual({
+			ms: FLOOR,
+			reason: 'floor:queue'
+		});
+		expect(idleRearm(86_400_000, FLOOR, CEILING, 'lanes').ms).toBe(FLOOR);
+	});
+
+	it('is a fixed value when the floor equals the ceiling, and when the ceiling is below it', () => {
+		expect(idleRearm(86_400_000, FLOOR, FLOOR)).toEqual({ ms: FLOOR, reason: 'fixed' });
+		expect(idleRearm(86_400_000, FLOOR, 60_000)).toEqual({ ms: FLOOR, reason: 'fixed' });
+	});
+
+	it('takes the floor when no activity is known rather than guessing an idle time', () => {
+		expect(idleRearm(undefined, FLOOR, CEILING)).toEqual({
+			ms: FLOOR,
+			reason: 'floor:no-activity'
+		});
+	});
+});
+
+describe('the render window carries the last activity without a new row', () => {
+	const NOW = 1_700_000_000_000;
+
+	it('round-trips a sixth field and still reads the shorter forms', () => {
+		const window = {
+			startedAt: NOW,
+			renders: 7,
+			intervalMs: 9_000,
+			clean: 1,
+			colds: 0,
+			lastAt: NOW + 5
+		};
+		const packed = writeRenderWindow(window);
+		expect(packed.split(':')).toHaveLength(6);
+		expect(readRenderWindow(packed)).toEqual(window);
+		expect(readRenderWindow(`${NOW}:7:9000:1:0`)?.lastAt).toBeUndefined();
+		expect(writeRenderWindow({ ...window, lastAt: undefined }).split(':')).toHaveLength(5);
+	});
+
+	it('stamps the roll and keeps the stamp across a fold that has none', () => {
+		const rolled = foldRenderWindow(
+			undefined,
+			2,
+			NOW,
+			RATE_WINDOW_MS,
+			false,
+			0,
+			9_500,
+			NOW - 50
+		);
+		expect(rolled.lastAt).toBe(NOW - 50);
+		const open = foldRenderWindow(rolled, 1, NOW + 1_000, RATE_WINDOW_MS, false, 0, 9_500);
+		expect(open.lastAt).toBe(NOW - 50);
 	});
 });

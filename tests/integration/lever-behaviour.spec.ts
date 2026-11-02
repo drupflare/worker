@@ -207,6 +207,8 @@ describe('the fixture covers the allow-list', () => {
 			'SITE_WARM',
 			'WARM_INTERVAL_MS',
 			'WARM_CEILING_MS',
+			'KEEP_WARM_MS',
+			'IDLE_CEILING_MS',
 			'SLEEP_BUDGET_MS',
 			'EDGE_PLAN',
 			'ASSET_AGGREGATES',
@@ -807,6 +809,110 @@ describe('SITE_WARM decides the idle re-arm', () => {
 		expect(await rearmWith({ WARM_CEILING_MS: '30000', RETAIN_INTERPRETER: '0' })).toBe(9_500);
 	});
 
+	/**
+	 * THE IDLE FADE: `KEEP_WARM_MS` is its floor and `IDLE_CEILING_MS` its ceiling. Unset, the
+	 * ceiling is the floor, so every pair's control arm is the constant 240 s re-arm as today.
+	 */
+	describe('the idle fade', () => {
+		type FadeObj = {
+			thermalRearmMs(queued?: boolean): number;
+			lastRearm?: { ms: number; reason: string; idleForMs: number | null };
+			lastRenderAtMs?: number;
+			lanesMemo?: number;
+			metaSet(k: string, v: string): void;
+			nowMs(): number;
+		};
+		const fade = (
+			overrides: Record<string, unknown>,
+			arrange: (obj: FadeObj) => void = () => undefined,
+			queued = false
+		) =>
+			inObject(freshSite(), async (site) => {
+				site.env = { ...site.env, ...overrides };
+				markProvisioned(site);
+				const obj = site as unknown as FadeObj;
+				arrange(obj);
+				return { ms: obj.thermalRearmMs(queued), why: obj.lastRearm };
+			});
+		const idleFor = (ms: number) => (obj: FadeObj) => {
+			obj.lastRenderAtMs = obj.nowMs() - ms;
+		};
+
+		it('holds the constant until IDLE_CEILING_MS lets the interval grow with idle time', async () => {
+			const fixed = await fade({}, idleFor(900_000));
+			const faded = await fade({ IDLE_CEILING_MS: '3600000' }, idleFor(900_000));
+			expect(fixed.ms).toBe(240_000);
+			expect(fixed.why?.reason).toBe('fixed');
+			// the object clock moves a few ms between arranging the stamp and reading it
+			expect(faded.ms).toBeGreaterThanOrEqual(900_000);
+			expect(faded.ms).toBeLessThan(901_000);
+			expect(faded.why?.reason).toBe('fade');
+			const capped = await fade({ IDLE_CEILING_MS: '3600000' }, idleFor(86_400_000));
+			expect(capped.ms).toBe(3_600_000);
+			const recent = await fade({ IDLE_CEILING_MS: '3600000' }, idleFor(1_000));
+			expect(recent.ms).toBe(240_000);
+		});
+
+		it('moves the floor with KEEP_WARM_MS, and the ceiling cannot sit under it', async () => {
+			const fallback = await fade({}, idleFor(1_000));
+			const set = await fade({ KEEP_WARM_MS: '60000' }, idleFor(1_000));
+			expect(fallback.ms).toBe(240_000);
+			expect(set.ms).toBe(60_000);
+			const under = await fade(
+				{ KEEP_WARM_MS: '600000', IDLE_CEILING_MS: '300000' },
+				idleFor(86_400_000)
+			);
+			expect(under.ms).toBe(600_000);
+		});
+
+		it('holds the floor while work is queued or a pool is active, however long it has idled', async () => {
+			const env = { IDLE_CEILING_MS: '3600000' };
+			const quiet = await fade(env, idleFor(86_400_000));
+			const queued = await fade(env, idleFor(86_400_000), true);
+			const pooled = await fade(env, (obj) => {
+				idleFor(86_400_000)(obj);
+				obj.lanesMemo = 2;
+			});
+			expect(quiet.ms).toBe(3_600_000);
+			expect(queued).toMatchObject({ ms: 240_000, why: { reason: 'floor:queue' } });
+			expect(pooled).toMatchObject({ ms: 240_000, why: { reason: 'floor:lanes' } });
+		});
+
+		it('reads the idle time off the stored window, a window short, after a hibernation', async () => {
+			const env = { IDLE_CEILING_MS: '3600000' };
+			const stamped = await fade(env, (obj) => {
+				obj.metaSet(
+					'render_window',
+					`${obj.nowMs() - 1_500_000}:9:8000:0:0:${obj.nowMs() - 1_200_000}`
+				);
+			});
+			// 1,200,000 since the stamp, less the 900,000 the stamp may lag by
+			expect(stamped.ms).toBeGreaterThanOrEqual(300_000);
+			expect(stamped.ms).toBeLessThan(301_000);
+			const legacy = await fade(env, (obj) => {
+				obj.metaSet('render_window', `${obj.nowMs() - 1_500_000}:9:8000:0:0`);
+			});
+			expect(legacy.ms).toBeGreaterThanOrEqual(600_000);
+			expect(legacy.ms).toBeLessThan(601_000);
+			const unknown = await fade(env);
+			expect(unknown).toMatchObject({ ms: 240_000, why: { reason: 'floor:no-activity' } });
+		});
+
+		it('reports the interval in force and why at /serve-stats, after a real firing', async () => {
+			const seen = await inObject(freshSite(), async (site) => {
+				site.env = { ...site.env, IDLE_CEILING_MS: '3600000' };
+				markProvisioned(site);
+				(site as unknown as FadeObj).lastRenderAtMs = site.nowMs() - 7_200_000;
+				await site.alarm();
+				return await statsOf(site);
+			});
+			expect((seen as unknown as { rearm: unknown }).rearm).toMatchObject({
+				ms: 3_600_000,
+				reason: 'ceiling'
+			});
+		});
+	});
+
 	it('counts a cold boot and writes it into the fifth field on the next roll', async () => {
 		const out = await inObject(freshSite(), async (site: ServeDo) => {
 			await site.fetch(new Request('https://cfw.local/__migrate?all=1&prefill=0'));
@@ -832,6 +938,41 @@ describe('SITE_WARM decides the idle re-arm', () => {
 		expect(out.counted).toBe(1);
 		expect(out.packed).toBe(`${out.now}:1:8000:0:1`);
 		expect(out.left).toBe(0);
+	});
+
+	// a build from before the fade rejects a six-field value and resets every warmed rate estimate,
+	// so the row stays five fields until a ceiling is set, and a stale stamp is dropped when it is off
+	it('writes the idle stamp as a sixth field only while the fade is on', async () => {
+		const roll = async (ceiling: string | undefined, stored: string) =>
+			inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request('https://cfw.local/__migrate?all=1&prefill=0'));
+				const s = site as unknown as {
+					env: Record<string, unknown>;
+					lastRenderAtMs?: number;
+					rendersSinceFlush?: number;
+					flushRenderWindow(nowMs: number): unknown;
+					metaGet(k: string): string | undefined;
+					metaSet(k: string, v: string): void;
+				};
+				if (ceiling === undefined) delete s.env.IDLE_CEILING_MS;
+				else s.env.IDLE_CEILING_MS = ceiling;
+				const now = site.nowMs();
+				s.metaSet('render_window', stored.replace('NOW', String(now - 1_000_000)));
+				s.lastRenderAtMs = now - 5_000;
+				s.rendersSinceFlush = 1;
+				s.flushRenderWindow(now);
+				return { packed: s.metaGet('render_window') ?? '', now };
+			});
+
+		const off = await roll(undefined, 'NOW:5:8000:0:0');
+		expect(off.packed.split(':')).toHaveLength(5);
+
+		const staleStamp = await roll(undefined, 'NOW:5:8000:0:0:1700000000000');
+		expect(staleStamp.packed.split(':')).toHaveLength(5);
+
+		const on = await roll('3600000', 'NOW:5:8000:0:0');
+		expect(on.packed.split(':')).toHaveLength(6);
+		expect(on.packed.split(':')[5]).toBe(String(on.now - 5_000));
 	});
 });
 

@@ -17,7 +17,7 @@ import { KV_OVERRIDABLE, SETTINGS_KV_KEY } from '../../src/ops/plan';
  * that appears somewhere real is one a reader can follow. The exclusion is `plan.ts` itself, which
  * is where the list lives.
  *
- * This also replaces four prose counts. `plan.ts`, `site-do.ts` and `docs/configuration.md` each
+ * This also replaces four prose counts. `plan.ts`, `site-do.ts` and `docs/configuration/index.md` each
  * carried a number -- seven, or eleven -- while the list held eighteen, and one of them named the
  * deleted lever. A count in prose cannot be checked; this property can.
  */

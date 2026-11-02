@@ -146,6 +146,8 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 		lastAggregation: site.lastAggregation ?? null,
 		warmDecision: site.lastWarmDecision ?? null,
 		warmCeilingMs: site.warmCeiling(),
+		// the idle re-arm last chosen and why; null until an alarm has re-armed in this incarnation
+		rearm: site.lastRearm ?? null,
 		warmWindowColds: site.storedRenderWindow()?.colds ?? null,
 		// a re-driven render costs one extra drain plus one extra render
 		lastRedrive: site.lastRedrive ?? null,

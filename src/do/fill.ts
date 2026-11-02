@@ -15,6 +15,7 @@ import {
 } from '../ops/render-lane';
 import { recordArrival } from '../ops/thermal';
 import type { SitePhpDurableObject } from '../site-do';
+import { WINDOW_HEADER } from '../site/fill-window';
 import { errorMessage } from '../util/errors';
 import { firstRow } from '../util/sql';
 import { pageTagList, passThroughHeaders, variesByRequest } from './helpers';
@@ -101,6 +102,7 @@ export async function fillOne(
 	site.deferredInRender = 0;
 	// a render is the arrival a warm object would have saved 1,398 ms on
 	site.arrivals = recordArrival(site.arrivals ?? [], { at: site.nowMs(), rendered: true });
+	site.lastRenderAtMs = site.nowMs();
 	// the counter survives a hibernation (the ring alone does not)
 	site.rendersSinceFlush = (site.rendersSinceFlush ?? 0) + 1;
 	site.countActivity('renders');
@@ -221,11 +223,36 @@ export async function fillOne(
 		!(status >= 300 && status < 400);
 	// aggregates applied at store time, so the saving lands in the row (needs `ASSET_AGGREGATES=1`
 	// and `bun run assets:agg`)
+	if (!cacheable && typeof result.html === 'string' && site.env?.ASSET_AGGREGATES === '1') {
+		site.lastAggregation = {
+			path,
+			libraries: 0,
+			tagsRemoved: 0,
+			bytesSaved: 0,
+			skipped: 'not-cacheable'
+		};
+	}
 	if (cacheable && typeof result.html === 'string' && site.env?.ASSET_AGGREGATES === '1') {
 		const index = await site.aggregateIndex();
-		if (index !== undefined) {
+		if (index === undefined) {
+			site.lastAggregation = {
+				path,
+				libraries: 0,
+				tagsRemoved: 0,
+				bytesSaved: 0,
+				skipped: 'no-index'
+			};
+		} else {
 			const out = substituteAggregates(result.html, index);
-			if (out.replaced.length > 0) {
+			if (out.replaced.length === 0) {
+				site.lastAggregation = {
+					path,
+					libraries: 0,
+					tagsRemoved: 0,
+					bytesSaved: 0,
+					skipped: 'no-match'
+				};
+			} else {
 				result.html = out.html;
 				site.lastAggregation = {
 					path,
@@ -318,6 +345,14 @@ export async function fillOne(
  * A non-hibernatable object bills duration, so the window is scoped to one drain.
  */
 export async function openFillWindow(site: SitePhpDurableObject): Promise<Response> {
+	// an empty queue has nothing to fill, so the socket, its message and the gate entry are skipped;
+	// every write that invalidates a page queues its refill, so a later write meets the next tick
+	if (site.queueDepth() === 0) {
+		return new Response(null, {
+			status: 204,
+			headers: { [WINDOW_HEADER]: 'skipped:empty-queue' }
+		});
+	}
 	const pair = new WebSocketPair();
 	// a pair is exactly two sockets, which is what `Object.values` cannot say on its own
 	const [client, server] = Object.values(pair) as [WebSocket, WebSocket];

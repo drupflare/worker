@@ -137,6 +137,30 @@ export function solveWarmInterval(
 	return { intervalMs: clampWarmInterval(current + step, ceilingMs), clean: 0 };
 }
 
+/**
+ * The idle re-arm for a site that is not warm: its own idle time, between the floor and the ceiling.
+ *
+ * Re-arming at the idle time puts each wake twice as far from the last activity as the one before,
+ * so the interval doubles until it meets the ceiling. `floored` names work that holds the floor
+ * (queued fills, mail or HTTP, an active pool, an update or migration); a ceiling at or below the
+ * floor is a fixed re-arm, which is what runs when no ceiling is configured.
+ *
+ * @param idleForMs ms since the last known activity, or undefined when none is known
+ */
+export function idleRearm(
+	idleForMs: number | undefined,
+	floorMs: number,
+	ceilingMs: number,
+	floored?: string
+): { ms: number; reason: string } {
+	if (floored !== undefined) return { ms: floorMs, reason: `floor:${floored}` };
+	if (ceilingMs <= floorMs) return { ms: floorMs, reason: 'fixed' };
+	if (idleForMs === undefined) return { ms: floorMs, reason: 'floor:no-activity' };
+	if (idleForMs <= floorMs) return { ms: floorMs, reason: 'floor' };
+	if (idleForMs >= ceilingMs) return { ms: ceilingMs, reason: 'ceiling' };
+	return { ms: Math.round(idleForMs), reason: 'fade' };
+}
+
 /** the verdict of {@link warmDecision} with the figures behind it */
 export type WarmDecision = {
 	warm: boolean;
@@ -179,6 +203,8 @@ export type RenderWindow = {
 	clean: number;
 	/** cold boots met during this window; the observation for an interval past hibernation */
 	colds: number;
+	/** when the newest render of the last rolled batch arrived; the idle fade's clock */
+	lastAt?: number;
 };
 
 /**
@@ -192,16 +218,24 @@ export function readRenderWindow(
 	ceilingMs = DEFAULT_CEILING_MS
 ): RenderWindow | undefined {
 	const parts = String(value ?? '').split(':');
-	if (parts.length !== 2 && parts.length !== 4 && parts.length !== 5) return undefined;
+	if (![2, 4, 5, 6].includes(parts.length)) return undefined;
 	const startedAt = Number(parts[0]);
 	const renders = Number(parts[1]);
 	if (!Number.isFinite(startedAt) || !Number.isFinite(renders)) return undefined;
 	if (startedAt <= 0 || renders < 0) return undefined;
-	const colds = parts.length === 5 ? Number(parts[4]) : 0;
+	const colds = parts.length >= 5 ? Number(parts[4]) : 0;
 	if (!Number.isFinite(colds) || colds < 0) return undefined;
+	const lastAt = parts.length === 6 ? Number(parts[5]) : undefined;
+	if (lastAt !== undefined && (!Number.isFinite(lastAt) || lastAt <= 0)) return undefined;
 	const solved =
 		parts.length >= 4 ? readSolvedInterval(parts[2], parts[3], ceilingMs) : undefined;
-	return { startedAt, renders, ...(solved ?? ZERO_SOLVED), colds: Math.round(colds) };
+	return {
+		startedAt,
+		renders,
+		...(solved ?? ZERO_SOLVED),
+		colds: Math.round(colds),
+		...(lastAt === undefined ? {} : { lastAt: Math.round(lastAt) })
+	};
 }
 
 /** parses the solved-interval half of the packed value; undefined when malformed */
@@ -217,15 +251,17 @@ function readSolvedInterval(
 	return { intervalMs: clampWarmInterval(intervalMs, ceilingMs), clean: Math.round(clean) };
 }
 
-/** packs a window as `startedAt:renders:intervalMs:clean:colds` for the meta row */
+/** packs a window as `startedAt:renders:intervalMs:clean:colds[:lastAt]` for the meta row */
 export function writeRenderWindow(window: RenderWindow): string {
-	return [
+	const fields = [
 		Math.round(window.startedAt),
 		Math.round(window.renders),
 		Math.round(window.intervalMs),
 		Math.round(window.clean),
 		Math.round(window.colds)
-	].join(':');
+	];
+	if (window.lastAt !== undefined) fields.push(Math.round(window.lastAt));
+	return fields.join(':');
 }
 
 /**
@@ -241,8 +277,12 @@ export function foldRenderWindow(
 	/** whether ONE incarnation spanned the window that is closing; see {@link windowVerdict} */
 	survived = false,
 	pendingColds = 0,
-	ceilingMs = DEFAULT_CEILING_MS
+	ceilingMs = DEFAULT_CEILING_MS,
+	/** when the newest of the pending renders arrived; kept from the stored window when absent */
+	lastAt?: number
 ): RenderWindow {
+	const stamp = lastAt ?? stored?.lastAt;
+	const last = stamp === undefined ? {} : { lastAt: stamp };
 	if (stored === undefined || nowMs - stored.startedAt >= windowMs) {
 		const solved =
 			stored === undefined
@@ -252,13 +292,14 @@ export function foldRenderWindow(
 						windowVerdict(stored.intervalMs, stored, survived),
 						ceilingMs
 					);
-		return { startedAt: nowMs, renders: pending, ...solved, colds: pendingColds };
+		return { startedAt: nowMs, renders: pending, ...solved, colds: pendingColds, ...last };
 	}
 	return {
 		startedAt: stored.startedAt,
 		renders: stored.renders + pending,
 		intervalMs: stored.intervalMs,
 		clean: stored.clean,
+		...last,
 		colds: stored.colds + pendingColds
 	};
 }

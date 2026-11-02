@@ -113,6 +113,35 @@ describe('a warm window drives fills over one socket', () => {
 	});
 });
 
+describe('the */5 window skips a site with nothing to fill', () => {
+	it('opens no socket and takes no gate entry on an empty queue', async () => {
+		const site = 'window-skip';
+		await inObject(namedSite(site), (obj) => {
+			stubRender(obj, ({ path }) => pageFor(path));
+			obj.ensureServeTables();
+		});
+		const win = await openWindow(site, { maxFills: 4 });
+		expect(win.skipped).toBe('empty-queue');
+		expect(win.drained).toBe(true);
+		expect(win.outcomes).toEqual([]);
+		const stats = await inObject(namedSite(site), (obj) => statsOf(obj));
+		expect(stats.gate.order).not.toContain('window');
+	});
+
+	it('still opens for a queued path, so the skip is the empty queue and nothing wider', async () => {
+		const site = 'window-skip-control';
+		await inObject(namedSite(site), (obj) => {
+			stubRender(obj, ({ path }) => pageFor(path));
+			queuePath(obj, '/', { arm: false });
+		});
+		const win = await openWindow(site, { maxFills: 4 });
+		expect(win.skipped).toBeUndefined();
+		expect(win.fills).toBe(1);
+		const stats = await inObject(namedSite(site), (obj) => statsOf(obj));
+		expect(stats.gate.order).toContain('window');
+	});
+});
+
 describe('a window is bounded three ways, because it spends three budgets', () => {
 	it('stops at maxFills, which bounds DO requests and rows written', async () => {
 		const site = 'window-max';

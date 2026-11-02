@@ -137,6 +137,44 @@ describe('an idle warming tick', () => {
 	);
 });
 
+describe('an idle tick with the idle fade on', () => {
+	it(
+		'still writes exactly one row, the setAlarm',
+		async () => {
+			const seen = await inObject(await provisionedSite(), async (site: ServeDo) => {
+				markProvisioned(site);
+				site.env = { ...site.env, IDLE_CEILING_MS: '3600000' };
+				site.ensureServeTables();
+				site.ensureHttpTables();
+				(site as unknown as { lastRenderAtMs?: number }).lastRenderAtMs =
+					site.nowMs() - 7_200_000;
+				const settling: number[] = [];
+				for (let i = 0; i < 8; i++) {
+					site.writeTally = emptyTally();
+					await site.alarm();
+					settling.push(site.writeTally?.rowsWritten ?? -1);
+					site.writeTally = undefined;
+					const n = settling.length;
+					if (n >= 2 && settling[n - 1] === 1 && settling[n - 2] === 1) break;
+				}
+				site.writeTally = emptyTally();
+				await site.alarm();
+				const rows = site.writeTally?.rowsWritten ?? -1;
+				const tables = { ...(site.writeTally?.byTable ?? {}) };
+				site.writeTally = undefined;
+				return {
+					rows,
+					tables,
+					rearm: (site as unknown as { lastRearm?: unknown }).lastRearm
+				};
+			});
+			expect(seen.rearm).toMatchObject({ ms: 3_600_000, reason: 'ceiling' });
+			expect(seen.rows, JSON.stringify(seen.tables)).toBe(1);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
 /**
  * When the object pays for its day row, which used to be a flat 60 s and 25 pending.
  *

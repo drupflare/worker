@@ -8,6 +8,7 @@ import {
 	parkTrapInstall
 } from '../../../src/ops/park';
 import {
+	PARK_ARM_SOCKET_IO,
 	PARK_FETCH_SCHEME,
 	PARK_IO_TIMEOUT_MS,
 	PARK_MARK,
@@ -637,6 +638,7 @@ describe('the drive loop', () => {
 				`{"fn":"stream_socket_client","args":[{"b64":"${btoa('tcp://cache.test:6379')}"}]}`
 			],
 			['fopen("php://memory", "r")', '{"id":2}'],
+			['cfw_park_trap($fn)', '{"armed":true}'],
 			['cfw_park_resume($GLOBALS["CFW_PARK_TOKENS"][2])', '{"state":"PARKED"}'],
 			['cfw_park_pending', `{"fn":"fwrite","args":[{"res":2},{"b64":"${btoa(PING)}"}]}`],
 			['cfw_park_resume(14)', '{"state":"PARKED"}'],
@@ -659,6 +661,23 @@ describe('the drive loop', () => {
 		// the token is minted read-only, so a REFUSED park fails at the first write instead of
 		// corrupting the conversation
 		expect(binary.seen[2]).toContain('"r"');
+		// the read/write traps arm after the dial and before the resume, so the first write is
+		// already diverted and nothing before the first open is
+		expect(binary.seen[3]).toBe('cfw_park_trap($fn)');
+		expect(binary.seen[4]).toBe('cfw_park_resume($GLOBALS["CFW_PARK_TOKENS"][2])');
+		expect(PARK_ARM_SOCKET_IO).toContain('"fwrite", "fread", "fgets"');
+	});
+
+	it('arms nothing but the open trap until a socket exists', async () => {
+		const out = await installPark(
+			binaryOf({
+				cfw_park_run: '{"park":true}',
+				cfw_park_trap: '{"armed":["stream_socket_client"]}'
+			}),
+			['fetch']
+		);
+		expect(out).toEqual({ state: 'installed', armed: ['stream_socket_client'] });
+		expect(parkTrapInstall(['fetch'])).not.toContain('fwrite');
 	});
 
 	it('waits on a timer for a parked sleep and spends the invocation allowance', async () => {

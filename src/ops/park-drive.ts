@@ -64,6 +64,20 @@ export const PARK_SOCKET_TRAPS: readonly string[] = [
  */
 export const PARK_FETCH_TRAPS: readonly string[] = ['stream_socket_client'];
 
+/**
+ * Arms the read/write half of the socket class, once a socket exists to read or write.
+ *
+ * The traps are global to the interpreter and cannot be removed, and a write to anything but a
+ * minted socket is a `passthrough` that only costs a trip. Armed from the first render, a
+ * `fwrite` inside a destructor parked a chain whose C frame no longer existed: the run ended
+ * `done` with no output, and the next call trapped with `memory access out of bounds`. Arming
+ * after the first open keeps every site that never opens a socket out of that path.
+ */
+export const PARK_ARM_SOCKET_IO = [
+	'<?php foreach (["fwrite", "fread", "fgets"] as $fn) { cfw_park_trap($fn); }',
+	'echo "\\x01", json_encode(["armed" => true]), "\\x01";'
+].join('\n');
+
 /** what a `cfwpark+fetch://` target carries, once decoded */
 export type ParkFetch = {
 	method: string;
@@ -518,6 +532,7 @@ async function perform(
 		if (!Number.isInteger(id) || id <= 0) return null;
 		// dial between the mint and the resume: PHP writes to the token on its next trip
 		await sockets.open(id, op.endpoint);
+		await collect(PARK_ARM_SOCKET_IO);
 		return await collect(parkResumeToken(id));
 	}
 	if (op.kind === 'fetch') {

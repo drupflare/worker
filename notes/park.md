@@ -99,8 +99,14 @@ claiming something the binary cannot do.
 Two arming rules survive. Both classes stay gated on their capability, because arming one the park
 cannot serve routes every render through `cfw_park_run` for a yield that always falls back -- measured
 when `fetch` was armed unconditionally: `serve-chain` read a render estimate of -1. The `socket` class
-additionally waits for `REDIS_URL`, because its read/write traps divert every file write inside a
-parked run; `fetch` needs no endpoint, since the destination is whatever the module asks for and the
+additionally waits for `REDIS_URL`, and even then arms only `stream_socket_client` at boot: its
+read/write traps divert every file write inside a parked run, so `drivePark` arms `fwrite`, `fread`
+and `fgets` at the first open (`PARK_ARM_SOCKET_IO`), when a socket exists to read or write. Armed from
+the first render they parked a `fwrite` inside a destructor, a chain whose C frame the `longjmp` had
+destroyed: the run ended `done` with empty output and the next call trapped with `memory access out of
+bounds`. A node save on any site with `REDIS_URL` set lost its answer that way, and the old unparked
+re-run hid it until `1f234a0a67` stopped re-running a request. The traps cannot be removed, so a
+site that opens a socket keeps them; `fetch` needs no endpoint, since the destination is whatever the module asks for and the
 SSRF guard is what bounds it. **That guard had its own defect**: `classifyParkOp` called
 `refuseOutbound()` directly while every other outbound path goes through `outboundGuardEnabled()`, so
 `OUTBOUND_GUARD=0` -- which exists for the rig -- turned the guard off everywhere except there.

@@ -161,12 +161,11 @@ export function queueHttp(
 export async function parkState(site: SitePhpDurableObject): Promise<ParkInstall> {
 	if (site.parkInstall) return site.parkInstall;
 	const hasRedis = !('refusal' in resolveTcpEndpoint(site.env, 'redis'));
-	const wanted: ParkClassName[] = !parkEnabled(site.env)
-		? []
-		: [
-				...(SHIPPED_CAPABILITIES.blockingSocket && hasRedis ? (['socket'] as const) : []),
-				...(SHIPPED_CAPABILITIES.blockingOutbound ? (['fetch'] as const) : [])
-			];
+	const wanted: ParkClassName[] =
+		parkEnabled(site.env) &&
+		((SHIPPED_CAPABILITIES.blockingSocket && hasRedis) || SHIPPED_CAPABILITIES.blockingOutbound)
+			? ['fetch']
+			: [];
 	site.parkInstall = await installPark(
 		{
 			// `run()` collects the output event; `_run`'s return value is not the printed text

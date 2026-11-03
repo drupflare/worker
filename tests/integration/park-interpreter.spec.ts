@@ -238,6 +238,105 @@ describe('the park, against the interpreter on disk', () => {
 	});
 
 	/**
+	 * What a Redis site does: the open trap alone is armed at boot, and the first dial arms the
+	 * read/write half before PHP is handed the token. The peer is a fake, so this needs no rig.
+	 */
+	it('arms the read and write traps at the first open and carries the conversation', async (ctx) => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			if (!(await canPark(site))) return { build: 'absent' as const };
+			await site.runJson(parkTrapInstall(['fetch']));
+			const replies = ['+PONG\r\n'];
+			const written: string[] = [];
+			const socket = {
+				reader: {
+					async readN(n: number) {
+						return new TextEncoder().encode((replies.shift() ?? '').slice(0, n));
+					},
+					async readUntil() {
+						return new TextEncoder().encode(replies.shift() ?? '');
+					}
+				},
+				writer: {
+					async write(chunk: Uint8Array) {
+						written.push(new TextDecoder().decode(chunk));
+					}
+				},
+				async close() {}
+			};
+			const code = [
+				'$before = fopen("php://temp", "r+");',
+				'fwrite($before, "plain");',
+				'$s = stream_socket_client("tcp://127.0.0.1:6379", $e, $m, 5);',
+				'fwrite($s, "PING\\r\\n");',
+				'echo json_encode(["said" => trim((string) fgets($s))]);'
+			].join('\n');
+			const sockets = new ParkSockets(async () => socket as never);
+			const driven = await drivePark(
+				{ runText: (c: string) => (site as Interp).run(c) },
+				sockets,
+				REDIS,
+				`<?php ${code}`
+			);
+			await sockets.closeAll();
+			return { build: 'current' as const, driven, written };
+		});
+
+		if (seen.build !== 'current') {
+			ctx.skip(`park build state: ${seen.build}`);
+			return;
+		}
+		expect(seen.driven.state, seen.driven.why ?? '').toBe('done');
+		// the write before the dial was never diverted; the two after it were
+		expect(seen.driven.trips.map((t) => `${t.fn}/${t.op}`)).toEqual([
+			'stream_socket_client/open',
+			'fwrite/write',
+			'fgets/line'
+		]);
+		expect(seen.written).toEqual(['PING\r\n']);
+		expect(JSON.parse(seen.driven.output)).toEqual({ said: '+PONG' });
+	});
+
+	/**
+	 * A `fwrite` inside a destructor, with only the open trap armed, which is what a site arms until
+	 * it has opened a socket. With the read/write traps armed from the start the write parked a
+	 * chain whose C frame (`zend_objects_store_del`) was gone: the run ended `done` with no output
+	 * and the next call trapped with `memory access out of bounds`. A node save on a site with
+	 * `REDIS_URL` set reached it through Guzzle's temp streams and lost its answer.
+	 */
+	it('keeps the output of a run whose destructor writes a stream, until a socket is open', async (ctx) => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			if (!(await canPark(site))) return { build: 'absent' as const };
+			await site.runJson(parkTrapInstall(['fetch']));
+			const code = [
+				'class Late {',
+				'  public $f;',
+				'  function __construct() { $this->f = fopen("php://temp", "r+"); }',
+				'  function __destruct() { fwrite($this->f, "late"); }',
+				'}',
+				'$o = new Late; $o = null;',
+				'echo json_encode(["after" => "destructor"]);'
+			].join('\n');
+			const sockets = new ParkSockets();
+			const driven = await drivePark(
+				{ runText: (c: string) => (site as Interp).run(c) },
+				sockets,
+				REDIS,
+				`<?php ${code}`
+			);
+			await sockets.closeAll();
+			return { build: 'current' as const, driven };
+		});
+
+		if (seen.build !== 'current') {
+			ctx.skip(`park build state: ${seen.build}`);
+			return;
+		}
+		expect(seen.driven.state, seen.driven.why ?? '').toBe('done');
+		expect(seen.driven.trips).toEqual([]);
+		expect(JSON.parse(seen.driven.output)).toEqual({ after: 'destructor' });
+	});
+
+	/**
 	 * The chain's root frame returned through a pointer into a dead C frame, so its value landed on
 	 * whatever the resuming call stack held there: on PHP 8.5.12 that was live data of `execute_ex`.
 	 * Which bytes were live depended on the resume fragment, so the crash alone is no test of the

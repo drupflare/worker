@@ -44,6 +44,16 @@ export const TOP: { name: string; text: string }[] = [
 /** the header nav: the top-level entries only; a folder's children are reached from its index */
 export const NAV = TOP.map((entry) => entry.name);
 
+/** the header menus: every NAV entry once, then the generated API and PHP references */
+export const NAV_MENUS: { label: string; items: string[] }[] = [
+	{ label: 'Run', items: ['getting-started/index', 'operating/index', 'configuration/index'] },
+	{
+		label: 'Understand',
+		items: ['architecture/index', 'security/index', 'impact/index', 'audiences/index']
+	},
+	{ label: 'Reference', items: [REPORT, 'api', 'php'] }
+];
+
 /** nav labels where the page's H1 is too long for the bar */
 export const NAV_LABEL: Record<string, string> = { [REPORT]: 'Technical Report' };
 

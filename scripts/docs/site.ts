@@ -9,8 +9,8 @@ import {
 	contentsOf,
 	leadOf,
 	loadMoves,
-	NAV,
 	NAV_LABEL,
+	NAV_MENUS,
 	pageHref,
 	pageOf,
 	redirectStubs,
@@ -106,14 +106,20 @@ function nav(current: string, titles: Record<string, string>): string {
 		name === current || (name.endsWith('/index') && current.startsWith(name.slice(0, -5)));
 	const link = (href: string, label: string, page?: string) =>
 		`<a href="${href}"${page && here(page) ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`;
-	return [
-		...NAV.map((name) =>
-			link(`${prefix}${name}.html`, NAV_LABEL[name] ?? titles[name] ?? name, name)
-		),
-		link(`${prefix}api/index.html`, 'API'),
-		link(`${prefix}php/index.html`, 'PHP'),
-		link(repo, 'GitHub')
-	].join('\n\t\t\t\t');
+	const entry = (name: string) =>
+		name === 'api' || name === 'php'
+			? link(`${prefix}${name}/index.html`, name.toUpperCase())
+			: link(`${prefix}${name}.html`, NAV_LABEL[name] ?? titles[name] ?? name, name);
+	const menu = ({ label, items }: (typeof NAV_MENUS)[number]) => {
+		const open = items.some(here);
+		return [
+			`<details class="menu"${open ? ' data-current' : ''}>`,
+			`<summary>${escapeHtml(label)}</summary>`,
+			`<div class="panel">${items.map(entry).join('')}</div>`,
+			'</details>'
+		].join('');
+	};
+	return [...NAV_MENUS.map(menu), link(repo, 'GitHub')].join('\n\t\t\t\t');
 }
 
 function page(options: {

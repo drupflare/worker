@@ -6,6 +6,7 @@ From a clean clone to a running site, then claiming it and moving an existing on
 
 - [Claiming and Managing a Site](claim-and-log-in.md): claim a new site, log in, and the management surfaces.
 - [Updating a Site](updating.md): taking a new release, keeping a site current, and what an update leaves alone.
+- [Reproducing Thunder](reproduce-thunder.md): rebuild a Verified codebase on your own machine and score it.
 
 ## Prerequisites
 

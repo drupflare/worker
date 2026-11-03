@@ -10,6 +10,7 @@ import {
 	leadOf,
 	loadMoves,
 	NAV,
+	NAV_MENUS,
 	pageHref,
 	pageOf,
 	redirectStubs,
@@ -93,6 +94,12 @@ describe('navigation', () => {
 			.map((entry) => `${entry.name}/index`);
 		expect([...NAV].sort()).toEqual([...folders, REPORT].sort());
 		expect(TOP.map((entry) => entry.name)).toEqual(NAV);
+	});
+
+	it('groups every nav entry into exactly one header menu, beside the generated references', () => {
+		const items = NAV_MENUS.flatMap((menu) => menu.items);
+		expect([...items].sort()).toEqual([...NAV, 'api', 'php'].sort());
+		expect(NAV_MENUS.length).toBeLessThanOrEqual(4);
 	});
 
 	it('names every nav entry as a real page', () => {

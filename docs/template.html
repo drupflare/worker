@@ -113,6 +113,48 @@
 				color: var(--fg);
 				font-size: 1.05rem;
 			}
+			nav .menu {
+				position: relative;
+			}
+			nav .menu summary {
+				color: var(--muted);
+				font-size: 0.925rem;
+				list-style: none;
+				cursor: pointer;
+			}
+			nav .menu summary::-webkit-details-marker {
+				display: none;
+			}
+			nav .menu summary::after {
+				content: ' \25BE';
+				font-size: 0.75em;
+			}
+			nav .menu summary:hover,
+			nav .menu[open] summary,
+			nav .menu[data-current] summary {
+				color: var(--accent);
+			}
+			nav .menu .panel {
+				position: absolute;
+				z-index: 10;
+				top: 1.9rem;
+				left: -0.75rem;
+				display: flex;
+				flex-direction: column;
+				min-width: 12rem;
+				padding: 0.5rem;
+				border: 1px solid var(--line);
+				border-radius: 0.7rem;
+				background: var(--card);
+				box-shadow: 0 0.75rem 2rem var(--glow);
+			}
+			nav .menu .panel a {
+				padding: 0.4rem 0.75rem;
+				border-radius: 0.4rem;
+			}
+			nav .menu .panel a:hover {
+				background: var(--code-bg);
+			}
 			h1 {
 				margin: 0 0 0.5rem;
 				font-size: 2.5rem;

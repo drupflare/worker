@@ -457,3 +457,48 @@ describe('the contrib job', () => {
 		expect(String(step.with?.path)).not.toContain('shipping');
 	});
 });
+
+describe('the pack suites lane', () => {
+	type Job = {
+		needs?: string[];
+		strategy?: { 'fail-fast'?: boolean; matrix?: { shard?: number[] } };
+		steps: NonNullable<Workflow['jobs'][string]['steps']>;
+	};
+	const jobs = () =>
+		(parse(readFileSync(join(DIR, 'e2e.yml'), 'utf8')) as { jobs: Record<string, Job> }).jobs;
+	const step = (job: Job | undefined, name: string) => job?.steps.find((s) => s.name === name);
+
+	it('shards the gate over a matrix and never stops the other shards on a failure', () => {
+		const gate = jobs().gate;
+		expect(gate?.strategy?.['fail-fast']).toBe(false);
+		expect(gate?.strategy?.matrix?.shard).toEqual([1, 2, 3, 4]);
+		const run = step(gate, 'Run the Gate Shard With the Pack Asserted')?.run ?? '';
+		expect(run).toContain('--shard=${{ matrix.shard }}/${{ strategy.job-total }}');
+		expect(run).toContain('--reporter=blob');
+	});
+
+	it('zeroes the thresholds in a shard, since each one sees a fraction of the coverage', () => {
+		const run = step(jobs().gate, 'Run the Gate Shard With the Pack Asserted')?.run ?? '';
+		for (const metric of ['lines', 'functions', 'branches', 'statements']) {
+			expect(run, `${metric} would fail every shard`).toContain(
+				`--coverage.thresholds.${metric}=0`
+			);
+		}
+	});
+
+	it('asserts the thresholds once, on the merged reports, and waits for every other job', () => {
+		const merge = jobs()['pack-suites'];
+		expect(merge?.needs).toEqual(['gate', 'lane']);
+		const run = step(merge, 'Merge the Shards and Assert the Coverage Gate')?.run ?? '';
+		expect(run).toContain('--merge-reports --coverage');
+		expect(run).not.toContain('thresholds');
+		expect(step(merge, 'Fail When a Shard or the e2e Lane Failed')).toBeDefined();
+	});
+
+	it('runs the e2e lane as its own job rather than after the gate', () => {
+		const lane = jobs().lane;
+		expect(lane?.needs).toBeUndefined();
+		expect(step(lane, 'Run the e2e Lane')?.run).toContain('test:e2e');
+		expect(step(jobs().gate, 'Run the e2e Lane')).toBeUndefined();
+	});
+});

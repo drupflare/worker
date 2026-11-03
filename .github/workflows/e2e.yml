@@ -22,10 +22,15 @@ env:
   ROM_SRC: .siblings/rom
 
 jobs:
-  pack-suites:
-    name: End-to-End Testing
+  gate:
+    name: Gate Shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
 
     steps:
       - uses: actions/checkout@v7
@@ -99,28 +104,110 @@ jobs:
             sleep 3
           done
 
-      - name: Run the Gate With the Pack Asserted
+      - name: Run the Gate Shard With the Pack Asserted
         env:
           REQUIRE_ARTIFACTS: '1'
           PACK_FROM_SOURCE: '1'
-        run: bun run test:coverage
+        run: >
+          ./node_modules/.bin/vitest run --project=workers --project=node --coverage
+          --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+          --reporter=default --reporter=blob
+          --coverage.thresholds.lines=0 --coverage.thresholds.functions=0
+          --coverage.thresholds.branches=0 --coverage.thresholds.statements=0
 
-      - name: Upload Coverage to Codecov
+      - name: Upload the Shard Report
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v7
+        uses: actions/upload-artifact@v7
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
-          report_type: coverage
-          flags: pack
-          disable_search: true
-          files: coverage/lcov.info
+          name: blob-${{ matrix.shard }}
+          path: .vitest-reports/
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Stop the Rig
+        if: ${{ always() }}
+        run: docker compose -f docker/compose.yml down -v || true
+
+  lane:
+    name: e2e Lane
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Out the Siblings
+        uses: ./.github/actions/siblings
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pdo_sqlite, sqlite3, mbstring, iconv
+      - name: Cache the Restored Interpreter
+        uses: actions/cache@v6
+        with:
+          path: .interp
+          key: interp-${{ hashFiles('cdn-manifest.json') }}
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Resolve Drupal Version
+        id: drupalver
+        run: |
+          version=$(bun scripts/fetch-drupal-tree.ts --print-version)
+          test -n "$version" || { echo "::error::no Drupal version resolved" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Cache Drupal Tree
+        uses: actions/cache@v6
+        with:
+          path: drupal-src
+          key: drupal-${{ steps.drupalver.outputs.version }}-${{ hashFiles('composer.lock') }}
+      - name: Cache the Built Pack
+        uses: actions/cache@v6
+        with:
+          path: |
+            assets/drupal
+            assets/drupal-pf
+            assets/drupal-sql
+            assets/core
+            assets/modules
+            assets/themes
+            assets/prefill.json
+          key: pack-${{ steps.drupalver.outputs.version }}-${{ hashFiles('scripts/pack-*.ts', 'scripts/build-local.ts', 'scripts/patch-drupal.mjs', 'scripts/drupal/**', 'cdn-manifest.json') }}
+
+      - name: Build the Pack From Source
+        run: bun run build:local
+      - name: Pack the Drupal Modules
+        run: bun run assets:driver
+
+      - name: Start the Rig
+        run: |
+          docker compose -f docker/compose.yml up -d greenmail redis syslog gitea keycloak
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:3300/api/v1/version >/dev/null; then
+              echo "gitea reachable"
+              break
+            fi
+            sleep 3
+          done
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8081/realms/drupflare/.well-known/openid-configuration >/dev/null; then
+              echo "keycloak realm reachable"
+              break
+            fi
+            sleep 3
+          done
 
       - name: Start a Worker for the e2e Lane
         run: |
           WORKER="bunx wrangler dev -c wrangler.jsonc --port 8787 --var PW_DIAGNOSTICS:1"
-          # the rig is all loopback and the SSRF guard refuses loopback SILENTLY -- `queueHttp()`
-          # returns without queueing, so `cfwTcp` answers "queued" and nothing ever drains
           WORKER="$WORKER --var OUTBOUND_GUARD:0"
           WORKER="$WORKER --var REDIS_URL:redis://:testpass@127.0.0.1:6379/0"
           WORKER="$WORKER --var SYSLOG_URL:syslog://127.0.0.1:5514"
@@ -155,13 +242,108 @@ jobs:
           PACK_FROM_SOURCE: '1'
         run: bun run test:e2e
 
-      - name: Worker Log on Failure
+      - name: Upload the Worker Log on Failure
         if: ${{ failure() }}
-        run: tail -200 /tmp/dev.log || true
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-worker-log
+          path: /tmp/dev.log
+          retention-days: 3
 
       - name: Stop the Rig
         if: ${{ always() }}
         run: docker compose -f docker/compose.yml down -v || true
+
+  pack-suites:
+    name: End-to-End Testing
+    needs: [gate, lane]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Out the Siblings
+        uses: ./.github/actions/siblings
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pdo_sqlite, sqlite3, mbstring, iconv
+      - name: Cache the Restored Interpreter
+        uses: actions/cache@v6
+        with:
+          path: .interp
+          key: interp-${{ hashFiles('cdn-manifest.json') }}
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Resolve Drupal Version
+        id: drupalver
+        run: |
+          version=$(bun scripts/fetch-drupal-tree.ts --print-version)
+          test -n "$version" || { echo "::error::no Drupal version resolved" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Cache Drupal Tree
+        uses: actions/cache@v6
+        with:
+          path: drupal-src
+          key: drupal-${{ steps.drupalver.outputs.version }}-${{ hashFiles('composer.lock') }}
+      - name: Cache the Built Pack
+        uses: actions/cache@v6
+        with:
+          path: |
+            assets/drupal
+            assets/drupal-pf
+            assets/drupal-sql
+            assets/core
+            assets/modules
+            assets/themes
+            assets/prefill.json
+          key: pack-${{ steps.drupalver.outputs.version }}-${{ hashFiles('scripts/pack-*.ts', 'scripts/build-local.ts', 'scripts/patch-drupal.mjs', 'scripts/drupal/**', 'cdn-manifest.json') }}
+
+      - name: Build the Pack From Source
+        run: bun run build:local
+      - name: Pack the Drupal Modules
+        run: bun run assets:driver
+
+      - name: Download the Shard Reports
+        uses: actions/download-artifact@v8
+        with:
+          pattern: blob-*
+          path: .vitest-reports
+          merge-multiple: true
+
+      - name: Merge the Shards and Assert the Coverage Gate
+        env:
+          REQUIRE_ARTIFACTS: '1'
+          PACK_FROM_SOURCE: '1'
+        run: ./node_modules/.bin/vitest --merge-reports --coverage --reporter=default
+
+      - name: Upload Coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+          report_type: coverage
+          flags: pack
+          disable_search: true
+          files: coverage/lcov.info
+
+      - name: Fail When a Shard or the e2e Lane Failed
+        if: ${{ needs.gate.result != 'success' || needs.lane.result != 'success' }}
+        run: |
+          echo "::error::the gate ended ${{ needs.gate.result }} and the e2e lane ended ${{ needs.lane.result }}"
+          exit 1
 
       - name: Pack Suites to Job Summary
         if: ${{ !cancelled() }}
@@ -169,15 +351,10 @@ jobs:
           {
             echo "## Pack suites"
             echo
-            echo "Two lanes that had never run on any commit."
-            echo
-            echo "- \`REQUIRE_ARTIFACTS=1 bun run test\`: without a pack the gate EXCLUDES the specs"
-            echo "  in \`tests/artifact-specs.ts\` and prints what it dropped, so they were invisible"
-            echo "  on every push. Only the release lane set the flag, and that lane needs a"
-            echo "  published release."
-            echo "- \`bun run test:e2e\`: the vitest \`e2e\` project is excluded from \`bun run test\`"
-            echo "  by design, and no workflow ran it. Its gate throws rather than skips when \`CI\`"
-            echo "  is set, so an unreachable worker fails here instead of passing quietly."
+            echo "- Four gate shards run \`REQUIRE_ARTIFACTS=1 vitest --shard\`; this job merges their"
+            echo "  reports and asserts the coverage thresholds on the union."
+            echo "- \`bun run test:e2e\` runs as its own job against a \`wrangler dev\` worker. Its gate"
+            echo "  throws rather than skips when \`CI\` is set, so an unreachable worker fails there."
           } >> "$GITHUB_STEP_SUMMARY"
 
   live-deploy:

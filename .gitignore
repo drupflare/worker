@@ -47,6 +47,7 @@ assets/drupal/*
 
 # test and coverage output
 coverage/
+.vitest-reports/
 *.lcov
 .vitest-cache/
 # the browser lane's reporter output and its per-failure traces, screenshots and videos

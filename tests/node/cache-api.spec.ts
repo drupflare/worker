@@ -27,6 +27,21 @@ describe('the default cache stand-in', () => {
 		expect(await cache.delete(new Request('https://a.test/'))).toBe(false);
 	});
 
+	it('falls back to the stand-in when the platform throws and warns once', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+		vi.stubGlobal('caches', {
+			get default(): never {
+				throw new Error('This Worker is not permitted to access the default cache.');
+			}
+		});
+		for (let i = 0; i < 3; i++) {
+			const cache = defaultCache({});
+			expect(await cache.match(new Request('https://a.test/'))).toBeUndefined();
+		}
+		expect(warn).toHaveBeenCalledTimes(1);
+		warn.mockRestore();
+	});
+
 	it('returns the platform cache otherwise', () => {
 		const platform = { match: vi.fn() };
 		vi.stubGlobal('caches', { default: platform });

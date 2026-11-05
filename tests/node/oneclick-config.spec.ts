@@ -35,6 +35,7 @@ const managed = JSON.parse(readFileSync(resolve(ROOT, 'wrangler.managed.jsonc'),
 >;
 
 const MANAGED_ONLY = ['r2_buckets', 'send_email'];
+const MANAGED_VARS = ['CACHE_API'];
 
 describe('the managed config is the canonical one plus the managed-only bindings', () => {
 	it('adds exactly the managed-only keys', () => {
@@ -45,7 +46,17 @@ describe('the managed config is the canonical one plus the managed-only bindings
 		const rest = Object.fromEntries(
 			Object.entries(managed).filter(([k]) => !MANAGED_ONLY.includes(k))
 		);
-		expect(rest).toEqual(config);
+		const vars = Object.fromEntries(
+			Object.entries(rest.vars as Record<string, string>).filter(
+				([k]) => !MANAGED_VARS.includes(k)
+			)
+		);
+		expect({ ...rest, vars }).toEqual(config);
+	});
+
+	it('sets the managed-only vars the platform needs', () => {
+		expect((managed.vars as Record<string, string>).CACHE_API).toBe('off');
+		expect((config.vars as Record<string, string>).CACHE_API).toBeUndefined();
 	});
 
 	it('binds the file mirror and the mail transport the code reads', () => {

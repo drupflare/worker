@@ -12,7 +12,8 @@
 		"GEN_BUCKET_MS": "5000",
 		"PLAN": "free",
 		"ASSET_AGGREGATES": "1",
-		"SITE_ID_PORTS": "strip"
+		"SITE_ID_PORTS": "strip",
+		"CACHE_API": "off"
 	},
 	"rules": [
 		{

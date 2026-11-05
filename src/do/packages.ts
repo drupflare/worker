@@ -1,5 +1,6 @@
 import { type LazyFS, mkdirp } from '@drupflare/cartridge/fs';
 import { withMask } from '@drupflare/cartridge/mask';
+import { defaultCache } from '../ops/cache-api';
 import { type OracleResult, resolveInstallable } from '../ops/oracle';
 import {
 	asksForBranch,
@@ -39,7 +40,7 @@ export async function installableVerdict(
 	constraint?: string,
 	stability?: string
 ): Promise<OracleResult> {
-	const cache = caches.default;
+	const cache = defaultCache(site.env as { CACHE_API?: string });
 	return await resolveInstallable(
 		site.env as never,
 		async (target: string) => {

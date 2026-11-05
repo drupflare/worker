@@ -1,4 +1,5 @@
 import { normaliseUri } from '../db/file-store';
+import { defaultCache } from '../ops/cache-api';
 import { parseTransformPath, runImageTransform } from '../ops/image-runtime';
 import { resolveSite, siteStubOptions } from '../ops/site-id';
 import { errorMessage } from '../util/errors';
@@ -73,7 +74,7 @@ async function serveFromObject(
 	objectPath: string,
 	build: (source: Response) => Response
 ): Promise<Response | undefined> {
-	const cache = caches.default;
+	const cache = defaultCache(env);
 	const key = new Request(url.toString(), { method: 'GET' });
 	const cached = await cache.match(key);
 	if (cached) return request.method === 'HEAD' ? new Response(null, cached) : cached;
@@ -167,7 +168,7 @@ export async function serveImageTransform(
 	// the site's CPU on work nobody asked for
 	if (parsed === null) return new Response('not found\n', { status: 404 });
 
-	const cache = caches.default;
+	const cache = defaultCache(env);
 	const cached = await cache.match(new Request(url.toString(), { method: 'GET' }));
 	if (cached) {
 		const headers = new Headers(cached.headers);

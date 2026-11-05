@@ -65,6 +65,7 @@ Every variable and binding on the configuration pages, once each.
 | `PAGE_KV_TTL`                   | 86,400                                | [Serving](serving/index.md)                             |
 | `KV_WRITES_PER_DAY`             | per plan                              | [Serving](serving/index.md)                             |
 | `EDGE_PLAN`                     | on                                    | [Serving](serving/page-cache.md#edge_plan)              |
+| `CACHE_API`                     | on                                    | [Configuration](index.md#the-managed-config)            |
 | `CSP_MODE`                      | per plan                              | [Serving](serving/index.md)                             |
 | `SPOOL`                         | per plan                              | [Serving](serving/index.md)                             |
 | `SPOOL_IMAGES`                  | on                                    | [Serving](serving/index.md)                             |
@@ -198,7 +199,10 @@ binding when you want the mirror:
 ### The managed config
 
 `wrangler.managed.jsonc` is the canonical config plus the two bindings it leaves out, `FILES` and
-`SEND_EMAIL`. It is what a managed deployment deploys with, where the control plane has enabled R2 on
+`SEND_EMAIL`, and one var, `CACHE_API=off`. A user Worker in a Workers for Platforms dispatch namespace
+cannot read `caches.default`: the property access throws, and every dynamic request failed with error
+1101 before the var existed. With `CACHE_API=off` the serving path never touches the Cache API and
+answers from the KV page tier and the object instead. Unset, it is on. The managed config is what a managed deployment deploys with, where the control plane has enabled R2 on
 the account and set up Email Routing, which a deploy button cannot do:
 
 ```sh

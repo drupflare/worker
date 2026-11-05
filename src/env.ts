@@ -32,6 +32,8 @@ export interface SiteEnv extends BaseSiteEnv {
 	SHELL_ASSEMBLY?: string;
 	/** the front worker's compiled-plan tier; on unless `0` */
 	EDGE_PLAN?: string;
+	/** `off` where the platform forbids `caches.default` (a WfP user Worker); on otherwise */
+	CACHE_API?: string;
 	/**
 	 * Image derivative engine: `tinyimg` (default) or `images`.
 	 * `images` needs a zone with transformations and caps at 5,000 a month; only it encodes `avif`.

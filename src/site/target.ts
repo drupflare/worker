@@ -1,4 +1,5 @@
 import { sessionCookieValue } from '../ops/auth-budget';
+import { defaultCache } from '../ops/cache-api';
 import {
 	affinityKey,
 	believedLanes,
@@ -49,7 +50,7 @@ export async function openContext(entry: FrontEntry): Promise<FrontContext> {
 	const stubOf = (): DurableObjectStub =>
 		(stubMemo ??= env.SITE.get(env.SITE.idFromName(laneOf().target), siteStubOptions(env)));
 
-	const cache = caches.default;
+	const cache = defaultCache(env);
 	const origin = url.origin;
 	const bucket = Math.floor(Date.now() / genBucketMs(env));
 	// only the serving path is cacheable, and only for a safe method

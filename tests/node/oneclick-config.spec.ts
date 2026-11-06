@@ -35,7 +35,7 @@ const managed = JSON.parse(readFileSync(resolve(ROOT, 'wrangler.managed.jsonc'),
 >;
 
 const MANAGED_ONLY = ['r2_buckets', 'send_email'];
-const MANAGED_VARS = ['CACHE_API'];
+const MANAGED_VARS = ['CACHE_API', 'FILE_STORE'];
 
 describe('the managed config is the canonical one plus the managed-only bindings', () => {
 	it('adds exactly the managed-only keys', () => {
@@ -59,9 +59,21 @@ describe('the managed config is the canonical one plus the managed-only bindings
 		expect((config.vars as Record<string, string>).CACHE_API).toBeUndefined();
 	});
 
-	it('binds the file mirror and the mail transport the code reads', () => {
-		expect(managed.r2_buckets).toEqual([{ binding: 'FILES', bucket_name: 'drupflare-files' }]);
+	it('binds the file buckets and the mail transport the code reads', () => {
+		expect(managed.r2_buckets).toEqual([
+			{ binding: 'FILES', bucket_name: 'drupflare-files' },
+			{ binding: 'FILES_PRIVATE', bucket_name: 'drupflare-files-private' }
+		]);
 		expect(managed.send_email).toEqual([{ name: 'SEND_EMAIL' }]);
+	});
+
+	it('makes R2 the file store only on the managed config', () => {
+		expect((managed.vars as Record<string, string>).FILE_STORE).toBe('r2');
+		expect((config.vars as Record<string, string>).FILE_STORE).toBeUndefined();
+	});
+
+	it('gives the private bucket no public origin', () => {
+		expect((managed.vars as Record<string, string>).FILES_PUBLIC_URL).toBeUndefined();
 	});
 });
 

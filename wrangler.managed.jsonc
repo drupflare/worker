@@ -13,7 +13,8 @@
 		"PLAN": "free",
 		"ASSET_AGGREGATES": "1",
 		"SITE_ID_PORTS": "strip",
-		"CACHE_API": "off"
+		"CACHE_API": "off",
+		"FILE_STORE": "r2"
 	},
 	"rules": [
 		{
@@ -41,7 +42,10 @@
 	},
 	"kv_namespaces": [{ "binding": "CONFIG_KV" }, { "binding": "PAGE_KV" }],
 	"d1_databases": [{ "binding": "FLEET_DB", "database_name": "drupflare-fleet" }],
-	"r2_buckets": [{ "binding": "FILES", "bucket_name": "drupflare-files" }],
+	"r2_buckets": [
+		{ "binding": "FILES", "bucket_name": "drupflare-files" },
+		{ "binding": "FILES_PRIVATE", "bucket_name": "drupflare-files-private" }
+	],
 	"send_email": [{ "name": "SEND_EMAIL" }],
 	"version_metadata": { "binding": "CF_VERSION_METADATA" },
 	"migrations": [

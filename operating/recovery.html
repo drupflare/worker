@@ -573,9 +573,33 @@ order, and sends the result. The body ceiling is <code>MAX_RESTORE_BYTES</code>,
 restored through this route until a paged restore exists. The reply is <code>{ok, id, chunks, statements, generation}</code>; the replay then runs on the alarm, and <code>GET /health</code> reports the stored import.</p>
 <p>To restore into a new site, provision the site, take its owner token, then POST the dump to it. The
 dump carries the database and not the owner token, <code>hash_salt</code> (unless exported with <code>?secrets=1</code>) or
-any file bytes held in R2. Under <code>FILE_STORE=r2</code> a file&#39;s row says where its bytes are, and R2 keys carry
-the source site&#39;s name, so a restored copy reads <code>f/&lt;new site&gt;/...</code> and finds nothing. Copy the source
-site&#39;s objects to the new prefix before serving the new site.</p>
+any file bytes held in R2.</p>
+<p><strong>A dump never says which site it came from.</strong> <code>site_name</code> and <code>site_origin</code> are left out of every
+export, <code>?secrets=1</code> included, and a restore drops them from a dump that still carries them. Before
+this, a restore replaced the target&#39;s pinned name with the source&#39;s, so the target keyed its R2 objects
+under the source&#39;s prefix and read the source&#39;s KV settings. The restore replaces <code>cfw_meta</code>, so the
+target answers to the name <code>site</code> until its next request teaches it the real one, and R2 mode waits for
+that.</p>
+<p>Under <code>FILE_STORE=r2</code> a file row records which site&#39;s prefix holds its object (<code>r2site</code>), and a
+restored row names the source. <strong>That name is a claim, not an authority.</strong> It arrives in a request body
+that a site&#39;s owner writes, and the managed buckets are shared between tenants, so honouring it would
+let one tenant read another&#39;s files by naming them as the source. A target reads or copies a source&#39;s
+objects only when the platform has granted that source: the key <code>file_clone:&lt;target site&gt;</code> in
+<code>CONFIG_KV</code> holds a comma-separated list of source site names. A tenant&#39;s own writes reach only
+<code>plan:</code> and <code>settings:</code> keys, so the grant has to come from whoever holds the account&#39;s credentials,
+which is the dashboard. Write it before the target&#39;s first alarm after the restore, and remove it once
+<code>storage.adopting</code> reads <code>0</code>. The worker reads it with a 30 second cache, and a failed read grants
+nothing.</p>
+<p>With a grant, on the first alarm after the target learns its name each foreign row is queued. An
+offloaded file is copied from the source prefix to the target&#39;s own, checked against the hash and size
+the row recorded (a row with no recorded hash is refused), and the row is re-pointed. A resident file
+has its bytes in the target already, so it drops the claim and is sent as an ordinary verified put;
+nothing foreign is read. Without a grant, an offloaded file under a foreign prefix stays unreadable and
+<code>/serve-stats</code> shows it as offloaded. A foreign row stops claiming a mirror at once, so no public link
+points at an object that is not at the target&#39;s prefix, and it is never evicted on the strength of
+another site&#39;s object. The source&#39;s objects are read and never written or deleted, so two sites never
+share one. <code>storage.adopting</code> counts the copies still queued. Keep the source&#39;s buckets and objects
+until it reads <code>0</code>.</p>
 <p>The body is stored, not executed. <code>storeImport()</code> splits it into statements, refuses at store time if
 any statement exceeds the 100,000-character ceiling, and writes the parent row and every chunk in one
 <code>transactionSync()</code>. Then the object arms its alarm and the replay runs there, a chunk at a time. The

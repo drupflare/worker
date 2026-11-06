@@ -17,7 +17,10 @@
 <div class="tsd-signature tsd-anchor-link" id="migratestepifpending"><span class="tsd-kind-call-signature">migrateStepIfPending</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">site</span><span class="tsd-signature-symbol">:</span> <a href="../classes/site-do.SitePhpDurableObject.html" class="tsd-signature-type tsd-kind-class">SitePhpDurableObject</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/do_types.Payload.html" class="tsd-signature-type tsd-kind-type-alias">Payload</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span><a href="#migratestepifpending" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Advances the migration by one invocation's chunks, or returns undefined when there is nothing
-to do: never started, finished, or no manifest at all (an alarm that throws stops re-arming).</p>
+to do: never started, finished, or no manifest at all (an alarm that throws stops re-arming).
+A stored import that has not been applied takes the chain over from the pack: the restore route
+only stores the dump, and this is what replays it. A first-run migration still in flight
+finishes first, since a migrator cannot continue another generation's cursor.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -25,7 +28,7 @@ to do: never started, finished, or no manifest at all (an alarm that throws stop
 <li><span><span class="tsd-kind-parameter">site</span>: <a href="../classes/site-do.SitePhpDurableObject.html" class="tsd-signature-type tsd-kind-class">SitePhpDurableObject</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/do_types.Payload.html" class="tsd-signature-type tsd-kind-type-alias">Payload</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/0826011bee905774531c851858fa65329c21c78b/src/do/provision.ts#L231">src/do/provision.ts:231</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/edd7f09234d2a22d4c8073ed7c19ac3777f3eba1/src/do/provision.ts#L240">src/do/provision.ts:240</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

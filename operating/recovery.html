@@ -570,7 +570,13 @@ and <code>/php</code> to do it.</p>
 <p>The dump is one body. <code>/export</code> pages as JSON, so a client joins the <code>sql</code> field of every page, in
 order, and sends the result. The body ceiling is <code>MAX_RESTORE_BYTES</code>, 16 MiB by default, separate from
 <code>MAX_BODY_BYTES</code>; a fresh site&#39;s dump is 1.9 MB (n=1). A site whose dump exceeds the ceiling cannot be
-restored through this route until a paged restore exists. The reply is <code>{ok, id, chunks, statements, generation}</code>; the replay then runs on the alarm, and <code>GET /health</code> reports the stored import.</p>
+restored through this route until a paged restore exists. The reply is <code>{ok, id, chunks, statements, generation}</code>. The route only stores the dump; the alarm replays it a few chunks at a time, and the
+site answers 503 from the first chunk until the last.</p>
+<p><code>GET /health</code> carries an <code>import</code> object for the newest stored dump, or <code>null</code> when none exists:
+<code>{id, generation, state, chunk, chunks, error}</code>. <code>state</code> is <code>pending</code> until the replay has finished,
+<code>applied</code> once it has, and <code>failed</code> when a chunk threw, with the cause in <code>error</code>. A failed replay
+retries on the next alarm. A client polls <code>/health</code> with the owner token until <code>state</code> is <code>applied</code>.
+A site still running its first-run migration finishes that before it starts the dump.</p>
 <p>To restore into a new site, provision the site, take its owner token, then POST the dump to it. The
 dump carries the database and not the owner token, <code>hash_salt</code> (unless exported with <code>?secrets=1</code>) or
 any file bytes held in R2.</p>
@@ -604,8 +610,8 @@ until it reads <code>0</code>.</p>
 any statement exceeds the 100,000-character ceiling, and writes the parent row and every chunk in one
 <code>transactionSync()</code>. Then the object arms its alarm and the replay runs there, a chunk at a time. The
 invocation that accepts the upload is never the one holding a half-overwritten site open.</p>
-<p><code>?label=</code> names the restore point; it defaults to the current time. <code>GET /health</code> reports whether a
-complete stored import exists.</p>
+<p><code>?label=</code> names the restore point; it defaults to the current time. <code>GET /health</code> reports the newest
+stored import in its <code>import</code> field.</p>
 <h2 id="the-recovery-matrix">The Recovery Matrix</h2>
 <div class="table"><table>
 <thead>

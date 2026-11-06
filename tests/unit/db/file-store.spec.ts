@@ -27,6 +27,7 @@ import {
 	queueHydrate,
 	queueRehydrateAll,
 	readFile,
+	reconcileForeign,
 	recordMirror,
 	renameFile,
 	statFile,
@@ -341,14 +342,19 @@ describe('listing, where LIKE metacharacters are a real filename', () => {
 			putFile(site.sql, 'public://b.bin', bytes(250), { nowMs: 1 });
 			return storedBytes(site.sql);
 		});
-		expect(got).toEqual({ files: 2, bytes: 350, offloaded: { files: 0, bytes: 0 } });
+		expect(got).toEqual({
+			files: 2,
+			bytes: 350,
+			offloaded: { files: 0, bytes: 0 },
+			adopting: 0
+		});
 	});
 
 	it('totals zero rather than NaN on an empty store', async () => {
 		// SUM() over no rows is NULL, and Number(null) is 0 only if it is not read as undefined
 		const stub = freshSite();
 		const got = await inObject(stub, async (site) => storedBytes(site.sql));
-		expect(got).toEqual({ files: 0, bytes: 0, offloaded: { files: 0, bytes: 0 } });
+		expect(got).toEqual({ files: 0, bytes: 0, offloaded: { files: 0, bytes: 0 }, adopting: 0 });
 	});
 });
 
@@ -801,6 +807,7 @@ describe('the alarm drains it, with no diagnostic route poked', () => {
 			patched.fileStoreR2 = () => true;
 			patched.fileBuckets = () => ({ public: bucket });
 			patched.fileSchemes = () => ['public'];
+			patched.siteName = () => 'alarm-site';
 			patched.env = { ...(site as unknown as { env: object }).env, FILE_EVICT_AFTER_MS: '0' };
 			putFile(site.sql, 'public://alarm.bin', bytes(48, 7), { nowMs: Date.now() });
 		});
@@ -815,13 +822,90 @@ describe('the alarm drains it, with no diagnostic route poked', () => {
 		const after = await inObject(stub, async (site) => ({
 			stat: statFile(site.sql, 'public://alarm.bin'),
 			chunkRows: site.sql.exec('SELECT COUNT(*) AS n FROM cfw_file_chunk').toArray()[0]?.n,
-			back: await readFile(site.sql, { public: bucket }, 'public://alarm.bin'),
+			back: await readFile(site.sql, { public: bucket }, 'public://alarm.bin', 'alarm-site'),
 			backfilled: site.metaGet('file_backfill:public')
 		}));
 		expect(after.stat).toMatchObject({ mirrored: true, evicted: true });
 		expect(after.chunkRows).toBe(0);
 		expect(after.back).toEqual(bytes(48, 7));
 		expect(after.backfilled).not.toBeNull();
+	});
+
+	it('under FILE_STORE=r2, copies a restored site its own objects once the name changes, and waits for the name', async () => {
+		const objects = new Map<string, Uint8Array>();
+		const bucket: FileBucket = {
+			async put(key, value) {
+				objects.set(key, new Uint8Array(value));
+				return { size: value.length };
+			},
+			async delete(key) {
+				objects.delete(key);
+			},
+			async get(key) {
+				const found = objects.get(key);
+				return found === undefined
+					? null
+					: {
+							size: found.length,
+							body: null,
+							arrayBuffer: async () => found.slice().buffer as ArrayBuffer
+						};
+			}
+		};
+		const stub = freshSite();
+		let name = 'site';
+		await inObject(stub, async (site) => {
+			const patched = site as unknown as Record<string, unknown>;
+			patched.mirrorBucket = () => bucket;
+			patched.fileStoreR2 = () => true;
+			patched.fileBuckets = () => ({ public: bucket });
+			patched.fileSchemes = () => ['public'];
+			patched.siteName = () => name;
+			patched.trustedFileSources = async () => new Set(['a.example']);
+			patched.env = { ...(site as unknown as { env: object }).env, FILE_EVICT_AFTER_MS: '0' };
+			// what a restore from a.example leaves behind
+			putFile(site.sql, 'public://moved.bin', bytes(40, 2), { nowMs: 1 });
+			await drainMirrors(site.sql, bucket, { verify: true, site: 'a.example' });
+			evictMirrored(site.sql, {
+				nowMs: 1e12,
+				graceMs: 0,
+				limit: 5,
+				schemes: ['public'],
+				site: 'a.example'
+			});
+			(site as unknown as { metaSet: (k: string, v: unknown) => void }).metaSet(
+				'file_site',
+				'a.example'
+			);
+		});
+
+		// the name is not learned yet: nothing may be keyed under the literal fallback
+		await inObject(stub, (site) => site.ctx.storage.setAlarm(Date.now() - 1));
+		await driveAlarms(stub, () => false, 3);
+		expect([...objects.keys()]).toEqual(['f/a.example/public/moved.bin']);
+
+		name = 'b.example';
+		await inObject(stub, (site) => site.ctx.storage.setAlarm(Date.now() - 1));
+		await driveAlarms(
+			stub,
+			(site) => statFile(site.sql, 'public://moved.bin')?.r2site === 'b.example',
+			8
+		);
+		const after = await inObject(stub, (site) => ({
+			stat: statFile(site.sql, 'public://moved.bin'),
+			meta: (site as unknown as { metaGet: (k: string) => string | null }).metaGet(
+				'file_site'
+			),
+			stats: storedBytes(site.sql)
+		}));
+		expect(after.stat).toMatchObject({ evicted: true, mirrored: true, r2site: 'b.example' });
+		expect(after.meta).toBe('b.example');
+		expect(after.stats.adopting).toBe(0);
+		expect([...objects.keys()].sort()).toEqual([
+			'f/a.example/public/moved.bin',
+			'f/b.example/public/moved.bin'
+		]);
+		expect(objects.get('f/b.example/public/moved.bin')).toEqual(bytes(40, 2));
 	});
 
 	it('does not disturb a site with no bucket bound', async () => {
@@ -1006,7 +1090,12 @@ describe('R2 as the file store', () => {
 		expect(out.due).toBe(1 + GRACE);
 		expect(out.late).toEqual({ evicted: 1, bytes: 300 });
 		expect(out.chunkRows).toBe(0);
-		expect(out.stats).toEqual({ files: 1, bytes: 300, offloaded: { files: 1, bytes: 300 } });
+		expect(out.stats).toEqual({
+			files: 1,
+			bytes: 300,
+			offloaded: { files: 1, bytes: 300 },
+			adopting: 0
+		});
 		expect(out.next).toBeUndefined();
 	});
 
@@ -1303,6 +1392,302 @@ describe('R2 as the file store', () => {
 		expect(isMirrorable('private://a', ['public', 'private'])).toBe(true);
 		expect(isMirrorable('private://a')).toBe(false);
 	});
+
+	describe('a restore into a new site, where the rows name another sites objects', () => {
+		const A = 'a.example';
+		const B = 'b.example';
+		const grace = { graceMs: 0, limit: 10, schemes: ['public'] } as const;
+		/** what the platform grants B after cloning A: A's prefix */
+		const trust = async () => new Set([A]);
+
+		/** site A stores, verifies and evicts one file; the rows are then B's, as a restore leaves them */
+		async function restored(
+			site: Parameters<Parameters<typeof inObject>[1]>[0],
+			bucket: FileBucket
+		) {
+			putFile(site.sql, 'public://a.bin', bytes(120, 3), { nowMs: 1, mime: 'image/png' });
+			putFile(site.sql, 'public://resident.bin', bytes(60, 4), { nowMs: 1 });
+			await drainMirrors(site.sql, bucket, { verify: true, site: A });
+			evictMirrored(site.sql, { ...grace, nowMs: 1e9, site: A });
+			// resident.bin stays in the object: re-verify it, but do not evict it
+			putFile(site.sql, 'public://resident.bin', bytes(60, 4), { nowMs: 2e9 });
+			await drainMirrors(site.sql, bucket, { verify: true, site: A });
+		}
+
+		it('records which prefix holds each verified object', async () => {
+			const bucket = memoryBucket();
+			const stat = await inObject(freshSite(), async (site) => {
+				putFile(site.sql, 'public://a.bin', bytes(8), { nowMs: 1 });
+				await drainMirrors(site.sql, bucket, { verify: true, site: A });
+				return statFile(site.sql, 'public://a.bin');
+			});
+			expect(stat?.r2site).toBe(A);
+			expect([...bucket.objects.keys()]).toEqual(['f/a.example/public/a.bin']);
+		});
+
+		it('never evicts an object it does not own, which would leave one object under two sites', async () => {
+			const bucket = memoryBucket();
+			const out = await inObject(freshSite(), async (site) => {
+				putFile(site.sql, 'public://a.bin', bytes(8), { nowMs: 1 });
+				await drainMirrors(site.sql, bucket, { verify: true, site: A });
+				const asB = evictMirrored(site.sql, { ...grace, nowMs: 1e9, site: B });
+				const nextAsB = nextEvictionAt(site.sql, 0, B);
+				const asA = evictMirrored(site.sql, { ...grace, nowMs: 1e9, site: A });
+				return { asB, nextAsB, asA };
+			});
+			expect(out.asB.evicted).toBe(0);
+			expect(out.nextAsB).toBeUndefined();
+			expect(out.asA.evicted).toBe(1);
+		});
+
+		it('reads an evicted foreign file from its owners prefix until it is copied', async () => {
+			const bucket = memoryBucket();
+			const got = await inObject(freshSite(), async (site) => {
+				await restored(site, bucket);
+				return readFile(site.sql, { public: bucket }, 'public://a.bin', B, trust);
+			});
+			expect(got).toEqual(bytes(120, 3));
+			expect(bucket.gets).toEqual(['f/a.example/public/a.bin']);
+		});
+
+		it('queues a copy for an evicted file and a put for a resident one, and stops claiming a mirror', async () => {
+			const bucket = memoryBucket();
+			const out = await inObject(freshSite(), async (site) => {
+				await restored(site, bucket);
+				const found = reconcileForeign(site.sql, B, 5, ['public'], new Set([A]));
+				const again = reconcileForeign(site.sql, B, 6, ['public'], new Set([A]));
+				return {
+					found,
+					again,
+					queue: pendingMirrors(site.sql)
+						.map((t) => `${t.op}:${t.uri}`)
+						.sort(),
+					evicted: statFile(site.sql, 'public://a.bin'),
+					resident: statFile(site.sql, 'public://resident.bin')
+				};
+			});
+			expect(out.found).toEqual({ resident: 1, offloaded: 1, refused: 0 });
+			// the resident row dropped its claim the first time, so only the evicted one is still foreign
+			expect(out.again).toEqual({ resident: 0, offloaded: 1, refused: 0 });
+			expect(out.queue).toEqual(['adopt:public://a.bin', 'put:public://resident.bin']);
+			// the public link follows `mirrored`, and no object sits at this prefix yet
+			expect(out.evicted).toMatchObject({ evicted: true, mirrored: false, r2site: A });
+			expect(out.resident).toMatchObject({ evicted: false, mirrored: false });
+		});
+
+		it('copies the object under its own prefix, checked against the recorded hash, and leaves the source alone', async () => {
+			const bucket = memoryBucket();
+			const out = await inObject(freshSite(), async (site) => {
+				await restored(site, bucket);
+				reconcileForeign(site.sql, B, 5, ['public'], new Set([A]));
+				const drained = await drainMirrors(site.sql, bucket, {
+					verify: true,
+					site: B,
+					trust
+				});
+				return {
+					drained,
+					stat: statFile(site.sql, 'public://a.bin'),
+					resident: statFile(site.sql, 'public://resident.bin'),
+					stats: storedBytes(site.sql),
+					back: await readFile(site.sql, { public: bucket }, 'public://a.bin', B, trust)
+				};
+			});
+			expect(out.drained).toMatchObject({ adopted: 1, mirrored: 1 });
+			expect(out.stat).toMatchObject({ evicted: true, mirrored: true, r2site: B });
+			expect(out.resident).toMatchObject({ mirrored: true, r2site: B });
+			expect(out.stats.adopting).toBe(0);
+			expect(out.back).toEqual(bytes(120, 3));
+			expect(bucket.objects.get('f/b.example/public/a.bin')).toEqual(bytes(120, 3));
+			// the source site's object is untouched
+			expect(bucket.objects.get('f/a.example/public/a.bin')).toEqual(bytes(120, 3));
+			expect(bucket.objects.get('f/b.example/public/resident.bin')).toEqual(bytes(60, 4));
+		});
+
+		it('keeps two sites on separate objects: deleting or rewriting in B never touches the object of A', async () => {
+			const bucket = memoryBucket();
+			await inObject(freshSite(), async (site) => {
+				await restored(site, bucket);
+				reconcileForeign(site.sql, B, 5, ['public'], new Set([A]));
+				await drainMirrors(site.sql, bucket, { verify: true, site: B, trust });
+				// B rewrites one file and deletes the other
+				putFile(site.sql, 'public://a.bin', bytes(7, 9), { nowMs: 6 });
+				deleteFile(site.sql, 'public://resident.bin', 6);
+				await drainMirrors(site.sql, bucket, { verify: true, site: B, trust });
+			});
+			expect(bucket.objects.get('f/a.example/public/a.bin')).toEqual(bytes(120, 3));
+			expect(bucket.objects.get('f/a.example/public/resident.bin')).toEqual(bytes(60, 4));
+			expect(bucket.objects.get('f/b.example/public/a.bin')).toEqual(bytes(7, 9));
+			expect(bucket.objects.has('f/b.example/public/resident.bin')).toBe(false);
+		});
+
+		it('does not adopt bytes that fail the recorded hash, and keeps reading the source', async () => {
+			const bucket = memoryBucket();
+			const out = await inObject(freshSite(), async (site) => {
+				await restored(site, bucket);
+				// corrupt the source object with bytes of the same length
+				bucket.objects.set('f/a.example/public/a.bin', bytes(120, 99));
+				reconcileForeign(site.sql, B, 5, ['public'], new Set([A]));
+				const drained = await drainMirrors(site.sql, bucket, {
+					verify: true,
+					site: B,
+					trust
+				});
+				return { drained, stat: statFile(site.sql, 'public://a.bin') };
+			});
+			expect(out.drained.failed).toBe(1);
+			expect(out.drained.adopted).toBe(0);
+			expect(out.stat).toMatchObject({ mirrored: false, r2site: A });
+			expect(bucket.objects.has('f/b.example/public/a.bin')).toBe(false);
+		});
+
+		it('a restored hydrate becomes an ordinary put under the new site, and is not evicted on the old object', async () => {
+			const bucket = memoryBucket();
+			const out = await inObject(freshSite(), async (site) => {
+				await restored(site, bucket);
+				const restoredNow = await hydrateFile(
+					site.sql,
+					{ public: bucket },
+					'public://a.bin',
+					{
+						nowMs: 7,
+						site: B,
+						schemes: ['public'],
+						trust
+					}
+				);
+				const evict = evictMirrored(site.sql, { ...grace, nowMs: 1e12, site: B });
+				return {
+					restoredNow,
+					evict,
+					stat: statFile(site.sql, 'public://a.bin'),
+					queue: pendingMirrors(site.sql).map((t) => `${t.op}:${t.uri}`)
+				};
+			});
+			expect(out.restoredNow).toBe(true);
+			expect(out.stat).toMatchObject({ evicted: false, mirrored: false });
+			expect(out.stat?.r2site).toBeUndefined();
+			expect(out.queue).toContain('put:public://a.bin');
+			expect(out.evict.evicted).toBe(0);
+		});
+
+		it('refuses to read an object under a prefix nobody granted, and never asks R2 for it', async () => {
+			const bucket = memoryBucket();
+			const out = await inObject(freshSite(), async (site) => {
+				await restored(site, bucket);
+				const none = await readFile(
+					site.sql,
+					{ public: bucket },
+					'public://a.bin',
+					B
+				).catch((e: Error) => e.message);
+				const other = await readFile(
+					site.sql,
+					{ public: bucket },
+					'public://a.bin',
+					B,
+					async () => new Set(['c.example'])
+				).catch((e: Error) => e.message);
+				return { none, other };
+			});
+			expect(out.none).toContain('not authorized');
+			expect(out.other).toContain('not authorized');
+			expect(bucket.gets).toEqual([]);
+		});
+
+		it('does not let a crafted row read another tenants object: no grant, no copy, no read', async () => {
+			// what an owner can write through a restore body: an evicted row naming a victim's prefix,
+			// with a hash and size they chose, and a queued adopt to go with it
+			const bucket = memoryBucket();
+			bucket.objects.set('f/victim.example/private/secret.pdf', bytes(50, 8));
+			const out = await inObject(freshSite(), async (site) => {
+				ensureFileTables(site.sql);
+				site.sql.exec(
+					`INSERT INTO cfw_file (uri, size, modified, mime, chunks, mirrored, rev, touched, evicted, hash, r2site)
+					 VALUES ('public://secret.pdf', 50, 1, 'application/pdf', 1, 1, 1, 1, 1, 'deadbeef', 'victim.example')`
+				);
+				const found = reconcileForeign(site.sql, B, 5, ['public', 'private'], new Set([A]));
+				site.sql.exec(
+					`INSERT OR REPLACE INTO cfw_file_mirror_queue (uri, op, queued_at, attempts)
+					 VALUES ('public://secret.pdf', 'adopt', 1, 0)`
+				);
+				const drained = await drainMirrors(site.sql, bucket, {
+					verify: true,
+					site: B,
+					trust
+				});
+				const read = await readFile(
+					site.sql,
+					{ public: bucket },
+					'public://secret.pdf',
+					B,
+					trust
+				).catch((e: Error) => e.message);
+				return { found, drained, read, stat: statFile(site.sql, 'public://secret.pdf') };
+			});
+			expect(out.found).toEqual({ resident: 0, offloaded: 0, refused: 1 });
+			expect(out.drained.failed).toBe(1);
+			expect(out.drained.adopted).toBe(0);
+			expect(out.read).toContain('not authorized');
+			expect(out.stat).toMatchObject({ mirrored: false, r2site: 'victim.example' });
+			expect(bucket.gets).toEqual([]);
+			expect([...bucket.objects.keys()]).toEqual(['f/victim.example/private/secret.pdf']);
+		});
+
+		it('drops the claim of a resident file, whose bytes are already here, and sends it as an ordinary put', async () => {
+			const bucket = memoryBucket();
+			const out = await inObject(freshSite(), async (site) => {
+				putFile(site.sql, 'public://mine.bin', bytes(30, 6), { nowMs: 1 });
+				site.sql.exec(
+					"UPDATE cfw_file SET mirrored = 1, hash = 'abc', r2site = 'victim.example' WHERE uri = 'public://mine.bin'"
+				);
+				const found = reconcileForeign(site.sql, B, 5, ['public'], new Set());
+				const drained = await drainMirrors(site.sql, bucket, { verify: true, site: B });
+				return { found, drained, stat: statFile(site.sql, 'public://mine.bin') };
+			});
+			expect(out.found).toEqual({ resident: 1, offloaded: 0, refused: 0 });
+			expect(out.drained.mirrored).toBe(1);
+			expect(out.stat).toMatchObject({ mirrored: true, r2site: B });
+			expect(bucket.gets).toEqual([]);
+			expect([...bucket.objects.keys()]).toEqual(['f/b.example/public/mine.bin']);
+		});
+
+		it('copies nothing that has no recorded hash to check it against', async () => {
+			const bucket = memoryBucket();
+			const out = await inObject(freshSite(), async (site) => {
+				await restored(site, bucket);
+				site.sql.exec("UPDATE cfw_file SET hash = NULL WHERE uri = 'public://a.bin'");
+				reconcileForeign(site.sql, B, 5, ['public'], new Set([A]));
+				const drained = await drainMirrors(site.sql, bucket, {
+					verify: true,
+					site: B,
+					trust
+				});
+				return { drained, stat: statFile(site.sql, 'public://a.bin') };
+			});
+			expect(out.drained).toMatchObject({ failed: 1, adopted: 0 });
+			expect(out.stat?.r2site).toBe(A);
+			expect(bucket.objects.has('f/b.example/public/a.bin')).toBe(false);
+		});
+
+		it('reads the grant from the platform key in CONFIG_KV, never from the site or the dump', async () => {
+			const kv = (env as unknown as { CONFIG_KV: KVNamespace }).CONFIG_KV;
+			await kv.put('file_clone:grant-b.example', ' a.example, c.example ,grant-b.example');
+			const out = await inObject(freshSite(), async (site) => {
+				(site as unknown as Record<string, unknown>).siteName = () => 'grant-b.example';
+				const granted = [...(await site.trustedFileSources())].sort();
+				const ungranted = await inObject(freshSite(), async (other) => {
+					(other as unknown as Record<string, unknown>).siteName = () => 'nobody.example';
+					return [...(await other.trustedFileSources())];
+				});
+				return { granted, ungranted };
+			});
+			await kv.delete('file_clone:grant-b.example');
+			// the site's own name is dropped, and a site with no key is granted nothing
+			expect(out.granted).toEqual(['a.example', 'c.example']);
+			expect(out.ungranted).toEqual([]);
+		});
+	});
 });
 
 describe('the host answers PHP honestly about an evicted file', () => {
@@ -1386,7 +1771,13 @@ describe('R2 itself, through the local binding', () => {
 				verify: true,
 				site: 'spec-real'
 			});
-			evictMirrored(site.sql, { nowMs: 1e9, graceMs: 1, limit: 5, schemes: ['public'] });
+			evictMirrored(site.sql, {
+				nowMs: 1e9,
+				graceMs: 1,
+				limit: 5,
+				schemes: ['public'],
+				site: 'spec-real'
+			});
 			const back = await readFile(
 				site.sql,
 				{ public: FILES as unknown as FileBucket },

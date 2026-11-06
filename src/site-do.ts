@@ -3303,6 +3303,36 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return bucket && typeof bucket.put === 'function' ? bucket : undefined;
 	}
 
+	/** the last grant read from `CONFIG_KV`, reused briefly so a run of foreign reads costs one lookup */
+	private fileGrant?: { at: number; sources: ReadonlySet<string> };
+
+	/**
+	 * The sites whose R2 prefix this site may read or copy from: the comma-separated names under
+	 * `file_clone:<this site>` in `CONFIG_KV`. Only the platform writes that key (a tenant's own
+	 * writes land on `plan:` and `settings:` keys), so a restore body cannot name a prefix into it.
+	 * Empty when there is no grant or no KV, and a failed read grants nothing.
+	 */
+	async trustedFileSources(): Promise<ReadonlySet<string>> {
+		const now = Date.now();
+		if (this.fileGrant !== undefined && now - this.fileGrant.at < 30_000)
+			return this.fileGrant.sources;
+		let sources = new Set<string>();
+		try {
+			const kv = (this.env as { CONFIG_KV?: KVNamespace } | undefined)?.CONFIG_KV;
+			const raw = kv ? await kv.get(`file_clone:${this.siteName()}`) : null;
+			sources = new Set(
+				String(raw ?? '')
+					.split(',')
+					.map((n) => n.trim())
+					.filter((n) => n !== '' && n !== this.siteName())
+			);
+		} catch (e) {
+			this.noteError('trustedFileSources', e);
+		}
+		this.fileGrant = { at: now, sources };
+		return sources;
+	}
+
 	/** whether R2 is the file store: `FILE_STORE=r2` and `FILES` bound */
 	fileStoreR2(): boolean {
 		return String(this.env?.FILE_STORE ?? '') === 'r2' && this.mirrorBucket() !== undefined;
@@ -3338,7 +3368,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		try {
 			await hydrateFile(this.sql, this.fileBuckets(), uri, {
 				nowMs: this.nowMs(),
-				site: this.siteName()
+				site: this.siteName(),
+				schemes: this.fileSchemes(),
+				trust: () => this.trustedFileSources()
 			});
 		} catch (e) {
 			// PHP then answers its own refusal and queues the restore

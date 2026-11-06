@@ -5,6 +5,7 @@ import {
 	nextEvictionAt,
 	queueBackfill,
 	r2OpsSpent,
+	reconcileForeign,
 	type HydrateDrain,
 	type MirrorBucket,
 	type MirrorDrain
@@ -39,6 +40,8 @@ export type FileOffload = {
 	restored?: HydrateDrain;
 	evicted?: { evicted: number; bytes: number };
 	queuedBackfill?: number;
+	/** files found under another site's prefix after a restore, and queued to be copied */
+	foreign?: { resident: number; offloaded: number; refused: number };
 };
 
 /**
@@ -52,6 +55,9 @@ export async function offloadFiles(
 ): Promise<FileOffload> {
 	const out: FileOffload = {};
 	const store = site.fileStoreR2();
+	// a restore clears the pinned name until the next request; keys under the literal fallback would
+	// belong to no site, so R2 mode waits for the name
+	if (store && site.siteName() === 'site') return out;
 	const buckets = site.fileBuckets();
 	const nowMs = site.nowMs();
 	if (store) {
@@ -61,17 +67,39 @@ export async function offloadFiles(
 			out.queuedBackfill = queueBackfill(site.sql, nowMs, schemes);
 			site.metaSet(flag, nowMs);
 		}
+		// the rows came from whichever site last verified them; after a restore that is not this one.
+		// `cfw_meta` carries the name through a dump, so a change of it is the trigger, and the scan
+		// is skipped until the name has been learned from a request
+		const own = site.siteName();
+		if (own !== 'site' && site.metaGet('file_site') !== own) {
+			out.foreign = reconcileForeign(
+				site.sql,
+				own,
+				nowMs,
+				schemes,
+				await site.trustedFileSources()
+			);
+			site.metaSet('file_site', own);
+		}
 		out.restored = await drainHydrates(site.sql, buckets, {
 			limit: opts.limit,
-			site: site.siteName(),
-			nowMs
+			site: own,
+			nowMs,
+			schemes,
+			trust: () => site.trustedFileSources()
 		});
 	}
 	if (opts.left > 0) {
 		out.drained = await drainMirrors(site.sql, bucket, {
 			limit: Math.min(opts.limit, opts.left),
 			site: site.siteName(),
-			...(store ? { privateBucket: buckets.private, verify: true } : {})
+			...(store
+				? {
+						privateBucket: buckets.private,
+						verify: true,
+						trust: () => site.trustedFileSources()
+					}
+				: {})
 		});
 		site.chargeR2(r2OpsSpent(out.drained));
 	}
@@ -81,10 +109,11 @@ export async function offloadFiles(
 			nowMs: site.nowMs(),
 			graceMs,
 			limit: opts.limit,
-			schemes: site.fileSchemes()
+			schemes: site.fileSchemes(),
+			site: site.siteName()
 		});
 		// the grace window is longer than any alarm cadence, so name the moment it ends
-		const due = nextEvictionAt(site.sql, graceMs);
+		const due = nextEvictionAt(site.sql, graceMs, site.siteName());
 		if (due !== undefined) site.armFillAlarm(Math.max(1_000, due - site.nowMs()));
 	}
 	return out;
@@ -107,6 +136,7 @@ async function drainBoth(
 			(drained?.mirrored ?? 0) +
 			(drained?.deleted ?? 0) +
 			(drained?.refused ?? 0) +
+			(drained?.adopted ?? 0) +
 			(offload.restored?.hydrated ?? 0) +
 			(offload.evicted?.evicted ?? 0);
 		if (moved > 0) {

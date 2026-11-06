@@ -38,6 +38,12 @@ export type FileStat = {
 	rev: number;
 	/** whether the object holds no chunks and R2 has the only copy of the bytes */
 	evicted: boolean;
+	/**
+	 * The site whose key prefix holds the R2 object, absent while nothing was verified there.
+	 * A restore into a new site leaves the source's name here, which marks the object as not this
+	 * site's own until it is copied.
+	 */
+	r2site?: string;
 };
 
 /** the `cfw_file` columns as SQLite hands them back */
@@ -50,9 +56,10 @@ type FileRow = {
 	mirrored: number;
 	rev: number;
 	evicted: number;
+	r2site: string | null;
 };
 
-const FILE_COLUMNS = 'uri, size, modified, mime, chunks, mirrored, rev, evicted';
+const FILE_COLUMNS = 'uri, size, modified, mime, chunks, mirrored, rev, evicted, r2site';
 
 /** coerces a raw row into a `FileStat` */
 function toStat(row: FileRow): FileStat {
@@ -64,7 +71,8 @@ function toStat(row: FileRow): FileStat {
 		chunks: Number(row.chunks),
 		mirrored: Number(row.mirrored) === 1,
 		rev: Number(row.rev),
-		evicted: Number(row.evicted) === 1
+		evicted: Number(row.evicted) === 1,
+		...(row.r2site === null || row.r2site === undefined ? {} : { r2site: String(row.r2site) })
 	};
 }
 
@@ -81,7 +89,8 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
 	['rev', 'INTEGER NOT NULL DEFAULT 0'],
 	['touched', 'INTEGER NOT NULL DEFAULT 0'],
 	['evicted', 'INTEGER NOT NULL DEFAULT 0'],
-	['hash', 'TEXT']
+	['hash', 'TEXT'],
+	['r2site', 'TEXT']
 ];
 
 /** handles already migrated, so the column check costs one read per object rather than per call */
@@ -100,7 +109,8 @@ export function ensureFileTables(sql: FileSql): void {
       rev INTEGER NOT NULL DEFAULT 0,
       touched INTEGER NOT NULL DEFAULT 0,
       evicted INTEGER NOT NULL DEFAULT 0,
-      hash TEXT
+      hash TEXT,
+      r2site TEXT
     )`
 	);
 	if (!migrated.has(sql)) {
@@ -265,8 +275,8 @@ export function putFile(
 		sql.exec('INSERT INTO cfw_file_chunk (uri, seq, bytes) VALUES (?, ?, ?)', key, seq, chunk);
 	}
 	sql.exec(
-		`INSERT INTO cfw_file (uri, size, modified, mime, chunks, mirrored, rev, touched, evicted, hash)
-     VALUES (?, ?, ?, ?, ?, 0, 1, ?, 0, NULL)
+		`INSERT INTO cfw_file (uri, size, modified, mime, chunks, mirrored, rev, touched, evicted, hash, r2site)
+     VALUES (?, ?, ?, ?, ?, 0, 1, ?, 0, NULL, NULL)
      ON CONFLICT(uri) DO UPDATE SET
        size = excluded.size,
        modified = excluded.modified,
@@ -276,7 +286,8 @@ export function putFile(
        rev = cfw_file.rev + 1,
        touched = excluded.touched,
        evicted = 0,
-       hash = NULL`,
+       hash = NULL,
+       r2site = NULL`,
 		key,
 		bytes.length,
 		opts.nowMs,
@@ -435,7 +446,7 @@ export function renameFile(
 	}
 	sql.exec('UPDATE cfw_file_chunk SET uri = ? WHERE uri = ?', dst, src);
 	sql.exec(
-		'UPDATE cfw_file SET uri = ?, modified = ?, mirrored = 0, rev = rev + 1, touched = ?, hash = NULL WHERE uri = ?',
+		'UPDATE cfw_file SET uri = ?, modified = ?, mirrored = 0, rev = rev + 1, touched = ?, hash = NULL, r2site = NULL WHERE uri = ?',
 		dst,
 		nowMs,
 		nowMs,
@@ -449,7 +460,11 @@ export function renameFile(
 }
 
 /** one queued R2 operation and how many times it has failed */
-export type MirrorTask = { uri: string; op: 'put' | 'delete' | 'hydrate'; attempts: number };
+export type MirrorTask = {
+	uri: string;
+	op: 'put' | 'delete' | 'hydrate' | 'adopt';
+	attempts: number;
+};
 
 /**
  * The next queued operations, oldest first; `ops` narrows them, because the write drain and the
@@ -469,7 +484,7 @@ export function pendingMirrors(
 		Math.max(1, Math.floor(limit))
 	).map((row) => ({
 		uri: String(row.uri),
-		op: row.op === 'delete' ? 'delete' : row.op === 'hydrate' ? 'hydrate' : 'put',
+		op: (['delete', 'hydrate', 'adopt'] as const).find((o) => o === row.op) ?? 'put',
 		attempts: Number(row.attempts)
 	}));
 }
@@ -546,12 +561,22 @@ export type FileBucket = MirrorBucket & { get(key: string): Promise<StoredObject
 /** the two buckets a file can live in; `private` has no custom domain */
 export type FileBuckets = { public?: FileBucket; private?: FileBucket };
 
+/**
+ * The sites whose R2 prefix this site may read, resolved lazily so a read of its own file costs no
+ * lookup. A row's `r2site` arrives in a restore body, which a tenant holding the owner token
+ * writes, so it is a claim and never an authority: the buckets are shared between tenants. The
+ * platform grants a prefix out of band, and an ungranted one is refused.
+ */
+export type FileTrust = () => Promise<ReadonlySet<string>>;
+
 /** what one drain pass did, in the terms the meters care about */
 export type MirrorDrain = {
 	/** operations that reached the bucket and succeeded */
 	mirrored: number;
 	/** puts that reached R2 but were replaced in the object meanwhile; the new bytes stay queued */
 	superseded: number;
+	/** objects copied from another site's prefix into this site's own */
+	adopted: number;
 	deleted: number;
 	/** attempts that failed and remain queued for another pass */
 	failed: number;
@@ -587,11 +612,14 @@ export async function drainMirrors(
 		privateBucket?: MirrorBucket;
 		/** send a sha256 for R2 to check, confirm the stored size, and record the hash */
 		verify?: boolean;
+		/** the prefixes of other sites this one may copy from, which only an adopt reads */
+		trust?: FileTrust;
 	} = {}
 ): Promise<MirrorDrain> {
 	const out: MirrorDrain = {
 		mirrored: 0,
 		superseded: 0,
+		adopted: 0,
 		deleted: 0,
 		failed: 0,
 		droppedAfterStrikes: 0,
@@ -601,7 +629,7 @@ export async function drainMirrors(
 	if (!bucket) return { ...out, noBucket: true };
 	const schemes = opts.privateBucket ? OFFLOAD_SCHEMES : MIRRORABLE_SCHEMES;
 
-	for (const task of pendingMirrors(sql, opts.limit ?? 10, ['put', 'delete'])) {
+	for (const task of pendingMirrors(sql, opts.limit ?? 10, ['put', 'delete', 'adopt'])) {
 		const key = mirrorKey(task.uri, opts.site ?? 'site');
 		if (key === undefined || !isMirrorable(task.uri, schemes)) {
 			// dropped: it can never become sendable and would starve real work
@@ -617,6 +645,22 @@ export async function drainMirrors(
 				// the file row is gone, so clearing the queue row is all the bookkeeping
 				sql.exec('DELETE FROM cfw_file_mirror_queue WHERE uri = ?', task.uri);
 				out.deleted += 1;
+				continue;
+			}
+			if (task.op === 'adopt') {
+				if (
+					await adoptObject(
+						sql,
+						target as FileBucket,
+						task.uri,
+						opts.site ?? 'site',
+						opts.trust
+					)
+				) {
+					out.adopted += 1;
+				} else {
+					out.superseded += 1;
+				}
 				continue;
 			}
 			const meta = statFile(sql, task.uri);
@@ -640,7 +684,7 @@ export async function drainMirrors(
 				if (size !== bytes.length)
 					throw new Error(`r2 stored ${size} of ${bytes.length} bytes`);
 			}
-			if (settleMirror(sql, task.uri, meta.rev, hash)) out.mirrored += 1;
+			if (settleMirror(sql, task.uri, meta.rev, hash, opts.site ?? 'site')) out.mirrored += 1;
 			else out.superseded += 1;
 		} catch (error) {
 			const outcome = recordMirror(sql, task.uri, {
@@ -666,11 +710,22 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
  * marking the new bytes mirrored here would hide them from the drain (and, under `FILE_STORE=r2`,
  * evict a file whose R2 copy is stale).
  */
-function settleMirror(sql: FileSql, uri: string, rev: number, hash: string | undefined): boolean {
+function settleMirror(
+	sql: FileSql,
+	uri: string,
+	rev: number,
+	hash: string | undefined,
+	site: string
+): boolean {
 	const key = normaliseUri(uri) ?? uri;
 	if (statFile(sql, key)?.rev !== rev) return false;
 	sql.exec('DELETE FROM cfw_file_mirror_queue WHERE uri = ?', key);
-	sql.exec('UPDATE cfw_file SET mirrored = 1, hash = ? WHERE uri = ?', hash ?? null, key);
+	sql.exec(
+		'UPDATE cfw_file SET mirrored = 1, hash = ?, r2site = ? WHERE uri = ?',
+		hash ?? null,
+		site,
+		key
+	);
 	return true;
 }
 
@@ -679,6 +734,7 @@ export function r2OpsSpent(drained: MirrorDrain): number {
 	return (
 		drained.mirrored +
 		drained.superseded +
+		drained.adopted +
 		drained.deleted +
 		drained.failed +
 		drained.droppedAfterStrikes
@@ -693,7 +749,14 @@ export function r2OpsSpent(drained: MirrorDrain): number {
  */
 export function evictMirrored(
 	sql: FileSql,
-	opts: { nowMs: number; graceMs: number; limit: number; schemes: readonly string[] }
+	opts: {
+		nowMs: number;
+		graceMs: number;
+		limit: number;
+		schemes: readonly string[];
+		/** this site's name; a row whose object sits under another site's prefix is never evicted */
+		site?: string;
+	}
 ): { evicted: number; bytes: number } {
 	ensureFileTables(sql);
 	let evicted = 0;
@@ -702,8 +765,10 @@ export function evictMirrored(
 		sql,
 		`SELECT uri, rev, size FROM cfw_file
      WHERE mirrored = 1 AND evicted = 0 AND hash IS NOT NULL AND touched <= ?
+       AND (r2site IS NULL OR r2site = ?)
      ORDER BY touched LIMIT ?`,
 		opts.nowMs - opts.graceMs,
+		opts.site ?? 'site',
 		Math.max(1, Math.floor(opts.limit))
 	);
 	for (const row of due) {
@@ -719,11 +784,12 @@ export function evictMirrored(
 }
 
 /** when the earliest verified, still-resident file becomes evictable, or undefined when none is */
-export function nextEvictionAt(sql: FileSql, graceMs: number): number | undefined {
+export function nextEvictionAt(sql: FileSql, graceMs: number, site = 'site'): number | undefined {
 	ensureFileTables(sql);
 	const row = rows<{ t: number | null }>(
 		sql,
-		'SELECT MIN(touched) AS t FROM cfw_file WHERE mirrored = 1 AND evicted = 0 AND hash IS NOT NULL'
+		'SELECT MIN(touched) AS t FROM cfw_file WHERE mirrored = 1 AND evicted = 0 AND hash IS NOT NULL AND (r2site IS NULL OR r2site = ?)',
+		site
 	)[0];
 	return row?.t === null || row?.t === undefined ? undefined : Number(row.t) + graceMs;
 }
@@ -741,11 +807,18 @@ function bucketFor(buckets: FileBuckets, uri: string): FileBucket | undefined {
 export async function fetchOffloaded(
 	buckets: FileBuckets,
 	meta: FileStat,
-	site = 'site'
+	site = 'site',
+	trust?: FileTrust
 ): Promise<StoredObject> {
+	if (meta.r2site !== undefined && meta.r2site !== site && !(await trust?.())?.has(meta.r2site)) {
+		throw new Error(
+			`${meta.uri} names the objects of ${meta.r2site}, which this site is not authorized to read`
+		);
+	}
 	const bucket = bucketFor(buckets, meta.uri);
 	if (!bucket) throw new Error(`${meta.uri} is offloaded and its R2 bucket is not bound`);
-	const key = mirrorKey(meta.uri, site) as string;
+	// the object sits under the prefix of the site that verified it, which a restore changes
+	const key = mirrorKey(meta.uri, meta.r2site ?? site) as string;
 	const object = await bucket.get(key);
 	if (object === null) throw new Error(`${meta.uri} is missing from R2 (${key})`);
 	if (object.size !== meta.size) {
@@ -759,12 +832,13 @@ export async function readFile(
 	sql: FileSql,
 	buckets: FileBuckets,
 	uri: string,
-	site = 'site'
+	site = 'site',
+	trust?: FileTrust
 ): Promise<Uint8Array | undefined> {
 	const meta = statFile(sql, uri);
 	if (meta === undefined) return undefined;
 	if (!meta.evicted) return getFile(sql, uri);
-	return new Uint8Array(await (await fetchOffloaded(buckets, meta, site)).arrayBuffer());
+	return new Uint8Array(await (await fetchOffloaded(buckets, meta, site, trust)).arrayBuffer());
 }
 
 /**
@@ -775,12 +849,12 @@ export async function hydrateFile(
 	sql: FileSql,
 	buckets: FileBuckets,
 	uri: string,
-	opts: { nowMs: number; site?: string }
+	opts: { nowMs: number; site?: string; schemes?: readonly string[]; trust?: FileTrust }
 ): Promise<boolean> {
 	const meta = statFile(sql, uri);
 	if (meta === undefined || !meta.evicted) return false;
 	const bytes = new Uint8Array(
-		await (await fetchOffloaded(buckets, meta, opts.site)).arrayBuffer()
+		await (await fetchOffloaded(buckets, meta, opts.site, opts.trust)).arrayBuffer()
 	);
 	if (statFile(sql, uri)?.rev !== meta.rev) return false;
 	sql.exec('DELETE FROM cfw_file_chunk WHERE uri = ?', meta.uri);
@@ -801,6 +875,15 @@ export async function hydrateFile(
 		meta.uri,
 		meta.rev
 	);
+	// another site's object is read, never relied on: put these bytes under this site's own prefix
+	if (meta.r2site !== undefined && meta.r2site !== (opts.site ?? 'site')) {
+		sql.exec(
+			'UPDATE cfw_file SET mirrored = 0, hash = NULL, r2site = NULL WHERE uri = ? AND rev = ?',
+			meta.uri,
+			meta.rev
+		);
+		queueMirror(sql, meta.uri, 'put', opts.nowMs, opts.schemes ?? OFFLOAD_SCHEMES);
+	}
 	return true;
 }
 
@@ -814,7 +897,13 @@ export type HydrateDrain = { hydrated: number; failed: number; droppedAfterStrik
 export async function drainHydrates(
 	sql: FileSql,
 	buckets: FileBuckets,
-	opts: { limit?: number; site?: string; nowMs: number }
+	opts: {
+		limit?: number;
+		site?: string;
+		nowMs: number;
+		schemes?: readonly string[];
+		trust?: FileTrust;
+	}
 ): Promise<HydrateDrain> {
 	const out: HydrateDrain = { hydrated: 0, failed: 0, droppedAfterStrikes: 0 };
 	for (const task of pendingMirrors(sql, opts.limit ?? 10, ['hydrate'])) {
@@ -832,6 +921,126 @@ export async function drainHydrates(
 		}
 	}
 	return out;
+}
+
+/**
+ * Copies an evicted file's object from another site's prefix into this site's own, checking the
+ * bytes against the row's recorded hash and size, then re-points the row. The source object is
+ * never deleted or written: it belongs to the site that made it, and this one only read it.
+ * Returns false when the file changed or went meanwhile (the queue row stays for a changed one).
+ */
+async function adoptObject(
+	sql: FileSql,
+	bucket: FileBucket,
+	uri: string,
+	site: string,
+	trust?: FileTrust
+): Promise<boolean> {
+	const meta = statFile(sql, uri);
+	if (meta === undefined || !meta.evicted || meta.r2site === undefined || meta.r2site === site) {
+		sql.exec('DELETE FROM cfw_file_mirror_queue WHERE uri = ?', uri);
+		return true;
+	}
+	if (typeof bucket.get !== 'function') throw new Error('the bucket cannot be read');
+	const source = await fetchOffloaded({ public: bucket, private: bucket }, meta, site, trust);
+	const bytes = new Uint8Array(await source.arrayBuffer());
+	const hash = await sha256Hex(bytes);
+	const recorded = rows<{ hash: string | null }>(
+		sql,
+		'SELECT hash FROM cfw_file WHERE uri = ?',
+		meta.uri
+	)[0]?.hash;
+	// no recorded hash means nothing vouches for the bytes, so nothing is copied
+	if (recorded === null || recorded === undefined || recorded !== hash) {
+		throw new Error(`${meta.uri} in R2 does not match its recorded hash`);
+	}
+	const key = mirrorKey(meta.uri, site) as string;
+	const stored = await bucket.put(key, bytes, {
+		httpMetadata: meta.mime ? { contentType: meta.mime } : undefined,
+		sha256: hash
+	});
+	if ((stored as { size?: number } | null)?.size !== bytes.length) {
+		throw new Error(
+			`r2 stored ${(stored as { size?: number } | null)?.size} of ${bytes.length} bytes`
+		);
+	}
+	if (statFile(sql, meta.uri)?.rev !== meta.rev) return false;
+	sql.exec('DELETE FROM cfw_file_mirror_queue WHERE uri = ?', meta.uri);
+	sql.exec(
+		'UPDATE cfw_file SET mirrored = 1, hash = ?, r2site = ? WHERE uri = ? AND rev = ?',
+		hash,
+		site,
+		meta.uri,
+		meta.rev
+	);
+	return true;
+}
+
+/**
+ * Finds files whose R2 object sits under another site's prefix, which is what a restore into a new
+ * site leaves, and queues what can be made this site's own. A foreign row's `r2site` is only a
+ * claim (it came in a restore body), so what happens depends on `trusted`, the prefixes the
+ * platform granted:
+ *
+ * - a resident file has its bytes here, so it stops naming any prefix and is sent as an ordinary
+ *   verified put; nothing foreign is read;
+ * - an evicted file under a granted prefix is queued to be copied under this site's own;
+ * - an evicted file under any other prefix is left alone and refused when read, because copying it
+ *   would hand one tenant another tenant's object.
+ *
+ * Every foreign row stops claiming a mirror at once, so no public link points at an object that is
+ * not at this site's prefix. Run once per change of the site name, not per alarm: it scans every row
+ * with a recorded prefix.
+ */
+export function reconcileForeign(
+	sql: FileSql,
+	site: string,
+	nowMs: number,
+	schemes: readonly string[],
+	trusted: ReadonlySet<string> = new Set()
+): { resident: number; offloaded: number; refused: number } {
+	ensureFileTables(sql);
+	const grant = [...trusted];
+	const inGrant = grant.length === 0 ? '(NULL)' : `(${grant.map(() => '?').join(', ')})`;
+	const foreign = 'r2site IS NOT NULL AND r2site <> ?';
+	const count = (where: string, ...args: unknown[]) =>
+		Number(
+			rows<{ n: number }>(
+				sql,
+				`SELECT COUNT(*) AS n FROM cfw_file WHERE ${foreign} AND ${where}`,
+				site,
+				...args
+			)[0]?.n ?? 0
+		);
+	const resident = count('evicted = 0');
+	const offloaded = count(`evicted = 1 AND r2site IN ${inGrant}`, ...grant);
+	const refused = count(`evicted = 1 AND r2site NOT IN ${inGrant}`, ...grant);
+	if (resident + offloaded + refused === 0) return { resident, offloaded, refused };
+	for (const scheme of schemes) {
+		const prefix = `${scheme}://`;
+		const queue = (op: string, where: string, ...args: unknown[]) =>
+			sql.exec(
+				`INSERT INTO cfw_file_mirror_queue (uri, op, queued_at, attempts)
+         SELECT uri, ?, ?, 0 FROM cfw_file
+         WHERE ${foreign} AND ${where} AND uri >= ? AND uri < ?
+         ON CONFLICT(uri) DO UPDATE SET op = excluded.op, queued_at = excluded.queued_at, attempts = 0`,
+				op,
+				nowMs,
+				site,
+				...args,
+				prefix,
+				prefixCeiling(prefix)
+			);
+		queue('put', 'evicted = 0');
+		queue('adopt', `evicted = 1 AND r2site IN ${inGrant}`, ...grant);
+	}
+	sql.exec(
+		`UPDATE cfw_file SET mirrored = 0, hash = NULL, r2site = NULL WHERE ${foreign} AND evicted = 0`,
+		site
+	);
+	// an evicted row keeps its hash, which a granted copy is checked against
+	sql.exec(`UPDATE cfw_file SET mirrored = 0 WHERE ${foreign} AND evicted = 1`, site);
+	return { resident, offloaded, refused };
 }
 
 /**
@@ -907,6 +1116,8 @@ export function storedBytes(sql: FileSql): {
 	files: number;
 	bytes: number;
 	offloaded: { files: number; bytes: number };
+	/** files queued to be copied under this site's prefix after a restore into it */
+	adopting: number;
 } {
 	ensureFileTables(sql);
 	const row = rows<{ n: number; b: number | null; oc: number | null; ob: number | null }>(
@@ -918,6 +1129,12 @@ export function storedBytes(sql: FileSql): {
 	return {
 		files: Number(row?.n ?? 0),
 		bytes: Number(row?.b ?? 0),
-		offloaded: { files: Number(row?.oc ?? 0), bytes: Number(row?.ob ?? 0) }
+		offloaded: { files: Number(row?.oc ?? 0), bytes: Number(row?.ob ?? 0) },
+		adopting: Number(
+			rows<{ n: number }>(
+				sql,
+				"SELECT COUNT(*) AS n FROM cfw_file_mirror_queue WHERE op = 'adopt'"
+			)[0]?.n ?? 0
+		)
 	};
 }

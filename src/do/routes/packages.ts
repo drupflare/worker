@@ -306,7 +306,9 @@ async function storedBody(
 			? undefined
 			: { body: bytes, size: bytes.length, mime, offloaded: false };
 	}
-	const object = await fetchOffloaded(site.fileBuckets(), meta, site.siteName());
+	const object = await fetchOffloaded(site.fileBuckets(), meta, site.siteName(), () =>
+		site.trustedFileSources()
+	);
 	return { body: object.body, size: object.size, mime, offloaded: true };
 }
 

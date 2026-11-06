@@ -425,7 +425,9 @@ export async function deriveStep(
 	if (row?.uri === undefined) return;
 	const uri = String(row.uri);
 	site.sql.exec('DELETE FROM cfw_derive_queue WHERE uri = ?', uri);
-	const source = await readFile(site.sql, site.fileBuckets(), uri, site.siteName());
+	const source = await readFile(site.sql, site.fileBuckets(), uri, site.siteName(), () =>
+		site.trustedFileSources()
+	);
 	if (source === undefined) {
 		site.lastDerive = { uri, skipped: 'the file is gone' };
 		return;

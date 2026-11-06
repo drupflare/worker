@@ -109,6 +109,10 @@ export type BumpResult = {
  * `updb.spec.ts` narrow the same way for the same reason.
  */
 export type ServeDo = {
+	/** the pinned site name, learned from `observed` when none is pinned yet */
+	siteName(observed?: string): string;
+	/** the sites whose R2 prefix this site may read, from the platform's key in `CONFIG_KV` */
+	trustedFileSources(): Promise<ReadonlySet<string>>;
 	ctx: {
 		/** `name` is set only for an object addressed through `idFromName()` */
 		id: { name?: string };

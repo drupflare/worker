@@ -780,8 +780,10 @@ modules:
   drupal/simplesamlphp_auth:
     needs: []
     why: SAML sign-on through SimpleSAMLphp. It cannot share a composer lock with `drupal/smtp`,
-      because SimpleSAMLphp 2.5 needs phpmailer 7 and smtp needs phpmailer 6, so the contrib lane
-      installs it in a phase after the census with smtp removed. A login needs a SimpleSAMLphp
+      because SimpleSAMLphp 2.5 needs phpmailer 7 and smtp needs phpmailer 6, nor with
+      `drupal/samlauth`, whose current release resolves robrichards/xmlseclibs 4 where SimpleSAMLphp
+      2.5 needs ^3.1.5, so the contrib lane installs it in a phase after the census with both
+      removed. A login needs a SimpleSAMLphp
       datastore, and every stock one is unavailable on this interpreter, so a site names
       drupflare's `Drupal\drupflare\SimpleSaml\DatabaseStore` as `store.type`
     verified:
@@ -812,6 +814,7 @@ modules:
       contrib fixture pack, so it sits outside the hermetic gate and has not run on a deployed worker
     collides:
       - drupal/smtp
+      - drupal/samlauth
     plugins:
       - simplesamlphp/composer-module-installer
       - simplesamlphp/composer-xmlprovider-installer

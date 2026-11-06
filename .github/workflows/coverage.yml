@@ -49,6 +49,8 @@ jobs:
         run: bun run fetch:drupal
       - name: Pack the Drupal Modules
         run: bun run assets:driver
+      - name: Mount the Driver Modules
+        run: bun run assets:driver -- --to=drupal-src
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
@@ -127,6 +129,8 @@ jobs:
         run: bun run fetch:drupal
       - name: Pack the Drupal Modules
         run: bun run assets:driver
+      - name: Mount the Driver Modules
+        run: bun run assets:driver -- --to=drupal-src
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:

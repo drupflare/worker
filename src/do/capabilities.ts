@@ -3,10 +3,12 @@ import {
 	base64ToBytes,
 	bytesToBase64,
 	deleteFile,
+	FileOffloadedError,
 	getFile,
 	getFileChunk,
 	listFiles,
 	putFile,
+	queueHydrate,
 	renameFile,
 	statFile
 } from '../db/file-store';
@@ -436,7 +438,9 @@ export function installCapabilities(site: SitePhpDurableObject, binary: SiteBina
 				base64ToBytes(String(req.b64 ?? '')),
 				{
 					nowMs: site.nowMs(),
-					mime: req.mime === undefined || req.mime === null ? undefined : String(req.mime)
+					mime:
+						req.mime === undefined || req.mime === null ? undefined : String(req.mime),
+					schemes: site.fileSchemes()
 				}
 			);
 			site.queueDerivatives(written.uri);
@@ -446,24 +450,41 @@ export function installCapabilities(site: SitePhpDurableObject, binary: SiteBina
 		}
 	};
 
+	// PHP cannot wait for R2: an evicted file answers `offloaded` and queues its restore, and the
+	// stream wrapper fails the open rather than treat it as absent (an append would truncate it)
+	const offloaded = (uri: string) => {
+		queueHydrate(site.sql, uri, site.nowMs());
+		site.armFillAlarm(1000);
+		return reply({
+			ok: false,
+			offloaded: true,
+			error: `${uri} is offloaded to R2; a restore is queued`
+		});
+	};
+
 	binary.cfwFileRead = (json: string) => {
 		const req = parse(json);
 		const uri = String(req.uri ?? '');
-		// a chunk when `seq` is given, else the whole file (chunks divide a large read)
-		if (req.seq !== undefined && req.seq !== null) {
-			const chunk = getFileChunk(site.sql, uri, Number(req.seq));
+		try {
+			// a chunk when `seq` is given, else the whole file (chunks divide a large read)
+			if (req.seq !== undefined && req.seq !== null) {
+				const chunk = getFileChunk(site.sql, uri, Number(req.seq));
+				return reply(
+					chunk === undefined
+						? { ok: false, error: 'no such chunk' }
+						: { ok: true, b64: bytesToBase64(chunk), bytes: chunk.length }
+				);
+			}
+			const body = getFile(site.sql, uri);
 			return reply(
-				chunk === undefined
-					? { ok: false, error: 'no such chunk' }
-					: { ok: true, b64: bytesToBase64(chunk), bytes: chunk.length }
+				body === undefined
+					? { ok: false, error: 'no such file' }
+					: { ok: true, b64: bytesToBase64(body), bytes: body.length }
 			);
+		} catch (e) {
+			if (e instanceof FileOffloadedError) return offloaded(e.uri);
+			throw e;
 		}
-		const body = getFile(site.sql, uri);
-		return reply(
-			body === undefined
-				? { ok: false, error: 'no such file' }
-				: { ok: true, b64: bytesToBase64(body), bytes: body.length }
-		);
 	};
 
 	// where a public file is served from, or '' when the Worker serves it; only a static asset or
@@ -478,18 +499,31 @@ export function installCapabilities(site: SitePhpDurableObject, binary: SiteBina
 	};
 
 	binary.cfwFileDelete = (json: string) => {
-		const removed = deleteFile(site.sql, String(parse(json).uri ?? ''), site.nowMs());
+		const removed = deleteFile(
+			site.sql,
+			String(parse(json).uri ?? ''),
+			site.nowMs(),
+			site.fileSchemes()
+		);
 		// `ok` reports whether anything was there (`unlink()` on an absent path is a PHP false)
 		return reply({ ok: removed });
 	};
 
 	binary.cfwFileRename = (json: string) => {
 		const req = parse(json);
-		return reply({
-			ok: renameFile(site.sql, String(req.from ?? ''), String(req.to ?? ''), site.nowMs(), {
-				overwrite: req.overwrite === true
-			})
-		});
+		const moved = renameFile(
+			site.sql,
+			String(req.from ?? ''),
+			String(req.to ?? ''),
+			site.nowMs(),
+			{
+				overwrite: req.overwrite === true,
+				schemes: site.fileSchemes()
+			}
+		);
+		// a refused rename of an evicted file queued its restore; the alarm has to run it
+		if (!moved && statFile(site.sql, String(req.from ?? ''))?.evicted) site.armFillAlarm(1000);
+		return reply({ ok: moved });
 	};
 
 	binary.cfwFileList = (json: string) => {

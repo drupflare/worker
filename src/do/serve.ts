@@ -195,6 +195,7 @@ export async function route(site: SitePhpDurableObject, request: Request): Promi
 	// one gate entry for the whole request; handle() must never re-enter it
 	const entered = site.gate.run(async () => {
 		const enteredAt = site.nowMs();
+		await site.hydrateForRequest(url);
 		const response = await site.handle(request, url);
 		// a lane's writes ran speculatively and rolled back; this is the only place they land
 		// (before the seal: a lane seals nothing and a primary's buffer is empty)

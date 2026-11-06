@@ -1,24 +1,40 @@
+import { decode } from '@drupflare/durabledb/codec';
+import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
 	FILE_CHUNK_BYTES,
+	FileOffloadedError,
 	MIRROR_STRIKES,
 	chunkBytes,
 	deleteFile,
+	drainHydrates,
 	drainMirrors,
 	ensureFileTables,
+	evictMirrored,
+	fetchOffloaded,
 	getFile,
 	getFileChunk,
+	hydrateFile,
 	isMirrorable,
 	listFiles,
 	mirrorKey,
+	nextEvictionAt,
 	normaliseUri,
 	pendingMirrors,
+	privateUriForPath,
 	putFile,
+	queueBackfill,
+	queueHydrate,
+	queueRehydrateAll,
+	readFile,
 	recordMirror,
 	renameFile,
 	statFile,
-	storedBytes
+	storedBytes,
+	type FileBucket,
+	type FileBuckets
 } from '../../../src/db/file-store';
+import { installCapabilities } from '../../../src/do/capabilities';
 import { driveAlarms, freshSite, inObject, namedSite } from '../../helpers/serve-do';
 
 /**
@@ -325,14 +341,14 @@ describe('listing, where LIKE metacharacters are a real filename', () => {
 			putFile(site.sql, 'public://b.bin', bytes(250), { nowMs: 1 });
 			return storedBytes(site.sql);
 		});
-		expect(got).toEqual({ files: 2, bytes: 350 });
+		expect(got).toEqual({ files: 2, bytes: 350, offloaded: { files: 0, bytes: 0 } });
 	});
 
 	it('totals zero rather than NaN on an empty store', async () => {
 		// SUM() over no rows is NULL, and Number(null) is 0 only if it is not read as undefined
 		const stub = freshSite();
 		const got = await inObject(stub, async (site) => storedBytes(site.sql));
-		expect(got).toEqual({ files: 0, bytes: 0 });
+		expect(got).toEqual({ files: 0, bytes: 0, offloaded: { files: 0, bytes: 0 } });
 	});
 });
 
@@ -739,7 +755,7 @@ describe('the alarm drains it, with no diagnostic route poked', () => {
 		const puts: string[] = [];
 		const stub = freshSite();
 		await inObject(stub, (site) => {
-			// the accessor is overridden per INSTANCE rather than `env.FILES` being set. `env` is
+			// the accessor is overridden per INSTANCE rather than `FILES` being set. `env` is
 			// shared across every object in this pool, so writing a binding onto it leaks into the
 			// next spec -- which is exactly what the sibling test below caught when it did.
 			(site as unknown as { mirrorBucket: () => unknown }).mirrorBucket = () => ({
@@ -755,6 +771,57 @@ describe('the alarm drains it, with no diagnostic route poked', () => {
 		await driveAlarms(stub, (site) => pendingMirrors(site.sql).length === 0, 6);
 
 		expect(puts).toEqual(['f/site/public/alarm.bin:48']);
+	});
+
+	it('under FILE_STORE=r2, verifies the put, evicts the chunks, and still serves from R2', async () => {
+		const objects = new Map<string, Uint8Array>();
+		const bucket: FileBucket = {
+			async put(key, value) {
+				objects.set(key, new Uint8Array(value));
+				return { size: value.length };
+			},
+			async delete(key) {
+				objects.delete(key);
+			},
+			async get(key) {
+				const found = objects.get(key);
+				return found === undefined
+					? null
+					: {
+							size: found.length,
+							body: null,
+							arrayBuffer: async () => found.slice().buffer as ArrayBuffer
+						};
+			}
+		};
+		const stub = freshSite();
+		await inObject(stub, (site) => {
+			const patched = site as unknown as Record<string, unknown>;
+			patched.mirrorBucket = () => bucket;
+			patched.fileStoreR2 = () => true;
+			patched.fileBuckets = () => ({ public: bucket });
+			patched.fileSchemes = () => ['public'];
+			patched.env = { ...(site as unknown as { env: object }).env, FILE_EVICT_AFTER_MS: '0' };
+			putFile(site.sql, 'public://alarm.bin', bytes(48, 7), { nowMs: Date.now() });
+		});
+
+		await inObject(stub, (site) => site.ctx.storage.setAlarm(Date.now() - 1));
+		await driveAlarms(
+			stub,
+			(site) => statFile(site.sql, 'public://alarm.bin')?.evicted === true,
+			8
+		);
+
+		const after = await inObject(stub, async (site) => ({
+			stat: statFile(site.sql, 'public://alarm.bin'),
+			chunkRows: site.sql.exec('SELECT COUNT(*) AS n FROM cfw_file_chunk').toArray()[0]?.n,
+			back: await readFile(site.sql, { public: bucket }, 'public://alarm.bin'),
+			backfilled: site.metaGet('file_backfill:public')
+		}));
+		expect(after.stat).toMatchObject({ mirrored: true, evicted: true });
+		expect(after.chunkRows).toBe(0);
+		expect(after.back).toEqual(bytes(48, 7));
+		expect(after.backfilled).not.toBeNull();
 	});
 
 	it('does not disturb a site with no bucket bound', async () => {
@@ -781,5 +848,563 @@ describe('the alarm drains it, with no diagnostic route poked', () => {
 		// still queued for whenever a bucket appears, and nothing recorded as an error
 		expect(state.queued).toBe(1);
 		expect(state.drain).toBeNull();
+	});
+});
+
+/**
+ * `FILE_STORE=r2`: R2 holds the bytes and the object keeps metadata.
+ *
+ * PHP cannot wait for R2, so the order is write-behind: the object takes the chunks, a verified put
+ * follows, and the chunks leave only after a grace window. Every test here is a way that order
+ * could lose bytes or serve the wrong ones.
+ */
+describe('R2 as the file store', () => {
+	/** an in-memory R2 that keeps what it was given and can run a hook inside a put */
+	function memoryBucket(opts: { onPut?: () => void; lie?: boolean } = {}) {
+		const objects = new Map<string, Uint8Array>();
+		const puts: { key: string; options: Record<string, unknown> }[] = [];
+		const bucket: FileBucket & {
+			objects: Map<string, Uint8Array>;
+			puts: typeof puts;
+			gets: string[];
+		} = {
+			objects,
+			puts,
+			gets: [],
+			async put(key, value, options) {
+				opts.onPut?.();
+				puts.push({ key, options: (options ?? {}) as Record<string, unknown> });
+				objects.set(key, new Uint8Array(value));
+				return { size: opts.lie ? value.length - 1 : value.length };
+			},
+			async delete(key) {
+				objects.delete(key);
+			},
+			async get(key) {
+				bucket.gets.push(key);
+				const found = objects.get(key);
+				if (found === undefined) return null;
+				return {
+					size: found.length,
+					body: new Blob([found]).stream(),
+					arrayBuffer: async () => found.slice().buffer as ArrayBuffer
+				};
+			}
+		};
+		return bucket;
+	}
+
+	const GRACE = 1_000;
+
+	/** stores, verifies and evicts one public file; returns what the object holds after */
+	async function offloaded(
+		site: Parameters<Parameters<typeof inObject>[1]>[0],
+		bucket: FileBucket
+	) {
+		putFile(site.sql, 'public://a.bin', bytes(300, 5), {
+			nowMs: 1,
+			mime: 'application/x-test'
+		});
+		await drainMirrors(site.sql, bucket, { verify: true });
+		return evictMirrored(site.sql, {
+			nowMs: 1 + GRACE,
+			graceMs: GRACE,
+			limit: 10,
+			schemes: ['public']
+		});
+	}
+
+	it('migrates a table written before the new columns existed', async () => {
+		const got = await inObject(freshSite(), (site) => {
+			site.sql.exec(
+				`CREATE TABLE cfw_file (uri TEXT PRIMARY KEY, size INTEGER NOT NULL, modified INTEGER NOT NULL,
+				 mime TEXT, chunks INTEGER NOT NULL, mirrored INTEGER NOT NULL DEFAULT 0)`
+			);
+			site.sql.exec("INSERT INTO cfw_file VALUES ('public://old.bin', 4, 1, NULL, 1, 1)");
+			return statFile(site.sql, 'public://old.bin');
+		});
+		expect(got).toMatchObject({ size: 4, mirrored: true, evicted: false, rev: 0 });
+	});
+
+	it('bumps rev on every write and clears the verified state', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			const bucket = memoryBucket();
+			putFile(site.sql, 'public://a.bin', bytes(8), { nowMs: 1 });
+			const first = statFile(site.sql, 'public://a.bin')?.rev;
+			await drainMirrors(site.sql, bucket, { verify: true });
+			putFile(site.sql, 'public://a.bin', bytes(8, 1), { nowMs: 2 });
+			return { first, second: statFile(site.sql, 'public://a.bin') };
+		});
+		expect(out.first).toBe(1);
+		expect(out.second).toMatchObject({ rev: 2, mirrored: false, evicted: false });
+	});
+
+	it('sends a sha256 R2 can check, confirms the size, and records the hash', async () => {
+		const bucket = memoryBucket();
+		const out = await inObject(freshSite(), async (site) => {
+			putFile(site.sql, 'public://a.bin', bytes(300, 5), { nowMs: 1 });
+			const drained = await drainMirrors(site.sql, bucket, { verify: true });
+			return {
+				drained,
+				hash: site.sql.exec('SELECT hash FROM cfw_file').toArray()[0]?.hash
+			};
+		});
+		const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes(300, 5)));
+		const expected = Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+		expect(bucket.puts[0]?.options.sha256).toBe(expected);
+		expect(out.hash).toBe(expected);
+		expect(out.drained.mirrored).toBe(1);
+	});
+
+	it('does not evict a file whose stored size disagrees', async () => {
+		const bucket = memoryBucket({ lie: true });
+		const out = await inObject(freshSite(), async (site) => {
+			putFile(site.sql, 'public://a.bin', bytes(64), { nowMs: 1 });
+			const drained = await drainMirrors(site.sql, bucket, { verify: true });
+			const evicted = evictMirrored(site.sql, {
+				nowMs: 10 * GRACE,
+				graceMs: GRACE,
+				limit: 10,
+				schemes: ['public']
+			});
+			return { drained, evicted, stat: statFile(site.sql, 'public://a.bin') };
+		});
+		expect(out.drained.failed).toBe(1);
+		expect(out.evicted.evicted).toBe(0);
+		expect(out.stat).toMatchObject({ mirrored: false, evicted: false });
+	});
+
+	it('keeps the chunks through the grace window and drops them after', async () => {
+		const bucket = memoryBucket();
+		const out = await inObject(freshSite(), async (site) => {
+			putFile(site.sql, 'public://a.bin', bytes(300, 5), { nowMs: 1 });
+			await drainMirrors(site.sql, bucket, { verify: true });
+			const early = evictMirrored(site.sql, {
+				nowMs: GRACE,
+				graceMs: GRACE,
+				limit: 10,
+				schemes: ['public']
+			});
+			const due = nextEvictionAt(site.sql, GRACE);
+			const late = evictMirrored(site.sql, {
+				nowMs: 1 + GRACE,
+				graceMs: GRACE,
+				limit: 10,
+				schemes: ['public']
+			});
+			return {
+				early,
+				due,
+				late,
+				chunkRows: site.sql.exec('SELECT COUNT(*) AS n FROM cfw_file_chunk').toArray()[0]
+					?.n,
+				stats: storedBytes(site.sql),
+				next: nextEvictionAt(site.sql, GRACE)
+			};
+		});
+		expect(out.early.evicted).toBe(0);
+		expect(out.due).toBe(1 + GRACE);
+		expect(out.late).toEqual({ evicted: 1, bytes: 300 });
+		expect(out.chunkRows).toBe(0);
+		expect(out.stats).toEqual({ files: 1, bytes: 300, offloaded: { files: 1, bytes: 300 } });
+		expect(out.next).toBeUndefined();
+	});
+
+	it('never evicts a file that was mirrored without verification', async () => {
+		// the legacy mirror sends no hash; those bytes are not trusted enough to delete the copy
+		const bucket = memoryBucket();
+		const evicted = await inObject(freshSite(), async (site) => {
+			putFile(site.sql, 'public://a.bin', bytes(16), { nowMs: 1 });
+			await drainMirrors(site.sql, bucket);
+			return evictMirrored(site.sql, {
+				nowMs: 10 * GRACE,
+				graceMs: GRACE,
+				limit: 10,
+				schemes: ['public']
+			});
+		});
+		expect(evicted.evicted).toBe(0);
+	});
+
+	it('leaves a file alone when it is rewritten while its put is in flight', async () => {
+		// the put is awaited and other requests run meanwhile; marking the new bytes mirrored would
+		// hide them from the drain and evict a file whose R2 copy is the OLD one
+		let rewrite: () => void = () => {};
+		const bucket = memoryBucket({ onPut: () => rewrite() });
+		const out = await inObject(freshSite(), async (site) => {
+			putFile(site.sql, 'public://a.bin', bytes(32, 1), { nowMs: 1 });
+			rewrite = () => putFile(site.sql, 'public://a.bin', bytes(32, 2), { nowMs: 2 });
+			const first = await drainMirrors(site.sql, bucket, { verify: true });
+			rewrite = () => {};
+			const mid = {
+				stat: statFile(site.sql, 'public://a.bin'),
+				queued: pendingMirrors(site.sql).length
+			};
+			const second = await drainMirrors(site.sql, bucket, { verify: true });
+			return { first, mid, second };
+		});
+		expect(out.first).toMatchObject({ mirrored: 0, superseded: 1 });
+		expect(out.mid.stat?.mirrored).toBe(false);
+		expect(out.mid.queued).toBe(1);
+		expect(out.second.mirrored).toBe(1);
+		expect(bucket.objects.get('f/site/public/a.bin')).toEqual(bytes(32, 2));
+	});
+
+	it('refuses a synchronous read of an evicted file instead of answering empty', async () => {
+		const bucket = memoryBucket();
+		const out = await inObject(freshSite(), async (site) => {
+			await offloaded(site, bucket);
+			const whole = (() => {
+				try {
+					return getFile(site.sql, 'public://a.bin');
+				} catch (e) {
+					return e;
+				}
+			})();
+			const chunk = (() => {
+				try {
+					return getFileChunk(site.sql, 'public://a.bin', 0);
+				} catch (e) {
+					return e;
+				}
+			})();
+			return { whole, chunk };
+		});
+		expect(out.whole).toBeInstanceOf(FileOffloadedError);
+		expect(out.chunk).toBeInstanceOf(FileOffloadedError);
+	});
+
+	it('reads an evicted file back from R2 byte for byte', async () => {
+		const bucket = memoryBucket();
+		const got = await inObject(freshSite(), async (site) => {
+			await offloaded(site, bucket);
+			return readFile(site.sql, { public: bucket }, 'public://a.bin');
+		});
+		expect(got).toEqual(bytes(300, 5));
+		expect(bucket.gets).toEqual(['f/site/public/a.bin']);
+	});
+
+	it('throws, not empty, when the bucket is gone or the object is wrong', async () => {
+		const bucket = memoryBucket();
+		const out = await inObject(freshSite(), async (site) => {
+			await offloaded(site, bucket);
+			const meta = statFile(site.sql, 'public://a.bin')!;
+			const unbound = await fetchOffloaded({}, meta).catch((e: Error) => e.message);
+			const short = memoryBucket();
+			short.objects.set('f/site/public/a.bin', bytes(10));
+			const wrongSize = await fetchOffloaded({ public: short }, meta).catch(
+				(e: Error) => e.message
+			);
+			const missing = await fetchOffloaded({ public: memoryBucket() }, meta).catch(
+				(e: Error) => e.message
+			);
+			return { unbound, wrongSize, missing };
+		});
+		expect(out.unbound).toContain('not bound');
+		expect(out.wrongSize).toContain('10 bytes in R2, expected 300');
+		expect(out.missing).toContain('missing from R2');
+	});
+
+	it('restores an evicted file into the object and restarts its grace window', async () => {
+		const bucket = memoryBucket();
+		const out = await inObject(freshSite(), async (site) => {
+			await offloaded(site, bucket);
+			const restored = await hydrateFile(site.sql, { public: bucket }, 'public://a.bin', {
+				nowMs: 5_000
+			});
+			const reEvict = evictMirrored(site.sql, {
+				nowMs: 5_000 + GRACE - 1,
+				graceMs: GRACE,
+				limit: 10,
+				schemes: ['public']
+			});
+			return {
+				restored,
+				body: getFile(site.sql, 'public://a.bin'),
+				stat: statFile(site.sql, 'public://a.bin'),
+				reEvict
+			};
+		});
+		expect(out.restored).toBe(true);
+		expect(out.body).toEqual(bytes(300, 5));
+		expect(out.stat).toMatchObject({ evicted: false, mirrored: true });
+		expect(out.reEvict.evicted).toBe(0);
+	});
+
+	it('writes nothing back when the file was rewritten while the restore read R2', async () => {
+		const bucket = memoryBucket();
+		const out = await inObject(freshSite(), async (site) => {
+			await offloaded(site, bucket);
+			const slow: FileBucket = {
+				...bucket,
+				get: async (key) => {
+					const object = await bucket.get(key);
+					putFile(site.sql, 'public://a.bin', bytes(7, 9), { nowMs: 9 });
+					return object;
+				}
+			};
+			const restored = await hydrateFile(site.sql, { public: slow }, 'public://a.bin', {
+				nowMs: 10
+			});
+			return { restored, body: getFile(site.sql, 'public://a.bin') };
+		});
+		expect(out.restored).toBe(false);
+		expect(out.body).toEqual(bytes(7, 9));
+	});
+
+	it('refuses to rename an evicted file and queues its restore', async () => {
+		const bucket = memoryBucket();
+		const out = await inObject(freshSite(), async (site) => {
+			await offloaded(site, bucket);
+			const moved = renameFile(site.sql, 'public://a.bin', 'public://b.bin', 5_000);
+			return {
+				moved,
+				queued: pendingMirrors(site.sql).map((t) => `${t.op}:${t.uri}`),
+				still: statFile(site.sql, 'public://a.bin')?.evicted
+			};
+		});
+		expect(out.moved).toBe(false);
+		expect(out.queued).toEqual(['hydrate:public://a.bin']);
+		expect(out.still).toBe(true);
+	});
+
+	it('deleting an evicted file removes its R2 object', async () => {
+		const bucket = memoryBucket();
+		await inObject(freshSite(), async (site) => {
+			await offloaded(site, bucket);
+			expect(bucket.objects.size).toBe(1);
+			deleteFile(site.sql, 'public://a.bin', 5_000);
+			await drainMirrors(site.sql, bucket, { verify: true });
+		});
+		expect(bucket.objects.size).toBe(0);
+	});
+
+	it('sends private files to the private bucket only, and only when one is bound', async () => {
+		const pub = memoryBucket();
+		const priv = memoryBucket();
+		const out = await inObject(freshSite(), async (site) => {
+			putFile(site.sql, 'private://s.pdf', bytes(40), {
+				nowMs: 1,
+				schemes: ['public', 'private']
+			});
+			putFile(site.sql, 'public://p.png', bytes(40), { nowMs: 1 });
+			const drained = await drainMirrors(site.sql, pub, {
+				verify: true,
+				privateBucket: priv
+			});
+			return drained;
+		});
+		expect([...priv.objects.keys()]).toEqual(['f/site/private/s.pdf']);
+		expect([...pub.objects.keys()]).toEqual(['f/site/public/p.png']);
+		expect(out.mirrored).toBe(2);
+	});
+
+	it('does not queue a private write unless the caller says private may leave', async () => {
+		const queued = await inObject(freshSite(), (site) => {
+			putFile(site.sql, 'private://s.pdf', bytes(8), { nowMs: 1 });
+			return pendingMirrors(site.sql).length;
+		});
+		expect(queued).toBe(0);
+	});
+
+	it('only evicts schemes the caller lists', async () => {
+		const pub = memoryBucket();
+		const priv = memoryBucket();
+		const out = await inObject(freshSite(), async (site) => {
+			putFile(site.sql, 'private://s.pdf', bytes(8), {
+				nowMs: 1,
+				schemes: ['public', 'private']
+			});
+			await drainMirrors(site.sql, pub, { verify: true, privateBucket: priv });
+			return evictMirrored(site.sql, {
+				nowMs: 10 * GRACE,
+				graceMs: GRACE,
+				limit: 10,
+				schemes: ['public']
+			});
+		});
+		expect(out.evicted).toBe(0);
+	});
+
+	it('backfills what the object already holds, once, and skips what is done', async () => {
+		const bucket = memoryBucket();
+		const out = await inObject(freshSite(), async (site) => {
+			putFile(site.sql, 'public://new.bin', bytes(8), { nowMs: 1 });
+			putFile(site.sql, 'public://legacy.bin', bytes(8, 1), { nowMs: 1 });
+			recordMirror(site.sql, 'public://legacy.bin', { ok: true });
+			putFile(site.sql, 'private://s.pdf', bytes(8), { nowMs: 1 });
+			site.sql.exec('DELETE FROM cfw_file_mirror_queue');
+			const first = queueBackfill(site.sql, 2, ['public']);
+			const again = queueBackfill(site.sql, 3, ['public']);
+			await drainMirrors(site.sql, bucket, { verify: true });
+			const afterDrain = queueBackfill(site.sql, 4, ['public']);
+			return {
+				first,
+				again,
+				afterDrain,
+				queued: pendingMirrors(site.sql).length
+			};
+		});
+		expect(out.first).toBe(2);
+		expect(out.again).toBe(2);
+		expect(out.afterDrain).toBe(0);
+		expect(out.queued).toBe(0);
+		expect([...bucket.objects.keys()].sort()).toEqual([
+			'f/site/public/legacy.bin',
+			'f/site/public/new.bin'
+		]);
+	});
+
+	it('restores every evicted file on request, so a site can leave the bucket', async () => {
+		const bucket = memoryBucket();
+		const out = await inObject(freshSite(), async (site) => {
+			await offloaded(site, bucket);
+			const queued = queueRehydrateAll(site.sql, 5_000);
+			const drained = await drainHydrates(site.sql, { public: bucket }, { nowMs: 5_000 });
+			return {
+				queued,
+				drained,
+				stats: storedBytes(site.sql),
+				body: getFile(site.sql, 'public://a.bin')
+			};
+		});
+		expect(out.queued).toBe(1);
+		expect(out.drained.hydrated).toBe(1);
+		expect(out.stats.offloaded).toEqual({ files: 0, bytes: 0 });
+		expect(out.body).toEqual(bytes(300, 5));
+	});
+
+	it('counts a failed restore as a strike and drops it at the limit', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			await offloaded(site, memoryBucket());
+			queueHydrate(site.sql, 'public://a.bin', 5_000);
+			const empty: FileBuckets = { public: memoryBucket() };
+			const passes = [];
+			for (let i = 0; i < MIRROR_STRIKES; i++) {
+				passes.push(await drainHydrates(site.sql, empty, { nowMs: 5_000 }));
+			}
+			return { passes, left: pendingMirrors(site.sql).length };
+		});
+		expect(out.passes[0]).toMatchObject({ failed: 1, hydrated: 0 });
+		expect(out.passes[MIRROR_STRIKES - 1]).toMatchObject({ droppedAfterStrikes: 1 });
+		expect(out.left).toBe(0);
+	});
+
+	it('names the private uri behind a download path, and nothing else', () => {
+		expect(privateUriForPath('/system/files/reports/q3%20final.pdf?download=1')).toBe(
+			'private://reports/q3 final.pdf'
+		);
+		expect(privateUriForPath('/sites/default/files/a.png')).toBeUndefined();
+		expect(privateUriForPath('/system/files/../x')).toBeUndefined();
+		expect(privateUriForPath('/system/files/%E0%A4%A')).toBeUndefined();
+	});
+
+	it('exports the schemes a private bucket opens', () => {
+		expect(isMirrorable('private://a', ['public', 'private'])).toBe(true);
+		expect(isMirrorable('private://a')).toBe(false);
+	});
+});
+
+describe('the host answers PHP honestly about an evicted file', () => {
+	it('replies offloaded, queues the restore, and never answers an empty file', async () => {
+		const bucket = {
+			objects: new Map<string, Uint8Array>(),
+			async put(key: string, value: Uint8Array) {
+				this.objects.set(key, value);
+				return { size: value.length };
+			},
+			async delete() {},
+			async get() {
+				return null;
+			}
+		};
+		const reply = await inObject(freshSite(), async (site) => {
+			putFile(site.sql, 'public://a.bin', bytes(50), { nowMs: 1 });
+			await drainMirrors(site.sql, bucket, { verify: true });
+			evictMirrored(site.sql, { nowMs: 1e9, graceMs: 1, limit: 5, schemes: ['public'] });
+			const binary = installCapabilities(site as never, {} as never) as unknown as Record<
+				string,
+				(json: string) => string
+			>;
+			const read = decode(
+				JSON.parse(binary.cfwFileRead!(JSON.stringify({ uri: 'public://a.bin' })))
+			);
+			const chunk = decode(
+				JSON.parse(binary.cfwFileRead!(JSON.stringify({ uri: 'public://a.bin', seq: 0 })))
+			);
+			const rename = decode(
+				JSON.parse(
+					binary.cfwFileRename!(
+						JSON.stringify({ from: 'public://a.bin', to: 'public://b.bin' })
+					)
+				)
+			);
+			const stat = decode(
+				JSON.parse(binary.cfwFileStat!(JSON.stringify({ uri: 'public://a.bin' })))
+			);
+			return {
+				read,
+				chunk,
+				rename,
+				stat,
+				queued: pendingMirrors(site.sql).map((t) => `${t.op}:${t.uri}`)
+			};
+		});
+		expect(reply.read).toMatchObject({ ok: false, offloaded: true });
+		expect(reply.chunk).toMatchObject({ ok: false, offloaded: true });
+		expect(reply.rename).toMatchObject({ ok: false });
+		expect(reply.stat).toMatchObject({ ok: true, evicted: true, mirrored: true, size: 50 });
+		expect(reply.queued).toEqual(['hydrate:public://a.bin']);
+	});
+});
+
+/** the test pool binds `FILES` though the canonical config does not declare it */
+const FILES = (env as unknown as { FILES: R2Bucket }).FILES;
+
+describe('R2 itself, through the local binding', () => {
+	it('accepts a matching sha256 and rejects a wrong one, which is what verification relies on', async () => {
+		const body = bytes(2048, 3);
+		const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', body));
+		const good = Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+		const stored = await FILES.put('spec/sha-good', body, { sha256: good });
+		expect(stored?.size).toBe(2048);
+		await expect(
+			FILES.put('spec/sha-bad', body, { sha256: 'ab'.repeat(32) })
+		).rejects.toThrow();
+		expect(await FILES.get('spec/sha-bad')).toBeNull();
+		await FILES.delete('spec/sha-good');
+	});
+
+	it('round-trips a multi-chunk file through verify, evict and a read from the real bucket', async () => {
+		const size = FILE_CHUNK_BYTES * 2 + 17;
+		const got = await inObject(freshSite(), async (site) => {
+			putFile(site.sql, 'public://big.bin', bytes(size, 4), {
+				nowMs: 1,
+				mime: 'application/x-big'
+			});
+			const drained = await drainMirrors(site.sql, FILES, {
+				verify: true,
+				site: 'spec-real'
+			});
+			evictMirrored(site.sql, { nowMs: 1e9, graceMs: 1, limit: 5, schemes: ['public'] });
+			const back = await readFile(
+				site.sql,
+				{ public: FILES as unknown as FileBucket },
+				'public://big.bin',
+				'spec-real'
+			);
+			return {
+				drained,
+				chunkRows: site.sql.exec('SELECT COUNT(*) AS n FROM cfw_file_chunk').toArray()[0]
+					?.n,
+				back
+			};
+		});
+		expect(got.drained.mirrored).toBe(1);
+		expect(got.chunkRows).toBe(0);
+		expect(got.back).toEqual(bytes(size, 4));
+		const head = await FILES.head('f/spec-real/public/big.bin');
+		expect(head?.httpMetadata?.contentType).toBe('application/x-big');
+		await FILES.delete('f/spec-real/public/big.bin');
 	});
 });

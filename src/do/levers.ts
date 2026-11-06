@@ -110,6 +110,17 @@ export function r2WriteBudget(env?: SiteEnv): number {
 }
 
 /**
+ * Milliseconds a verified file stays in the object after its last write or restore.
+ *
+ * PHP cannot wait for R2, so a file Drupal reads back soon after an upload (the next request of a
+ * media form) has to still be here. Fifteen minutes is a judgment, not a measurement; `0` evicts
+ * on the first alarm after the put verifies.
+ */
+export function fileEvictAfterMs(env?: SiteEnv): number {
+	return leverInt(env?.FILE_EVICT_AFTER_MS) ?? 900_000;
+}
+
+/**
  * Whether `/migrate` seeds the serving table from `prefill.json` when nothing says otherwise.
  *
  * On for free, off for paid. A prefilled path is a HIT on its first request, which changes the

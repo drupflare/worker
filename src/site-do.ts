@@ -8,7 +8,15 @@ import {
 	type SqlBindings,
 	type TxnRequest
 } from '@drupflare/durabledb/do-sqlite';
-import { type MirrorBucket } from './db/file-store';
+import {
+	MIRRORABLE_SCHEMES,
+	OFFLOAD_SCHEMES,
+	hydrateFile,
+	privateUriForPath,
+	type FileBucket,
+	type FileBuckets,
+	type MirrorBucket
+} from './db/file-store';
 import { type HandleIndex } from './db/heap-store';
 import {
 	SqlMigrator,
@@ -3293,6 +3301,49 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	mirrorBucket(): MirrorBucket | undefined {
 		const bucket = (this.env as { FILES?: MirrorBucket } | undefined)?.FILES;
 		return bucket && typeof bucket.put === 'function' ? bucket : undefined;
+	}
+
+	/** whether R2 is the file store: `FILE_STORE=r2` and `FILES` bound */
+	fileStoreR2(): boolean {
+		return String(this.env?.FILE_STORE ?? '') === 'r2' && this.mirrorBucket() !== undefined;
+	}
+
+	/** the readable buckets; `private` is unbound unless the managed config attaches it */
+	fileBuckets(): FileBuckets {
+		const env = this.env as { FILES?: FileBucket; FILES_PRIVATE?: FileBucket } | undefined;
+		const usable = (b?: FileBucket) =>
+			b && typeof b.put === 'function' && typeof b.get === 'function' ? b : undefined;
+		return { public: usable(env?.FILES), private: usable(env?.FILES_PRIVATE) };
+	}
+
+	/**
+	 * The schemes a write queues for R2. `private://` joins only when R2 is the store and a private
+	 * bucket is bound; otherwise it stays in the object, as it always has.
+	 */
+	fileSchemes(): readonly string[] {
+		return this.fileStoreR2() && this.fileBuckets().private
+			? OFFLOAD_SCHEMES
+			: MIRRORABLE_SCHEMES;
+	}
+
+	/**
+	 * Restores an evicted private file before PHP serves it. A download reads the file inside a
+	 * synchronous run that cannot wait for R2, so the restore has to happen first; one read of the
+	 * row on every `/system/files/` request, and nothing for any other path.
+	 */
+	async hydrateForRequest(url: URL): Promise<void> {
+		const path = url.pathname === '/__serve' ? url.searchParams.get('path') : null;
+		const uri = path === null ? undefined : privateUriForPath(path);
+		if (uri === undefined) return;
+		try {
+			await hydrateFile(this.sql, this.fileBuckets(), uri, {
+				nowMs: this.nowMs(),
+				site: this.siteName()
+			});
+		} catch (e) {
+			// PHP then answers its own refusal and queues the restore
+			this.noteError('hydrateForRequest', e);
+		}
 	}
 
 	/** this month's R2 writes against {@link r2WriteBudget}; the key carries the month */

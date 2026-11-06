@@ -1,4 +1,4 @@
-import { getFile, statFile } from '../../db/file-store';
+import { fetchOffloaded, getFile, statFile } from '../../db/file-store';
 import {
 	amplification,
 	emptyTally,
@@ -261,31 +261,53 @@ export async function filebytes(
 	// a derivative rendered ahead of time answers in place of the source
 	const id = url.searchParams.get('derivative') ?? '';
 	if (uri.startsWith('public://') && /^[A-Za-z0-9_-]{1,64}$/.test(id)) {
-		const stored = getFile(site.sql, derivativeUri(id));
+		const stored = await storedBody(site, derivativeUri(id));
 		if (stored !== undefined) {
-			return new Response(stored, {
+			return new Response(stored.body, {
 				status: 200,
 				headers: {
-					'content-type': String(
-						statFile(site.sql, derivativeUri(id))?.mime ?? 'application/octet-stream'
-					),
+					'content-type': stored.mime,
 					'cache-control': 'private, no-store',
 					'x-cfw-derivative': 'stored'
 				}
 			});
 		}
 	}
-	const bytes = getFile(site.sql, uri);
-	if (bytes === undefined) return new Response('not found\n', { status: 404 });
-	const meta = statFile(site.sql, uri);
-	return new Response(bytes, {
+	const source = await storedBody(site, uri);
+	if (source === undefined) return new Response('not found\n', { status: 404 });
+	return new Response(source.body, {
 		status: 200,
 		headers: {
-			'content-type': String(meta?.mime ?? 'application/octet-stream'),
+			'content-type': source.mime,
 			'cache-control': 'private, no-store',
-			'x-cfw-file-bytes': String(bytes.length)
+			'x-cfw-file-bytes': String(source.size),
+			...(source.offloaded ? { 'x-cfw-file-store': 'r2' } : {})
 		}
 	});
+}
+
+/**
+ * A stored file's body: the object's bytes, or a stream straight from R2 for an evicted file so a
+ * large one never sits in the isolate.
+ */
+async function storedBody(
+	site: SitePhpDurableObject,
+	uri: string
+): Promise<
+	| { body: Uint8Array | ReadableStream | null; size: number; mime: string; offloaded: boolean }
+	| undefined
+> {
+	const meta = statFile(site.sql, uri);
+	if (meta === undefined) return undefined;
+	const mime = String(meta.mime ?? 'application/octet-stream');
+	if (!meta.evicted) {
+		const bytes = getFile(site.sql, uri);
+		return bytes === undefined
+			? undefined
+			: { body: bytes, size: bytes.length, mime, offloaded: false };
+	}
+	const object = await fetchOffloaded(site.fileBuckets(), meta, site.siteName());
+	return { body: object.body, size: object.size, mime, offloaded: true };
 }
 
 /** Writes or reads one file through Drupal's stream wrappers (`op`, `uri`, `body`); a probe. */

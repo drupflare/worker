@@ -45,6 +45,14 @@ export interface SiteEnv extends BaseSiteEnv {
 	 */
 	FILES_PUBLIC_URL?: string;
 	/**
+	 * `r2` makes the `FILES` and `FILES_PRIVATE` buckets the home of file bytes: a verified put is
+	 * followed by eviction from the object after `FILE_EVICT_AFTER_MS`. Unset keeps files in the
+	 * object with `FILES` as a `public://` mirror. Needs `FILES` bound.
+	 */
+	FILE_STORE?: string;
+	/** milliseconds a verified file stays in the object after its last write or restore */
+	FILE_EVICT_AFTER_MS?: string;
+	/**
 	 * Replaces a stored page's asset tags with the build's aggregates; off unless `1`.
 	 * Needs `bun run assets:agg` (writes `assets/agg/`, 6.57 MB for 808 libraries).
 	 */

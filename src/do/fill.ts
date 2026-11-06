@@ -1,4 +1,4 @@
-import { getFile, putFile } from '../db/file-store';
+import { putFile, readFile } from '../db/file-store';
 import { drupalOp, renderPage, type RenderRequest } from '../drupal/site-php';
 import { substituteAggregates } from '../ops/aggregates';
 import { crossingsSince, emptyCrossings, snapshotCrossings } from '../ops/crossings';
@@ -425,7 +425,7 @@ export async function deriveStep(
 	if (row?.uri === undefined) return;
 	const uri = String(row.uri);
 	site.sql.exec('DELETE FROM cfw_derive_queue WHERE uri = ?', uri);
-	const source = getFile(site.sql, uri);
+	const source = await readFile(site.sql, site.fileBuckets(), uri, site.siteName());
 	if (source === undefined) {
 		site.lastDerive = { uri, skipped: 'the file is gone' };
 		return;

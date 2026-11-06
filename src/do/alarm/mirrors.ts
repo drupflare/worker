@@ -1,14 +1,26 @@
-import { drainMirrors, type MirrorBucket } from '../../db/file-store';
+import {
+	drainHydrates,
+	drainMirrors,
+	evictMirrored,
+	nextEvictionAt,
+	queueBackfill,
+	r2OpsSpent,
+	type HydrateDrain,
+	type MirrorBucket,
+	type MirrorDrain
+} from '../../db/file-store';
 import { drainPageMirrors } from '../../ops/page-mirror';
 import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
-import { mirrorLimit } from '../levers';
+import { fileEvictAfterMs, mirrorLimit } from '../levers';
 import type { PageRow } from '../types';
 import type { AlarmContext } from './context';
 
 /**
  * The R2 file and page mirrors. A page answered from an R2 custom domain costs no Worker request,
  * and Worker requests bind the serving ceiling. No bucket bound is the free default, not an error.
+ * Under `FILE_STORE=r2` restores and evictions still run on a spent write budget: neither writes
+ * to R2, and a file must stay readable and leave the object either way.
  */
 export function mirrorsPhase({ site }: AlarmContext): Promise<void> | undefined {
 	const bucket = site.mirrorBucket();
@@ -17,8 +29,65 @@ export function mirrorsPhase({ site }: AlarmContext): Promise<void> | undefined 
 	if (bucket && r2Left === 0) {
 		site.lastMirrorDrain = { at: Date.now(), value: { budgetSpent: site.r2Allowance() } };
 	}
-	if (bucket && r2Left > 0) return drainBoth(site, bucket, r2Left);
+	if (bucket && (r2Left > 0 || site.fileStoreR2())) return drainBoth(site, bucket, r2Left);
 	return undefined;
+}
+
+/** what one file-store pass did; the `FILE_STORE=r2` parts are absent otherwise */
+export type FileOffload = {
+	drained?: MirrorDrain;
+	restored?: HydrateDrain;
+	evicted?: { evicted: number; bytes: number };
+	queuedBackfill?: number;
+};
+
+/**
+ * One pass over the file store: backfill once, restore, put, then evict. The write budget gates
+ * only the puts; `left` is what remains of it.
+ */
+export async function offloadFiles(
+	site: SitePhpDurableObject,
+	bucket: MirrorBucket,
+	opts: { limit: number; left: number }
+): Promise<FileOffload> {
+	const out: FileOffload = {};
+	const store = site.fileStoreR2();
+	const buckets = site.fileBuckets();
+	const nowMs = site.nowMs();
+	if (store) {
+		const schemes = site.fileSchemes();
+		const flag = `file_backfill:${schemes.join('+')}`;
+		if (site.metaGet(flag) === null) {
+			out.queuedBackfill = queueBackfill(site.sql, nowMs, schemes);
+			site.metaSet(flag, nowMs);
+		}
+		out.restored = await drainHydrates(site.sql, buckets, {
+			limit: opts.limit,
+			site: site.siteName(),
+			nowMs
+		});
+	}
+	if (opts.left > 0) {
+		out.drained = await drainMirrors(site.sql, bucket, {
+			limit: Math.min(opts.limit, opts.left),
+			site: site.siteName(),
+			...(store ? { privateBucket: buckets.private, verify: true } : {})
+		});
+		site.chargeR2(r2OpsSpent(out.drained));
+	}
+	if (store) {
+		const graceMs = fileEvictAfterMs(site.env);
+		out.evicted = evictMirrored(site.sql, {
+			nowMs: site.nowMs(),
+			graceMs,
+			limit: opts.limit,
+			schemes: site.fileSchemes()
+		});
+		// the grace window is longer than any alarm cadence, so name the moment it ends
+		const due = nextEvictionAt(site.sql, graceMs);
+		if (due !== undefined) site.armFillAlarm(Math.max(1_000, due - site.nowMs()));
+	}
+	return out;
 }
 
 async function drainBoth(
@@ -28,16 +97,23 @@ async function drainBoth(
 ): Promise<void> {
 	let r2Left = start;
 	try {
-		const drained = await drainMirrors(site.sql, bucket, {
-			limit: Math.min(mirrorLimit(site.env), r2Left),
-			site: site.siteName()
+		const offload = await offloadFiles(site, bucket, {
+			limit: mirrorLimit(site.env),
+			left: r2Left
 		});
-		const spent =
-			drained.mirrored + drained.deleted + drained.failed + drained.droppedAfterStrikes;
-		site.chargeR2(spent);
-		r2Left -= spent;
-		if (drained.mirrored + drained.deleted + drained.refused > 0) {
-			site.lastMirrorDrain = { at: Date.now(), value: drained };
+		const drained = offload.drained;
+		if (drained) r2Left -= r2OpsSpent(drained);
+		const moved =
+			(drained?.mirrored ?? 0) +
+			(drained?.deleted ?? 0) +
+			(drained?.refused ?? 0) +
+			(offload.restored?.hydrated ?? 0) +
+			(offload.evicted?.evicted ?? 0);
+		if (moved > 0) {
+			site.lastMirrorDrain = {
+				at: Date.now(),
+				value: drained && !site.fileStoreR2() ? drained : { ...offload }
+			};
 		}
 	} catch (e) {
 		site.lastMirrorDrain = { at: Date.now(), value: { error: errorMessage(e) } };

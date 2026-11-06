@@ -1,5 +1,5 @@
 import { DO_MAX_RECORD_BYTES, DO_MAX_STATEMENT_CHARS } from '../../db/export-sql';
-import { drainMirrors, pendingMirrors } from '../../db/file-store';
+import { drainMirrors, pendingMirrors, queueRehydrateAll, storedBytes } from '../../db/file-store';
 import {
 	amplification,
 	chargeFactorsFromSchema,
@@ -17,6 +17,7 @@ import {
 import type { SitePhpDurableObject } from '../../site-do';
 import { jsonError } from '../../util/reply';
 import { firstRow } from '../../util/sql';
+import { offloadFiles, type FileOffload } from '../alarm/mirrors';
 import { mirrorLimit } from '../levers';
 import type { Row } from '../types';
 
@@ -121,7 +122,12 @@ export async function mirror(
 	const bucket = site.mirrorBucket();
 	const limit = Number(url.searchParams.get('limit') ?? mirrorLimit(site.env));
 	const left = bucket ? site.r2Allowance().left : 0;
-	if (bucket && left === 0) {
+	// a site about to move to a config without `FILES` asks for every evicted file back first
+	const rehydrating =
+		url.searchParams.get('rehydrate') === '1'
+			? queueRehydrateAll(site.sql, site.nowMs())
+			: null;
+	if (bucket && left === 0 && !site.fileStoreR2()) {
 		return Response.json({
 			ok: true,
 			budgetSpent: true,
@@ -130,16 +136,16 @@ export async function mirror(
 			how: 'the R2 write budget is spent for this month; files serve from the object'
 		});
 	}
-	const drained = await drainMirrors(site.sql, bucket, {
-		limit: bucket ? Math.min(limit, left) : limit,
-		site: site.siteName()
-	});
-	site.chargeR2(
-		drained.mirrored + drained.deleted + drained.failed + drained.droppedAfterStrikes
-	);
+	const offload: FileOffload = bucket
+		? await offloadFiles(site, bucket, { limit, left })
+		: { drained: await drainMirrors(site.sql, undefined, { limit, site: site.siteName() }) };
 	return Response.json({
 		ok: true,
-		...drained,
+		...(offload.drained ?? {}),
+		restored: offload.restored ?? null,
+		evicted: offload.evicted ?? null,
+		rehydrating,
+		storage: storedBytes(site.sql),
 		r2: bucket ? site.r2Allowance() : null,
 		pending: pendingMirrors(site.sql, 25),
 		how: bucket

@@ -120,7 +120,9 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 			lastWithdrawal: site.lastWithdrawal ?? null
 		},
 		// quota accounting; guarded like `spend.storage` below (a read must not run DDL)
-		storage: site.hasTable('cfw_file') ? storedBytes(site.sql) : { files: 0, bytes: 0 },
+		storage: site.hasTable('cfw_file')
+			? storedBytes(site.sql)
+			: { files: 0, bytes: 0, offloaded: { files: 0, bytes: 0 } },
 		// per-site rollup over those meters; a dimension with no counter reports null and a reason
 		spend: attributeSpend(
 			{

@@ -101,8 +101,14 @@ the drain moves it under the normal limits. To move a site back to a config with
 `POST /mirror?rehydrate=1` with the owner token and wait until `storage.offloaded.files` in `/serve-stats` reads `0`. Removing
 the var alone does not bring bytes back, and an evicted file whose bucket is unbound cannot be read.
 
-`/serve-stats` reports `storage.bytes` (every byte the site owns) and `storage.offloaded` (the part
-held only in R2). The `/export` dump holds file rows and no offloaded bytes; see
+R2 keys carry the site's name (`f/<site>/<scheme>/<path>`) and each row records the site that verified
+its object. A site restored from another site's dump therefore starts with rows that name the
+source's objects. It reads them, copies each under its own prefix on the alarm and re-points the
+row only when the platform has granted that source (`file_clone:<site>` in `CONFIG_KV`); the name in
+the row is a claim and never an authority. See [Recovery](../../operating/recovery.md#restore).
+
+`/serve-stats` reports `storage.bytes` (every byte the site owns), `storage.offloaded` (the part
+held only in R2) and `storage.adopting` (copies still queued after a restore). The `/export` dump holds file rows and no offloaded bytes; see
 [Recovery](../../operating/recovery.md).
 
 ### Image Styles

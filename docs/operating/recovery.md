@@ -122,9 +122,36 @@ generation}`; the replay then runs on the alarm, and `GET /health` reports the s
 
 To restore into a new site, provision the site, take its owner token, then POST the dump to it. The
 dump carries the database and not the owner token, `hash_salt` (unless exported with `?secrets=1`) or
-any file bytes held in R2. Under `FILE_STORE=r2` a file's row says where its bytes are, and R2 keys carry
-the source site's name, so a restored copy reads `f/<new site>/...` and finds nothing. Copy the source
-site's objects to the new prefix before serving the new site.
+any file bytes held in R2.
+
+**A dump never says which site it came from.** `site_name` and `site_origin` are left out of every
+export, `?secrets=1` included, and a restore drops them from a dump that still carries them. Before
+this, a restore replaced the target's pinned name with the source's, so the target keyed its R2 objects
+under the source's prefix and read the source's KV settings. The restore replaces `cfw_meta`, so the
+target answers to the name `site` until its next request teaches it the real one, and R2 mode waits for
+that.
+
+Under `FILE_STORE=r2` a file row records which site's prefix holds its object (`r2site`), and a
+restored row names the source. **That name is a claim, not an authority.** It arrives in a request body
+that a site's owner writes, and the managed buckets are shared between tenants, so honouring it would
+let one tenant read another's files by naming them as the source. A target reads or copies a source's
+objects only when the platform has granted that source: the key `file_clone:<target site>` in
+`CONFIG_KV` holds a comma-separated list of source site names. A tenant's own writes reach only
+`plan:` and `settings:` keys, so the grant has to come from whoever holds the account's credentials,
+which is the dashboard. Write it before the target's first alarm after the restore, and remove it once
+`storage.adopting` reads `0`. The worker reads it with a 30 second cache, and a failed read grants
+nothing.
+
+With a grant, on the first alarm after the target learns its name each foreign row is queued. An
+offloaded file is copied from the source prefix to the target's own, checked against the hash and size
+the row recorded (a row with no recorded hash is refused), and the row is re-pointed. A resident file
+has its bytes in the target already, so it drops the claim and is sent as an ordinary verified put;
+nothing foreign is read. Without a grant, an offloaded file under a foreign prefix stays unreadable and
+`/serve-stats` shows it as offloaded. A foreign row stops claiming a mirror at once, so no public link
+points at an object that is not at the target's prefix, and it is never evicted on the strength of
+another site's object. The source's objects are read and never written or deleted, so two sites never
+share one. `storage.adopting` counts the copies still queued. Keep the source's buckets and objects
+until it reads `0`.
 
 The body is stored, not executed. `storeImport()` splits it into statements, refuses at store time if
 any statement exceeds the 100,000-character ceiling, and writes the parent row and every chunk in one

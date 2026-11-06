@@ -394,7 +394,7 @@
 <ul>
 <li><a href="page-cache.html">Page Cache Settings</a>: the KV page tier, NEVER_STALE, MEMORY_CACHE_BINS and EDGE_PLAN.</li>
 <li><a href="static-assets.html">Static Asset Settings</a>: asset cache lifetimes, request headers and ASSET_AGGREGATES.</li>
-<li><a href="request-limits.html">Request Limits</a>: OUTBOUND_GUARD and MAX_BODY_BYTES.</li>
+<li><a href="request-limits.html">Request Limits</a>: OUTBOUND_GUARD, MAX_BODY_BYTES and MAX_RESTORE_BYTES.</li>
 <li><a href="files-and-images.html">Files, Images and Prefill</a>: prefill and mirroring, files and image styles.</li>
 <li><a href="r2-page-origin.html">R2 Page Origin Caching</a>: a cache rule, tiered cache and the model terms for an R2 page origin.</li>
 </ul>
@@ -416,6 +416,11 @@
 <td><code>MAX_BODY_BYTES</code></td>
 <td>2 MiB</td>
 <td>largest non-file request body the edge forwards</td>
+</tr>
+<tr>
+<td><code>MAX_RESTORE_BYTES</code></td>
+<td>16 MiB</td>
+<td>largest <code>/restore</code> dump the edge forwards</td>
 </tr>
 <tr>
 <td><code>MAX_UPLOAD_BYTES</code></td>

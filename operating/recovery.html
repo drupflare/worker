@@ -466,9 +466,9 @@ comparable, so ordering them as strings orders them in time. Three methods:</p>
 <code>onNextSessionRestoreBookmark()</code> is the undo, so capture it before restarting.</p>
 <p><strong>There is no wrangler command and no dashboard button.</strong> PITR is a runtime API only, so an operator
 can reach it only through code running inside the Durable Object.</p>
-<p><code>GET /pitr</code> is that code. It takes the owner token or <code>PW_DIAGNOSTICS=1</code>. <code>/restore</code> is
-diagnostic-only: a restore body names a state the caller invents, where a <code>/pitr</code> bookmark names
-one the platform holds.</p>
+<p><code>GET /pitr</code> is that code. It takes the owner token or <code>PW_DIAGNOSTICS=1</code>, and so does <code>/restore</code>.
+A restore body names a state the caller invents, where a <code>/pitr</code> bookmark names one the platform
+holds.</p>
 <div class="table"><table>
 <thead>
 <tr>
@@ -563,9 +563,19 @@ reads as a backup while being useless. <code>?all=1</code> includes the <code>ca
 it is not replayable. A chunked export also answers 409 on a shape mismatch, so two dumps cannot be
 spliced into one file unnoticed.</p>
 <h2 id="restore">Restore</h2>
-<p><code>POST /restore</code> with the dump as the request body. <strong>This route is diagnostic-gated, not
-owner-gated</strong>: it needs <code>PW_DIAGNOSTICS=1</code>, because it overwrites a whole database. Export is a
-supported customer-facing property; restore is an operator action.</p>
+<p><code>POST /restore</code> with the dump as the request body. It takes the owner token (<code>Authorization: Bearer &lt;token&gt;</code>) or <code>PW_DIAGNOSTICS=1</code>. It was diagnostic-only until v1.0.5, because a body overwrites a whole
+database; the owner token already runs code the site did not ship (<code>/modify</code>, <code>/install</code>), so
+restoring a dump gives it no further reach, and a backup into a new site no longer has to open <code>/sql</code>
+and <code>/php</code> to do it.</p>
+<p>The dump is one body. <code>/export</code> pages as JSON, so a client joins the <code>sql</code> field of every page, in
+order, and sends the result. The body ceiling is <code>MAX_RESTORE_BYTES</code>, 16 MiB by default, separate from
+<code>MAX_BODY_BYTES</code>; a fresh site&#39;s dump is 1.9 MB (n=1). A site whose dump exceeds the ceiling cannot be
+restored through this route until a paged restore exists. The reply is <code>{ok, id, chunks, statements, generation}</code>; the replay then runs on the alarm, and <code>GET /health</code> reports the stored import.</p>
+<p>To restore into a new site, provision the site, take its owner token, then POST the dump to it. The
+dump carries the database and not the owner token, <code>hash_salt</code> (unless exported with <code>?secrets=1</code>) or
+any file bytes held in R2. Under <code>FILE_STORE=r2</code> a file&#39;s row says where its bytes are, and R2 keys carry
+the source site&#39;s name, so a restored copy reads <code>f/&lt;new site&gt;/...</code> and finds nothing. Copy the source
+site&#39;s objects to the new prefix before serving the new site.</p>
 <p>The body is stored, not executed. <code>storeImport()</code> splits it into statements, refuses at store time if
 any statement exceeds the 100,000-character ceiling, and writes the parent row and every chunk in one
 <code>transactionSync()</code>. Then the object arms its alarm and the replay runs there, a chunk at a time. The
@@ -597,7 +607,7 @@ complete stored import exists.</p>
 <tr>
 <td>Corrupted config</td>
 <td><code>/restore</code> of the last good dump</td>
-<td>content created since that dump; needs <code>PW_DIAGNOSTICS=1</code></td>
+<td>content created since that dump; takes the owner token</td>
 <td><code>POST /restore?label=pre-fix</code> with the dump as the body</td>
 </tr>
 <tr>
@@ -622,7 +632,7 @@ complete stored import exists.</p>
 <td>R2 asset loss</td>
 <td>the mirror refills from the object</td>
 <td>nothing; the object is the durable copy and R2 is a cache in front of it</td>
-<td>no operator route; <code>/__mirror</code> is DO-internal and the alarm drains the queue</td>
+<td>the alarm drains the queue; <code>/mirror</code> (owner token) runs a pass by hand</td>
 </tr>
 </tbody></table></div>
 <p>The flowchart reads the matrix from the top: whether the object survived, then what caused the change.</p>
@@ -633,7 +643,7 @@ complete stored import exists.</p>
     D -->|yes| E[&quot;Roll back the Worker and restore the data with PITR&quot;]
     D -->|no| F{&quot;Content or configuration?&quot;}
     F -->|content| G[&quot;PITR to a bookmark taken before the change&quot;]
-    F -->|configuration| H[&quot;POST /restore with the last good dump, needs PW_DIAGNOSTICS=1&quot;]</code></pre><p>Two rows carry the distinctions that matter most.</p>
+    F -->|configuration| H[&quot;POST /restore with the last good dump, with the owner token&quot;]</code></pre><p>Two rows carry the distinctions that matter most.</p>
 <p><strong>A Worker rollback is not a data rollback.</strong> <code>wrangler rollback</code> creates a new deployment from a
 previous version and becomes active across every route immediately. It reaches the 100 most recent
 versions. It does not touch <code>ctx.storage</code>, so a bad deploy that also wrote bad rows needs both a
@@ -650,7 +660,7 @@ point-in-time recovery does not cover R2. Treat the buckets as primary storage: 
 any teardown, and do not restore the object without them. This release has no blob export; a
 restore drill for blobs is open work.</p>
 <p>Before moving a site to a config without <code>FILES</code>, restore every file into the object:
-<code>/__mirror?rehydrate=1</code>, then poll <code>/serve-stats</code> until <code>storage.offloaded.files</code> reads <code>0</code>.</p>
+<code>POST /mirror?rehydrate=1</code> with the owner token, then poll <code>/serve-stats</code> until <code>storage.offloaded.files</code> reads <code>0</code>.</p>
 <h2 id="keeping-a-dump">Keeping a Dump</h2>
 <p>Nothing schedules an export. A dump exists because someone asked for one, and it lives wherever they
 put it. For a site whose object still exists, PITR covers the last 30 days with no storage of your

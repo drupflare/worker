@@ -1,4 +1,10 @@
-import { chunksPerInvocation, ensureMigrateTable, readMigrateCursor } from '../db/migrate-sql';
+import { importGeneration, importStatus, latestImport, storedImportLoader } from '../db/import-sql';
+import {
+	SqlMigrator,
+	chunksPerInvocation,
+	ensureMigrateTable,
+	readMigrateCursor
+} from '../db/migrate-sql';
 import { PACKED_CONTAINER_DIGEST } from '../ops/container-digest';
 import { ensureFragmentTables } from '../ops/fragment-index';
 import { ensureRevTables } from '../ops/module-rev';
@@ -227,16 +233,26 @@ export async function prefillServingTable(
 /**
  * Advances the migration by one invocation's chunks, or returns undefined when there is nothing
  * to do: never started, finished, or no manifest at all (an alarm that throws stops re-arming).
+ * A stored import that has not been applied takes the chain over from the pack: the restore route
+ * only stores the dump, and this is what replays it. A first-run migration still in flight
+ * finishes first, since a migrator cannot continue another generation's cursor.
  */
 export async function migrateStepIfPending(
 	site: SitePhpDurableObject
 ): Promise<Payload | undefined> {
 	ensureMigrateTable(site.sql);
 	const cursor = readMigrateCursor(site.sql);
-	if (cursor?.state === 'done') return undefined;
+	const point = latestImport(site.sql);
+	const owed =
+		point &&
+		importStatus(point, cursor)?.state !== 'applied' &&
+		(!cursor || cursor.state === 'done' || cursor.generation === importGeneration(point))
+			? point
+			: undefined;
+	if (cursor?.state === 'done' && !owed) return undefined;
 	// with no cursor, start only when provisioning was requested: starting on any alarm hijacked
 	// 37 tests (the object migrated first and never reached the quarantine or drain checks)
-	if (!cursor && !(site.provisionRequested() && (await site.hasMigrationManifest()))) {
+	if (!owed && !cursor && !(site.provisionRequested() && (await site.hasMigrationManifest()))) {
 		return undefined;
 	}
 
@@ -246,12 +262,23 @@ export async function migrateStepIfPending(
 		// gated here (alarm() is not): a concurrent `/migrate` replays a chunk, a `UNIQUE` failure
 		// latches the cursor to `failed` and `/serve` answers 503 forever
 		const out = await site.gate.run(
-			() => site.migrator().step({ maxChunks: chunksPerInvocation(site.env) }),
+			() =>
+				(owed
+					? new SqlMigrator({
+							sql: site.sql,
+							storage: site.storage,
+							now: () => site.nowMs(),
+							...storedImportLoader(site.sql, owed.id)
+						})
+					: site.migrator()
+				).step({ maxChunks: chunksPerInvocation(site.env) }),
 			'alarm-migrate'
 		);
 		site.migrated = out.done;
 		// the completion branch a deployed site reaches: prefill in its own `gate.run()`
 		// (a sequential acquire is fine, nesting would deadlock)
+		// the dump carries the site's own pages, and the pack's digest would claim a container it lacks
+		if (out.done && owed) return { migrate: out };
 		if (out.done) {
 			// stamp the digest the container was baked with, not the shipping one (they differ till
 			// `assets:container` reruns); no stamp reads owed and the first boot rebuilds

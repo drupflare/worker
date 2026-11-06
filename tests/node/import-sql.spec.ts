@@ -13,6 +13,8 @@ import { DO_SQLITE_MAX_STATEMENT_CHARS } from '../../src/db/heap-store';
 import {
 	IMPORT_STATEMENTS_PER_CHUNK,
 	ensureImportTables,
+	importGeneration,
+	importStatus,
 	latestImport,
 	splitSqlStatements,
 	storeImport,
@@ -200,6 +202,36 @@ describe('storing a dump, and replaying it through the EXISTING migrator loader'
 
 	it('returns undefined when nothing has been imported', () => {
 		expect(latestImport(sql)).toBeUndefined();
+	});
+
+	it('reads the stored import against the migrate cursor: pending, applied or failed', () => {
+		const stored = store('SELECT 1; SELECT 2;', { generation: 'manual-1', perChunk: 1 });
+		const point = latestImport(sql);
+		const cursor = (state: string, generation = importGeneration(stored), chunk = 0) => ({
+			generation,
+			state,
+			chunk,
+			chunks: 2,
+			error: state === 'failed' ? 'no such table: t' : null
+		});
+		expect(importStatus(undefined, undefined)).toBeUndefined();
+		// the pack's own cursor, finished: this import has not started
+		expect(importStatus(point, cursor('done', 'packgen'))).toMatchObject({
+			generation: 'manual-1',
+			state: 'pending',
+			chunk: 0
+		});
+		expect(importStatus(point, undefined)?.state).toBe('pending');
+		expect(importStatus(point, cursor('running', undefined, 1))).toMatchObject({
+			state: 'pending',
+			chunk: 1,
+			chunks: 2
+		});
+		expect(importStatus(point, cursor('done'))?.state).toBe('applied');
+		expect(importStatus(point, cursor('failed'))).toMatchObject({
+			state: 'failed',
+			error: 'no such table: t'
+		});
 	});
 
 	it('does NOT offer a torn import as a restore point', () => {

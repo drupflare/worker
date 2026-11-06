@@ -1,4 +1,4 @@
-import { latestImport } from '../../db/import-sql';
+import { importStatus, latestImport } from '../../db/import-sql';
 import {
 	claimWarmRun,
 	firstRunConfig,
@@ -97,6 +97,7 @@ export async function health(
 		site.metaSet('repair_state', serialiseState(released));
 		return Response.json({ ok: true, released, was: state });
 	}
+	const point = latestImport(site.sql);
 	return Response.json({
 		tree: healthTree([
 			repairNode(state),
@@ -105,7 +106,8 @@ export async function health(
 		]),
 		repair: state,
 		quarantined: isQuarantined(state),
-		rollback: shouldRollback(state, latestImport(site.sql), site.nowMs()),
+		rollback: shouldRollback(state, point, site.nowMs()),
+		import: importStatus(point, site.migrateCursorOrNull() ?? undefined) ?? null,
 		advisories: site.advisoryVerdict(),
 		version: site.workerVersion(),
 		lastFindings: site.lastFindings ?? [],

@@ -6,6 +6,7 @@
 import { firstRow } from '../util/sql';
 import { DO_SQLITE_MAX_STATEMENT_CHARS } from './heap-store';
 import type {
+	MigrateCursor,
 	MigrationChunk,
 	MigrationLoader,
 	MigrationManifest,
@@ -119,6 +120,50 @@ export type StoredImport = {
 	statements: number;
 	generation: string;
 };
+
+/** the generation the migrator records while it replays an import, which is how a cursor names one */
+export function importGeneration(point: Pick<StoredImport, 'id' | 'generation'>): string {
+	return `import:${point.id}:${point.generation}`;
+}
+
+/** where the newest stored import stands: replaying, replayed, or stopped on an error */
+export type ImportStatus = {
+	id: number;
+	generation: string;
+	state: 'pending' | 'applied' | 'failed';
+	chunk: number;
+	chunks: number;
+	error: string | null;
+};
+
+/**
+ * Reads the newest stored import against the migrate cursor. The cursor names an import by
+ * {@link importGeneration}, so any other generation there means this one has not started.
+ *
+ * @returns undefined when no import is stored
+ */
+export function importStatus(
+	point: StoredImport | undefined,
+	cursor: Pick<MigrateCursor, 'generation' | 'state' | 'chunk' | 'chunks' | 'error'> | undefined
+): ImportStatus | undefined {
+	if (!point) return undefined;
+	const mine = cursor?.generation === importGeneration(point);
+	const state = !mine
+		? 'pending'
+		: cursor.state === 'done'
+			? 'applied'
+			: cursor.state === 'failed'
+				? 'failed'
+				: 'pending';
+	return {
+		id: point.id,
+		generation: point.generation,
+		state,
+		chunk: mine ? cursor.chunk : 0,
+		chunks: point.chunks,
+		error: mine ? cursor.error : null
+	};
+}
 
 /** a statement no replay could execute, refused at store time rather than mid-restore */
 export class ImportStatementTooLongError extends Error {
@@ -283,7 +328,7 @@ export function storedImportLoader(sql: SqlLike, importId: number): MigrationLoa
 			const chunks = Number(row.total_chunks);
 			return {
 				// the import's own generation, so the migrator cannot skip it as the shipped pack
-				generation: `import:${importId}:${row.generation}`,
+				generation: importGeneration({ id: importId, generation: String(row.generation) }),
 				// a backup may replay over a finished, different generation (else skipped)
 				replaces: true,
 				totals: {

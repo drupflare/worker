@@ -329,6 +329,65 @@ describe('the wiring that makes a rollback actually restore something', () => {
 		expect(Number(out.body.chunks)).toBeGreaterThan(0);
 	});
 
+	it('applies a POSTed dump on a migrated site, and /health follows it from pending to applied', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, PW_DIAGNOSTICS: '1' };
+			await migrate(site, '?all=1&prefill=0');
+			const health = async () =>
+				(
+					(await site
+						.fetch(new Request('https://do.local/__health'))
+						.then((r) => r.json())) as {
+						import: Record<string, unknown> | null;
+					}
+				).import;
+			const before = await health();
+			await site.fetch(
+				new Request('https://do.local/__restore?label=manual-1', {
+					method: 'POST',
+					body: 'CREATE TABLE cfw_restore_probe (a);\nINSERT INTO cfw_restore_probe (a) VALUES (7);'
+				})
+			);
+			const pending = await health();
+			let applied = await health();
+			for (let i = 0; i < 6 && applied?.state !== 'applied'; i++) {
+				await site.storage.setAlarm(Date.now() + 1);
+				await site.alarm();
+				applied = await health();
+			}
+			const rows = seams(site)
+				.sql.exec('SELECT a FROM cfw_restore_probe')
+				.toArray()
+				.map((r) => Number(r.a));
+			return { before, pending, applied, rows };
+		});
+		expect(out.before).toBeNull();
+		expect(out.pending).toMatchObject({ generation: 'manual-1', state: 'pending' });
+		expect(out.rows, 'the alarm never replayed the stored dump').toEqual([7]);
+		expect(out.applied).toMatchObject({ generation: 'manual-1', state: 'applied' });
+	});
+
+	it('reports a dump whose replay fails as failed, and keeps the cause', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, PW_DIAGNOSTICS: '1' };
+			await migrate(site, '?all=1&prefill=0');
+			await site.fetch(
+				new Request('https://do.local/__restore?label=bad-1', {
+					method: 'POST',
+					body: 'INSERT INTO cfw_absent (a) VALUES (1);'
+				})
+			);
+			await site.storage.setAlarm(Date.now() + 1);
+			await site.alarm();
+			const reply = (await site
+				.fetch(new Request('https://do.local/__health'))
+				.then((r) => r.json())) as { import: Record<string, unknown> | null };
+			return reply.import;
+		});
+		expect(out).toMatchObject({ generation: 'bad-1', state: 'failed' });
+		expect(String(out?.error)).toContain('cfw_absent');
+	});
+
 	it('refuses a GET, because a restore overwrites the database', async () => {
 		const out = await inObject(freshSite(), async (site) => {
 			site.env = { ...site.env, PW_DIAGNOSTICS: '1' };

@@ -379,6 +379,13 @@
 			"sha256": "f583d0d942b62320c32f763bd600b956cdfc5e06e92d48ec77c843eaef7a2ca0",
 			"md5": "9b9c464dca06819d3da6595e7fcd6ab0",
 			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-11-02"
+		},
+		{
+			"key": "snapshots/site.sqlite.964a71ae6f9e",
+			"bytes": 5832704,
+			"sha256": "964a71ae6f9e311b13f26045b2cac65f0c52f292eb519908a8ebecf37c54f434",
+			"md5": "497ad2fee86935da39a8f50b13583f9b",
+			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-11-06"
 		}
 	]
 }

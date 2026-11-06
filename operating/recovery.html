@@ -425,6 +425,12 @@ restores.</p>
 <td>current state</td>
 <td>yes</td>
 </tr>
+<tr>
+<td>The R2 file store</td>
+<td>file bytes (<code>FILE_STORE=r2</code>)</td>
+<td>current state</td>
+<td>no; the dump holds metadata only</td>
+</tr>
 </tbody></table></div>
 <p><strong>PITR is operational recovery, not backup.</strong> It reverses a change to an object that still exists.
 It lives in the same place as the data it protects, so a deleted namespace, a deleted Worker or a
@@ -634,9 +640,17 @@ versions. It does not touch <code>ctx.storage</code>, so a bad deploy that also 
 rollback and a PITR restore. Cloudflare refuses the rollback outright if a Durable
 Object class lifecycle change happened between the two versions, or if the target version binds an R2
 bucket, KV namespace or queue that no longer exists.</p>
-<p><strong>R2 is a mirror, not a backup.</strong> With no <code>FILES</code> bucket bound, which is the shipped configuration, the
+<p><strong>R2 is a mirror, not a backup, unless <code>FILE_STORE=r2</code>.</strong> With no <code>FILES</code> bucket bound, which is the shipped configuration, the
 object is the durable copy and there is nothing to lose. With one bound, the bucket holds rendered pages and
 uploaded files that the object still has, and the mirror queue refills it on the alarm.</p>
+<p>With <code>FILE_STORE=r2</code>, which the managed config sets, a file leaves the object once its upload is
+verified and the grace window has passed. The bucket then holds the only copy of its bytes, so the
+<code>/export</code> dump carries the file&#39;s row and no bytes, and losing the bucket loses the file. Object
+point-in-time recovery does not cover R2. Treat the buckets as primary storage: keep them out of
+any teardown, and do not restore the object without them. This release has no blob export; a
+restore drill for blobs is open work.</p>
+<p>Before moving a site to a config without <code>FILES</code>, restore every file into the object:
+<code>/__mirror?rehydrate=1</code>, then poll <code>/serve-stats</code> until <code>storage.offloaded.files</code> reads <code>0</code>.</p>
 <h2 id="keeping-a-dump">Keeping a Dump</h2>
 <p>Nothing schedules an export. A dump exists because someone asked for one, and it lives wherever they
 put it. For a site whose object still exists, PITR covers the last 30 days with no storage of your

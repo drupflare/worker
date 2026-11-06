@@ -448,6 +448,11 @@ serving path, and a typo must not take a site down.</p>
 <td><a href="index.html">Configuration</a></td>
 </tr>
 <tr>
+<td><code>FILES_PRIVATE</code></td>
+<td>binding</td>
+<td><a href="index.html">Configuration</a></td>
+</tr>
+<tr>
 <td><code>CF_VERSION_METADATA</code></td>
 <td>binding</td>
 <td><a href="index.html">Configuration</a></td>
@@ -711,6 +716,16 @@ serving path, and a typo must not take a site down.</p>
 <td><code>FILES_PUBLIC_URL</code></td>
 <td>unset</td>
 <td><a href="serving/files-and-images.html#files_public_url">Serving</a></td>
+</tr>
+<tr>
+<td><code>FILE_STORE</code></td>
+<td>unset; <code>r2</code> on the managed config</td>
+<td><a href="serving/files-and-images.html#the-r2-file-store">Serving</a></td>
+</tr>
+<tr>
+<td><code>FILE_EVICT_AFTER_MS</code></td>
+<td>900000</td>
+<td><a href="serving/files-and-images.html#the-r2-file-store">Serving</a></td>
 </tr>
 <tr>
 <td><code>IMAGE_ENGINE</code></td>
@@ -1089,8 +1104,8 @@ serving path, and a typo must not take a site down.</p>
 </tr>
 </tbody></table></div>
 <h2 id="bindings">Bindings</h2>
-<p><code>wrangler.jsonc</code> is the canonical config and declares seven of the nine. <code>FILES</code> and <code>SEND_EMAIL</code> are
-the two it leaves out.</p>
+<p><code>wrangler.jsonc</code> is the canonical config and declares seven of the ten. <code>FILES</code>, <code>FILES_PRIVATE</code> and
+<code>SEND_EMAIL</code> are the three it leaves out.</p>
 <div class="table"><table>
 <thead>
 <tr>
@@ -1131,6 +1146,12 @@ the two it leaves out.</p>
 <td>the page and file mirror drains nothing; the off-Worker serving path is unavailable</td>
 </tr>
 <tr>
+<td><code>FILES_PRIVATE</code></td>
+<td>R2</td>
+<td>not declared</td>
+<td>with <code>FILE_STORE=r2</code>, <code>private://</code> files stay in the object</td>
+</tr>
+<tr>
 <td><code>CF_VERSION_METADATA</code></td>
 <td>version metadata</td>
 <td>declared</td>
@@ -1163,14 +1184,17 @@ requirement: wrangler creates <code>CONFIG_KV</code> and <code>FLEET_DB</code> o
 <p>Once R2 is enabled, wrangler creates the named bucket on deploy as it does for KV and D1. Add the
 binding when you want the mirror:</p>
 <pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"r2_buckets"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: [{ </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">"binding"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"FILES"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">"bucket_name"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"drupflare-files"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8"> }]</span></span></code></pre><h3 id="the-managed-config">The managed config</h3>
-<p><code>wrangler.managed.jsonc</code> is the canonical config plus the two bindings it leaves out, <code>FILES</code> and
-<code>SEND_EMAIL</code>, and one var, <code>CACHE_API=off</code>. A user Worker in a Workers for Platforms dispatch namespace
+<p><code>wrangler.managed.jsonc</code> is the canonical config plus the three bindings it leaves out, <code>FILES</code>,
+<code>FILES_PRIVATE</code> and <code>SEND_EMAIL</code>, and two vars, <code>CACHE_API=off</code> and <code>FILE_STORE=r2</code>.
+<code>FILE_STORE=r2</code> makes the two R2 buckets the home of file bytes; see
+<a href="serving/files-and-images.html#the-r2-file-store">the R2 file store</a>. The private bucket is
+<code>drupflare-files-private</code> and has no custom domain. A user Worker in a Workers for Platforms dispatch namespace
 cannot read <code>caches.default</code>: the property access throws, and every dynamic request failed with error
 1101 before the var existed. With <code>CACHE_API=off</code> the serving path never touches the Cache API and
 answers from the KV page tier and the object instead. Unset, it is on. The managed config is what a managed deployment deploys with, where the control plane has enabled R2 on
 the account and set up Email Routing, which a deploy button cannot do:</p>
 <pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bunx</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> wrangler</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> deploy</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -c</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> wrangler.managed.jsonc</span></span></code></pre><p><code>tests/node/oneclick-config.spec.ts</code> holds the two files together. It fails when the managed config
-differs from the canonical one in any key but those two, and when the canonical config names a binding
+differs from the canonical one in any key but those, and when the canonical config names a binding
 that needs an account resource it cannot create. <code>bun run release:check</code> dry-runs both configs and
 prices each bundle against the 64 MiB limit, and the release workflow bundles both before it
 publishes. Whether a deploy that names <code>send_email</code> is refused on an account without Email Routing has

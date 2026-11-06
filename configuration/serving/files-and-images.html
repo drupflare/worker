@@ -453,7 +453,8 @@ once; only the pages nobody has asked for wait.</p>
 one site at 90% of that. The count is kept in <code>cfw_meta</code> under a key that names the month, so it
 resets on the first of each month. Deletes count as well, so the tally reads high. A spent budget
 leaves the rest of the queue in place and every file keeps serving from the object, which holds the
-bytes either way. <code>/serve-stats</code> reports the month&#39;s tally as <code>r2</code>. Set it to <code>0</code> to stop both
+bytes either way (under <code>FILE_STORE=r2</code> a file already evicted serves from R2, and no file is
+evicted without a verified put, so a spent budget stops new evictions and loses nothing). <code>/serve-stats</code> reports the month&#39;s tally as <code>r2</code>. Set it to <code>0</code> to stop both
 mirrors while leaving <code>FILES</code> bound. On an account running several sites, divide the allocation
 between them.</p>
 <p>The share of traffic worth serving off the Worker depends on the traffic mix and on CDN absorption.
@@ -474,6 +475,16 @@ envelope uses.</p>
 <td>origin a mirrored public file is linked from; unset uses the Worker</td>
 </tr>
 <tr>
+<td><code>FILE_STORE</code></td>
+<td>unset</td>
+<td><code>r2</code> makes the R2 buckets the home of file bytes; needs <code>FILES</code></td>
+</tr>
+<tr>
+<td><code>FILE_EVICT_AFTER_MS</code></td>
+<td>900000</td>
+<td>how long a verified file stays in the object after its last write</td>
+</tr>
+<tr>
 <td><code>IMAGE_ENGINE</code></td>
 <td><code>tinyimg</code></td>
 <td>which engine produces derivatives; <code>images</code> for Cloudflare Images</td>
@@ -484,6 +495,63 @@ envelope uses.</p>
 <td>render an upload&#39;s image styles on the rendering lanes; <code>0</code> off</td>
 </tr>
 </tbody></table></div>
+<h3 id="the-r2-file-store">The R2 File Store</h3>
+<p>By default the Durable Object holds every file&#39;s bytes and <code>FILES</code> is an optional mirror of
+<code>public://</code>, so uploads count against the 5 GB of object storage an account has. With
+<code>FILE_STORE=r2</code> and <code>FILES</code> bound, R2 holds the bytes and the object keeps one metadata row per file.
+The managed config sets it and binds a second bucket, <code>FILES_PRIVATE</code>, for <code>private://</code>. The canonical
+config does not, so the one-click path is unchanged.</p>
+<p>PHP calls the file store synchronously and R2 is asynchronous, so a write cannot wait for R2. The order
+is write-behind:</p>
+<ol>
+<li>PHP writes the file into the object as before. Drupal can read it back at once.</li>
+<li>The alarm sends it to R2 with its SHA-256. R2 rejects the put if the bytes differ, and the drain
+also checks the stored size. A file rewritten while its put was in flight is left queued, not
+marked done.</li>
+<li>After <code>FILE_EVICT_AFTER_MS</code> with no write, the object deletes the chunks. Eviction runs no R2 call,
+so a spent write budget cannot stop it, and it never touches a file whose put was not verified.</li>
+</ol>
+<p>The grace window exists because Drupal often reads an upload back on the next request, and PHP cannot
+wait for R2. Fifteen minutes is a chosen default, not a measured one. <code>0</code> evicts on the first alarm
+after verification.</p>
+<p>Reading an evicted file depends on who asks:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>reader</th>
+<th>what happens</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>a visitor requesting a public file</td>
+<td>the Worker streams it from R2 (<code>x-cfw-file-store: r2</code>)</td>
+</tr>
+<tr>
+<td>the image styles</td>
+<td>the source is read from R2 on the Worker side</td>
+</tr>
+<tr>
+<td>a download at <code>/system/files/...</code></td>
+<td>the object restores the file before PHP runs, then PHP serves it</td>
+</tr>
+<tr>
+<td>any other PHP read (<code>fopen</code>, <code>file_get_contents</code>)</td>
+<td>the open fails and a restore is queued; a retry after the next alarm works</td>
+</tr>
+</tbody></table></div>
+<p>A rename of an evicted file is refused the same way, because R2 has no rename. The stream wrapper fails
+the open of an offloaded file in every mode that reads, so an append cannot replace the file with a
+fragment. A restored file stays in the object for another grace window.</p>
+<p><code>private://</code> files go to <code>FILES_PRIVATE</code> only, never to <code>FILES</code>. A custom domain publishes a whole
+bucket, so the private bucket must not have one. Without <code>FILES_PRIVATE</code> bound, private files stay in
+the object.</p>
+<p>A site that switches to <code>FILE_STORE=r2</code> queues what the object already holds on its first alarm, and
+the drain moves it under the normal limits. To move a site back to a config without <code>FILES</code>, call
+<code>/__mirror?rehydrate=1</code> and wait until <code>storage.offloaded.files</code> in <code>/serve-stats</code> reads <code>0</code>. Removing
+the var alone does not bring bytes back, and an evicted file whose bucket is unbound cannot be read.</p>
+<p><code>/serve-stats</code> reports <code>storage.bytes</code> (every byte the site owns) and <code>storage.offloaded</code> (the part
+held only in R2). The <code>/export</code> dump holds file rows and no offloaded bytes; see
+<a href="../../operating/recovery.html">Recovery</a>.</p>
 <h3 id="image-styles">Image Styles</h3>
 <p>A public image style&#39;s URL points at the Worker&#39;s delivery path, <code>/cfw-img/&lt;id&gt;/&lt;uri&gt;?&lt;transform&gt;</code>,
 where the front worker renders the derivative with tinyimg. The drupflare module rewrites the URL

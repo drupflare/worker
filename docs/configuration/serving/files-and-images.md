@@ -30,7 +30,8 @@ once; only the pages nobody has asked for wait.
 one site at 90% of that. The count is kept in `cfw_meta` under a key that names the month, so it
 resets on the first of each month. Deletes count as well, so the tally reads high. A spent budget
 leaves the rest of the queue in place and every file keeps serving from the object, which holds the
-bytes either way. `/serve-stats` reports the month's tally as `r2`. Set it to `0` to stop both
+bytes either way (under `FILE_STORE=r2` a file already evicted serves from R2, and no file is
+evicted without a verified put, so a spent budget stops new evictions and loses nothing). `/serve-stats` reports the month's tally as `r2`. Set it to `0` to stop both
 mirrors while leaving `FILES` bound. On an account running several sites, divide the allocation
 between them.
 
@@ -40,11 +41,61 @@ envelope uses.
 
 ## Files and Images
 
-| var                 | default   | what it does                                                        |
-| ------------------- | --------- | ------------------------------------------------------------------- |
-| `FILES_PUBLIC_URL`  | unset     | origin a mirrored public file is linked from; unset uses the Worker |
-| `IMAGE_ENGINE`      | `tinyimg` | which engine produces derivatives; `images` for Cloudflare Images   |
-| `EAGER_DERIVATIVES` | on        | render an upload's image styles on the rendering lanes; `0` off     |
+| var                   | default   | what it does                                                        |
+| --------------------- | --------- | ------------------------------------------------------------------- |
+| `FILES_PUBLIC_URL`    | unset     | origin a mirrored public file is linked from; unset uses the Worker |
+| `FILE_STORE`          | unset     | `r2` makes the R2 buckets the home of file bytes; needs `FILES`     |
+| `FILE_EVICT_AFTER_MS` | 900000    | how long a verified file stays in the object after its last write   |
+| `IMAGE_ENGINE`        | `tinyimg` | which engine produces derivatives; `images` for Cloudflare Images   |
+| `EAGER_DERIVATIVES`   | on        | render an upload's image styles on the rendering lanes; `0` off     |
+
+### The R2 File Store
+
+By default the Durable Object holds every file's bytes and `FILES` is an optional mirror of
+`public://`, so uploads count against the 5 GB of object storage an account has. With
+`FILE_STORE=r2` and `FILES` bound, R2 holds the bytes and the object keeps one metadata row per file.
+The managed config sets it and binds a second bucket, `FILES_PRIVATE`, for `private://`. The canonical
+config does not, so the one-click path is unchanged.
+
+PHP calls the file store synchronously and R2 is asynchronous, so a write cannot wait for R2. The order
+is write-behind:
+
+1. PHP writes the file into the object as before. Drupal can read it back at once.
+2. The alarm sends it to R2 with its SHA-256. R2 rejects the put if the bytes differ, and the drain
+   also checks the stored size. A file rewritten while its put was in flight is left queued, not
+   marked done.
+3. After `FILE_EVICT_AFTER_MS` with no write, the object deletes the chunks. Eviction runs no R2 call,
+   so a spent write budget cannot stop it, and it never touches a file whose put was not verified.
+
+The grace window exists because Drupal often reads an upload back on the next request, and PHP cannot
+wait for R2. Fifteen minutes is a chosen default, not a measured one. `0` evicts on the first alarm
+after verification.
+
+Reading an evicted file depends on who asks:
+
+| reader                                            | what happens                                                               |
+| ------------------------------------------------- | -------------------------------------------------------------------------- |
+| a visitor requesting a public file                | the Worker streams it from R2 (`x-cfw-file-store: r2`)                     |
+| the image styles                                  | the source is read from R2 on the Worker side                              |
+| a download at `/system/files/...`                 | the object restores the file before PHP runs, then PHP serves it           |
+| any other PHP read (`fopen`, `file_get_contents`) | the open fails and a restore is queued; a retry after the next alarm works |
+
+A rename of an evicted file is refused the same way, because R2 has no rename. The stream wrapper fails
+the open of an offloaded file in every mode that reads, so an append cannot replace the file with a
+fragment. A restored file stays in the object for another grace window.
+
+`private://` files go to `FILES_PRIVATE` only, never to `FILES`. A custom domain publishes a whole
+bucket, so the private bucket must not have one. Without `FILES_PRIVATE` bound, private files stay in
+the object.
+
+A site that switches to `FILE_STORE=r2` queues what the object already holds on its first alarm, and
+the drain moves it under the normal limits. To move a site back to a config without `FILES`, call
+`/__mirror?rehydrate=1` and wait until `storage.offloaded.files` in `/serve-stats` reads `0`. Removing
+the var alone does not bring bytes back, and an evicted file whose bucket is unbound cannot be read.
+
+`/serve-stats` reports `storage.bytes` (every byte the site owns) and `storage.offloaded` (the part
+held only in R2). The `/export` dump holds file rows and no offloaded bytes; see
+[Recovery](../../operating/recovery.md).
 
 ### Image Styles
 

@@ -4,12 +4,13 @@ A site is a Durable Object holding a SQLite database. Four primitives can move i
 they answer different failures. Picking the wrong one either does nothing or destroys more than it
 restores.
 
-| Primitive              | Scope                             | Window                 | Survives object loss |
-| ---------------------- | --------------------------------- | ---------------------- | -------------------- |
-| Point-in-time recovery | the object's whole storage        | 30 days                | no                   |
-| `/export` dump         | the site database, as SQL text    | as long as you keep it | yes                  |
-| `wrangler rollback`    | Worker code and config            | 100 versions           | n/a                  |
-| The R2 mirror          | rendered pages and uploaded files | current state          | yes                  |
+| Primitive              | Scope                             | Window                 | Survives object loss             |
+| ---------------------- | --------------------------------- | ---------------------- | -------------------------------- |
+| Point-in-time recovery | the object's whole storage        | 30 days                | no                               |
+| `/export` dump         | the site database, as SQL text    | as long as you keep it | yes                              |
+| `wrangler rollback`    | Worker code and config            | 100 versions           | n/a                              |
+| The R2 mirror          | rendered pages and uploaded files | current state          | yes                              |
+| The R2 file store      | file bytes (`FILE_STORE=r2`)      | current state          | no; the dump holds metadata only |
 
 **PITR is operational recovery, not backup.** It reverses a change to an object that still exists.
 It lives in the same place as the data it protects, so a deleted namespace, a deleted Worker or a
@@ -153,9 +154,19 @@ rollback and a PITR restore. Cloudflare refuses the rollback outright if a Durab
 Object class lifecycle change happened between the two versions, or if the target version binds an R2
 bucket, KV namespace or queue that no longer exists.
 
-**R2 is a mirror, not a backup.** With no `FILES` bucket bound, which is the shipped configuration, the
+**R2 is a mirror, not a backup, unless `FILE_STORE=r2`.** With no `FILES` bucket bound, which is the shipped configuration, the
 object is the durable copy and there is nothing to lose. With one bound, the bucket holds rendered pages and
 uploaded files that the object still has, and the mirror queue refills it on the alarm.
+
+With `FILE_STORE=r2`, which the managed config sets, a file leaves the object once its upload is
+verified and the grace window has passed. The bucket then holds the only copy of its bytes, so the
+`/export` dump carries the file's row and no bytes, and losing the bucket loses the file. Object
+point-in-time recovery does not cover R2. Treat the buckets as primary storage: keep them out of
+any teardown, and do not restore the object without them. This release has no blob export; a
+restore drill for blobs is open work.
+
+Before moving a site to a config without `FILES`, restore every file into the object:
+`/__mirror?rehydrate=1`, then poll `/serve-stats` until `storage.offloaded.files` reads `0`.
 
 ## Keeping a Dump
 

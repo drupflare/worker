@@ -118,7 +118,14 @@ The dump is one body. `/export` pages as JSON, so a client joins the `sql` field
 order, and sends the result. The body ceiling is `MAX_RESTORE_BYTES`, 16 MiB by default, separate from
 `MAX_BODY_BYTES`; a fresh site's dump is 1.9 MB (n=1). A site whose dump exceeds the ceiling cannot be
 restored through this route until a paged restore exists. The reply is `{ok, id, chunks, statements,
-generation}`; the replay then runs on the alarm, and `GET /health` reports the stored import.
+generation}`. The route only stores the dump; the alarm replays it a few chunks at a time, and the
+site answers 503 from the first chunk until the last.
+
+`GET /health` carries an `import` object for the newest stored dump, or `null` when none exists:
+`{id, generation, state, chunk, chunks, error}`. `state` is `pending` until the replay has finished,
+`applied` once it has, and `failed` when a chunk threw, with the cause in `error`. A failed replay
+retries on the next alarm. A client polls `/health` with the owner token until `state` is `applied`.
+A site still running its first-run migration finishes that before it starts the dump.
 
 To restore into a new site, provision the site, take its owner token, then POST the dump to it. The
 dump carries the database and not the owner token, `hash_salt` (unless exported with `?secrets=1`) or
@@ -158,8 +165,8 @@ any statement exceeds the 100,000-character ceiling, and writes the parent row a
 `transactionSync()`. Then the object arms its alarm and the replay runs there, a chunk at a time. The
 invocation that accepts the upload is never the one holding a half-overwritten site open.
 
-`?label=` names the restore point; it defaults to the current time. `GET /health` reports whether a
-complete stored import exists.
+`?label=` names the restore point; it defaults to the current time. `GET /health` reports the newest
+stored import in its `import` field.
 
 ## The Recovery Matrix
 

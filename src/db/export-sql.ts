@@ -121,6 +121,35 @@ export function isSecretMetaRow(
 	return SECRET_META_HEX_PREFIXES.some((p) => hex.startsWith(p));
 }
 
+/**
+ * The `cfw_meta` keys that say WHICH site an object is, which a dump never carries, `?secrets=1`
+ * included. A restore that carried `site_name` renamed the target to the source: it then keyed its
+ * R2 objects under the source's prefix (two sites on one object) and read the source's KV settings.
+ * `site_origin` pins the host the site builds URLs for. Both are learned again from the next request.
+ */
+export const IDENTITY_META_KEYS = new Set(['site_name', 'site_origin']);
+
+const IDENTITY_META_HEX = new Set(
+	[...IDENTITY_META_KEYS].map((k) =>
+		[...new TextEncoder().encode(k)]
+			.map((b) => b.toString(16).padStart(2, '0'))
+			.join('')
+			.toUpperCase()
+	)
+);
+
+/** whether this row is an identity `cfw_meta` row; the key is column `k` */
+export function isIdentityMetaRow(
+	table: string,
+	columns: readonly string[],
+	raw: Record<string, unknown>
+): boolean {
+	if (table !== 'cfw_meta') return false;
+	const at = columns.indexOf('k');
+	if (at < 0) return false;
+	return IDENTITY_META_HEX.has(String(raw[`h${at}`] ?? '').toUpperCase());
+}
+
 /** options that shape a dump; a resumed export must repeat them */
 export interface DumpOptions {
 	/** rows per table, for a cheap sample; 0 or absent is every row */
@@ -727,6 +756,13 @@ export function dumpChunk(
 			}
 			let consumed = 0;
 			for (const raw of rows) {
+				if (isIdentityMetaRow(table, columns, raw)) {
+					// consumed so the cursor advances; an identity row is never part of a dump
+					emitted++;
+					consumed++;
+					if (keyed) afterRowid = Number(raw.__rid);
+					continue;
+				}
 				if (isSecretMetaRow(table, columns, raw) && opts.secrets !== true) {
 					// consumed so the cursor advances; only the value is withheld
 					counts[table] = (counts[table] ?? 0) + 1;

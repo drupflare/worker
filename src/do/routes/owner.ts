@@ -5,7 +5,7 @@ import {
 	type DumpCursor,
 	dumpDatabase
 } from '../../db/export-sql';
-import { storeImport } from '../../db/import-sql';
+import { isIdentityMetaStatement, storeImport } from '../../db/import-sql';
 import { isBookmark, sealedExportRows } from '../../ops/site-secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
@@ -112,7 +112,9 @@ export async function restore(
 		storage: site.storage,
 		generation: url.searchParams.get('label') ?? String(site.nowMs()),
 		source: '/__restore',
-		nowMs: site.nowMs()
+		nowMs: site.nowMs(),
+		// a dump taken before identity rows were withheld would rename this site to the source
+		skip: isIdentityMetaStatement
 	});
 	await site.setAlarmAt(site.nowMs() + 1);
 	return Response.json({ ok: true, ...stored });

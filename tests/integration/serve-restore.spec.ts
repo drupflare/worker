@@ -7,7 +7,7 @@ import {
 	tableColumns
 } from '../../src/db/export-sql';
 import { getFile, putFile } from '../../src/db/file-store';
-import { storeImport, storedImportLoader } from '../../src/db/import-sql';
+import { isIdentityMetaStatement, storeImport, storedImportLoader } from '../../src/db/import-sql';
 import type { SqlLike, StorageLike } from '../../src/db/migrate-sql';
 import { SqlMigrator, readMigrateCursor } from '../../src/db/migrate-sql';
 import { pendingMatches as oidcPendingMatches, ticketRedeemable } from '../../src/ops/oidc';
@@ -1184,5 +1184,119 @@ describe('a site that holds the rows the shipped build wrote', () => {
 			await site.adoptSecrets();
 			expect(state()).toBe(before);
 		});
+	});
+});
+
+describe('a dump never says which site it came from', () => {
+	/** a site that has learned its name and pinned an origin, as any served site has */
+	async function named(name: string) {
+		return inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, MIGRATE_SELF_DRIVE: '0' };
+			await migrate(site, '?all=1&prefill=0');
+			site.siteName(name);
+			const sql = seams(site).sql;
+			sql.exec(
+				"INSERT OR REPLACE INTO cfw_meta (k, v) VALUES ('site_origin', 'https://a.example')"
+			);
+			sql.exec("INSERT OR REPLACE INTO cfw_meta (k, v) VALUES ('zz_kept_probe', 'kept')");
+			return {
+				plain: dumpDatabase(sql).sql,
+				withSecrets: dumpDatabase(sql, { secrets: true }).sql
+			};
+		});
+	}
+
+	it('omits the pinned name and origin, with or without secrets, and keeps other meta rows', async () => {
+		const { plain, withSecrets } = await named('a.example');
+		for (const dump of [plain, withSecrets]) {
+			expect(dump).not.toContain("'site_name'");
+			expect(dump).not.toContain("'site_origin'");
+			expect(dump).not.toContain('a.example');
+			expect(dump).toContain('zz_kept_probe');
+		}
+	});
+
+	it('recognises an identity statement in the exporter own shape, and nothing wider', async () => {
+		const { plain } = await named('a.example');
+		const probe = plain
+			.split('\n')
+			.find((s) => s.includes('zz_kept_probe') && s.includes('cfw_meta'));
+		expect(probe, 'no cfw_meta insert to take the shape from').toBeDefined();
+		expect(
+			isIdentityMetaStatement((probe as string).replace('zz_kept_probe', 'site_name'))
+		).toBe(true);
+		expect(
+			isIdentityMetaStatement((probe as string).replace('zz_kept_probe', 'site_origin'))
+		).toBe(true);
+		expect(isIdentityMetaStatement(probe as string)).toBe(false);
+		expect(
+			isIdentityMetaStatement(
+				`INSERT OR REPLACE INTO "cfw_meta" (k, v) VALUES ('site_name', 'a.example');`
+			)
+		).toBe(true);
+		expect(
+			isIdentityMetaStatement(`INSERT INTO "cfw_meta" ("k", "v") VALUES ('site_name2', 'x');`)
+		).toBe(false);
+		expect(
+			isIdentityMetaStatement(`INSERT INTO "other" ("k", "v") VALUES ('site_name', 'x');`)
+		).toBe(false);
+	});
+
+	it('does not rename the target when an OLD dump that carries a name is restored into it', async () => {
+		const { plain } = await named('a.example');
+		const old = `${plain}\nINSERT OR REPLACE INTO "cfw_meta" ("k", "v") VALUES ('site_name', 'a.example');\nINSERT OR REPLACE INTO "cfw_meta" ("k", "v") VALUES ('site_origin', 'https://a.example');\n`;
+		const after = await inObject(freshSite(), async (site) => {
+			site.siteName('b.example');
+			const { sql, storage } = seams(site);
+			const id = storeImport(sql, old, {
+				storage,
+				generation: 'old-dump',
+				source: 'test',
+				nowMs: 1,
+				skip: isIdentityMetaStatement
+			}).id;
+			await new SqlMigrator({
+				sql,
+				storage,
+				now: () => Date.now(),
+				...storedImportLoader(sql, id)
+			}).step({ maxChunks: Infinity });
+			const replayed = site.siteName();
+			return {
+				replayed,
+				// the next request names it again, as every request does
+				relearned: site.siteName('b.example'),
+				origin: sql.exec("SELECT v FROM cfw_meta WHERE k = 'site_origin'").toArray(),
+				kept: sql.exec("SELECT v FROM cfw_meta WHERE k = 'zz_kept_probe'").toArray()
+			};
+		});
+		// the restore replaces cfw_meta, so the pin is gone until a request teaches it again
+		expect(after.replayed).not.toBe('a.example');
+		expect(after.relearned).toBe('b.example');
+		expect(after.origin).toEqual([]);
+		expect(after.kept).toEqual([{ v: 'kept' }]);
+	});
+
+	it('without the filter the same replay renames the target, which is the bug', async () => {
+		const { plain } = await named('a.example');
+		const old = `${plain}\nINSERT OR REPLACE INTO "cfw_meta" ("k", "v") VALUES ('site_name', 'a.example');\n`;
+		const name = await inObject(freshSite(), async (site) => {
+			site.siteName('b.example');
+			const { sql, storage } = seams(site);
+			const id = storeImport(sql, old, {
+				storage,
+				generation: 'old-dump',
+				source: 'test',
+				nowMs: 1
+			}).id;
+			await new SqlMigrator({
+				sql,
+				storage,
+				now: () => Date.now(),
+				...storedImportLoader(sql, id)
+			}).step({ maxChunks: Infinity });
+			return site.siteName();
+		});
+		expect(name).toBe('a.example');
 	});
 });

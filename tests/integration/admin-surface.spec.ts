@@ -390,16 +390,18 @@ describe('the Operate page reaches what it offers', () => {
 		expect(routeTable().owner.has(p)).toBe(true);
 	});
 
-	// THE OTHER HALF, and it is the control that gives the line above its meaning. `/restore`
-	// replays SQL a caller supplies, so it is the same shape as `/sql` rather than the same shape
-	// as `/pitr`: a bookmark names a state the platform already holds, a body names one the caller
-	// invents. It was promoted with `/pitr` for one commit and `serve-edge.spec.ts` caught it.
-	it.each(['/restore', '/sql'])(
-		'%s stays diagnostic-only, so the owner tier did not widen',
-		(p) => {
-			expect(routeTable().owner.has(p)).toBe(false);
-		}
-	);
+	// THE OTHER HALF, and it is the control that gives the line above its meaning. `/sql` runs
+	// arbitrary SQL, so it is not an owner route. `/restore` was held back with it until v1.0.5.
+	it('/sql stays diagnostic-only, so the owner tier did not widen', () => {
+		expect(routeTable().owner.has('/sql')).toBe(false);
+	});
+
+	// `/restore` joined the owner tier in v1.0.5, for a backup into a new site without opening `/sql`
+	// and `/php`; it stays out of the Operate page, which offers no whole-database overwrite
+	it('/restore is an owner route but has no control on the Operate page', () => {
+		expect(routeTable().owner.has('/restore')).toBe(true);
+		expect(OPERATE_ACTIONS.some((x) => x.path === '/restore')).toBe(false);
+	});
 
 	it('renders a control for every declared action, and marks the writes', () => {
 		const html = renderOperate();

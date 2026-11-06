@@ -856,7 +856,9 @@ describe('what a dump carries and what it leaves behind', () => {
 		db.exec(`INSERT INTO cfw_meta VALUES ('owner_token', 'tok-SECRET')`);
 		db.exec(`INSERT INTO cfw_meta VALUES ('cf_oauth_token', '{"access":"AT-SECRET"}')`);
 		db.exec(`INSERT INTO cfw_meta VALUES ('hash_salt', 'salt-SECRET')`);
-		db.exec(`INSERT INTO cfw_meta VALUES ('site_origin', 'https://real.example')`);
+		db.exec(`INSERT INTO cfw_meta VALUES ('site_note', 'https://real.example')`);
+		db.exec(`INSERT INTO cfw_meta VALUES ('site_name', 'a.example')`);
+		db.exec(`INSERT INTO cfw_meta VALUES ('site_origin', 'https://a.example')`);
 		return db;
 	}
 
@@ -867,6 +869,18 @@ describe('what a dump carries and what it leaves behind', () => {
 		expect(dump.sql).toContain('https://real.example');
 		expect(dump.sql).toContain('CREATE TABLE cfw_meta');
 		expect(dump.redacted).toBe(3);
+	});
+
+	/** which site an object is says where its R2 objects and KV settings live, so no dump carries it */
+	it('never carries the site name or origin, not even when secrets are asked for', () => {
+		for (const opts of [{}, { secrets: true }, { includeRows: () => true }]) {
+			const dump = dumpDatabase(storageOver(withSecrets()).sql, opts);
+			expect(dump.sql).not.toContain('a.example');
+			expect(dump.sql).not.toContain("'site_name'");
+			expect(dump.sql).not.toContain("'site_origin'");
+			// CONTROL: an ordinary meta row still travels
+			expect(dump.sql).toContain('https://real.example');
+		}
 	});
 
 	it('carries them when a restore asks by name', () => {

@@ -140,6 +140,17 @@ export class ImportStatementTooLongError extends Error {
 }
 
 /**
+ * Whether a dump statement writes a `cfw_meta` identity row (`site_name`, `site_origin`).
+ * Dumps stopped carrying them, but one taken earlier still does, and replaying it would rename the
+ * target to the source.
+ */
+export function isIdentityMetaStatement(statement: string): boolean {
+	return /^\s*INSERT\s+(?:OR\s+\w+\s+)?INTO\s+["`]?cfw_meta["`]?\s*\([^)]*\)\s*VALUES\s*\(\s*'(?:site_name|site_origin)'\s*,/i.test(
+		statement
+	);
+}
+
+/**
  * Stores a dump as replay chunks and returns what a loader will find.
  *
  * Atomic: the parent row and every chunk commit together, or a killed invocation leaves a row
@@ -149,7 +160,8 @@ export class ImportStatementTooLongError extends Error {
  * @param sql the object's own SQL
  * @param dump the SQL text, as `dumpDatabase()` or `/export` produces it
  * @param opts `storage` supplies the transaction; `generation` labels the import; `source` records
- *   where it came from, for the audit trail a rollback needs
+ *   where it came from, for the audit trail a rollback needs; `skip` drops statements before they
+ *   are stored
  */
 export function storeImport(
 	sql: SqlLike,
@@ -160,10 +172,11 @@ export function storeImport(
 		source: string;
 		nowMs: number;
 		perChunk?: number;
+		skip?: (statement: string) => boolean;
 	}
 ): StoredImport {
 	ensureImportTables(sql);
-	const statements = splitSqlStatements(dump);
+	const statements = splitSqlStatements(dump).filter((s) => !opts.skip?.(s));
 	if (statements.length === 0) throw new Error('dump contains no statements');
 
 	// checked before any write, so an unreplayable dump costs nothing (one big blob is enough)

@@ -389,6 +389,9 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		id: 'mount',
 		title: 'write the driver modules into the tree, so a kernel can enable them',
 		produces: ['drupal-src/modules/custom/drupflare/drupflare.info.yml'],
+		// a cached or older tree already has the info file, so presence says nothing about whether a
+		// sibling moved: a skipped mount left stale module copies, and driver-pack failed in CI
+		alwaysRun: true,
 		inputs: ['drupal-src/core/lib/Drupal.php'],
 		tools: ['bun'],
 		// THE `site` STEP NEEDS THIS NOW. `install-site-db.php` enables `drupflare`, because the

@@ -299,13 +299,15 @@ describe('planning is pure, so the resume decision is one testable function', ()
 		expect(planned.map((p) => p.step.id)).toEqual(LOCAL_STEPS.map((s) => s.id));
 	});
 
-	it('skips every step but the driver pack against a tree that already has the artifacts', () => {
+	it('skips every step but the two that write driver modules against a tree that already has the artifacts', () => {
 		const planned = planLocalBuild(satisfiedTree());
 		const running = planned.filter((p) => p.run).map((p) => p.step.id);
 		// the driver pack always runs: assets/driver.json is tracked, so it is on disk before a sibling
-		// has been read, and the digest every later step compares comes from packing it
+		// has been read, and the digest every later step compares comes from packing it. The mount
+		// writes the same modules into the tree, which a cached tree would otherwise keep stale
 		expect(running, JSON.stringify(planned.map((p) => [p.step.id, p.reason]))).toEqual([
-			'driver'
+			'driver',
+			'mount'
 		]);
 	});
 
@@ -343,6 +345,16 @@ describe('planning is pure, so the resume decision is one testable function', ()
 		expect(driver?.alwaysRun).toBe(true);
 		expect(stepSatisfied(satisfiedTree(), driver!)).toBe(true);
 		expect(stepSatisfied(scratch(), driver!)).toBe(false);
+	});
+
+	it('writes the driver modules into the tree on every build, so a cached tree cannot hold stale copies', () => {
+		const mount = LOCAL_STEPS.find((s) => s.id === 'mount');
+		expect(mount?.alwaysRun).toBe(true);
+		// still verified by its output after it runs
+		expect(stepSatisfied(satisfiedTree(), mount!)).toBe(true);
+		expect(stepSatisfied(scratch(), mount!)).toBe(false);
+		const planned = planLocalBuild(satisfiedTree(), {});
+		expect(planned.find((p) => p.step.id === 'mount')?.run).toBe(true);
 	});
 
 	it('bakes the container again when the driver moved and the composer hash did not', () => {

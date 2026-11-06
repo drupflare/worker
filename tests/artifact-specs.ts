@@ -87,6 +87,8 @@ export const ARTIFACT_SPECS = [
 	'tests/integration/module-behaviour.spec.ts',
 	'tests/integration/module-enable.spec.ts',
 	'tests/integration/multipart-submit.spec.ts',
+	// real Drupal over a file held only in R2; found by CI, which runs it where no pack exists
+	'tests/integration/offloaded-file-reads.spec.ts',
 	'tests/integration/opcache-ab.spec.ts',
 	'tests/integration/ops-surface.spec.ts',
 	'tests/integration/pack-consistency.spec.ts',

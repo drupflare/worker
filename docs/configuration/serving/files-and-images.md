@@ -80,6 +80,14 @@ Reading an evicted file depends on who asks:
 | a download at `/system/files/...`                 | the object restores the file before PHP runs, then PHP serves it           |
 | any other PHP read (`fopen`, `file_get_contents`) | the open fails and a restore is queued; a retry after the next alarm works |
 
+`tests/integration/offloaded-file-reads.spec.ts` drives real Drupal over an evicted file. `file_exists`,
+`filesize` and an overwrite (`file_put_contents`) work. `file_get_contents`, `getimagesize`, the image
+factory, `fopen` in append mode and `FileSystem::copy()` and `move()` fail until the restore runs, and
+all of them work after it. These are the flows that read the bytes of an old file inside PHP: cloning
+or moving a file, regenerating an image's dimensions, and text extraction from stored documents. A
+file edited within the grace window is unaffected. Raise `FILE_EVICT_AFTER_MS` for a site that runs
+such flows on files older than that.
+
 A rename of an evicted file is refused the same way, because R2 has no rename. The stream wrapper fails
 the open of an offloaded file in every mode that reads, so an append cannot replace the file with a
 fragment. A restored file stays in the object for another grace window.
@@ -90,7 +98,7 @@ the object.
 
 A site that switches to `FILE_STORE=r2` queues what the object already holds on its first alarm, and
 the drain moves it under the normal limits. To move a site back to a config without `FILES`, call
-`/__mirror?rehydrate=1` and wait until `storage.offloaded.files` in `/serve-stats` reads `0`. Removing
+`POST /mirror?rehydrate=1` with the owner token and wait until `storage.offloaded.files` in `/serve-stats` reads `0`. Removing
 the var alone does not bring bytes back, and an evicted file whose bucket is unbound cannot be read.
 
 `/serve-stats` reports `storage.bytes` (every byte the site owns) and `storage.offloaded` (the part

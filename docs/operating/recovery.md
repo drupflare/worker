@@ -38,9 +38,9 @@ The restore is applied on the object's next start, not immediately. The bookmark
 **There is no wrangler command and no dashboard button.** PITR is a runtime API only, so an operator
 can reach it only through code running inside the Durable Object.
 
-`GET /pitr` is that code. It takes the owner token or `PW_DIAGNOSTICS=1`. `/restore` is
-diagnostic-only: a restore body names a state the caller invents, where a `/pitr` bookmark names
-one the platform holds.
+`GET /pitr` is that code. It takes the owner token or `PW_DIAGNOSTICS=1`, and so does `/restore`.
+A restore body names a state the caller invents, where a `/pitr` bookmark names one the platform
+holds.
 
 | Request                    | Answers                                             |
 | -------------------------- | --------------------------------------------------- |
@@ -108,9 +108,23 @@ spliced into one file unnoticed.
 
 ## Restore
 
-`POST /restore` with the dump as the request body. **This route is diagnostic-gated, not
-owner-gated**: it needs `PW_DIAGNOSTICS=1`, because it overwrites a whole database. Export is a
-supported customer-facing property; restore is an operator action.
+`POST /restore` with the dump as the request body. It takes the owner token (`Authorization: Bearer
+<token>`) or `PW_DIAGNOSTICS=1`. It was diagnostic-only until v1.0.5, because a body overwrites a whole
+database; the owner token already runs code the site did not ship (`/modify`, `/install`), so
+restoring a dump gives it no further reach, and a backup into a new site no longer has to open `/sql`
+and `/php` to do it.
+
+The dump is one body. `/export` pages as JSON, so a client joins the `sql` field of every page, in
+order, and sends the result. The body ceiling is `MAX_RESTORE_BYTES`, 16 MiB by default, separate from
+`MAX_BODY_BYTES`; a fresh site's dump is 1.9 MB (n=1). A site whose dump exceeds the ceiling cannot be
+restored through this route until a paged restore exists. The reply is `{ok, id, chunks, statements,
+generation}`; the replay then runs on the alarm, and `GET /health` reports the stored import.
+
+To restore into a new site, provision the site, take its owner token, then POST the dump to it. The
+dump carries the database and not the owner token, `hash_salt` (unless exported with `?secrets=1`) or
+any file bytes held in R2. Under `FILE_STORE=r2` a file's row says where its bytes are, and R2 keys carry
+the source site's name, so a restored copy reads `f/<new site>/...` and finds nothing. Copy the source
+site's objects to the new prefix before serving the new site.
 
 The body is stored, not executed. `storeImport()` splits it into statements, refuses at store time if
 any statement exceeds the 100,000-character ceiling, and writes the parent row and every chunk in one
@@ -122,15 +136,15 @@ complete stored import exists.
 
 ## The Recovery Matrix
 
-| Failure                     | Primitive                                   | Does not cover                                                                                                                                     | Command                                                                      |
-| --------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Accidental content deletion | PITR to just before the delete              | anything written after the bookmark; the object must still exist                                                                                   | `GET /pitr?at=<t>` then `POST /pitr?bookmark=<b>`                            |
-| Bad module update           | PITR, and `wrangler rollback` if code moved | files already mirrored to R2; a config change an editor made after the update                                                                      | as above, plus `wrangler rollback [VERSION_ID]`                              |
-| Corrupted config            | `/restore` of the last good dump            | content created since that dump; needs `PW_DIAGNOSTICS=1`                                                                                          | `POST /restore?label=pre-fix` with the dump as the body                      |
-| Failed migration            | re-run the migration                        | nothing, if the cursor survived; `cfw_migrate` is resumable and a dump excludes it                                                                 | `drangler migrate ...`; `GET /migrate` reports `chunk`, `chunks` and `done`  |
-| Whole-object loss           | `/restore` into a new object                | PITR entirely; the log died with the object; `hash_salt` unless the dump used `?secrets=1`                                                         | `POST /restore` against the new site name                                    |
-| Worker version rollback     | `wrangler rollback`                         | **the database.** Code moves, data does not. Refused if a Durable Object class lifecycle change or a deleted binding sits between the two versions | `wrangler rollback [VERSION_ID] --name <worker>`                             |
-| R2 asset loss               | the mirror refills from the object          | nothing; the object is the durable copy and R2 is a cache in front of it                                                                           | no operator route; `/__mirror` is DO-internal and the alarm drains the queue |
+| Failure                     | Primitive                                   | Does not cover                                                                                                                                     | Command                                                                     |
+| --------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Accidental content deletion | PITR to just before the delete              | anything written after the bookmark; the object must still exist                                                                                   | `GET /pitr?at=<t>` then `POST /pitr?bookmark=<b>`                           |
+| Bad module update           | PITR, and `wrangler rollback` if code moved | files already mirrored to R2; a config change an editor made after the update                                                                      | as above, plus `wrangler rollback [VERSION_ID]`                             |
+| Corrupted config            | `/restore` of the last good dump            | content created since that dump; takes the owner token                                                                                             | `POST /restore?label=pre-fix` with the dump as the body                     |
+| Failed migration            | re-run the migration                        | nothing, if the cursor survived; `cfw_migrate` is resumable and a dump excludes it                                                                 | `drangler migrate ...`; `GET /migrate` reports `chunk`, `chunks` and `done` |
+| Whole-object loss           | `/restore` into a new object                | PITR entirely; the log died with the object; `hash_salt` unless the dump used `?secrets=1`                                                         | `POST /restore` against the new site name                                   |
+| Worker version rollback     | `wrangler rollback`                         | **the database.** Code moves, data does not. Refused if a Durable Object class lifecycle change or a deleted binding sits between the two versions | `wrangler rollback [VERSION_ID] --name <worker>`                            |
+| R2 asset loss               | the mirror refills from the object          | nothing; the object is the durable copy and R2 is a cache in front of it                                                                           | the alarm drains the queue; `/mirror` (owner token) runs a pass by hand     |
 
 The flowchart reads the matrix from the top: whether the object survived, then what caused the change.
 
@@ -142,7 +156,7 @@ flowchart TD
     D -->|yes| E["Roll back the Worker and restore the data with PITR"]
     D -->|no| F{"Content or configuration?"}
     F -->|content| G["PITR to a bookmark taken before the change"]
-    F -->|configuration| H["POST /restore with the last good dump, needs PW_DIAGNOSTICS=1"]
+    F -->|configuration| H["POST /restore with the last good dump, with the owner token"]
 ```
 
 Two rows carry the distinctions that matter most.
@@ -166,7 +180,7 @@ any teardown, and do not restore the object without them. This release has no bl
 restore drill for blobs is open work.
 
 Before moving a site to a config without `FILES`, restore every file into the object:
-`/__mirror?rehydrate=1`, then poll `/serve-stats` until `storage.offloaded.files` reads `0`.
+`POST /mirror?rehydrate=1` with the owner token, then poll `/serve-stats` until `storage.offloaded.files` reads `0`.
 
 ## Keeping a Dump
 

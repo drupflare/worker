@@ -34,6 +34,13 @@ chunk that crosses it. `GET` and `HEAD` are not checked.
 be a functional regression. It defaults to 100 MiB, the platform's own request limit, which is the
 only limit a multipart body had before the edge counted it.
 
+## `MAX_RESTORE_BYTES`
+
+A `/restore` body is one SQL dump, which the object holds as text and splits into statements, so it has
+its own ceiling and the form-body one does not apply. The default is 16 MiB, a chosen value that has
+not been measured against the isolate's heap. A fresh site's dump is 1.9 MB (n=1), which the 2 MiB form
+ceiling would barely admit. `0` disables the guard.
+
 Over either limit, the edge answers 413 before any Durable Object hop. `0` disables that guard
 entirely. Raising `MAX_BODY_BYTES` trades isolate headroom for larger non-upload submissions; the
 failure mode of too high is an object that runs out of memory mid-parse.

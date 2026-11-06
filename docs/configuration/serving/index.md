@@ -6,7 +6,7 @@ Settings for page caching, static assets, prefill, files and images, and the R2 
 
 - [Page Cache Settings](page-cache.md): the KV page tier, NEVER_STALE, MEMORY_CACHE_BINS and EDGE_PLAN.
 - [Static Asset Settings](static-assets.md): asset cache lifetimes, request headers and ASSET_AGGREGATES.
-- [Request Limits](request-limits.md): OUTBOUND_GUARD and MAX_BODY_BYTES.
+- [Request Limits](request-limits.md): OUTBOUND_GUARD, MAX_BODY_BYTES and MAX_RESTORE_BYTES.
 - [Files, Images and Prefill](files-and-images.md): prefill and mirroring, files and image styles.
 - [R2 Page Origin Caching](r2-page-origin.md): a cache rule, tiered cache and the model terms for an R2 page origin.
 
@@ -16,6 +16,7 @@ Settings for page caching, static assets, prefill, files and images, and the R2 
 | ------------------------ | -------- | --------------------------------------------------------------------------------------------------------- |
 | `GEN_BUCKET_MS`          | 5,000    | how long the edge reuses a resolved site generation before re-reading it                                  |
 | `MAX_BODY_BYTES`         | 2 MiB    | largest non-file request body the edge forwards                                                           |
+| `MAX_RESTORE_BYTES`      | 16 MiB   | largest `/restore` dump the edge forwards                                                                 |
 | `MAX_UPLOAD_BYTES`       | 100 MiB  | largest `multipart/form-data` body the edge forwards                                                      |
 | `OUTBOUND_GUARD`         | on       | refuse an outbound fetch to a private, loopback or metadata address; `0` off                              |
 | `PAGE_KV_ENABLED`        | on       | the cross-colo KV page tier; `0` off, `1` also lets free store compiled plans                             |

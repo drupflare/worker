@@ -16,6 +16,13 @@
 export const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
 
 /**
+ * The largest `/restore` body, in bytes: one SQL dump, which the object holds as text and splits
+ * into statements. A fresh site's dump is 1.9 MB (n=1), so the form-body ceiling would refuse any
+ * site with content. 16 MiB is a chosen default, not a measured isolate limit.
+ */
+export const DEFAULT_MAX_RESTORE_BYTES = 16 * 1024 * 1024;
+
+/**
  * The largest `multipart/form-data` body that may reach the object, in bytes.
  * The site set no ceiling here before; the platform's own 100 MB request limit was the only one, so
  * this default sits at that limit and lowers nothing that arrived. An upload is read whole by the

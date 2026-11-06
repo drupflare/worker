@@ -1,13 +1,15 @@
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { latestImport } from '../../src/db/import-sql';
 import {
 	OWNER_FAIL_LIMIT,
 	OWNER_FAIL_WINDOW_MS,
 	resetOwnerFailures
 } from '../../src/ops/admin-session';
 import { KV_OVERRIDABLE } from '../../src/ops/plan';
+import { OWNER_TOKEN_KEY } from '../../src/ops/site-secrets';
 import worker, { routeTable } from '../../src/site';
-import { provisionedNamedSite } from '../helpers/serve-do';
+import { inObject, provisionedNamedSite } from '../helpers/serve-do';
 
 /**
  * The owner credential, asserted with the diagnostic flag OFF.
@@ -394,6 +396,143 @@ describe('the runtime levers are writable, within the allow-list', () => {
 			expect([...routeTable().owner]).toContain('/settings');
 			const res = await guarded('/settings');
 			expect(res.status).toBe(401);
+		},
+		TIMEOUT
+	);
+});
+
+/**
+ * `/restore` with the owner token, diagnostics off: the path a dashboard takes to put a backup
+ * into a new site. It used to need `PW_DIAGNOSTICS`, which also opens `/sql` and `/php`.
+ */
+describe('an owner restores a dump into a new site without diagnostics', () => {
+	const SOURCE = 'restore-src.example';
+	const TARGET = 'restore-dst.example';
+	const SRC_TOKEN = 'owner-token-for-the-source-site';
+	const DST_TOKEN = 'owner-token-for-the-target-site';
+
+	/** the worker with diagnostics off, any site, any env override */
+	async function front(
+		site: string,
+		path: string,
+		init: RequestInit = {},
+		extra: Record<string, unknown> = {}
+	): Promise<Response> {
+		const ctx = createExecutionContext();
+		const joiner = path.includes('?') ? '&' : '?';
+		const res = await worker.fetch(
+			new Request(`https://cfw.local${path}${joiner}site=${site}`, init),
+			{ ...env, PW_DIAGNOSTICS: undefined, ...extra } as unknown as typeof env,
+			ctx
+		);
+		await waitOnExecutionContext(ctx);
+		return res;
+	}
+
+	const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
+
+	async function ready(site: string, token: string) {
+		const stub = await provisionedNamedSite(site);
+		await inObject(stub, (s) => {
+			(s as unknown as { metaSet: (k: string, v: unknown) => void }).metaSet(
+				OWNER_TOKEN_KEY,
+				token
+			);
+		});
+		return stub;
+	}
+
+	/** every chunk of `/export`, joined, the way a client pages it */
+	async function exportDump(site: string, token: string): Promise<string> {
+		let cursor = 'start';
+		let sql = '';
+		for (let i = 0; i < 200; i++) {
+			const res = await front(site, `/export?body=1&cursor=${encodeURIComponent(cursor)}`, {
+				headers: bearer(token)
+			});
+			expect(res.status, 'the export refused the owner token').toBe(200);
+			const page = (await res.json()) as { sql: string; nextCursor: string | null };
+			sql += page.sql;
+			if (page.nextCursor === null) return sql;
+			cursor = page.nextCursor;
+		}
+		throw new Error('the export never finished');
+	}
+
+	it(
+		'restores an exported dump into a different site, with the owner token alone',
+		async () => {
+			await ready(SOURCE, SRC_TOKEN);
+			const target = await ready(TARGET, DST_TOKEN);
+			const dump = await exportDump(SOURCE, SRC_TOKEN);
+			expect(dump.length).toBeGreaterThan(1000);
+
+			const res = await front(TARGET, '/restore?label=drill', {
+				method: 'POST',
+				body: dump,
+				headers: bearer(DST_TOKEN)
+			});
+			expect(res.status).toBe(200);
+			const stored = (await res.json()) as { ok: boolean; id: number; chunks: number };
+			expect(stored.ok).toBe(true);
+			expect(stored.chunks).toBeGreaterThan(0);
+
+			const point = await inObject(target, (s) => latestImport(s.sql as never));
+			expect(point).toMatchObject({ generation: 'drill', chunks: stored.chunks });
+		},
+		TIMEOUT
+	);
+
+	it(
+		'refuses a restore with the wrong token, the source site token, or none',
+		async () => {
+			await ready(SOURCE, SRC_TOKEN);
+			await ready(TARGET, DST_TOKEN);
+			for (const headers of [{}, bearer('wrong'), bearer(SRC_TOKEN)]) {
+				const res = await front(TARGET, '/restore', {
+					method: 'POST',
+					body: 'CREATE TABLE x (a);',
+					headers
+				});
+				expect(res.status).toBe(401);
+			}
+		},
+		TIMEOUT
+	);
+
+	it(
+		'is still open to PW_DIAGNOSTICS, which this change does not narrow',
+		async () => {
+			await ready(TARGET, DST_TOKEN);
+			const res = await diagnostic('/restore');
+			// a GET reaches the object, which says POST; it was not refused at the gate
+			expect(res.status).toBe(405);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'applies its own body ceiling, not the 2 MiB form-body one',
+		async () => {
+			await ready(TARGET, DST_TOKEN);
+			const body = 'CREATE TABLE t (a);'.repeat(200);
+			const post = (extra: Record<string, unknown>) =>
+				front(
+					TARGET,
+					'/restore',
+					{
+						method: 'POST',
+						body,
+						headers: { ...bearer(DST_TOKEN), 'content-type': 'text/plain' }
+					},
+					extra
+				);
+			// the form ceiling is below the body and does not apply
+			expect((await post({ MAX_BODY_BYTES: 100 })).status).toBe(200);
+			// the restore ceiling is below the body and does
+			const refused = await post({ MAX_RESTORE_BYTES: 100 });
+			expect(refused.status).toBe(413);
+			expect(refused.headers.get('x-cfw-body-limit')).toBe('100');
 		},
 		TIMEOUT
 	);

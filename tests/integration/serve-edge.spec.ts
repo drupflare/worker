@@ -706,16 +706,19 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		}
 	});
 
-	it('still 404s /restore with diagnostics off, so the owner tier did not widen', async () => {
-		// the guard that matters: adding a credential path must not have promoted the routes that
-		// overwrite the database or run arbitrary SQL
-		for (const route of ['/restore', '/sql']) {
-			const res = await worker.fetch(new Request(`https://cfw.local${route}?site=x`), {
-				...env,
-				PW_DIAGNOSTICS: '0'
-			});
-			expect(res.status, route).toBe(404);
-		}
+	it('refuses /restore without a credential and still 404s /sql, so only the owner tier widened', async () => {
+		// /restore takes the owner token since v1.0.5; arbitrary SQL does not, and neither is open
+		const restore = await worker.fetch(new Request('https://cfw.local/restore?site=x'), {
+			...env,
+			PW_DIAGNOSTICS: '0'
+		});
+		expect(restore.status).toBe(401);
+		expect(restore.headers.get('www-authenticate')).toContain('Bearer');
+		const sql = await worker.fetch(new Request('https://cfw.local/sql?site=x'), {
+			...env,
+			PW_DIAGNOSTICS: '0'
+		});
+		expect(sql.status).toBe(404);
 	});
 
 	it('renders an unclaimed path as a page rather than 404ing it', async () => {

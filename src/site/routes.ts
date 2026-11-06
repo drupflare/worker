@@ -41,8 +41,8 @@ export const PUBLIC_ROUTES = new Set([
  * overwrites it from a body, `/savenode` writes content, `/migrate` and `/bump` can wipe the page
  * cache or re-run migration, `/nativefetch` reaches outbound. `/php` runs one fixed statement.
  *
- * `/migrate`, `/bump`, `/invalidate` and `/armfill` are owner routes too; the owner token is per
- * site where this flag is per deployment.
+ * `/migrate`, `/bump`, `/invalidate`, `/armfill` and `/restore` are owner routes too; the owner
+ * token is per site where this flag is per deployment.
  */
 const DIAGNOSTIC_ROUTES = new Set([
 	'/php',
@@ -121,11 +121,15 @@ export const OWNER_ROUTES = new Set([
 	'/migrate',
 	// the update chain the alarm already runs; `site-do.ts` names "/updb" as its driver
 	'/updb',
+	// the file offload: queue, restore of offloaded files (`?rehydrate=1`) before leaving `FILES`
+	'/mirror',
 	// the operation registry, so `drangler` can list what a site can run without the flag
 	'/ops',
-	// recovery, only the half without a payload: `/restore` stays diagnostic-only because a body
-	// names a state the caller invents, where a `/pitr` bookmark names one the platform holds
+	// recovery: a `/pitr` bookmark names a state the platform holds
 	'/pitr',
+	// recovery from a dump: a body names a state the caller invents, which the owner token already
+	// can (`/modify` and `/install` run code the site did not ship); has its own body ceiling
+	'/restore',
 	// fleet reconciliation: reports what a site still owes and drives one step of it
 	'/reconcile',
 	// the addressable sweep; bounds what an indexer can make a site spend
@@ -227,6 +231,7 @@ export const DO_ROUTE: Record<string, string> = {
 	'/invalidate': '/__invalidate',
 	'/health': '/__health',
 	'/updb': '/__updb',
+	'/mirror': '/__mirror',
 	'/reconcile': '/__reconcile',
 	'/sweep': '/__sweep',
 	'/modify': '/__modify',

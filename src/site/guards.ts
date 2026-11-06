@@ -1,4 +1,8 @@
-import { DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_UPLOAD_BYTES } from '../ops/body-limit';
+import {
+	DEFAULT_MAX_BODY_BYTES,
+	DEFAULT_MAX_RESTORE_BYTES,
+	DEFAULT_MAX_UPLOAD_BYTES
+} from '../ops/body-limit';
 import { renderTemplate } from '../util/template';
 import { GUARDS_OBJECT_RESET_HTML, GUARDS_OBJECT_RESET_UNSAVED_HTML } from './generated/assets';
 
@@ -60,19 +64,27 @@ export function objectResetPage(method: string): Response {
 }
 
 /** the env vars the body ceilings read */
-export type BodyLimitEnv = { MAX_BODY_BYTES?: string | number; MAX_UPLOAD_BYTES?: string | number };
+export type BodyLimitEnv = {
+	MAX_BODY_BYTES?: string | number;
+	MAX_UPLOAD_BYTES?: string | number;
+	MAX_RESTORE_BYTES?: string | number;
+};
 
 /**
  * The ceiling that applies to a request, or 0 for none: a form body has `MAX_BODY_BYTES`, an
- * upload (`multipart/form-data`) has its own `MAX_UPLOAD_BYTES`, and `0` disables either.
+ * upload (`multipart/form-data`) has its own `MAX_UPLOAD_BYTES`, a `/restore` dump has
+ * `MAX_RESTORE_BYTES`, and `0` disables any of them.
  */
 export function bodyLimitFor(request: Request, env?: BodyLimitEnv): number {
 	const upload = (request.headers.get('content-type') ?? '')
 		.toLowerCase()
 		.includes('multipart/form-data');
+	const restore = new URL(request.url).pathname === '/restore';
 	const [value, fallback] = upload
 		? [env?.MAX_UPLOAD_BYTES, DEFAULT_MAX_UPLOAD_BYTES]
-		: [env?.MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES];
+		: restore
+			? [env?.MAX_RESTORE_BYTES, DEFAULT_MAX_RESTORE_BYTES]
+			: [env?.MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES];
 	const raw = Number(value ?? fallback);
 	return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : fallback;
 }

@@ -170,6 +170,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/body-limit.ts': 'host',
 	// keys an image on Drupal's `config` rows
 	'src/ops/boot-image.ts': 'mixed',
+	'src/ops/cache-api.ts': 'host',
 	'src/ops/cache-tiers.ts': 'host',
 	// probes name drupflare classes and Drupal's stream wrappers
 	'src/ops/capability-contract.ts': 'mixed',
@@ -362,5 +363,6 @@ export const ROUTE_SIDES: Readonly<Record<string, Side>> = {
 	'/updb': 'cms',
 	'/reconcile': 'mixed',
 	'/sweep': 'mixed',
-	'/modify': 'mixed'
+	'/modify': 'mixed',
+	'/mirror': 'host'
 };

@@ -13,12 +13,12 @@ import { SURFACE_PREFIX } from '../../../src/ui/admin';
  * it is per site, and adding a route here must not remove the flag's existing reach for anything
  * that already worked.
  *
- * The four that moved: ordinary maintenance an owner should not need diagnostics for.
+ * The ones that moved: maintenance and recovery an owner should not need diagnostics for.
  */
-const MOVED = ['/armfill', '/invalidate', '/bump', '/migrate'] as const;
+const MOVED = ['/armfill', '/invalidate', '/bump', '/migrate', '/restore'] as const;
 
 /** the two that are new, so there is no caller to keep working and no diagnostics fallback */
-const OWNER_ONLY = ['/updb', '/modify'] as const;
+const OWNER_ONLY = ['/updb', '/modify', '/mirror'] as const;
 
 describe('site maintenance is reachable with an owner token', () => {
 	it.each(MOVED)('%s is an owner route', (path) => {

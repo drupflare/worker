@@ -134,7 +134,7 @@ services:
       start_period: 240s
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.8.1@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b
     command: ['start-dev', '--import-realm', '--http-port=8081']
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
@@ -161,7 +161,7 @@ services:
       retries: 40
 
   syslog:
-    image: alpine:3.24.3@sha256:b3413572228e34bd1c9245f5565e6cd127005655e8a7899aef33d8e83255c9e6
+    image: alpine:3.24.4@sha256:93b41ef40b1677fce8fcc64ff4af09daddfacf5040afde618bc46c1e2d1cc7d4
     command:
       - sh
       - -c

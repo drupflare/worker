@@ -47,6 +47,22 @@ export function releaseKeyBase(tag: string): string {
 	return `${PAYLOAD_PREFIX}/${tag.startsWith('v') ? tag : `v${tag}`}`;
 }
 
+/**
+ * The managed worker bundle the dashboard reads, one `releases/<tag>/` tree per cut version.
+ * It is derived output like the payload, so it sits under the same prefix and outside the backup set.
+ */
+export const MANAGED_PREFIX = `${PAYLOAD_PREFIX}/managed`;
+
+/** the key prefix one release's managed bundle is published under */
+export function managedKeyBase(tag: string): string {
+	return `${MANAGED_PREFIX}/releases/${tag.startsWith('v') ? tag : `v${tag}`}`;
+}
+
+/** the tarball a release carries beside the payload, named by version like it */
+export function bundleTarballName(version: string): string {
+	return `drupflare-managed-bundle-${version}.tar.gz`;
+}
+
 /** the key prefix a branch's rolling payload is published under */
 export function devKeyBase(branch: string): string {
 	return `${PAYLOAD_PREFIX}/${devLabel(branch)}`;

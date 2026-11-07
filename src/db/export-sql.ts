@@ -761,6 +761,7 @@ export function dumpChunk(
 					emitted++;
 					consumed++;
 					if (keyed) afterRowid = Number(raw.__rid);
+					else offset++;
 					continue;
 				}
 				if (isSecretMetaRow(table, columns, raw) && opts.secrets !== true) {
@@ -770,6 +771,7 @@ export function dumpChunk(
 					emitted++;
 					consumed++;
 					if (keyed) afterRowid = Number(raw.__rid);
+					else offset++;
 					continue;
 				}
 				const { statements, split } = emitRow(

@@ -414,7 +414,7 @@
 </tbody></table></div>
 <p><code>bun run hydrate</code> takes the payload route by default and falls back to the source route when no
 payload exists. <code>--payload-only</code> forbids the fallback; <code>--from-source</code> skips straight to it.</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#why-two-routes">Why Two Routes</a></li><li><a href="#where-a-payload-comes-from">Where a Payload Comes From</a></li><li><a href="#quick-start">Quick Start</a></li><li><a href="#prerequisites-per-route">Prerequisites, Per Route</a></li><li><a href="#related">Related</a></li></ol></nav><h2 id="pages">Pages</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#why-two-routes">Why Two Routes</a></li><li><a href="#where-a-payload-comes-from">Where a Payload Comes From</a></li><li><a href="#the-managed-bundle">The Managed Bundle</a></li><li><a href="#quick-start">Quick Start</a></li><li><a href="#prerequisites-per-route">Prerequisites, Per Route</a></li><li><a href="#related">Related</a></li></ol></nav><h2 id="pages">Pages</h2>
 <ul>
 <li><a href="steps.html">The Steps</a>: the seventeen build steps, from the interpreter to the assets.</li>
 <li><a href="build-order.html">Build Order and Caching</a>: why the order is fixed, what is cached, and partial rebuilds.</li>
@@ -479,6 +479,23 @@ bytes are a branch tip, so the next push replaces them and the run says so.</p>
 rebuilt to publish it. The keys come from <code>scripts/payload-cdn.ts</code>, which the resolver and the
 workflows both read; <code>tests/node/workflows.spec.ts</code> fails if a workflow starts spelling a key of its
 own.</p>
+<h2 id="the-managed-bundle">The Managed Bundle</h2>
+<p>A release also builds the bundle that <code>wrangler.managed.jsonc</code> deploys, for the dashboard&#39;s engine to
+read. The release job bundles the hydrated tree with <code>wrangler deploy --dry-run</code>, and
+<code>scripts/build-managed-bundle.ts</code> writes <code>releases/&lt;tag&gt;/</code> from that output: <code>manifest.json</code>,
+<code>metadata.json</code>, one file per module, and one file per distinct asset named by the first 32 hex
+characters of its sha-256. The asset list is what <code>assets/.assetsignore</code> ships, not a walk of
+<code>assets/</code>. The manifest records the sha-256 and size of every module.</p>
+<p><code>scripts/publish-bundle.ts</code> checks the files against the manifest, uploads them to
+<code>payloads/managed/releases/&lt;tag&gt;/</code> on the CDN, writes the manifest last, then reads every object back
+and compares it. A prefix whose manifest is already live is refused. With the R2 key pair in
+<code>CLOUDFLARE_R2_KEY_ID</code> and <code>CLOUDFLARE_R2_SECRET_ACCESS_KEY</code> it uses the S3 endpoint: v1.0.5&#39;s 4,339
+assets took 578 s (n=1). Without them it falls back to <code>wrangler r2 bulk put</code>, which reached 1,720 of
+those objects in 17 minutes before one failed request ended the run.</p>
+<p>The bundle&#39;s tarball, <code>drupflare-managed-bundle-&lt;version&gt;.tar.gz</code>, goes on the GitHub Release and
+its checksum is a second line in <code>SHA256SUMS</code>, below the payload&#39;s. <code>hydrate</code> reads only the first
+line. GitHub release assets cannot be added after a release is cut, so v1.0.5&#39;s tarball and its own
+<code>drupflare-managed-bundle-1.0.5.SHA256SUMS</code> sit under <code>payloads/v1.0.5/</code> on the CDN instead.</p>
 <h2 id="quick-start">Quick Start</h2>
 <pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">git</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> clone</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://github.com/drupflare/worker.git</span></span>
 <span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">cd</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> worker</span></span>

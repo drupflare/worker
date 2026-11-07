@@ -1,12 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-	DUMP_START,
-	dumpChunk,
-	type DumpCursor,
-	type DumpOptions,
-	type SqlLike
-} from '../../src/db/export-sql';
+import { DUMP_START, dumpChunk, type DumpCursor, type DumpOptions } from '../../src/db/export-sql';
+import type { SqlLike } from '../../src/db/migrate-sql';
 
 /**
  * A dump must carry every row of a table once, whatever the table's shape and however many chunks

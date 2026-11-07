@@ -108,6 +108,7 @@ jobs:
             echo "VERSION=$VERSION"
             echo "TAG=v${VERSION}${{ github.event.inputs.suffix }}"
             echo "PAYLOAD=drupflare-worker-${VERSION}.tar.gz"
+            echo "BUNDLE=drupflare-managed-bundle-${VERSION}.tar.gz"
           } >> "$GITHUB_ENV"
       - name: Resolve Drupal Version
         id: drupalver
@@ -138,6 +139,19 @@ jobs:
           bun run release:check | tee /tmp/bundle.txt
       - name: Smoke the Hydrated Tree
         run: bun run release:smoke
+      # the hydrated tree is what the payload carries, so the bundle is built from the same bytes a
+      # published release hydrates. The bundle's checksum joins SHA256SUMS BELOW the payload line,
+      # which is the line `hydrate` reads
+      - name: Build the Managed Bundle
+        env:
+          DRUPFLARE_HYDRATING: '1'
+        run: |
+          ./node_modules/.bin/wrangler deploy --dry-run --outdir=/tmp/managed -c wrangler.managed.jsonc
+          bun scripts/build-managed-bundle.ts --outdir=/tmp/managed --release="$TAG" --commit="$GITHUB_SHA" --out=/tmp/bundle
+          tar -czf "dist/$BUNDLE" -C /tmp/bundle "releases/$TAG"
+          cd dist
+          sha256sum "$BUNDLE" >> SHA256SUMS
+          sha256sum -c SHA256SUMS
       # AFTER the checks, not before them. A release prefix is what `hydrate` prefers over the
       # GitHub release, so publishing it early would leave a resolvable `payloads/v<version>/` for
       # a version whose checks then failed and which no release ever carried
@@ -146,6 +160,15 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: bun scripts/publish-payload.ts --release --tag="$TAG"
+      # the S3 pair makes the 4,346 objects a minute's work; without it the step falls back to
+      # `wrangler r2 bulk put`, which measured 1.7 objects a second
+      - name: Publish the Managed Bundle to the CDN
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_R2_KEY_ID: ${{ secrets.CLOUDFLARE_R2_KEY_ID }}
+          CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+        run: bun scripts/publish-bundle.ts --out=/tmp/bundle --release="$TAG"
       - name: Payload to Job Summary
         if: ${{ !cancelled() }}
         run: |
@@ -164,6 +187,7 @@ jobs:
           name: release-payload
           path: |
             dist/${{ env.PAYLOAD }}
+            dist/${{ env.BUNDLE }}
             dist/SHA256SUMS
           retention-days: 1
           if-no-files-found: error
@@ -227,6 +251,7 @@ jobs:
             ${{ steps.changelog.outputs.changelog || github.event.inputs.changelog }}
           files: |
             dist/drupflare-worker-${{ env.VERSION }}.tar.gz
+            dist/drupflare-managed-bundle-${{ env.VERSION }}.tar.gz
             dist/SHA256SUMS
           draft: false
           prerelease: ${{ github.ref_name != 'master' }}

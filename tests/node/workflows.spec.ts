@@ -285,6 +285,32 @@ describe('the payload publishing lanes', () => {
 			expect(step?.env?.['CLOUDFLARE_API_TOKEN'], file).toBeDefined();
 		}
 	});
+
+	/**
+	 * The managed bundle is built from the hydrated tree and its checksum joins `SHA256SUMS` below
+	 * the payload line, the one `hydrate` reads. Published after the payload, from the same lane.
+	 */
+	it('builds the managed bundle from the hydrated tree and publishes it after the payload', () => {
+		const text = readFileSync(join(DIR, 'release.yml'), 'utf8');
+		const smoke = text.indexOf('release:smoke');
+		const build = text.indexOf('build-managed-bundle.ts');
+		const payload = text.indexOf('publish-payload.ts');
+		const bundle = text.indexOf('publish-bundle.ts');
+		expect(build, 'builds after the smoke').toBeGreaterThan(smoke);
+		expect(payload, 'the payload publishes after the bundle is summed').toBeGreaterThan(build);
+		expect(bundle, 'the bundle publishes after the payload').toBeGreaterThan(payload);
+		const step = Object.values(byFile('release.yml').jobs)
+			.flatMap((job) => job.steps ?? [])
+			.find((s) => (s.run ?? '').includes('publish-bundle.ts'));
+		expect(step?.env?.['CLOUDFLARE_ACCOUNT_ID']).toBeDefined();
+		expect(step?.env?.['CLOUDFLARE_R2_KEY_ID']).toBeDefined();
+		expect(step?.env?.['CLOUDFLARE_R2_SECRET_ACCESS_KEY']).toBeDefined();
+	});
+
+	it('puts the bundle tarball on the release beside the payload', () => {
+		const text = readFileSync(join(DIR, 'release.yml'), 'utf8');
+		expect(text).toContain('dist/drupflare-managed-bundle-${{ env.VERSION }}.tar.gz');
+	});
 });
 
 /**

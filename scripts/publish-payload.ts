@@ -24,7 +24,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BUCKET } from './backup-cdn';
 import {
@@ -110,6 +110,11 @@ export function plan(
 			file: join(dist, side),
 			required: side === 'SHA256SUMS'
 		});
+	}
+	// a release's SHA256SUMS also lists its managed bundle, so the tarball has to be where it says
+	for (const name of readdirSync(dist)) {
+		if (!/^drupflare-managed-bundle-[A-Za-z0-9.-]+\.tar\.gz$/.test(name)) continue;
+		out.push({ key: `${keyBase}/${name}`, file: join(dist, name), required: false });
 	}
 	return out;
 }

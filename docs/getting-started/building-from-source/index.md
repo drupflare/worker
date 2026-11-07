@@ -63,6 +63,27 @@ rebuilt to publish it. The keys come from `scripts/payload-cdn.ts`, which the re
 workflows both read; `tests/node/workflows.spec.ts` fails if a workflow starts spelling a key of its
 own.
 
+## The Managed Bundle
+
+A release also builds the bundle that `wrangler.managed.jsonc` deploys, for the dashboard's engine to
+read. The release job bundles the hydrated tree with `wrangler deploy --dry-run`, and
+`scripts/build-managed-bundle.ts` writes `releases/<tag>/` from that output: `manifest.json`,
+`metadata.json`, one file per module, and one file per distinct asset named by the first 32 hex
+characters of its sha-256. The asset list is what `assets/.assetsignore` ships, not a walk of
+`assets/`. The manifest records the sha-256 and size of every module.
+
+`scripts/publish-bundle.ts` checks the files against the manifest, uploads them to
+`payloads/managed/releases/<tag>/` on the CDN, writes the manifest last, then reads every object back
+and compares it. A prefix whose manifest is already live is refused. With the R2 key pair in
+`CLOUDFLARE_R2_KEY_ID` and `CLOUDFLARE_R2_SECRET_ACCESS_KEY` it uses the S3 endpoint: v1.0.5's 4,339
+assets took 578 s (n=1). Without them it falls back to `wrangler r2 bulk put`, which reached 1,720 of
+those objects in 17 minutes before one failed request ended the run.
+
+The bundle's tarball, `drupflare-managed-bundle-<version>.tar.gz`, goes on the GitHub Release and
+its checksum is a second line in `SHA256SUMS`, below the payload's. `hydrate` reads only the first
+line. GitHub release assets cannot be added after a release is cut, so v1.0.5's tarball and its own
+`drupflare-managed-bundle-1.0.5.SHA256SUMS` sit under `payloads/v1.0.5/` on the CDN instead.
+
 ## Quick Start
 
 ```sh

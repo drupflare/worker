@@ -303,6 +303,30 @@ repos:
     install: none
     assessment: structural
     needs: []
+  - id: panopoly
+    repo: https://github.com/panopoly/panopoly
+    sha: 02a0b59aed9f468da653d9067be88c37f221c019
+    shape: profile
+    core: '7.x'
+    install: none
+    assessment: structural
+    needs: []
+  - id: commerce_kickstart
+    repo: https://github.com/commerceguys/commerce_kickstart
+    sha: b75860b6c72ef92de4020bb512236efb103dec09
+    shape: profile
+    core: '7.x'
+    install: none
+    assessment: structural
+    needs: []
+  - id: dkan7
+    repo: https://github.com/GetDKAN/dkan
+    sha: 21c18b6650c3f601057602fa978023fed9e95fda
+    shape: profile
+    core: '7.x'
+    install: none
+    assessment: structural
+    needs: []
   - id: simple_oauth_21
     repo: https://github.com/e0ipso/simple_oauth_21
     sha: f2b73148a83c99697e2d7ba7fcd36084fe0f8c40

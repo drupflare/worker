@@ -46,11 +46,11 @@ $out['constants'] = [
   'jpeg' => defined('IMAGETYPE_JPEG') ? IMAGETYPE_JPEG : null,
   'webp' => defined('IMAGETYPE_WEBP') ? IMAGETYPE_WEBP : null,
 ];
-$out['gd'] = extension_loaded('gd');
+$out['internal'] = (new ReflectionFunction('getimagesize'))->isInternal();
 echo json_encode($out);`;
 }
 
-describe('image metadata without gd', () => {
+describe('image metadata from the interpreter, not gd', () => {
 	it('reads dimensions and mime for every format the delivery path produces', async () => {
 		const png = druplicon();
 		const webp = (await runImageTransform(png, { width: 80, format: 'webp' })).bytes;
@@ -73,8 +73,9 @@ describe('image metadata without gd', () => {
 		console.log(`[image-metadata] ${JSON.stringify(seen)}`);
 
 		expect(seen['have']).toBe(true);
-		// the premise: no gd, so every reading below is the gd-free path and not gd answering
-		expect(seen['gd']).toBe(false);
+		// the premise: gd is reported loaded, but its shim never reads pixels, so every reading below
+		// is the interpreter's own getimagesize() and not a PHP stand-in
+		expect(seen['internal']).toBe(true);
 
 		const read = seen['read'] as unknown as Record<string, { w: number; h: number } | false>;
 		expect(read['a.png']).toMatchObject({ w: 88, h: 100, mime: 'image/png' });

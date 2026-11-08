@@ -1,0 +1,11 @@
+migration_example:
+  install: modify
+  modules: [c11n_migrate]
+  notes:
+    install: >-
+      override for the anachron run: the verified corpus records install none for this repository
+fflch:
+  install: project
+  notes:
+    install: >-
+      override for the anachron run: the verified corpus records install none for this repository

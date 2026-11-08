@@ -8,6 +8,7 @@ import { deployArgs } from '../../scripts/e2e/corpus-deploy';
 import {
 	agreementFields,
 	agreementForm,
+	anachronDir,
 	claimOwner,
 	composerReplaces,
 	composerRequires,
@@ -24,6 +25,7 @@ import {
 	formValues,
 	haltedBeat,
 	infoRequires,
+	installUrl,
 	lostServer,
 	mergeResults,
 	missingDependency,
@@ -37,14 +39,18 @@ import {
 	remoteServer,
 	renderMatrix,
 	requiredText,
+	resultPaths,
 	routePaths,
 	setAside,
 	settleRows,
+	stampRun,
 	unknownRows,
 	unresolvedFailure,
 	unsettled,
 	updateNote,
 	waitForTimingLock,
+	withAnachronOverride,
+	type AnachronOverride,
 	type Compatibility,
 	type Corpus,
 	type RowState
@@ -498,6 +504,18 @@ describe('what a project asks of a site', () => {
 			expect(needsProfileSwitch(plan)).toBe(false);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("carries the project's minimum-stability, and none when it sets none", () => {
+		const dev = build({ 'minimum-stability': 'dev' }, 'module:\n  token: 0\n');
+		const stable = build({}, 'module:\n  token: 0\n');
+		try {
+			expect(projectPlan(dev).stability).toBe('dev');
+			expect(projectPlan(stable)).not.toHaveProperty('stability');
+		} finally {
+			rmSync(dev, { recursive: true, force: true });
+			rmSync(stable, { recursive: true, force: true });
 		}
 	});
 
@@ -1251,5 +1269,124 @@ describe('a deployed run', () => {
 			expect.arrayContaining(['--paid', '--cpu-ms=300000', '--var=PLAN=paid'])
 		);
 		expect(deployArgs('cfw-e2e-x')).not.toContain('--paid');
+	});
+});
+
+describe('an anachron run', () => {
+	const entry = (over: Record<string, unknown>) =>
+		({
+			id: 'x',
+			repo: 'https://example.invalid/x',
+			sha: 'abc',
+			shape: 'project',
+			core: '^10.5',
+			install: 'project',
+			assessment: 'structural',
+			needs: [],
+			...over
+		}) as Corpus['repos'][number];
+
+	it('keeps the composer plugin refusal and lifts the upgrade note only when asked', () => {
+		const old = entry({ core: '^10.5.6' });
+		expect(refusalFor(old)).toMatch(/^needs upgrade:/);
+		expect(refusalFor(old, {})).toMatch(/^needs upgrade:/);
+		expect(refusalFor(old, { anachron: false })).toMatch(/^needs upgrade:/);
+		expect(refusalFor(old, { anachron: true })).toBeNull();
+		const plugin = entry({ shape: 'composer-plugin', core: 'n/a' });
+		expect(refusalFor(plugin, { anachron: true })).toMatch(/^not a site:/);
+		expect(refusalFor(entry({ core: '8.x', install: 'none' }), { anachron: true })).toBeNull();
+	});
+
+	it('lays an override over the entry, merging notes per row and replacing the rest', () => {
+		const base = entry({
+			core: '8.x',
+			install: 'none',
+			notes: { install: 'kept?', 'anon render': 'stays' }
+		});
+		const got = withAnachronOverride(base, {
+			x: { install: 'modify', modules: ['m'], notes: { install: 'override' } }
+		});
+		expect(got).toMatchObject({
+			install: 'modify',
+			modules: ['m'],
+			core: '8.x',
+			notes: { install: 'override', 'anon render': 'stays' }
+		});
+		expect(base.install).toBe('none');
+	});
+
+	it('returns an entry with no override as it is, and refuses a key it does not allow', () => {
+		const base = entry({});
+		expect(withAnachronOverride(base, { other: { install: 'modify' } })).toBe(base);
+		expect(() =>
+			withAnachronOverride(base, { x: { sha: 'f'.repeat(40) } as AnachronOverride })
+		).toThrow(/x sets sha, which is not overridable/);
+	});
+
+	it('reads the checkout from the flag, then ANACHRON_DIR, then the sibling of the worker', () => {
+		const root = '/work/worker';
+		expect(anachronDir(['--repo=x'], { ANACHRON_DIR: '/a' }, root)).toBeUndefined();
+		expect(anachronDir(['--anachron=/given'], { ANACHRON_DIR: '/a' }, root)).toBe('/given');
+		expect(anachronDir(['--anachron'], { ANACHRON_DIR: '/env' }, root)).toBe('/env');
+		expect(anachronDir(['--anachron='], { ANACHRON_DIR: '/env' }, root)).toBe('/env');
+		expect(anachronDir(['--anachron'], {}, root)).toBe('/work/anachron');
+		expect(anachronDir(['--anachron=rel'], {}, root)).toBe(resolve('rel'));
+	});
+
+	it('writes to its own record and leaves the matrix page alone', () => {
+		expect(resultPaths('/w', false)).toEqual({
+			json: '/w/docs/compatibility.json',
+			matrix: '/w/docs/architecture/compatibility.md'
+		});
+		expect(resultPaths('/w', true)).toEqual({
+			json: '/w/docs/compatibility-anachron.json',
+			matrix: undefined
+		});
+	});
+
+	it('suffixes the run stamp with the checkout, and only then', () => {
+		expect(stampRun('local:t', undefined)).toBe('local:t');
+		expect(stampRun('local:t', 'abc1234')).toBe('local:t+anachron:abc1234');
+	});
+
+	it('adds force to the install path only on request, leaving the rest as it was', () => {
+		expect(installUrl('drupal/a', '^1', undefined, false)).toBe(
+			'/install?module=drupal%2Fa&version=%5E1&deps=1'
+		);
+		expect(installUrl('drupal/a', null, 'dev', true)).toBe(
+			'/install?module=drupal%2Fa&deps=1&stability=dev&force=1'
+		);
+		expect(installUrl('drupal/a', null, undefined, true, true)).toBe(
+			'/install?module=drupal%2Fa&deps=1&force=1&ignore_core=1'
+		);
+	});
+
+	it('overrides only the six repositories the verified corpus refuses or records as none', () => {
+		const corpus = parse(
+			readFileSync(resolve(process.cwd(), 'config/corpus.yml'), 'utf8')
+		) as Corpus;
+		const overrides = parse(
+			readFileSync(resolve(process.cwd(), 'config/corpus-anachron.yml'), 'utf8')
+		) as Record<string, AnachronOverride>;
+		expect(Object.keys(overrides).sort()).toEqual(['fflch', 'migration_example']);
+		for (const id of Object.keys(overrides)) {
+			const base = corpus.repos.find((r) => r.id === id)!;
+			expect(base.install, id).toBe('none');
+			const merged = withAnachronOverride(base, overrides);
+			expect(merged.install, id).not.toBe('none');
+			expect(refusalFor(merged, { anachron: true }), id).toBeNull();
+			expect(merged.notes?.['install'], id).toMatch(/verified corpus records install none/);
+		}
+		expect(
+			withAnachronOverride(
+				corpus.repos.find((r) => r.id === 'migration_example')!,
+				overrides
+			)
+		).toMatchObject({ modules: ['c11n_migrate'] });
+		for (const id of ['webcms', 'open_social', 'localgov_microsites', 'essex']) {
+			const base = corpus.repos.find((r) => r.id === id)!;
+			expect(refusalFor(base), id).toMatch(/^needs upgrade:/);
+			expect(refusalFor(base, { anachron: true }), id).toBeNull();
+		}
 	});
 });

@@ -53,6 +53,8 @@ export type ProjectPlan = {
 	modules: string[];
 	/** composer patches the project applies, which the registry path does not */
 	patches: number;
+	/** the project's `minimum-stability` when it sets one, which every registry install honours */
+	stability?: string;
 };
 
 /** install profiles the pack's own site already runs on */
@@ -104,6 +106,7 @@ type Lock = {
 };
 type Composer = {
 	type?: string;
+	'minimum-stability'?: string;
 	require?: Record<string, string>;
 	extra?: {
 		patches?: Record<string, Record<string, string>>;
@@ -189,7 +192,8 @@ export function projectPlan(root: string): ProjectPlan {
 		packages,
 		custom: customCode(root),
 		modules,
-		patches: patchCount(root, composer)
+		patches: patchCount(root, composer),
+		...(composer['minimum-stability'] ? { stability: composer['minimum-stability'] } : {})
 	};
 }
 

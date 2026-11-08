@@ -3,6 +3,7 @@
  * Loads each corpus repository into a fresh local drupflare site and records what worked.
  *
  *   bun scripts/e2e/corpus-lane.ts [--repo=<id>[,<id>]] [--render-only] [--keep]
+ *   bun scripts/e2e/corpus-lane.ts --repo=<id> --anachron=<anachron checkout>
  *   CORPUS_ORIGIN=https://<worker>.workers.dev bun scripts/e2e/corpus-lane.ts --deployed --plan=free --repo=<id>
  *
  * Every repository is cloned at the commit `config/corpus.yml` pins. A module-shaped one has each
@@ -14,7 +15,9 @@
  * every row unknown and the reason, never guessed.
  *
  * Results merge into `docs/compatibility.json`, and `docs/architecture/compatibility.md` is rendered from that
- * file alone.
+ * file alone. With `--anachron` the library at that checkout is delivered first, the Drupal 10 refusal is
+ * lifted, `config/corpus-anachron.yml` overrides apply, and results go to `docs/compatibility-anachron.json`
+ * alone.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -35,6 +38,7 @@ import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { parse } from 'yaml';
 import { startDevServer, type DevServer } from '../dev-server';
+import { deliverAnachron, gitShortSha } from './anachron-deliver';
 import {
 	installPath,
 	lockedContrib,
@@ -936,11 +940,84 @@ function clone(repo: RepoEntry, into: string): void {
 
 // #region module-shaped repositories
 
-/** the row verdict for a repository the lane must not run, or null when it should run */
-export function refusalFor(repo: RepoEntry): string | null {
+/**
+ * The row verdict for a repository the lane must not run, or null when it should run.
+ *
+ * With anachron loaded a core below Drupal 11 is what the library is for, so only the composer
+ * plugin refusal stays.
+ */
+export function refusalFor(repo: RepoEntry, opts: { anachron?: boolean } = {}): string | null {
 	if (repo.shape === 'composer-plugin')
 		return `not a site: ${repo.id} is a composer plugin that patches other packages at install time`;
-	return upgradeNote(repo.core);
+	return opts.anachron === true ? null : upgradeNote(repo.core);
+}
+
+/** the keys `config/corpus-anachron.yml` may override on a corpus entry */
+const ANACHRON_KEYS = ['install', 'modules', 'checks', 'root', 'core', 'force', 'notes'] as const;
+
+export type AnachronOverride = Partial<Pick<RepoEntry, (typeof ANACHRON_KEYS)[number]>>;
+
+/** the corpus entry with its anachron override laid over it; `notes` merge per row, the rest replace */
+export function withAnachronOverride(
+	repo: RepoEntry,
+	overrides: Record<string, AnachronOverride>
+): RepoEntry {
+	const over = overrides[repo.id];
+	if (over === undefined) return repo;
+	const unknown = Object.keys(over).filter(
+		(k) => !(ANACHRON_KEYS as readonly string[]).includes(k)
+	);
+	if (unknown.length > 0)
+		throw new Error(
+			`corpus-anachron.yml: ${repo.id} sets ${unknown.join(', ')}, which is not overridable`
+		);
+	return { ...repo, ...over, ...(over.notes ? { notes: { ...repo.notes, ...over.notes } } : {}) };
+}
+
+/**
+ * The anachron checkout `--anachron` names, or undefined without the flag.
+ *
+ * A bare `--anachron` and an empty `--anachron=` take `ANACHRON_DIR`, then `../anachron` beside the
+ * worker.
+ */
+export function anachronDir(
+	args: readonly string[],
+	env: Record<string, string | undefined>,
+	workerRoot: string
+): string | undefined {
+	const flag = args.find((a) => a === '--anachron' || a.startsWith('--anachron='));
+	if (flag === undefined) return undefined;
+	const given = flag.slice('--anachron='.length);
+	return resolve(given || env['ANACHRON_DIR'] || join(workerRoot, '..', 'anachron'));
+}
+
+/** where a run writes: the verified record, or the anachron one with no matrix page */
+export function resultPaths(
+	root: string,
+	anachron: boolean
+): { json: string; matrix: string | undefined } {
+	return anachron
+		? { json: join(root, 'docs', 'compatibility-anachron.json'), matrix: undefined }
+		: {
+				json: join(root, 'docs', 'compatibility.json'),
+				matrix: join(root, 'docs', 'architecture', 'compatibility.md')
+			};
+}
+
+/** the run stamp, which names the anachron checkout when one was loaded */
+export function stampRun(run: string, anachronSha: string | undefined): string {
+	return anachronSha === undefined ? run : `${run}+anachron:${anachronSha}`;
+}
+
+/** the `/install` path for one package; `force` skips the shipped-lock pre-check */
+export function installUrl(
+	name: string,
+	want: string | null | undefined,
+	stability: string | undefined,
+	force: boolean,
+	ignoreCore = false
+): string {
+	return `/install?module=${encodeURIComponent(name)}${want ? `&version=${encodeURIComponent(want)}` : ''}&deps=1${stability ? `&stability=${stability}` : ''}${force ? '&force=1' : ''}${ignoreCore ? '&ignore_core=1' : ''}`;
 }
 
 /** the static GET paths a module's routing file declares, which a workflow check can visit */
@@ -1018,9 +1095,10 @@ async function enableWithDeps(
 	const raw = String(got.json['raw'] ?? '')
 		.replace(/\s+/g, ' ')
 		.trim();
+	const booted = got.json['booted'] === undefined ? '' : JSON.stringify(got.json['booted']);
 	const why =
 		message ||
-		`${String(got.json['error'] ?? JSON.stringify(got.json))}${raw ? ` (output: ${raw.slice(0, 240)})` : ''}`;
+		`${String(got.json['error'] ?? JSON.stringify(got.json))}${booted ? ` (boot: ${booted.slice(0, 320)})` : ''}${raw ? ` (output: ${raw.slice(0, 240)})` : ''}`;
 	return {
 		ok: false,
 		error: `enabling ${module} was refused: ${why.slice(0, 400)}${got.json['throwAt'] ? ` at ${String(got.json['throwAt'])}` : ''}`
@@ -1041,11 +1119,17 @@ async function installWithDeps(
 	constraint: string | null | undefined,
 	stability?: string,
 	replaced: Set<string> = new Set(),
-	forced: Set<string> = new Set()
+	forced: Set<string> | 'all' = new Set()
 ): Promise<Record<string, unknown>> {
 	const call = (name: string, want: string | null | undefined) =>
 		site.owned(
-			`/install?module=${encodeURIComponent(name)}${want ? `&version=${encodeURIComponent(want)}` : ''}&deps=1${stability ? `&stability=${stability}` : ''}${forced.has(name) ? '&force=1' : ''}`,
+			installUrl(
+				name,
+				want,
+				stability,
+				forced === 'all' || forced.has(name),
+				forced === 'all'
+			),
 			{ method: 'POST' }
 		);
 	let first = await call(pkg, constraint);
@@ -1254,6 +1338,9 @@ function enabler(site: Local, revive: () => Promise<void>) {
 	};
 }
 
+/** set by an anachron run, whose packages conflict with the shipped core by design */
+let forceInstalls = false;
+
 /** each locked package through `/install?deps=1`, in the order the plan lists them */
 async function installPackages(
 	site: Local,
@@ -1263,7 +1350,16 @@ async function installPackages(
 	let packages = 0;
 	for (const [pkg, version] of Object.entries(plan.packages)) {
 		// resumed past the per-call package cap, which a distribution's tree (Open Y) exceeds
-		const got = { json: await installWithDeps(site, pkg, version || null) };
+		const got = {
+			json: await installWithDeps(
+				site,
+				pkg,
+				version || null,
+				plan.stability,
+				undefined,
+				forceInstalls ? 'all' : undefined
+			)
+		};
 		if (got.json['refused'] === 'not-found' || got.json['refused'] === 'unverifiable') {
 			const why = await site.owned(
 				`/installable?module=${encodeURIComponent(pkg)}${version ? `&version=${encodeURIComponent(version)}` : ''}`
@@ -2046,7 +2142,8 @@ async function driveRepo(
 	corpus: Corpus,
 	workRoot: string,
 	port: number,
-	migrated?: { out: string; base?: RepoEntry }
+	migrated?: { out: string; base?: RepoEntry },
+	anachron?: string
 ): Promise<RepoResult['rows']> {
 	const rows = unknownRows(corpus.rows);
 	const set = (row: string, state: RowState, note?: string) => {
@@ -2100,6 +2197,11 @@ async function driveRepo(
 		}
 	};
 	try {
+		if (anachron !== undefined) {
+			const sent = await deliverAnachron(dev.origin, 'pw-diagnostics', anachron);
+			console.log(`  anachron ${sent.ok ? `delivered rev ${sent.rev ?? '?'}` : 'failed'}`);
+			if (!sent.ok) return unsettled(corpus.rows, `anachron delivery failed: ${sent.error}`);
+		}
 		for (let i = 0; i < 100; i++) {
 			const m = await fetch(new URL('/migrate?all=1', dev.origin));
 			const body = (await m.json().catch(() => ({}))) as { done?: boolean };
@@ -2479,7 +2581,14 @@ async function main(): Promise<void> {
 			throw new Error('--deployed drives one worker, so it needs exactly one --repo=<id>');
 	}
 	const corpus = parse(readFileSync(join(root, 'config', 'corpus.yml'), 'utf8')) as Corpus;
-	const jsonPath = join(root, 'docs', 'compatibility.json');
+	const anachron = anachronDir(args, process.env, root);
+	forceInstalls = anachron !== undefined;
+	const overrides =
+		anachron === undefined
+			? {}
+			: ((parse(readFileSync(join(root, 'config', 'corpus-anachron.yml'), 'utf8')) ??
+					{}) as Record<string, AnachronOverride>);
+	const { json: jsonPath, matrix: matrixPath } = resultPaths(root, anachron !== undefined);
 	const current = (): Compatibility =>
 		existsSync(jsonPath)
 			? (JSON.parse(readFileSync(jsonPath, 'utf8')) as Compatibility)
@@ -2488,12 +2597,16 @@ async function main(): Promise<void> {
 	const ran: Record<string, RepoResult> = {};
 	if (!args.includes('--render-only')) {
 		const work = process.env.CORPUS_DIR ?? join(root, '.corpus');
-		const run = process.env.GITHUB_RUN_ID
-			? `github:${process.env.GITHUB_RUN_ID}`
-			: `local:${new Date().toISOString()}`;
+		const run = stampRun(
+			process.env.GITHUB_RUN_ID
+				? `github:${process.env.GITHUB_RUN_ID}`
+				: `local:${new Date().toISOString()}`,
+			anachron === undefined ? undefined : (gitShortSha(anachron) ?? 'unversioned')
+		);
 		let port = Number(process.env.CORPUS_PORT ?? 8840);
-		for (const repo of corpus.repos) {
-			if (only && !only.includes(repo.id)) continue;
+		for (const entry of corpus.repos) {
+			if (only && !only.includes(entry.id)) continue;
+			const repo = withAnachronOverride(entry, overrides);
 			const base = {
 				sha: repo.sha,
 				lane: 'fixture',
@@ -2501,7 +2614,7 @@ async function main(): Promise<void> {
 				date: new Date().toISOString().slice(0, 10)
 			};
 			waitForTimingLock();
-			const upgrade = refusalFor(repo);
+			const upgrade = refusalFor(repo, { anachron: anachron !== undefined });
 			if (upgrade !== null) {
 				ran[repo.id] = { ...base, rows: unsettled(corpus.rows, upgrade) };
 				continue;
@@ -2556,10 +2669,10 @@ async function main(): Promise<void> {
 				// a lost dev server ends the whole repository, so it gets one more run on a fresh state
 				let driven: RepoResult['rows'];
 				try {
-					driven = await driveRepo(repo, corpus, work, port, migrated);
+					driven = await driveRepo(repo, corpus, work, port, migrated, anachron);
 				} catch (e) {
 					if (!lostServer(e)) throw e;
-					driven = await driveRepo(repo, corpus, work, port, migrated);
+					driven = await driveRepo(repo, corpus, work, port, migrated, anachron);
 				}
 				port++;
 				ran[repo.id] = {
@@ -2598,10 +2711,7 @@ async function main(): Promise<void> {
 		? recordDeployed(current(), corpus.rows, deployedRuns)
 		: mergeResults(current(), corpus.rows, ran);
 	writeFileSync(jsonPath, `${JSON.stringify(merged, null, '\t')}\n`);
-	writeFileSync(
-		join(root, 'docs', 'architecture', 'compatibility.md'),
-		renderMatrix(merged, corpus)
-	);
+	if (matrixPath !== undefined) writeFileSync(matrixPath, renderMatrix(merged, corpus));
 }
 
 if (import.meta.main) await main();

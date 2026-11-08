@@ -285,6 +285,42 @@ describe('the image descriptor and its reply', () => {
 		expect(parseParkImage(packed({ ...op, source: null, quality: 80 }))?.quality).toBe(80);
 	});
 
+	it('accepts avif and carries the progressive flag only when it is true', () => {
+		expect(parseParkImage(packed({ ...op, format: 'avif' }))?.format).toBe('avif');
+		expect(parseParkImage(packed({ ...op, progressive: true }))?.progressive).toBe(true);
+		expect(parseParkImage(packed({ ...op, progressive: 'yes' }))).not.toHaveProperty(
+			'progressive'
+		);
+		expect(parseParkImage(packed(op))).not.toHaveProperty('progressive');
+	});
+
+	it('carries a GIF transparent color, including null for none, and drops anything else', () => {
+		const gif = { ...op, format: 'gif' };
+		expect(parseParkImage(packed({ ...gif, transparent: 0x3f28323c }))?.transparent).toBe(
+			0x3f28323c
+		);
+		expect(parseParkImage(packed({ ...gif, transparent: null }))).toHaveProperty(
+			'transparent',
+			null
+		);
+		expect(parseParkImage(packed({ ...gif, transparent: 'red' }))).not.toHaveProperty(
+			'transparent'
+		);
+		expect(parseParkImage(packed(gif))).not.toHaveProperty('transparent');
+	});
+
+	it('carries a GD2 chunk size and mode, and refuses a gd2 request without them', () => {
+		const gd2 = { ...op, format: 'gd2', gd2: { chunk: 128, mode: 1 } };
+		expect(parseParkImage(packed(gd2))?.gd2).toEqual({ chunk: 128, mode: 1 });
+		expect(parseParkImage(packed({ ...op, format: 'gd2' }))).toBeUndefined();
+		expect(
+			parseParkImage(packed({ ...op, format: 'gd2', gd2: { chunk: 1.5, mode: 1 } }))
+		).toBeUndefined();
+		expect(parseParkImage(packed({ ...op, gd2: { chunk: 128, mode: 1 } }))).not.toHaveProperty(
+			'gd2'
+		);
+	});
+
 	it('refuses a format, an op list or a source it cannot run', () => {
 		expect(parseParkImage(packed({ ...op, format: 'bmp' }))).toBeUndefined();
 		expect(

@@ -668,7 +668,20 @@ export function parseParkImage(packed: string): ParkImageRequest | undefined {
 	const raw = unpackObject(packed);
 	if (raw === undefined) return undefined;
 	const r = raw as Record<string, unknown>;
-	if (!['jpeg', 'png', 'webp', 'gif'].includes(String(r['format']))) return undefined;
+	if (!['jpeg', 'png', 'webp', 'gif', 'avif', 'gd2'].includes(String(r['format'])))
+		return undefined;
+	const gd2 = r['gd2'] as { chunk?: unknown; mode?: unknown } | undefined;
+	if (
+		r['format'] === 'gd2' &&
+		!(
+			gd2 !== null &&
+			typeof gd2 === 'object' &&
+			Number.isInteger(gd2.chunk) &&
+			Number.isInteger(gd2.mode)
+		)
+	) {
+		return undefined;
+	}
 	if (!Array.isArray(r['ops']) || r['ops'].length > 32) return undefined;
 	if (typeof r['source'] !== 'string' && r['source'] !== null) return undefined;
 	return {
@@ -676,7 +689,12 @@ export function parseParkImage(packed: string): ParkImageRequest | undefined {
 		canvas: (r['canvas'] as ParkImageRequest['canvas']) ?? null,
 		ops: r['ops'] as ParkImageRequest['ops'],
 		format: r['format'] as ParkImageRequest['format'],
-		quality: typeof r['quality'] === 'number' ? r['quality'] : -1
+		quality: typeof r['quality'] === 'number' ? r['quality'] : -1,
+		...(r['progressive'] === true ? { progressive: true } : {}),
+		...(r['format'] === 'gd2' ? { gd2: gd2 as { chunk: number; mode: number } } : {}),
+		...(r['transparent'] === null || typeof r['transparent'] === 'number'
+			? { transparent: r['transparent'] as number | null }
+			: {})
 	};
 }
 

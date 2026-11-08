@@ -24,14 +24,16 @@ Measured properties of the runtime, listed so they are known before they are hit
   cfwpark, ctype, date, dom, filter, hash, json, lexbor, libxml, mbstring, pcre, pib, random,
   session, standard, tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by
   default; see [`OPCACHE_MODE`](../configuration/runtime.md#opcache_mode). `mbstring` is the native
-  extension; `iconv` is a PHP polyfill. There is no `gd` and no `pdo_sqlite`. `/php` reports the live
-  list.
+  extension; `iconv` is a PHP polyfill. `gd` is not compiled in and a stand-in covers 40 of its
+  functions; there is no `pdo_sqlite`. `/php` reports the live list.
 - **`extension_loaded()` is true for a stand-in only when the stand-in covers the extension's whole
   API.** The check is gated by a manifest of the extension's functions, constants and classes, and
   the shim answers false for any name outside it. `sodium` answers true: the stand-in covers the
   whole of ext-sodium and a conformance gate holds it to native libsodium, except that password
   hashing refuses work above a 64 MiB memory cap (see [Modules](modules.md#verified)). `zstd` and
-  `brotli` answer false because their streaming API is not shimmed, and `gd` answers false.
+  `brotli` answer false because their streaming API is not shimmed. `gd` answers true for the 40 functions the
+  WordPress, Joomla and Drupal image paths call, held to native gd by a differential; `imagecolorat()`, the drawing
+  functions and text stay undefined.
 
 ## Behavior Differences
 
@@ -59,7 +61,9 @@ Measured properties of the runtime, listed so they are known before they are hit
   applying an AVIF effect and falls through to the style's `webp` fallback. Cloudflare Images is
   reachable with [`IMAGE_ENGINE=images`](../configuration/serving/files-and-images.md#image_engine) on a zone that wants
   AVIF. Styles at or below 480 px on the long edge are produced during the request; larger ones are
-  produced on the alarm chain. A public image style URL is rewritten to the `/cfw-img/` delivery path.
+  produced on the alarm chain. A public image style URL is rewritten to the `/cfw-img/` delivery path. A site can
+  select Drupal's `GDToolkit` by hand, which builds each derivative at save time; see
+  [Choosing GDToolkit](../configuration/serving/files-and-images.md#choosing-gdtoolkit).
 - **Outbound HTTP completes inside the request that asks.** `Drupal::httpClient()` and a Symfony HTTP
   client park the PHP call while the Worker performs the fetch, and the same call resumes with the
   answer. Where a park is refused (a call made from inside an internal function such as

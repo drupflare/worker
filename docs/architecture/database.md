@@ -28,21 +28,29 @@ node scripts/diff-site-db.ts assets/drupal/site.sqlite /tmp/site.sqlite
    dependency closure, plus `update` from the install form, plus these two.
 3. **Applies the `page_content_type` recipe.** Drupal 11.4 ships no node type in `standard`; `page`
    and `article` are recipes under `core/recipes/`.
-4. **Writes four configuration values** through `ConfigFactory::save()`.
+4. **Writes five configuration values** through `ConfigFactory::save()`.
 5. **Drops the cache secondary indexes** on every bin except `cache_data`.
 6. **Truncates `watchdog`**, checkpoints the WAL and vacuums.
 
 Each step prints what it did, so a build log records the module set, the recipe list, the config keys
 and the index count.
 
-## The Four Configuration Values
+## The Five Configuration Values
 
-| Key                                     | Value   | Why                                                                   |
-| --------------------------------------- | ------- | --------------------------------------------------------------------- |
-| `system.performance:cache.page.max_age` | `300`   | at `0` every render answers `private, no-store` and no page is stored |
-| `system.performance:css.preprocess`     | `false` | the aggregates are built at pack time and served from `/agg/`         |
-| `system.performance:js.preprocess`      | `false` | the same                                                              |
-| `automated_cron.settings:interval`      | `0`     | the host owns the schedule; Drupal must not run cron inside a serve   |
+| Key                                     | Value        | Why                                                                   |
+| --------------------------------------- | ------------ | --------------------------------------------------------------------- |
+| `system.performance:cache.page.max_age` | `300`        | at `0` every render answers `private, no-store` and no page is stored |
+| `system.performance:css.preprocess`     | `false`      | the aggregates are built at pack time and served from `/agg/`         |
+| `system.performance:js.preprocess`      | `false`      | the same                                                              |
+| `automated_cron.settings:interval`      | `0`          | the host owns the schedule; Drupal must not run cron inside a serve   |
+| `system.image:toolkit`                  | `cfw_images` | core ships `gd`; see below                                            |
+
+`toolkit` matters because the gd shim defines `imagegd2`, so `GDToolkit::isAvailable()` is true.
+A database that kept core's `gd` would make every site nobody has claimed yet build its image
+derivatives eagerly. Neither the claim-time `image-toolkit` reconcile step nor
+`pack/consistency.php` changes a toolkit that is available, so the shipped rows have to say
+`cfw_images` themselves. `tests/node/baked-image-toolkit.spec.ts` reads the `config` row, the
+`cache_config` copy and the replay chunks.
 
 `max_age` is the one to understand. Drupal's installer default of `0` suits a host that configures a
 reverse proxy separately. This runtime serves its own cached pages, so at `0` the fill chain declines

@@ -74,7 +74,9 @@ characters of its sha-256. The asset list is what `assets/.assetsignore` ships, 
 
 `scripts/publish-bundle.ts` checks the files against the manifest, uploads them to
 `payloads/managed/releases/<tag>/` on the CDN, writes the manifest last, then reads every object back
-and compares it. A prefix whose manifest is already live is refused. With the R2 key pair in
+and compares it. A prefix whose manifest is already live is refused. Release prefixes stay published: a
+site records the release id it was built from, and an update reads that old manifest too, so nothing
+deletes or renames one. With the R2 key pair in
 `CLOUDFLARE_R2_KEY_ID` and `CLOUDFLARE_R2_SECRET_ACCESS_KEY` it uses the S3 endpoint: v1.0.5's 4,339
 assets took 578 s (n=1). Without them it falls back to `wrangler r2 bulk put`, which reached 1,720 of
 those objects in 17 minutes before one failed request ended the run.

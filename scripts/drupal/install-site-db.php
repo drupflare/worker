@@ -220,7 +220,7 @@ foreach (array_filter(explode(',', (string) $opt('recipes', 'page_content_type')
 $kernel = Drupal::service('kernel');
 // #endregion
 
-// #region the four config values the shipped pack disagrees with a stock install about
+// #region the config values the shipped pack disagrees with a stock install about
 // THROUGH ConfigFactory, NEVER SQL. `save()` clears `cache_config` and invalidates `config:<name>`;
 // a direct UPDATE leaves the serialized copy in the bin, Drupal reads the bin first, and the edit is
 // inert. That is not hypothetical -- commit 18b0aa85 shipped exactly that and the max_age fix did
@@ -238,6 +238,9 @@ $configEdits = [
 	],
 	// the host owns the schedule; Drupal firing its own on a request would run cron inside a serve
 	'automated_cron.settings' => ['interval' => 0],
+	// core ships `gd`, and the shim defines imagegd2, so GDToolkit reads as available and a site no
+	// claim has touched would build every derivative eagerly instead of through delivery
+	'system.image' => ['toolkit' => 'cfw_images'],
 ];
 $factory = Drupal::configFactory();
 foreach ($configEdits as $name => $values) {

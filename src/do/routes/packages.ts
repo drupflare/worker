@@ -158,8 +158,9 @@ export async function installable(
 /**
  * Installs one package, refusing first if the shipped lock conflicts.
  *
- * `?force=1` skips the check for a package the oracle cannot judge (`unverifiable`). It never skips
- * the archive digest check, which sits in `installPackage()`. Installing does not enable; both
+ * `?force=1` skips the check for a package the oracle cannot judge (`unverifiable`). `?ignore_core=1`
+ * lets version resolution take a release that declares an older core. Neither skips the archive
+ * digest check, which sits in `installPackage()`. Installing does not enable; both
  * routes are owner-gated because they write code the site did not ship with.
  */
 export async function install(
@@ -179,6 +180,9 @@ export async function install(
 	const stability = ['dev', 'alpha', 'beta', 'rc'].find(
 		(s) => s === url.searchParams.get('stability')
 	);
+	// a site that bypasses core's version gate (anachron) takes a release that declares an older
+	// core when none admits this one
+	const ignoreCore = url.searchParams.get('ignore_core') === '1';
 	if (url.searchParams.get('force') !== '1') {
 		// the method, not `this.fetch()`: the router already holds the gate
 		const verdict = await site.installableVerdict(name, constraint, stability);
@@ -204,12 +208,19 @@ export async function install(
 	// `composer` unless asked otherwise; `metadataUrl()` routes `drupal/*` to packages.drupal.org
 	const registry: Registry = url.searchParams.get('registry') === 'npm' ? 'npm' : 'composer';
 	if (withDeps) {
-		const installed = await site.installTree(registry, name, constraint, undefined, stability);
+		const installed = await site.installTree(
+			registry,
+			name,
+			constraint,
+			undefined,
+			stability,
+			ignoreCore
+		);
 		site.php = undefined;
 		const ok = installed.every((one) => one['ok'] === true);
 		return Response.json({ ok, name, installed }, { status: ok ? 200 : 502 });
 	}
-	const out = await site.installPackage(registry, name, constraint, stability);
+	const out = await site.installPackage(registry, name, constraint, stability, ignoreCore);
 	// the interpreter mounts new files at boot
 	site.php = undefined;
 	return Response.json(out, { status: out.ok === false ? 502 : 200 });

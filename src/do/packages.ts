@@ -106,7 +106,8 @@ export async function installTree(
 	name: string,
 	constraint?: string,
 	budget = { left: 40 },
-	stability?: string
+	stability?: string,
+	ignoreCore = false
 ): Promise<Record<string, unknown>[]> {
 	const installed = new Set(
 		[
@@ -146,7 +147,7 @@ export async function installTree(
 			continue;
 		}
 		installed.add(pkg);
-		const out = await site.installPackage(registry, pkg, wanted, stability);
+		const out = await site.installPackage(registry, pkg, wanted, stability, ignoreCore);
 		results.push(out);
 		if (out['ok'] !== true) continue;
 		const replaces = (out['replaces'] ?? []) as string[];
@@ -173,7 +174,8 @@ export async function installPackage(
 	registry: Registry,
 	name: string,
 	constraint?: string,
-	stability?: string
+	stability?: string,
+	ignoreCore = false
 ): Promise<Record<string, unknown>> {
 	site.ensureServeTables();
 	try {
@@ -184,11 +186,25 @@ export async function installPackage(
 		if (!meta.ok) {
 			return { ok: false, name, error: `metadata ${meta.status} for ${name}` };
 		}
-		let entry = pickVersion(await meta.json(), name, constraint, undefined, stability);
+		let entry = pickVersion(
+			await meta.json(),
+			name,
+			constraint,
+			undefined,
+			stability,
+			ignoreCore
+		);
 		if (!entry && registry !== 'npm' && (asksForBranch(constraint) || stability === 'dev')) {
 			const branches = await fetch(devMetadataUrl(url));
 			if (branches.ok)
-				entry = pickVersion(await branches.json(), name, constraint, undefined, stability);
+				entry = pickVersion(
+					await branches.json(),
+					name,
+					constraint,
+					undefined,
+					stability,
+					ignoreCore
+				);
 		}
 		if (!entry) {
 			return {

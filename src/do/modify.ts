@@ -21,7 +21,11 @@ import {
 	setActive,
 	storeBlobs
 } from '../ops/module-rev';
-import { type AutoloadDeclaration, parseAutoloadDeclaration } from '../ops/package-install';
+import {
+	type AutoloadDeclaration,
+	commitStalesContainer,
+	parseAutoloadDeclaration
+} from '../ops/package-install';
 import type { SitePhpDurableObject } from '../site-do';
 import { jsonError } from '../util/reply';
 import { firstRow } from '../util/sql';
@@ -171,8 +175,9 @@ export async function handleModify(
 				},
 				(fn) => site.storage.transactionSync(fn)
 			);
-			// a core yml is read only when the cached container and discovery are rebuilt
-			if (Object.keys(manifest).some((path) => /^core\/.*\.yml$/.test(path)))
+			// a core yml is read only when the cached container and discovery are rebuilt, and a
+			// vendor autoload can carry a service provider that only a rebuilt container holds
+			if (commitStalesContainer(Object.keys(manifest), autoloads))
 				site.dropCompiledContainer();
 			const applied = await applyRevision(site, pkg, manifest, rev);
 			if (!applied.ok) {

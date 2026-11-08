@@ -1747,18 +1747,20 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		name: string,
 		constraint?: string,
 		budget?: { left: number },
-		stability?: string
+		stability?: string,
+		ignoreCore?: boolean
 	): Promise<Record<string, unknown>[]> {
-		return installTree(this, registry, name, constraint, budget, stability);
+		return installTree(this, registry, name, constraint, budget, stability, ignoreCore);
 	}
 
 	async installPackage(
 		registry: Registry,
 		name: string,
 		constraint?: string,
-		stability?: string
+		stability?: string,
+		ignoreCore?: boolean
 	): Promise<Record<string, unknown>> {
-		return installPackage(this, registry, name, constraint, stability);
+		return installPackage(this, registry, name, constraint, stability, ignoreCore);
 	}
 
 	shellCandidates() {

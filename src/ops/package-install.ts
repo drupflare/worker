@@ -296,6 +296,20 @@ export function parseAutoloadDeclaration(
 	};
 }
 
+/**
+ * Whether a `/modify` commit leaves the compiled container stale.
+ *
+ * Core YAML is read only when the container is rebuilt. A vendor package that declares an autoload
+ * can register a service provider (a composer `files` entry that sets `container_service_providers`),
+ * and only a rebuilt container contains it.
+ */
+export function commitStalesContainer(
+	paths: readonly string[],
+	autoloads: readonly AutoloadDeclaration[]
+): boolean {
+	return autoloads.length > 0 || paths.some((path) => /^core\/.*\.yml$/.test(path));
+}
+
 /** class name to mount-relative path for a package's `classmap` roots, over files already read */
 export function classmapOf(
 	mount: string,
@@ -333,13 +347,32 @@ export function declaredClasses(source: string): string[] {
 /**
  * Picks a version from a composer `p2` document: newest stable unless the constraint says
  * otherwise. Both registries list newest first, so the first match wins without sorting.
+ *
+ * A release whose `require.drupal/core` excludes `core` is skipped. `ignoreCore` is for a site that
+ * bypasses core's version gate (anachron): a release that admits `core` still wins, and the newest
+ * release the constraint admits is the fallback when none does.
  */
 export function pickVersion(
 	doc: unknown,
 	name: string,
 	constraint?: string,
 	core: string = SHIPPED_CORE_VERSION,
-	stability: string = 'stable'
+	stability: string = 'stable',
+	ignoreCore = false
+): Record<string, unknown> | undefined {
+	return (
+		pickFor(doc, name, constraint, core, stability, true) ??
+		(ignoreCore ? pickFor(doc, name, constraint, core, stability, false) : undefined)
+	);
+}
+
+function pickFor(
+	doc: unknown,
+	name: string,
+	constraint: string | undefined,
+	core: string,
+	stability: string,
+	enforceCore: boolean
 ): Record<string, unknown> | undefined {
 	const packages = (doc as { packages?: Record<string, unknown[]> })?.packages;
 	const raw = packages?.[name];
@@ -390,7 +423,7 @@ export function pickVersion(
 	// a release requiring a Drupal core the site does not run is not installable
 	const admitsCore = (entry: Record<string, unknown>) => {
 		const need = (entry['require'] as Record<string, unknown> | undefined)?.['drupal/core'];
-		return typeof need !== 'string' || satisfies(core, need) !== 'no';
+		return !enforceCore || typeof need !== 'string' || satisfies(core, need) !== 'no';
 	};
 	// newest first, so the earliest admitted entry is composer's pick
 	for (const entry of list) {

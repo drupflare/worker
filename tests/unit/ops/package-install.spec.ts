@@ -8,6 +8,7 @@ import {
 	branchArchive,
 	checkArchiveDigest,
 	classmapOf,
+	commitStalesContainer,
 	commonPrefix,
 	composerVersion,
 	declaredClasses,
@@ -217,6 +218,34 @@ describe('picking a version', () => {
 		expect(pickVersion(ctx, 'drupal/context')?.version).toBe('5.0.0-rc2');
 		expect(pickVersion(ctx, 'drupal/old', undefined, '11.4.7')?.version).toBe('1.0.0');
 		expect(pickVersion(ctx, 'drupal/tool', undefined, '11.4.7')?.version).toBe('2.0.0');
+	});
+
+	it('takes a release that declares an older core only when asked to ignore core', () => {
+		const legacy = {
+			packages: {
+				'drupal/group': [
+					{ version: '1.6.0', require: { 'drupal/core': '^8.9 || ^9 || ^10' } },
+					{ version: '1.5.0', require: { 'drupal/core': '^8.9 || ^9' } }
+				],
+				'drupal/context': [
+					{ version: '5.0.0-rc2', require: { 'drupal/core': '^10.3 || ^11' } },
+					{ version: '4.1.0', require: { 'drupal/core': '^8.8 || ^9' } }
+				]
+			}
+		};
+		expect(pickVersion(legacy, 'drupal/group', '^1.0', '11.4.7')).toBeUndefined();
+		expect(pickVersion(legacy, 'drupal/group', '^1.0', '11.4.7', 'stable', true)?.version).toBe(
+			'1.6.0'
+		);
+		expect(pickVersion(legacy, 'drupal/group', '^1.0', '9.5.0', 'stable', true)?.version).toBe(
+			'1.6.0'
+		);
+		expect(
+			pickVersion(legacy, 'drupal/context', undefined, '9.5.0', 'stable', true)?.version
+		).toBe('4.1.0');
+		expect(
+			pickVersion(legacy, 'drupal/context', undefined, '11.4.7', 'stable', true)?.version
+		).toBe('5.0.0-rc2');
 	});
 
 	it('reads a stability flag the way composer does, for that package only', () => {
@@ -1084,6 +1113,13 @@ describe('the autoload a build delivers with a vendor package', () => {
 	it('is none when none was sent', () => {
 		expect(parseAutoloadDeclaration(undefined)).toBeUndefined();
 		expect(parseAutoloadDeclaration(null)).toBeUndefined();
+	});
+
+	it('leaves the compiled container stale, since a provider it registers is not in the cached one', () => {
+		const read = parseAutoloadDeclaration(declared);
+		expect(commitStalesContainer(['vendor/acme/widget/boot.php'], [read as never])).toBe(true);
+		expect(commitStalesContainer(['vendor/acme/widget/boot.php'], [])).toBe(false);
+		expect(commitStalesContainer(['core/core.services.yml'], [])).toBe(true);
 	});
 
 	it('refuses a mount outside vendor and libraries, a climbing path and a bad name', () => {

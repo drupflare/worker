@@ -90,10 +90,10 @@ describe('the extensions the shipping binary loads', () => {
 		expect(polyfilled.filter((ext) => loaded.includes(ext))).toEqual([]);
 	}, 900_000);
 
-	it('has no gd, which is what focal_point and every derivative-reading contrib depend on', async () => {
-		// asserted separately from the maps because nothing requires `ext-gd` here; the claim
-		// that was wrong lived in prose, and prose needs its own guard
-		expect(await loadedExtensions()).not.toContain('ext-gd');
+	it('reports gd, which the shim claims for the 40 functions the differential holds', async () => {
+		// the claim lives in SHIM_CLAIMS and is held by tests/gd-differential.php; a module that
+		// reads or paints pixels still fails at the call, because those functions stay undefined
+		expect(await loadedExtensions()).toContain('ext-gd');
 	}, 900_000);
 
 	// the gap `docs/getting-started/repository-layout/index.md` named: the extension set behind two COST decisions was

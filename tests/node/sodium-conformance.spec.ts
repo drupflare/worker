@@ -37,7 +37,7 @@ describe('the declared extension table', () => {
 
 	it('answers true for sodium only because the manifest covers the whole API', () => {
 		expect(covers(SODIUM_MANIFEST, api)).toBe(true);
-		expect(Object.keys(EXTENSION_TABLE)).toEqual(['sodium']);
+		expect(Object.keys(EXTENSION_TABLE)).toEqual(['sodium', 'gd']);
 		expect(EXTENSION_TABLE['sodium']).toEqual(SODIUM_API.functions.map((f) => f.name));
 	});
 
@@ -65,7 +65,7 @@ describe('the declared extension table', () => {
 		expect(extensionTable({ sodium: { api, manifest: noClass } })).toEqual({});
 	});
 
-	it('leaves a partial shim false: gd, curl and the rest are never in the table', () => {
+	it('leaves a partial shim false: a short gd manifest, and curl and the rest, are not in the table', () => {
 		const partial = {
 			...SHIM_CLAIMS,
 			gd: {
@@ -80,7 +80,7 @@ describe('the declared extension table', () => {
 		const table = extensionTable(partial);
 		expect(table['gd']).toBeUndefined();
 		expect(table['sodium']).toBeDefined();
-		for (const name of ['gd', 'curl', 'openssl', 'exif', 'fileinfo', 'zip', 'xmlwriter']) {
+		for (const name of ['curl', 'openssl', 'exif', 'fileinfo', 'zip', 'xmlwriter']) {
 			expect(EXTENSION_TABLE[name], name).toBeUndefined();
 		}
 	});

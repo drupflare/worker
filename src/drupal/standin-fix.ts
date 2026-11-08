@@ -23,7 +23,7 @@ import { renderTemplate } from '../util/template';
  *   changes, which never happens on a frozen clock.
  * - exec and the process family answer as a failed launch (there is no process table).
  * - extension_loaded, get_loaded_extensions and get_extension_funcs answer from a declared table
- *   (`EXTENSIONS_FIX`), so an extension reads loaded only when a shim covers its whole API.
+ *   (`EXTENSIONS_FIX`), so an extension reads loaded only when a shim's manifest covers the API it claims.
  *
  * Each degraded call keeps its name, so feature detection passes, and records a status-report row
  * through `Degradation::record()`.
@@ -65,6 +65,25 @@ export const GD_CONSTANTS: Record<string, number> = {
 	IMG_JPEG: 2,
 	IMG_PNG: 4,
 	IMG_WEBP: 32,
+	IMG_AVIF: 256,
+	IMG_GD2_RAW: 1,
+	IMG_GD2_COMPRESSED: 2,
+	IMG_FLIP_HORIZONTAL: 1,
+	IMG_FLIP_VERTICAL: 2,
+	IMG_FLIP_BOTH: 3,
+	IMG_FILTER_NEGATE: 0,
+	IMG_FILTER_GRAYSCALE: 1,
+	IMG_FILTER_BRIGHTNESS: 2,
+	IMG_FILTER_CONTRAST: 3,
+	IMG_FILTER_COLORIZE: 4,
+	IMG_FILTER_EDGEDETECT: 5,
+	IMG_FILTER_EMBOSS: 6,
+	IMG_FILTER_GAUSSIAN_BLUR: 7,
+	IMG_FILTER_SELECTIVE_BLUR: 8,
+	IMG_FILTER_MEAN_REMOVAL: 9,
+	IMG_FILTER_SMOOTH: 10,
+	IMG_FILTER_PIXELATE: 11,
+	IMG_FILTER_SCATTER: 12,
 	IMG_BELL: 1,
 	IMG_BESSEL: 2,
 	IMG_BILINEAR_FIXED: 3,
@@ -125,7 +144,51 @@ export const GD_FUNCTIONS: readonly (readonly [string, string, string])[] = [
 		'$image, $file, $quality, $filters'
 	],
 	['imagewebp', '$image, $file = null, $quality = -1', '$image, $file, $quality'],
-	['imagegif', '$image, $file = null', '$image, $file']
+	['imagegif', '$image, $file = null', '$image, $file'],
+	[
+		'imagecopy',
+		'$dst_image, $src_image, $dst_x, $dst_y, $src_x, $src_y, $src_width, $src_height',
+		'$dst_image, $src_image, $dst_x, $dst_y, $src_x, $src_y, $src_width, $src_height'
+	],
+	[
+		'imagecopymerge',
+		'$dst_image, $src_image, $dst_x, $dst_y, $src_x, $src_y, $src_width, $src_height, $pct',
+		'$dst_image, $src_image, $dst_x, $dst_y, $src_x, $src_y, $src_width, $src_height, $pct'
+	],
+	['imagecolorallocate', '$image, $red, $green, $blue', '$image, $red, $green, $blue'],
+	[
+		'imagecolorallocatealpha',
+		'$image, $red, $green, $blue, $alpha',
+		'$image, $red, $green, $blue, $alpha'
+	],
+	['imagecolortransparent', '$image, $color = null', '$image, $color'],
+	['imagecolorsforindex', '$image, $color', '$image, $color'],
+	['imagecolorstotal', '$image', '$image'],
+	[
+		'imagecolorexactalpha',
+		'$image, $red, $green, $blue, $alpha',
+		'$image, $red, $green, $blue, $alpha'
+	],
+	['imageistruecolor', '$image', '$image'],
+	['imagetruecolortopalette', '$image, $dither, $num_colors', '$image, $dither, $num_colors'],
+	['imagefill', '$image, $x, $y, $color', '$image, $x, $y, $color'],
+	['imagefilter', '$image, $filter, ...$args', '$image, $filter, ...$args'],
+	['imageflip', '$image, $mode', '$image, $mode'],
+	['imageinterlace', '$image, $enable = null', '$image, $enable'],
+	['imageantialias', '$image, $enable', '$image, $enable'],
+	['imagecreatefromavif', '$filename', '$filename'],
+	[
+		'imageavif',
+		'$image, $file = null, $quality = -1, $speed = -1',
+		'$image, $file, $quality, $speed'
+	],
+	[
+		'imagegd2',
+		'$image, $file = null, $chunk_size = 128, $mode = 1',
+		'$image, $file, $chunk_size, $mode'
+	],
+	['gd_info', '', ''],
+	['imagetypes', '', '']
 ];
 
 const gdPhp = (): string => {
@@ -140,7 +203,7 @@ const gdPhp = (): string => {
 			`\t\t\t\treturn false;\n\t\t\t}\n` +
 			`\t\t\treturn Drupal\\drupflare\\Shim\\Gd::${name}(${args});\n\t\t}`
 	).join('\n');
-	return `\tif (!extension_loaded('gd') && !function_exists('imagecreatefromstring')) {\n${defines}\n${wrappers}\n\t}`;
+	return `\tif (!function_exists('imagecreatefromstring')) {\n${defines}\n${wrappers}\n\t}`;
 };
 
 /** the stand-in PHP fragment with the gd constants and wrappers filled in */

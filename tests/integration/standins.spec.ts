@@ -227,11 +227,11 @@ describe('the stand-ins, in a booted site', () => {
 	);
 
 	it(
-		'declares the routed gd functions and the gd constants, and leaves the extension absent',
+		'declares the routed gd functions and the gd constants, and reports the extension loaded',
 		async () => {
 			const out = await measured();
 			expect(out['gdDeclared']).toBe(true);
-			expect(out['gdLoaded']).toBe(false);
+			expect(out['gdLoaded']).toBe(true);
 			expect(out['gdRouted']).toEqual(GD_FUNCTIONS.map(() => true));
 			// the worker copies the constants because nothing can load a class before this runs
 			expect(out['gdConstantNames']).toEqual(Object.keys(GD_CONSTANTS));

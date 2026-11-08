@@ -19,7 +19,7 @@ const run = (code: string) =>
 	inObject(freshSite(), async (site: ServeDo) => site.runJson(code)) as Promise<Json>;
 
 describe('extension_loaded() over the declared table', () => {
-	it('answers true for sodium and false for the partial shims', async () => {
+	it('answers true for sodium and gd and false for the partial shims', async () => {
 		const out = await run(`<?php echo json_encode([
 			'sodium' => extension_loaded('sodium'),
 			'upper' => extension_loaded('SODIUM'),
@@ -35,7 +35,7 @@ describe('extension_loaded() over the declared table', () => {
 		expect(out).toEqual({
 			sodium: true,
 			upper: true,
-			gd: false,
+			gd: true,
 			curl: false,
 			openssl: false,
 			exif: false,
@@ -56,7 +56,7 @@ describe('extension_loaded() over the declared table', () => {
 		]);`);
 		const loaded = out['loaded'] as string[];
 		expect(loaded).toContain('sodium');
-		expect(loaded).not.toContain('gd');
+		expect(loaded).toContain('gd');
 		for (const name of ['Core', 'mbstring', 'zlib', 'Zend OPcache', 'vrzno', 'Reflection']) {
 			expect(loaded).toContain(name);
 		}

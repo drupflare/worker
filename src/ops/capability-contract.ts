@@ -354,12 +354,12 @@ export const VECTORS: readonly Vector[] = [
 		id: 'media.gd',
 		group: 'MEDIA',
 		kind: 'executed',
-		claim: 'gd image handles that scale, crop, rotate and encode',
+		claim: 'gd image handles that scale, crop, rotate, copy, filter and encode',
 		probe: "(function () { if (!function_exists('imagecreatetruecolor')) { return false; } return @imagecreatetruecolor(1, 1) !== false; })()",
 		expected: true,
 		blocker: null,
 		evidence:
-			"ROUTED to the host image engine: the gd functions a CMS upload path uses build a handle that queues crop, resize and rotate operations, and writing the image out parks PHP on `cfwpark+image://` while tinyimg decodes, applies the queue and encodes. `extension_loaded('gd')` stays false and the per-pixel and drawing functions stay undefined, so a module that reads or paints pixels still fails at the call"
+			"ROUTED to the host image engine: the 40 gd functions the WordPress, Joomla and Drupal image paths call build a handle that queues crop, resize, rotate, flip, copy, merge, fill and filter operations, and writing the image out parks PHP on `cfwpark+image://` while tinyimg decodes, applies the queue and encodes. `extension_loaded('gd')` is true, held by the differential in the drupflare module against native gd on PHP 8.3 and 8.4. `imagecolorat`, the drawing functions and text stay undefined, so a module that reads or paints pixels still fails at the call, and `imageavif` answers false for an image with alpha"
 	},
 	{
 		id: 'media.delivery_styles',

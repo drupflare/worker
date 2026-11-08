@@ -1,5 +1,7 @@
+import { GD_MANIFEST } from '../generated/gd-manifest';
 import { SODIUM_API } from '../generated/sodium-api';
 import { SODIUM_MANIFEST } from '../generated/sodium-manifest';
+import { GD_API } from './gd-surface';
 
 /** the names of an extension's API: its functions, constants and classes */
 export type ApiSurface = {
@@ -108,15 +110,16 @@ export function covers(manifest: ApiSurface, api: ApiSurface): boolean {
 /** an extension a shim stands in for, with the API it must cover and the manifest that says it does */
 export type ShimClaim = { api: ApiSurface; manifest: ApiSurface };
 
-/** the extensions a shim claims to cover whole; a partial shim does not appear here */
+/** the extensions a shim claims to cover; gd claims the tier 1 surface in `gd-surface.ts`, not all of ext-gd */
 export const SHIM_CLAIMS: Readonly<Record<string, ShimClaim>> = {
-	sodium: { api: surfaceOf(SODIUM_API), manifest: SODIUM_MANIFEST }
+	sodium: { api: surfaceOf(SODIUM_API), manifest: SODIUM_MANIFEST },
+	gd: { api: GD_API, manifest: GD_MANIFEST }
 };
 
 /**
  * The declared table: an extension answers true only when its manifest covers its whole API, and
  * the value is the function list `get_extension_funcs()` gives. Everything else answers as the
- * build does, so `gd`, `curl` and the other partial shims stay false.
+ * build does, so `curl` and the other partial shims stay false.
  */
 export function extensionTable(claims: Readonly<Record<string, ShimClaim>> = SHIM_CLAIMS) {
 	const table: Record<string, string[]> = {};

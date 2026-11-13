@@ -74,8 +74,10 @@ Limits worth knowing:
 
 The object records every owner call that changes state or reads a secret, and `GET /audit` returns
 the log. A call is recorded when it carries the owner token and reaches one of these: `/install`,
-`/enable`, `/modify`, `/restore`, `/export`, `/migrate`, `/bump`, `/invalidate`, `/pitr` (POST),
-`/updb` (POST), `/reconcile` (POST), `/firstrun?force=1`, `/git` with any action but `list`,
+`/enable`, `/modify`, `/restore`, `/restore-parts` (`begin`, `commit` and `abort`), `/export`, `/offloaded` (the
+listing, and a read of a `private://` file), `/migrate`, `/bump`, `/invalidate`, `/pitr` (POST),
+`/updb` (POST), `/reconcile` (POST), `/writemark` (POST and DELETE), `/writechanges?body=1`,
+`/firstrun?force=1`, `/git` with any action but `list`,
 `check`, `branches`, `prs`, `diff` and `status`, `/queue?action=drop`, `/ops` with an `op`, the
 `/setup/*` pages when they write, `/health?clear=1`, and a `/settings` write. A token recovery is
 recorded with the actor `proof`, since it presents no token. Reads and polling (`/serve-stats`,
@@ -84,7 +86,7 @@ recorded with the actor `proof`, since it presents no token. Reads and polling (
 An entry is `{seq, at, route, method, status, actor, prev, hash}`. `actor` is the first 8 hex
 characters of the SHA-256 of the presented token, and `hash` is the SHA-256 of `prev` followed by
 the entry's JSON without its hash, keys in that order. The route carries only `action`, `force`,
-`secrets`, `all`, `op` and `clear` from the query. The log lives in `ctx.storage` key-value storage,
+`secrets`, `all`, `op`, `clear` and `replace` from the query. The log lives in `ctx.storage` key-value storage,
 which the SQL bridge cannot read or write (the platform reserves the `_cf_` tables behind it), as a
 ring of the last 1,000 entries, a head pointer, and the hash of the last entry the ring dropped.
 Each entry costs two key-value writes, three when it overwrites an older one.

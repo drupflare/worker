@@ -87,6 +87,8 @@ export interface MigrateCursor {
 export interface MigrateStepOptions {
 	maxChunks?: number;
 	budgetMs?: number;
+	/** runs inside the transaction that applies the final chunk, after its statements and before the cursor says done */
+	onLastChunk?: () => void;
 }
 
 /** options for {@link SqlMigrator.runAll} */
@@ -298,7 +300,8 @@ export class SqlMigrator {
 	 */
 	async step({
 		maxChunks = 1,
-		budgetMs = 0
+		budgetMs = 0,
+		onLastChunk
 	}: MigrateStepOptions = {}): Promise<MigrateStepResult> {
 		ensureMigrateTable(this.sql);
 		const manifest = await this.getManifest();
@@ -395,6 +398,7 @@ export class SqlMigrator {
 						c.toArray();
 						chunkRows += Number(c.rowsWritten ?? 0);
 					}
+					if (next >= total) onLastChunk?.();
 					// same transaction as the data: chunk and cursor commit together
 					this.sql.exec(
 						`UPDATE ${MIGRATE_TABLE}

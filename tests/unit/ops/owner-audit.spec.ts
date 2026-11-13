@@ -197,7 +197,10 @@ describe('which calls are recorded', () => {
 		['/__ops', 'POST', 'op=cim', '/__ops?op=cim'],
 		['/__bump', 'GET', 'reason=x', '/__bump'],
 		['/__cfoauth', 'GET', 'action=callback', '/__cfoauth?action=callback'],
-		['/__oidcsetup', 'POST', '', '/__oidcsetup']
+		['/__oidcsetup', 'POST', '', '/__oidcsetup'],
+		['/__writemark', 'POST', 'mark=m1&replace=1', '/__writemark?replace=1'],
+		['/__writemark', 'DELETE', 'mark=m1', '/__writemark'],
+		['/__writechanges', 'GET', 'body=1&through=3', '/__writechanges']
 	])('records %s %s ?%s as %s', (path, method, query, label) => {
 		expect(route(path, method, query)).toBe(label);
 	});
@@ -221,7 +224,9 @@ describe('which calls are recorded', () => {
 		['/__cfoauth', 'GET', ''],
 		['/__mailonboard', 'GET', 'action=status'],
 		['/__sweep', 'GET', ''],
-		['/__armfill', 'GET', '']
+		['/__armfill', 'GET', ''],
+		['/__writemark', 'GET', ''],
+		['/__writechanges', 'GET', '']
 	])('leaves %s %s ?%s alone', (path, method, query) => {
 		expect(route(path, method, query)).toBeUndefined();
 	});

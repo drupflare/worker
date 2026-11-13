@@ -23,6 +23,21 @@ export const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
 export const DEFAULT_MAX_RESTORE_BYTES = 16 * 1024 * 1024;
 
 /**
+ * The largest single part of a paged restore, in bytes. One part is held whole in the object and
+ * written as one row, so it sits well under the 8 MB string, BLOB and row ceiling the Durable
+ * Object limits page gives for SQLite storage. A chosen default, not a measured one.
+ */
+export const RESTORE_PART_MAX_BYTES = 1024 * 1024;
+
+/**
+ * The largest dump a paged restore accepts, in bytes. The raw parts, the replay chunks written
+ * from them and the restored tables can all be on disk together, so a dump costs up to three
+ * times its size against the 1 GB (Free) or 10 GB (Paid) storage limit per object. A chosen
+ * default, not a measured one.
+ */
+export const DEFAULT_MAX_PAGED_RESTORE_BYTES = 128 * 1024 * 1024;
+
+/**
  * The largest `multipart/form-data` body that may reach the object, in bytes.
  * The site set no ceiling here before; the platform's own 100 MB request limit was the only one, so
  * this default sits at that limit and lowers nothing that arrived. An upload is read whole by the

@@ -120,6 +120,9 @@ export async function readPage(
 /** how many generations back a miss may look (at three, the reads cost more than the object hop) */
 export const STALE_GENERATION_DEPTH = 2;
 
+/** the most generations back any caller may ask a miss to look */
+export const STALE_DEPTH_MAX = 8;
+
 /** the oldest a stale answer may be, in ms (an abandoned site is never bumped past the depth) */
 export const STALE_MAX_AGE_MS = 86_400_000;
 
@@ -164,7 +167,7 @@ export async function readStalePage(
 ): Promise<{ page: StoredPage; behind: number } | undefined> {
 	if (!pageKvEnabled(env) || !env?.PAGE_KV) return undefined;
 	if (!staleAllowed(path, opts.neverStale)) return undefined;
-	const depth = Math.max(1, Math.min(opts.depth ?? STALE_GENERATION_DEPTH, 8));
+	const depth = Math.max(1, Math.min(opts.depth ?? STALE_GENERATION_DEPTH, STALE_DEPTH_MAX));
 	const now = opts.nowMs ?? Date.now();
 	for (let behind = 1; behind <= depth; behind++) {
 		const previous = generation - behind;

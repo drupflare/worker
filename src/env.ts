@@ -143,6 +143,8 @@ export interface SiteEnv extends BaseSiteEnv {
 	MAX_BODY_BYTES?: string | number;
 	/** largest `/restore` dump the edge forwards, in bytes; default 16 MiB, `0` disables */
 	MAX_RESTORE_BYTES?: string | number;
+	/** largest dump a paged restore accepts, in bytes; default 128 MiB, `0` falls back to it */
+	MAX_RESTORE_PAGED_BYTES?: string | number;
 	/** largest `multipart/form-data` body the edge forwards, in bytes; default 100 MiB, `0` disables */
 	MAX_UPLOAD_BYTES?: string | number;
 	/**

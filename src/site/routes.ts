@@ -66,6 +66,7 @@ const DIAGNOSTIC_ROUTES = new Set([
 	'/bump',
 	'/export',
 	'/restore',
+	'/restore-parts',
 	'/pitr',
 	'/queue',
 	'/savenode',
@@ -130,6 +131,13 @@ export const OWNER_ROUTES = new Set([
 	// recovery from a dump: a body names a state the caller invents, which the owner token already
 	// can (`/modify` and `/install` run code the site did not ship); has its own body ceiling
 	'/restore',
+	// the same restore for a dump above that ceiling: parts of at most 1 MiB, then a commit
+	'/restore-parts',
+	// the bytes of files held only in R2, listed and streamed, so a copy of the site can carry them
+	'/offloaded',
+	// the accepted-write mark and the rows changed since it; owner-only, with no diagnostics path
+	'/writemark',
+	'/writechanges',
 	// fleet reconciliation: reports what a site still owes and drives one step of it
 	'/reconcile',
 	// the addressable sweep; bounds what an indexer can make a site spend
@@ -216,7 +224,11 @@ export const DO_ROUTE: Record<string, string> = {
 	'/bump': '/__bump',
 	'/export': '/__export',
 	'/restore': '/__restore',
+	'/restore-parts': '/__restore-parts',
+	'/offloaded': '/__offloaded',
 	'/pitr': '/__pitr',
+	'/writemark': '/__writemark',
+	'/writechanges': '/__writechanges',
 	'/queue': '/__queue',
 	'/firstrun': '/__firstrun',
 	'/savenode': '/__savenode',

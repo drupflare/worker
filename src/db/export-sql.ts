@@ -7,7 +7,16 @@ import type { SqlLike } from './migrate-sql';
  * A dump with `cfw_import_chunk` would contain itself, and one with `cfw_migrate` would overwrite
  * the cursor that makes the replay resumable.
  */
-export const RESTORE_OWNED_TABLES = ['cfw_migrate', 'cfw_import', 'cfw_import_chunk'];
+export const RESTORE_OWNED_TABLES = [
+	'cfw_migrate',
+	'cfw_import',
+	'cfw_import_chunk',
+	'cfw_restore_upload',
+	'cfw_restore_part',
+	'cfw_mark',
+	'cfw_wj',
+	'cfw_restore_mark'
+];
 
 /**
  * Name prefixes belonging to something other than the site.
@@ -289,7 +298,7 @@ interface MasterRow {
 }
 
 /** `"` doubled, which is how SQLite escapes an identifier */
-function ident(name: string): string {
+export function ident(name: string): string {
 	return `"${name.replace(/"/g, '""')}"`;
 }
 
@@ -341,7 +350,7 @@ export function encodeLiteral(type: string, hex: string, real: number | null): s
 }
 
 /** the typeof, hex and real-only projection that both row readers select */
-function columnSelect(columns: string[]): string {
+export function columnSelect(columns: string[]): string {
 	return columns
 		.map(
 			(c, i) =>
@@ -552,6 +561,8 @@ function schemaPlan(sql: SqlLike): SchemaPlan {
 		const owner = String(row.tbl_name ?? name);
 		// runtime-owned objects (`_cf_` appears on first storage API use)
 		if (!name || RUNTIME_OWNED_PREFIXES.some((p) => name.startsWith(p))) continue;
+		// a change-capture trigger belongs to the object that installed it
+		if (row.type === 'trigger' && name.startsWith('cfw_wt_')) continue;
 		if (owned.has(name) || owned.has(owner)) continue;
 		const ddl = `${String(row.sql).replace(/;+\s*$/, '')};`;
 		if (row.type === 'table') {

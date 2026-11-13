@@ -28,6 +28,8 @@ import {
 	updb
 } from './lifecycle';
 import { cfoauth, mailonboard } from './mail';
+import { writechanges, writemark } from './mark';
+import { offloaded } from './offloaded';
 import { exportRoute, pitr, restore } from './owner';
 import {
 	enable,
@@ -41,6 +43,7 @@ import {
 	moduleasset
 } from './packages';
 import { replica } from './replica';
+import { restoreParts } from './restore-parts';
 import { queue, serve, serveStats } from './serve';
 import { spool } from './spool';
 import { mirror, savenode, txnprobe, writes, writeworkload } from './writes';
@@ -74,10 +77,14 @@ export const ROUTES: Record<string, Route> = {
 	'/__recover-token': recoverToken,
 	'/__pitr': pitr,
 	'/__restore': restore,
+	'/__restore-parts': restoreParts,
+	'/__offloaded': offloaded,
 	'/__export': exportRoute,
 	'/__installable': installable,
 	'/__install': install,
 	'/__replica': replica,
+	'/__writemark': writemark,
+	'/__writechanges': writechanges,
 	'/__writes': writes,
 	'/__mirror': mirror,
 	'/__moduleasset': moduleasset,

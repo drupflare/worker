@@ -10,8 +10,10 @@ import { getFile, putFile } from '../../src/db/file-store';
 import { isIdentityMetaStatement, storeImport, storedImportLoader } from '../../src/db/import-sql';
 import type { SqlLike, StorageLike } from '../../src/db/migrate-sql';
 import { SqlMigrator, readMigrateCursor } from '../../src/db/migrate-sql';
+import { sha256Hex } from '../../src/db/restore-parts';
 import { pendingMatches as oidcPendingMatches, ticketRedeemable } from '../../src/ops/oidc';
 import { spendProof } from '../../src/ops/owner-recovery';
+import { STALE_DEPTH_MAX } from '../../src/ops/page-store';
 import {
 	mintOwnerToken,
 	ownerTokenIsSet,
@@ -1357,5 +1359,210 @@ describe('a dump never says which site it came from', () => {
 			return site.siteName();
 		});
 		expect(name).toBe('a.example');
+	});
+});
+
+describe('a restore onto a warm, claimed site ends fresh', () => {
+	const post = (site: ServeDo, path: string, init: RequestInit = { method: 'POST' }) =>
+		site.fetch(new Request(`https://do.local${path}`, init));
+
+	const dumpNamed = (name: string, generation: number) =>
+		[
+			'DROP TABLE IF EXISTS site_config;',
+			'CREATE TABLE site_config (name TEXT);',
+			`INSERT INTO site_config (name) VALUES ('${name}');`,
+			`INSERT OR REPLACE INTO cfw_meta (k, v) VALUES ('generation', '${generation}');`
+		].join('\n');
+
+	/** a site claimed under `generation` whose warm interpreter answers from the config it booted */
+	async function warm(site: ServeDo, generation: number, extra: Record<string, string> = {}) {
+		site.env = { ...site.env, PW_DIAGNOSTICS: '1', ...extra };
+		await migrate(site, '?all=1&prefill=0');
+		const doc = site as unknown as SitePhpDurableObject;
+		doc.metaSet('generation', generation);
+		const { sql } = seams(site);
+		sql.exec('CREATE TABLE site_config (name TEXT)');
+		sql.exec("INSERT INTO site_config (name) VALUES ('before')");
+		let booted: string | undefined;
+		const boots: string[] = [];
+		stubRender(site, ({ path }) => {
+			if (!doc.php) {
+				site.php = { stubbed: true, binary: {} };
+				booted = undefined;
+			}
+			if (booted === undefined) {
+				booted = String(sql.exec('SELECT name FROM site_config').toArray()[0]?.name);
+				boots.push(booted);
+			}
+			const html = `<html><body>${booted} ${path}</body></html>`;
+			return { ...pageFor(path), html, bytes: html.length };
+		});
+		site.php = { stubbed: true, binary: {} };
+		const first = await serveDirect(site, '/', '&lane=gate&inline=1&edge=0');
+		expect(first.status).toBe(200);
+		return { doc, sql, boots };
+	}
+
+	/** fires the alarm until the import reads applied, and not once more */
+	async function applyAll(site: ServeDo, rounds = 8) {
+		for (let i = 0; i < rounds; i++) {
+			await site.storage.setAlarm(Date.now() + 1);
+			await site.alarm();
+			if ((await state(site)).import?.state === 'applied') return;
+		}
+	}
+
+	const state = (site: ServeDo) =>
+		site
+			.fetch(new Request('https://do.local/__health'))
+			.then((r) => r.json() as Promise<{ import: { state: string } | null }>);
+
+	it('renders the restored config on the first request, with a generation above both', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			const { doc, sql, boots } = await warm(site, 5);
+			const pages = () =>
+				Number(sql.exec('SELECT COUNT(*) AS c FROM cfw_page').toArray()[0]?.c);
+			const before = { generation: doc.generation(), pages: pages() };
+			await post(site, '/__restore?label=fresh-1', {
+				method: 'POST',
+				body: dumpNamed('after', 3)
+			});
+			await applyAll(site);
+			const applied = (await state(site)).import?.state;
+			const settled = { generation: doc.generation(), pages: pages(), php: doc.php };
+			const first = await serveDirect(site, '/', '&lane=gate&inline=1&edge=0');
+			return { before, applied, settled, boots, first, meta: doc.metaGet('last_bump') };
+		});
+		expect(out.before.generation).toBe(5);
+		expect(out.before.pages).toBe(1);
+		expect(out.applied).toBe('applied');
+		// above the dump's 3 and the site's own 5, and past the stale read depth
+		expect(out.settled.generation).toBe(5 + STALE_DEPTH_MAX + 1);
+		expect(out.settled.pages).toBe(0);
+		expect(out.settled.php).toBeUndefined();
+		expect(out.meta?.startsWith(`${5 + STALE_DEPTH_MAX + 1}:restore:`)).toBe(true);
+		expect(out.boots).toEqual(['before', 'after']);
+		expect(out.first.status).toBe(200);
+		expect(out.first.cache).toBe('RENDER');
+		expect(out.first.body).toContain('after /');
+	});
+
+	it('moves a generation equal to the dump forward, and one below it', async () => {
+		const equal = await inObject(freshSite(), async (site) => {
+			const { doc } = await warm(site, 3);
+			await post(site, '/__restore?label=eq', { method: 'POST', body: dumpNamed('x', 3) });
+			await applyAll(site);
+			return doc.generation();
+		});
+		const below = await inObject(freshSite(), async (site) => {
+			const { doc } = await warm(site, 2);
+			await post(site, '/__restore?label=lo', { method: 'POST', body: dumpNamed('x', 40) });
+			await applyAll(site);
+			return doc.generation();
+		});
+		expect(equal).toBe(3 + STALE_DEPTH_MAX + 1);
+		expect(below).toBe(40 + STALE_DEPTH_MAX + 1);
+	});
+
+	it('stops serving a page stored before, including one a dump did not drop', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			await warm(site, 4);
+			seedPage(site, '/old', '<p>pre-restore</p>');
+			await post(site, '/__restore?label=pages', {
+				method: 'POST',
+				body: dumpNamed('after', 4)
+			});
+			await applyAll(site);
+			return serveDirect(site, '/old', '&lane=gate&inline=1&edge=0');
+		});
+		expect(out.body).not.toContain('pre-restore');
+		expect(out.body).toContain('after /old');
+	});
+
+	it('settles once at the last chunk of a restore that takes several invocations', async () => {
+		const many = [
+			'DROP TABLE IF EXISTS site_config;',
+			'CREATE TABLE site_config (name TEXT);',
+			"INSERT INTO site_config (name) VALUES ('after');",
+			"INSERT OR REPLACE INTO cfw_meta (k, v) VALUES ('generation', '3');",
+			...Array.from({ length: 130 }, (_, i) => `SELECT ${i};`)
+		].join('\n');
+		const out = await inObject(freshSite(), async (site) => {
+			const { doc } = await warm(site, 6, { MIGRATE_CHUNKS_PER_INVOCATION: '1' });
+			await post(site, '/__restore?label=long', { method: 'POST', body: many });
+			const seen: number[] = [];
+			for (let i = 0; i < 8; i++) {
+				await site.storage.setAlarm(Date.now() + 1);
+				await site.alarm();
+				seen.push(doc.generation());
+			}
+			const bumps = doc.bumps ?? 0;
+			await applyAll(site, 3);
+			return { seen, bumps, after: doc.bumps ?? 0, generation: doc.generation() };
+		});
+		const final = 6 + STALE_DEPTH_MAX + 1;
+		// the dump's 3 shows mid-replay; the pre-restore 6 is what the last chunk builds on
+		expect(out.seen).toContain(3);
+		expect(out.seen.at(-1)).toBe(final);
+		expect(out.bumps).toBe(1);
+		expect(out.after).toBe(1);
+		expect(out.generation).toBe(final);
+	});
+
+	it('ends fresh through the paged route as well', async () => {
+		const dump = dumpNamed('paged', 3);
+		const statements = dump.split('\n').map((s) => new TextEncoder().encode(`${s}\n`));
+		const whole = new Uint8Array(statements.reduce((n, s) => n + s.length, 0));
+		let at = 0;
+		for (const s of statements) {
+			whole.set(s, at);
+			at += s.length;
+		}
+		const out = await inObject(freshSite(), async (site) => {
+			const { doc } = await warm(site, 5);
+			const begun = (await (
+				await post(site, '/__restore-parts?action=begin&label=paged-1', {
+					method: 'POST',
+					body: JSON.stringify({
+						bytes: whole.length,
+						parts: 1,
+						sha256: sha256Hex(whole),
+						label: 'paged-1'
+					})
+				})
+			).json()) as { upload: string };
+			await post(site, `/__restore-parts?action=put&upload=${begun.upload}&part=0`, {
+				method: 'PUT',
+				headers: { 'x-part-sha256': sha256Hex(whole) },
+				body: whole
+			});
+			const commit = await post(
+				site,
+				`/__restore-parts?action=commit&upload=${begun.upload}`
+			);
+			await applyAll(site);
+			const first = await serveDirect(site, '/', '&lane=gate&inline=1&edge=0');
+			return { commit: commit.status, generation: doc.generation(), first };
+		});
+		expect(out.commit).toBe(200);
+		expect(out.generation).toBe(5 + STALE_DEPTH_MAX + 1);
+		expect(out.first.body).toContain('paged /');
+	});
+
+	it('leaves the first restore onto a site that never served with one bump and no page work', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, PW_DIAGNOSTICS: '1' };
+			await migrate(site, '?all=1&prefill=0');
+			const doc = site as unknown as SitePhpDurableObject;
+			await post(site, '/__restore?label=first', {
+				method: 'POST',
+				body: dumpNamed('first', 1)
+			});
+			await applyAll(site, 3);
+			return { generation: doc.generation(), bumps: doc.bumps ?? 0, php: doc.php };
+		});
+		expect(out.bumps).toBe(1);
+		expect(out.php).toBeUndefined();
+		expect(out.generation).toBeGreaterThan(STALE_DEPTH_MAX);
 	});
 });

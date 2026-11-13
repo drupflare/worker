@@ -1,7 +1,8 @@
 import {
 	DEFAULT_MAX_BODY_BYTES,
 	DEFAULT_MAX_RESTORE_BYTES,
-	DEFAULT_MAX_UPLOAD_BYTES
+	DEFAULT_MAX_UPLOAD_BYTES,
+	RESTORE_PART_MAX_BYTES
 } from '../ops/body-limit';
 import { renderTemplate } from '../util/template';
 import { GUARDS_OBJECT_RESET_HTML, GUARDS_OBJECT_RESET_UNSAVED_HTML } from './generated/assets';
@@ -76,6 +77,8 @@ export type BodyLimitEnv = {
  * `MAX_RESTORE_BYTES`, and `0` disables any of them.
  */
 export function bodyLimitFor(request: Request, env?: BodyLimitEnv): number {
+	// a restore part has a fixed size, so no variable lowers or lifts it
+	if (new URL(request.url).pathname === '/restore-parts') return RESTORE_PART_MAX_BYTES;
 	const upload = (request.headers.get('content-type') ?? '')
 		.toLowerCase()
 		.includes('multipart/form-data');

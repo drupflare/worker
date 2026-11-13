@@ -221,7 +221,7 @@ export function readAudit(store: SealedStore): AuditLog {
 }
 
 /** the query parameters a label may carry, since the rest can hold a token or a path */
-const LABEL_PARAMS = ['action', 'force', 'secrets', 'all', 'op', 'clear'];
+const LABEL_PARAMS = ['action', 'force', 'secrets', 'all', 'op', 'clear', 'replace'];
 
 /** a parameter value safe to write into a label */
 const LABEL_VALUE = /^[A-Za-z0-9_:.-]{1,40}$/;
@@ -266,6 +266,24 @@ export function auditedRoute(
 			break;
 		case '/__firstrun':
 			audited = params.get('force') === '1';
+			break;
+		// a part is not recorded: a dump of many parts would push every older entry out of the ring
+		case '/__restore-parts':
+			audited = action === 'begin' || action === 'commit' || action === 'abort';
+			break;
+		// the listing is recorded once per sweep; a public file is public already, so only a private
+		// one is recorded when read
+		case '/__offloaded':
+			audited = params.has('uri')
+				? (params.get('uri') ?? '').toLowerCase().startsWith('private:')
+				: params.get('after') === null;
+			break;
+		case '/__writemark':
+			audited = write;
+			break;
+		// the manifest reads counts; the body is the data leaving
+		case '/__writechanges':
+			audited = params.get('body') === '1';
 			break;
 		case '/__git':
 			audited = !GIT_READS.has(action ?? 'list');

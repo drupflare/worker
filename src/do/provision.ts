@@ -5,9 +5,11 @@ import {
 	ensureMigrateTable,
 	readMigrateCursor
 } from '../db/migrate-sql';
+import { openRestoreMark, readRestoreMark } from '../db/write-mark';
 import { PACKED_CONTAINER_DIGEST } from '../ops/container-digest';
 import { ensureFragmentTables } from '../ops/fragment-index';
 import { ensureRevTables } from '../ops/module-rev';
+import { STALE_DEPTH_MAX } from '../ops/page-store';
 import { DRIVER_DIGEST_KEY } from '../ops/reconcile';
 import { ensureHealthTable } from '../ops/supervisor';
 import type { SitePhpDurableObject } from '../site-do';
@@ -230,6 +232,39 @@ export async function prefillServingTable(
 	}
 }
 
+const RESTORE_FLOOR_KEY = 'restore_floor';
+
+/**
+ * The generation this site served under before a restore began replaying.
+ *
+ * Read before the first chunk and kept in key-value storage, since the dump overwrites `cfw_meta`
+ * and a restore takes more than one invocation.
+ */
+function restoreFloor(site: SitePhpDurableObject, importId: number): number {
+	const kept = site.storage.kv.get<{ id: number; generation: number }>(RESTORE_FLOOR_KEY);
+	if (kept?.id === importId) return kept.generation;
+	const generation = site.generation();
+	site.storage.kv.put(RESTORE_FLOOR_KEY, { id: importId, generation });
+	return generation;
+}
+
+/**
+ * Ends a restore fresh, inside the transaction that applies its last chunk.
+ *
+ * The dump's generation can equal the one pages were stored under, or sit below it. The new one
+ * clears both plus the stale read depth, so no stored or edge-cached page can carry it. Stored
+ * pages go too, and the running interpreter, which holds the pre-restore config.
+ */
+function settleRestore(site: SitePhpDurableObject, floor: number): void {
+	// a dump without the table leaves the memo claiming it exists
+	site.serveTablesReady = false;
+	site.ensureServeTables();
+	site.sql.exec('DELETE FROM cfw_page');
+	site.metaSet('generation', Math.max(floor, site.generation()) + STALE_DEPTH_MAX);
+	site.bumpGeneration('restore', { arm: false });
+	site.resetPhp();
+}
+
 /**
  * Advances the migration by one invocation's chunks, or returns undefined when there is nothing
  * to do: never started, finished, or no manifest at all (an alarm that throws stops re-arming).
@@ -258,6 +293,9 @@ export async function migrateStepIfPending(
 
 	// the pack's cachetags rows are setup, not a content change; no bump (it would purge the edge)
 	site.suppressBump = true;
+	// a restore that asked for a mark opens it in the transaction that applies its last chunk
+	const asked = owed ? readRestoreMark(site.sql, owed.generation) : undefined;
+	const floor = owed ? restoreFloor(site, owed.id) : 0;
 	try {
 		// gated here (alarm() is not): a concurrent `/migrate` replays a chunk, a `UNIQUE` failure
 		// latches the cursor to `failed` and `/serve` answers 503 forever
@@ -271,10 +309,26 @@ export async function migrateStepIfPending(
 							...storedImportLoader(site.sql, owed.id)
 						})
 					: site.migrator()
-				).step({ maxChunks: chunksPerInvocation(site.env) }),
+				).step({
+					maxChunks: chunksPerInvocation(site.env),
+					onLastChunk: owed
+						? () => {
+								settleRestore(site, floor);
+								if (asked) {
+									openRestoreMark(site.sql, {
+										generation: owed.generation,
+										mark: asked,
+										now: site.nowMs()
+									});
+								}
+							}
+						: undefined
+				}),
 			'alarm-migrate'
 		);
 		site.migrated = out.done;
+		// the schema hook caches whether a mark exists, so it reads again after this one may have opened
+		if (out.done && asked) site.markState.active = undefined;
 		// the completion branch a deployed site reaches: prefill in its own `gate.run()`
 		// (a sequential acquire is fine, nesting would deadlock)
 		// the dump carries the site's own pages, and the pack's digest would claim a container it lacks

@@ -314,6 +314,92 @@ describe('the payload publishing lanes', () => {
 });
 
 /**
+ * The box bundle is the canonical dry-run `release:check` already runs, packed before the release
+ * is cut.
+ *
+ * It cannot be packed after: a published release takes no new assets (the managed bundle's own
+ * section in the build docs says so), so a pack step in the job that follows publishing would fail on
+ * its upload and leave a release that never gets the file. And a second `wrangler deploy --dry-run`
+ * of the same config would be a second build, whose bytes could differ from the ones the job
+ * measured. So `release:check` keeps the canonical output where the packer reads it, the archive
+ * rides the same artifact and release as the payload, and the last job fetches it back.
+ */
+describe('the box bundle on the release', () => {
+	const byFile = (file: string) => workflows().find((w) => w.file === file)?.doc as Workflow;
+	type Steps = NonNullable<Workflow['jobs'][string]['steps']>;
+	const steps = (name: string) => byFile('release.yml').jobs[name]?.steps as Steps;
+	const at = (list: Steps, name: string) => list.findIndex((s) => s.name === name);
+	const text = () => readFileSync(join(DIR, 'release.yml'), 'utf8');
+
+	it('packs the canonical dry-run that release:check keeps, with no wrangler build of its own', () => {
+		const payload = steps('payload');
+		const pack = payload[at(payload, 'Pack the Box Bundle')]?.run ?? '';
+		expect(pack).toContain('scripts/build-box-bundle.ts');
+		expect(pack).toContain('--outdir=dist/dry-run/wrangler');
+		expect(pack).not.toContain('wrangler deploy');
+		expect(at(payload, 'Pack the Box Bundle')).toBeGreaterThan(
+			payload.findIndex((s) => (s.run ?? '').includes('release:check'))
+		);
+		const release = readFileSync(join(ROOT, 'scripts/release-payload.ts'), 'utf8');
+		expect(release).toContain("join(root, 'dist/dry-run', config.replace(/\\.jsonc$/, ''))");
+	});
+
+	it('appends its sum below the managed bundle, the payload line staying first', () => {
+		const payload = steps('payload');
+		const sums = (name: string) => payload[at(payload, name)]?.run ?? '';
+		expect(sums('Build the Managed Bundle')).toContain('>> SHA256SUMS');
+		expect(sums('Pack the Box Bundle')).toContain('--sums=dist/SHA256SUMS');
+		expect(sums('Pack the Box Bundle')).toContain('sha256sum -c SHA256SUMS');
+		expect(at(payload, 'Pack the Box Bundle')).toBeGreaterThan(
+			at(payload, 'Build the Managed Bundle')
+		);
+	});
+
+	it('packs before anything is published, so a refused bundle stops the release', () => {
+		const payload = steps('payload');
+		const pack = at(payload, 'Pack the Box Bundle');
+		const publish = payload.findIndex((s) => (s.run ?? '').includes('publish-payload.ts'));
+		expect(pack).toBeGreaterThan(0);
+		expect(publish).toBeGreaterThan(pack);
+	});
+
+	it('hands the archive to the publish job and puts it on the release', () => {
+		expect(text()).toContain('dist/${{ env.BOX }}');
+		expect(text()).toContain('dist/drupflare-box-bundle-${{ env.VERSION }}.tar.gz');
+		const read = steps('payload').find((s) => s.name === 'Read the Version')?.run ?? '';
+		expect(read).toContain('BOX=drupflare-box-bundle-${VERSION}.tar.gz');
+	});
+
+	it('builds each deploy config once in the last job, and adds no third dry-run', () => {
+		const last = steps('deploy-path');
+		const dryRuns = last.filter((s) => (s.run ?? '').includes('deploy --dry-run'));
+		expect(dryRuns.map((s) => s.name)).toEqual([
+			'Bundle the Canonical Config',
+			'Bundle the Managed Config'
+		]);
+	});
+
+	it('fetches the published asset and checks its sum and its root, with no write access', () => {
+		const last = steps('deploy-path');
+		const check = last[at(last, 'Check the Box Bundle as a Box Would Fetch It')]?.run ?? '';
+		expect(check).toContain('https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}');
+		expect(check).toContain('"$BASE/SHA256SUMS"');
+		expect(check).toContain('sha256sum /tmp/box.tar.gz');
+		expect(check).toContain("grep -qx 'site.js'");
+		expect(check).toContain("grep -qx 'assets.manifest'");
+		expect(check).toContain("grep -qx 'assets/drupal-pf/core.pf.bin'");
+		expect(check).toContain("grep -qx 'box.vars'");
+		expect(check).toContain("grep -q '^assets/bootimage/'");
+		const permissions = (
+			byFile('release.yml').jobs['deploy-path'] as unknown as {
+				permissions: Record<string, string>;
+			}
+		).permissions;
+		expect(permissions.contents).toBe('read');
+	});
+});
+
+/**
  * A cache key interpolating an empty step output does not fail; it becomes the constant prefix
  * before it. `drupal-${{ steps.drupalver.outputs.version }}` with no value is the key `drupal-`,
  * which `actions/cache` restores by prefix, so the job gets whichever tree was cached last under

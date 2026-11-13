@@ -15,10 +15,24 @@ import { SURFACE_PREFIX } from '../../../src/ui/admin';
  *
  * The ones that moved: maintenance and recovery an owner should not need diagnostics for.
  */
-const MOVED = ['/armfill', '/invalidate', '/bump', '/migrate', '/restore'] as const;
+const MOVED = [
+	'/armfill',
+	'/invalidate',
+	'/bump',
+	'/migrate',
+	'/restore',
+	'/restore-parts'
+] as const;
 
 /** the two that are new, so there is no caller to keep working and no diagnostics fallback */
-const OWNER_ONLY = ['/updb', '/modify', '/mirror'] as const;
+const OWNER_ONLY = [
+	'/updb',
+	'/modify',
+	'/mirror',
+	'/offloaded',
+	'/writemark',
+	'/writechanges'
+] as const;
 
 describe('site maintenance is reachable with an owner token', () => {
 	it.each(MOVED)('%s is an owner route', (path) => {

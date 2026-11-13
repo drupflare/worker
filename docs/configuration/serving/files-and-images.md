@@ -108,8 +108,8 @@ row only when the platform has granted that source (`file_clone:<site>` in `CONF
 the row is a claim and never an authority. See [Recovery](../../operating/recovery.md#restore).
 
 `/serve-stats` reports `storage.bytes` (every byte the site owns), `storage.offloaded` (the part
-held only in R2) and `storage.adopting` (copies still queued after a restore). The `/export` dump holds file rows and no offloaded bytes; see
-[Recovery](../../operating/recovery.md).
+held only in R2) and `storage.adopting` (copies still queued after a restore). The `/export` dump holds file rows and no offloaded bytes; `GET /offloaded` lists those files and
+streams each one, see [Recovery](../../operating/recovery.md#files-held-only-in-r2).
 
 ### Image Styles
 

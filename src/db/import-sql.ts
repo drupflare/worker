@@ -49,6 +49,15 @@ export function ensureImportTables(sql: SqlLike): void {
  * quoted run is content, not a terminator.
  */
 export function splitSqlStatements(dump: string): string[] {
+	const { statements, tail } = splitSqlStatementsStrict(dump);
+	return tail === '' ? statements : [...statements, tail];
+}
+
+/**
+ * The same split, with the unterminated remainder kept apart: `tail` is empty when the text ends
+ * on a `;` (or a comment after one), and holds the cut-off statement otherwise.
+ */
+export function splitSqlStatementsStrict(dump: string): { statements: string[]; tail: string } {
 	const out: string[] = [];
 	let current = '';
 	let inSingle = false;
@@ -108,9 +117,7 @@ export function splitSqlStatements(dump: string): string[] {
 		current += ch;
 	}
 
-	const tail = current.trim();
-	if (tail.length > 0) out.push(tail);
-	return out;
+	return { statements: out, tail: current.trim() };
 }
 
 /** a stored dump: its row id, chunk and statement counts, and generation label */

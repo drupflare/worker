@@ -14,6 +14,7 @@ import { quarantinePhase } from './alarm/quarantine';
 import { rearmPhase } from './alarm/rearm';
 import { reconcilePhase } from './alarm/reconcile';
 import { restorePhase } from './alarm/restore';
+import { restorePartsPhase } from './alarm/restore-parts';
 import { opsJobPhase, updbPhase } from './alarm/stepped';
 import { fillBatchSize } from './levers';
 
@@ -42,6 +43,7 @@ const WORK: WorkPhase[] = [
 	cronPhase,
 	drainsPhase,
 	mirrorsPhase,
+	restorePartsPhase,
 	metersPhase
 ];
 

@@ -60,21 +60,23 @@ routes directly, without turning on `PW_DIAGNOSTICS`. These are the ones this pa
 <details>
 <summary>Owner routes used on this page</summary>
 
-| route          | what it does                                                        |
-| -------------- | ------------------------------------------------------------------- |
-| `/export`      | dumps the site database; the "a customer can leave" property        |
-| `/health`      | the health ledger, the repair state and the budget projections      |
-| `/settings`    | every runtime lever with its value and source; `PUT` merges a patch |
-| `/setup/cf`    | connect, inspect or revoke a Cloudflare account for the site        |
-| `/setup/mail`  | onboard a sending domain onto a zone                                |
-| `/setup/oidc`  | set the OpenID Connect issuer and client id                         |
-| `/installable` | whether a package can be installed here                             |
-| `/install`     | fetch a package from a registry and write its files                 |
-| `/enable`      | turn an installed module on                                         |
-| `/modify`      | upload a module tree as a revision                                  |
-| `/reconcile`   | what a site still owes the shipping pack, and one step of it        |
-| `/sweep`       | coverage of the site's URLs, and one step of the sweep              |
-| `/git`         | remotes, branches, pull requests and the working-tree diff          |
+| route           | what it does                                                        |
+| --------------- | ------------------------------------------------------------------- |
+| `/export`       | dumps the site database; the "a customer can leave" property        |
+| `/health`       | the health ledger, the repair state and the budget projections      |
+| `/settings`     | every runtime lever with its value and source; `PUT` merges a patch |
+| `/setup/cf`     | connect, inspect or revoke a Cloudflare account for the site        |
+| `/setup/mail`   | onboard a sending domain onto a zone                                |
+| `/setup/oidc`   | set the OpenID Connect issuer and client id                         |
+| `/installable`  | whether a package can be installed here                             |
+| `/install`      | fetch a package from a registry and write its files                 |
+| `/enable`       | turn an installed module on                                         |
+| `/modify`       | upload a module tree as a revision                                  |
+| `/reconcile`    | what a site still owes the shipping pack, and one step of it        |
+| `/sweep`        | coverage of the site's URLs, and one step of the sweep              |
+| `/git`          | remotes, branches, pull requests and the working-tree diff          |
+| `/writemark`    | start, read or end the count of writes accepted since a mark        |
+| `/writechanges` | the rows changed since the mark, as a manifest or as SQL            |
 
 </details>
 

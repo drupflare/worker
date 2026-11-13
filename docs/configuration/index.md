@@ -61,6 +61,7 @@ Every variable and binding on the configuration pages, once each.
 | `GEN_BUCKET_MS`                 | 5,000                                 | [Serving](serving/index.md)                              |
 | `MAX_BODY_BYTES`                | 2 MiB                                 | [Serving](serving/request-limits.md#max_body_bytes)      |
 | `MAX_RESTORE_BYTES`             | 16 MiB                                | [Serving](serving/request-limits.md#max_restore_bytes)   |
+| `MAX_RESTORE_PAGED_BYTES`       | 128 MiB                               | [Serving](serving/request-limits.md)                     |
 | `MAX_UPLOAD_BYTES`              | 100 MiB                               | [Serving](serving/index.md)                              |
 | `OUTBOUND_GUARD`                | on                                    | [Serving](serving/request-limits.md#outbound_guard)      |
 | `PAGE_KV_ENABLED`               | on                                    | [Serving](serving/index.md)                              |

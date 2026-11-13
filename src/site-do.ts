@@ -26,6 +26,7 @@ import {
 	type MigrateCursor
 } from './db/migrate-sql';
 import { repairWideIntegers, type Row as WideRow } from './db/wide-integers';
+import { markSchemaHook, type MarkState } from './db/write-mark';
 import {
 	countingSql,
 	countingStorage,
@@ -755,6 +756,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	lastAlarmClass?: AlarmClass;
 	/** per-table rows-written tally; only allocated when /__writes turns it on */
 	writeTally?: WriteTally;
+	/** whether an accepted-write mark exists; unknown until the first table-level statement */
+	markState: MarkState = {};
 	/** the last garbage-collection pass; {@link lastGcAt} is apart because it paces the next */
 	lastGc?: Payload;
 	/** when the last collection pass succeeded; an error leaves it so a failing pass retries */
@@ -895,7 +898,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const charge = (rows: number) => {
 			this.rowsSinceFlush = (this.rowsSinceFlush ?? 0) + rows;
 		};
-		this.sql = countingSql(this.sql, () => this.writeTally, charge);
+		this.sql = countingSql(
+			this.sql,
+			() => this.writeTally,
+			charge,
+			markSchemaHook(() => this.sql, this.markState)
+		);
 		// the KV half of the same meter: `setAlarm` alone is 360 rows/day on an idle site
 		this.storage = countingStorage(this.ctx.storage, () => this.writeTally, charge);
 		this.limitTally = {};
@@ -3877,6 +3885,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	dropInterpreter(): void {
 		if (!this.php?.binary) return;
 		this.php = undefined;
+	}
+
+	/**
+	 * Drops the interpreter and the copy an earlier instance left in module scope, so the next boot
+	 * reads the database again (a retained one is adopted when the commit sequence matches).
+	 */
+	resetPhp(): void {
+		this.dropInterpreter();
+		const id = this.ctx.id.toString();
+		const kept = retainedInterpreters.get(id);
+		if (!kept) return;
+		retainedInterpreters.delete(id);
+		keepSpareMemory(kept.php);
 	}
 
 	/**

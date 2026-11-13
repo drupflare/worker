@@ -6,6 +6,7 @@ import {
 	dumpDatabase
 } from '../../db/export-sql';
 import { isIdentityMetaStatement, storeImport } from '../../db/import-sql';
+import { MARK_ID, noteRestoreMark } from '../../db/write-mark';
 import { isBookmark, sealedExportRows } from '../../ops/site-secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
@@ -99,7 +100,11 @@ export async function pitr(
 	return Response.json({ ok: true, supported: true, current, windowDays: 30 });
 }
 
-/** imports a POSTed SQL dump and arms the alarm to apply it */
+/**
+ * imports a POSTed SQL dump and arms the alarm to apply it. With `mark=<id>` the write mark opens in
+ * the transaction that applies the last chunk, and the answer names it; a site that does not know
+ * the parameter leaves it out, which tells the caller to start the mark itself.
+ */
 export async function restore(
 	site: SitePhpDurableObject,
 	request: Request,
@@ -108,6 +113,11 @@ export async function restore(
 	if (request.method !== 'POST') {
 		return jsonError('POST a dump body to /restore', 405);
 	}
+	const mark = url.searchParams.get('mark');
+	if (mark !== null && !MARK_ID.test(mark)) {
+		return jsonError('mark must be 1 to 64 letters, digits or _.:-', 400);
+	}
+	if (mark !== null && site.isReplica()) return jsonError('a replica lane keeps no mark', 409);
 	const stored = storeImport(site.sql, await request.text(), {
 		storage: site.storage,
 		generation: url.searchParams.get('label') ?? String(site.nowMs()),
@@ -116,8 +126,9 @@ export async function restore(
 		// a dump taken before identity rows were withheld would rename this site to the source
 		skip: isIdentityMetaStatement
 	});
+	if (mark !== null) noteRestoreMark(site.sql, stored.generation, mark);
 	await site.setAlarmAt(site.nowMs() + 1);
-	return Response.json({ ok: true, ...stored });
+	return Response.json({ ok: true, ...stored, ...(mark === null ? {} : { mark }) });
 }
 
 /** exports the site database as SQL, in cursor-paged chunks */

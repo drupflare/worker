@@ -37,19 +37,21 @@ What an owner token can fix, and what each one costs. The class decides whether 
 unattended: `safe` changes nothing a visitor sees, `rebuild` discards derived state that comes back
 on its own, and `stateful` changes what the site serves.
 
-| route                   | class    | what it does                                              |
-| ----------------------- | -------- | --------------------------------------------------------- |
-| `/health`               | safe     | reads the repair state, the ledger and the worker version |
-| `/health?clear=1`       | stateful | releases a quarantine, so the site serves again           |
-| `/updb`                 | safe     | reads the update run                                      |
-| `/updb` (POST)          | stateful | advances one beat of a database update                    |
-| `/updb?action=prepare`  | stateful | starts an update run, fence and snapshot included         |
-| `/updb?action=rollback` | stateful | restores the bookkeeping a halted run snapshotted         |
-| `/armfill`              | rebuild  | queues a fill, so cold paths warm without a visitor       |
-| `/invalidate`           | rebuild  | drops stored pages for a path or a tag                    |
-| `/bump`                 | rebuild  | advances the generation, retiring every stored page       |
-| `/migrate`              | stateful | resumes first-run migration on a site that stalled        |
-| `/git?action=unpin`     | stateful | releases a preview pin without reaching the remote        |
+| route                   | class    | what it does                                                           |
+| ----------------------- | -------- | ---------------------------------------------------------------------- |
+| `/health`               | safe     | reads the repair state, the ledger and the worker version              |
+| `/health?clear=1`       | stateful | releases a quarantine, so the site serves again                        |
+| `/updb`                 | safe     | reads the update run                                                   |
+| `/updb` (POST)          | stateful | advances one beat of a database update                                 |
+| `/updb?action=prepare`  | stateful | starts an update run, fence and snapshot included                      |
+| `/updb?action=rollback` | stateful | restores the bookkeeping a halted run snapshotted                      |
+| `/armfill`              | rebuild  | queues a fill, so cold paths warm without a visitor                    |
+| `/invalidate`           | rebuild  | drops stored pages for a path or a tag                                 |
+| `/bump`                 | rebuild  | advances the generation, retiring every stored page                    |
+| `/migrate`              | stateful | resumes first-run migration on a site that stalled                     |
+| `/writemark`            | safe     | reads the accepted-write count; POST and DELETE start and end the mark |
+| `/writechanges`         | safe     | reads the rows changed since the mark                                  |
+| `/git?action=unpin`     | stateful | releases a preview pin without reaching the remote                     |
 
 `/git?action=unpin` exists because `unpreview` cannot help here: it re-syncs to the branch head, so it
 needs the remote to answer, and a pin held against a remote that is down is exactly what an operator

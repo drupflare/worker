@@ -41,6 +41,13 @@ its own ceiling and the form-body one does not apply. The default is 16 MiB, a c
 not been measured against the isolate's heap. A fresh site's dump is 1.9 MB (n=1), which the 2 MiB form
 ceiling would barely admit. `0` disables the guard.
 
+## `MAX_RESTORE_PAGED_BYTES`
+
+A dump above `MAX_RESTORE_BYTES` is restored in parts through `/restore-parts`, which has its own
+ceiling on the whole dump: 128 MiB by default, a chosen value that has not been measured. A part is at
+most 1 MiB, fixed, and the edge refuses a larger one with 413 whatever the other limits say.
+See [Recovery](../../operating/recovery.md#restore-in-parts).
+
 Over either limit, the edge answers 413 before any Durable Object hop. `0` disables that guard
 entirely. Raising `MAX_BODY_BYTES` trades isolate headroom for larger non-upload submissions; the
 failure mode of too high is an object that runs out of memory mid-parse.

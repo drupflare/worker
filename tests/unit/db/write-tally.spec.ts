@@ -232,6 +232,43 @@ describe('countingSql, which is what made the instrument complete', () => {
 		};
 	}
 
+	it('calls the schema hook around a table-level statement, after it even when it throws', () => {
+		const events: string[] = [];
+		const hook = {
+			before: (c: { verb: string; table: string }) =>
+				events.push(`before ${c.verb} ${c.table}`),
+			after: (c: { verb: string; table: string }) => events.push(`after ${c.verb} ${c.table}`)
+		};
+		const raw = fakeSql();
+		const sql = countingSql(raw, () => undefined, undefined, hook);
+		sql.exec('ALTER TABLE node ADD COLUMN x');
+		sql.exec('INSERT INTO node (nid) VALUES (1)');
+		expect(events).toEqual(['before alter node', 'after alter node']);
+		const failing = {
+			exec: (_text: string): { rowsWritten: number } => {
+				throw new Error('refused');
+			}
+		};
+		events.length = 0;
+		const bad = countingSql(failing, () => undefined, undefined, hook);
+		expect(() => bad.exec('DROP TABLE node')).toThrow('refused');
+		expect(events).toEqual(['before drop node', 'after drop node']);
+	});
+
+	it('still charges a CREATE TABLE when a schema hook is present', () => {
+		const ddl = 'CREATE TABLE IF NOT EXISTS node__x (a INTEGER)';
+		let rows = 0;
+		const hook = { before: () => undefined, after: () => undefined };
+		const sql = countingSql(
+			fakeSql({ [ddl]: 2 }),
+			() => undefined,
+			(n) => (rows += n),
+			hook
+		);
+		sql.exec(ddl);
+		expect(rows).toBe(2);
+	});
+
 	it('counts a write the HOST makes directly, which execSql could never see', () => {
 		// the regression. `cfw_page` is written by `this.sql.exec()` inside fillOne(), not through
 		// the PHP driver, so the old execSql-based tally reported 0 for the statement that stores

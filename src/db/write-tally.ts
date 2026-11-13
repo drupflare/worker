@@ -1,5 +1,6 @@
 import { firstRow } from '../util/sql';
 import { bindIntegers } from './integer-bindings';
+import { schemaChange, type SchemaHook } from './write-mark';
 /**
  * The table a write statement targets, or `undefined` when the statement writes nothing.
  *
@@ -113,13 +114,23 @@ export type SqlLike = {
 export function countingSql<T extends SqlLike>(
 	sql: T,
 	getTally: () => WriteTally | undefined,
-	onWrite?: (rows: number) => void
+	onWrite?: (rows: number) => void,
+	schema?: SchemaHook
 ): T {
 	const wrapped: SqlLike = {
 		exec(text: string, ...bindings: unknown[]) {
-			// bound as integers here, at the last moment, so everything that classifies a statement
-			// by its text (the tally, the session sweep, the census) still reads the original
-			const cursor = sql.exec(bindIntegers(text, bindings), ...bindings);
+			const change = schema ? schemaChange(text) : undefined;
+			if (schema && change) schema.before(change);
+			let cursor: ReturnType<T['exec']>;
+			try {
+				// bound as integers here, at the last moment, so everything that classifies a statement
+				// by its text (the tally, the session sweep, the census) still reads the original
+				cursor = sql.exec(bindIntegers(text, bindings), ...bindings) as ReturnType<
+					T['exec']
+				>;
+			} finally {
+				if (schema && change) schema.after(change);
+			}
 			// a `SELECT` cursor is a live iterator; reading rowsWritten would consume its rows
 			const isWrite = writeTargetTable(text) !== undefined;
 			if (!isWrite) return cursor;

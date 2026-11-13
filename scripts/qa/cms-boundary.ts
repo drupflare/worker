@@ -41,6 +41,8 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/db/wide-integers.ts': 'host',
 	// reads the router table's statement count
 	'src/db/write-tally.ts': 'mixed',
+	// names Drupal's regenerable tables, `sequences` and the node id the re-seed reads
+	'src/db/write-mark.ts': 'mixed',
 	'src/do/alarm-body.ts': 'mixed',
 	'src/do/alarm.ts': 'host',
 	'src/do/alarm/autoscale.ts': 'host',
@@ -105,6 +107,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/do/routes/index.ts': 'mixed',
 	'src/do/routes/lifecycle.ts': 'mixed',
 	'src/do/routes/mail.ts': 'host',
+	'src/do/routes/mark.ts': 'host',
 	'src/do/routes/owner.ts': 'mixed',
 	'src/do/routes/packages.ts': 'mixed',
 	'src/do/routes/replica.ts': 'mixed',
@@ -347,6 +350,8 @@ export const ROUTE_SIDES: Readonly<Record<string, Side>> = {
 	'/export': 'mixed',
 	'/restore': 'mixed',
 	'/pitr': 'host',
+	'/writemark': 'host',
+	'/writechanges': 'mixed',
 	'/queue': 'host',
 	'/firstrun': 'cms',
 	'/savenode': 'cms',

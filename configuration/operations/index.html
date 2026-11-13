@@ -497,6 +497,16 @@ on its own, and <code>stateful</code> changes what the site serves.</p>
 <td>resumes first-run migration on a site that stalled</td>
 </tr>
 <tr>
+<td><code>/writemark</code></td>
+<td>safe</td>
+<td>reads the accepted-write count; POST and DELETE start and end the mark</td>
+</tr>
+<tr>
+<td><code>/writechanges</code></td>
+<td>safe</td>
+<td>reads the rows changed since the mark</td>
+</tr>
+<tr>
 <td><code>/git?action=unpin</code></td>
 <td>stateful</td>
 <td>releases a preview pin without reaching the remote</td>

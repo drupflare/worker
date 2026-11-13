@@ -390,7 +390,7 @@
 				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Serving and Caching Settings</a></p>
 <h1 id="request-limits">Request Limits</h1>
 <p>The guard on outbound requests and the cap on request bodies.</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#outbound_guard"><code>OUTBOUND_GUARD</code></a></li><li><a href="#max_body_bytes"><code>MAX_BODY_BYTES</code></a></li><li><a href="#max_restore_bytes"><code>MAX_RESTORE_BYTES</code></a></li></ol></nav><h2 id="outbound_guard"><code>OUTBOUND_GUARD</code></h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#outbound_guard"><code>OUTBOUND_GUARD</code></a></li><li><a href="#max_body_bytes"><code>MAX_BODY_BYTES</code></a></li><li><a href="#max_restore_bytes"><code>MAX_RESTORE_BYTES</code></a></li><li><a href="#max_restore_paged_bytes"><code>MAX_RESTORE_PAGED_BYTES</code></a></li></ol></nav><h2 id="outbound_guard"><code>OUTBOUND_GUARD</code></h2>
 <p>PHP names the URL for <code>cfwFetch</code> and <code>cfwQueueFetch</code>, so any module able to build a string chooses
 where the Worker connects. The guard refuses a scheme other than <code>http</code>/<code>https</code>, a URL carrying
 credentials, and any host that resolves to loopback, an RFC 1918 range, carrier-grade NAT, IPv6
@@ -419,6 +419,11 @@ only limit a multipart body had before the edge counted it.</p>
 its own ceiling and the form-body one does not apply. The default is 16 MiB, a chosen value that has
 not been measured against the isolate&#39;s heap. A fresh site&#39;s dump is 1.9 MB (n=1), which the 2 MiB form
 ceiling would barely admit. <code>0</code> disables the guard.</p>
+<h2 id="max_restore_paged_bytes"><code>MAX_RESTORE_PAGED_BYTES</code></h2>
+<p>A dump above <code>MAX_RESTORE_BYTES</code> is restored in parts through <code>/restore-parts</code>, which has its own
+ceiling on the whole dump: 128 MiB by default, a chosen value that has not been measured. A part is at
+most 1 MiB, fixed, and the edge refuses a larger one with 413 whatever the other limits say.
+See <a href="../../operating/recovery.html#restore-in-parts">Recovery</a>.</p>
 <p>Over either limit, the edge answers 413 before any Durable Object hop. <code>0</code> disables that guard
 entirely. Raising <code>MAX_BODY_BYTES</code> trades isolate headroom for larger non-upload submissions; the
 failure mode of too high is an object that runs out of memory mid-parse.</p>

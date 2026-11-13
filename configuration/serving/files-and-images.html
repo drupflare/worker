@@ -562,8 +562,8 @@ source&#39;s objects. It reads them, copies each under its own prefix on the ala
 row only when the platform has granted that source (<code>file_clone:&lt;site&gt;</code> in <code>CONFIG_KV</code>); the name in
 the row is a claim and never an authority. See <a href="../../operating/recovery.html#restore">Recovery</a>.</p>
 <p><code>/serve-stats</code> reports <code>storage.bytes</code> (every byte the site owns), <code>storage.offloaded</code> (the part
-held only in R2) and <code>storage.adopting</code> (copies still queued after a restore). The <code>/export</code> dump holds file rows and no offloaded bytes; see
-<a href="../../operating/recovery.html">Recovery</a>.</p>
+held only in R2) and <code>storage.adopting</code> (copies still queued after a restore). The <code>/export</code> dump holds file rows and no offloaded bytes; <code>GET /offloaded</code> lists those files and
+streams each one, see <a href="../../operating/recovery.html#files-held-only-in-r2">Recovery</a>.</p>
 <h3 id="image-styles">Image Styles</h3>
 <p>A public image style&#39;s URL points at the Worker&#39;s delivery path, <code>/cfw-img/&lt;id&gt;/&lt;uri&gt;?&lt;transform&gt;</code>,
 where the front worker renders the derivative with tinyimg. The drupflare module rewrites the URL
@@ -609,8 +609,87 @@ fallback.</p>
 <p>Measured on a deployed free worker, <code>cpuTime</code> amortised over 10 transforms per invocation, median of
 12, against a source-only control at 0 ms: thumbnail 36.3 ms, medium 48.6, large 63.5, wide 188.2.
 Styles at or below 480 px on the long edge are produced inline; larger ones go to the fill queue.</p>
-<p>gd is not an engine. Code that calls PHP&#39;s <code>imagecreate*</code> functions directly finds them absent on this
-runtime.</p>
+<h3 id="choosing-gdtoolkit">Choosing GDToolkit</h3>
+<p><code>gd</code> is not an engine in the sense <code>IMAGE_ENGINE</code> means. A shim in the drupflare module defines 40 of its functions, including
+<code>imagegd2</code>, which is the only thing Drupal&#39;s <code>GDToolkit::isAvailable()</code> tests. So <code>GDToolkit</code> is selectable, and it is never the
+default: <code>cfw_images</code> stays the toolkit on install and update (<code>Image\ToolkitDefault</code>), and a site that picks <code>gd</code> by hand keeps it.</p>
+<p>Choosing GD builds every derivative at save time, in one park per image operation chain, and writes real pixels to the file
+store. <code>cfw_images</code> writes a copy of the source and resizes at delivery. A site that reads a derivative&#39;s pixels needs GD; a site
+that only serves styles does not.</p>
+<p>What runs through the shim is what Drupal&#39;s own GD operations call: resize, scale, scale and crop, crop, convert, desaturate and
+rotate. A custom image effect that reads or draws pixels (<code>imagecolorat</code>, the drawing functions, text) fails at the call.</p>
+<p>Measured, all locally. Nothing below ran on Cloudflare, and no number here is a Workers CPU figure.</p>
+<ul>
+<li><p><strong>Drupal&#39;s GD operations end to end.</strong> A real Drupal 11 kernel in the local workerd harness
+(<code>tests/integration/image-toolkit.spec.ts</code>), a 240 by 120 PNG, the shipped <code>thumbnail</code> style, toolkit set to <code>gd</code>: <code>image_scale</code>
+and <code>image_convert_avif</code> both apply, <code>GDToolkit::save()</code> returns true, and the derivative reads back as a 100 by 50 AVIF. Each of resize, scale, crop, scale and crop, desaturate, rotate 90 and rotate 30 applied through the toolkit API saves a PNG of the expected size (90 by 40, 120 by 60, 100 by 50, 64 by 64, 240 by 120, 120 by 240, 268 by 224); sizes were checked there, and pixels are compared by the differential below.</p>
+</li>
+<li><p><strong>The differential.</strong> <code>tests/gd-differential.php</code> runs the same calls against native gd and the shim with tinyimg as host, on PHP
+8.3.36 and 8.4.27: 389 rows, 383 PASS, 0 FAIL, 6 REFUSED on both. For <code>imagegd2</code>, 32 rows over 7 sources: 29 PASS and 3 REFUSED
+(the GIF source, which is an indexed handle; the shim writes true color GD2 only). Of the 26 file rows, 23 decode to the same
+pixels as libgd&#39;s file. The 3 AVIF rows differ by at most 1 level at 90.44 dB, the AVIF decoder spread that every AVIF row in
+the differential shows, with a floor of 89 dB. Raw files are byte for byte libgd&#39;s in 12 of 14 rows; the other 2 are the AVIF
+rows. Compressed files differ in the deflate stream, so they are compared by decoding. The reference is libgd 2.3.3 built with
+<code>ENABLE_GD_FORMATS=1</code>, because the Homebrew PHP builds used here have GD2 compiled out and <code>imagegd2()</code> there writes no bytes.
+The drawing, readback and text functions are not part of the 40.</p>
+</li>
+<li><p><strong>Package size.</strong> <code>assets/driver.json</code> grew from 1,031,632 to 1,034,458 bytes (+2,826) for <code>imagegd2</code>, the canvas-source copy and
+the GD2 writer; the writer lives in the host (<code>gd2Encode</code> in <code>src/ops/image-runtime.ts</code>) and adds nothing to the wasm module.</p>
+</li>
+<li><p><strong>Derivative build cost, GD against <code>cfw_images</code> delivery</strong> (1200 by 800 JPEG of 96,537 bytes to 300 by 200 JPEG at quality 75;
+the GD request is the one the shim emitted for a fresh white canvas and one <code>imagecopyresampled</code>; the delivery request is
+<code>runImageTransform</code> with the same size; <code>bun</code>, local, the module&#39;s work counters from <code>module.measure</code>):</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>counter</th>
+<th>GD path</th>
+<th>delivery transform</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>source samples read</td>
+<td>1,020,000</td>
+<td>960,000</td>
+</tr>
+<tr>
+<td>decoded samples</td>
+<td>120,000</td>
+<td>60,000</td>
+</tr>
+<tr>
+<td>resampled samples</td>
+<td>120,000</td>
+<td>60,000</td>
+</tr>
+<tr>
+<td>encode passes</td>
+<td>2</td>
+<td>1</td>
+</tr>
+<tr>
+<td>modeled work (<code>clockMicros</code>)</td>
+<td>7,850</td>
+<td>3,909</td>
+</tr>
+<tr>
+<td>output bytes</td>
+<td>7,829</td>
+<td>7,829</td>
+</tr>
+</tbody></table></div>
+<p>The GD path shows a second pass: 60,000 more samples read, decoded and resampled than the delivery transform. This
+run did not find which step of the host causes it. <code>clockMicros</code> is a count-derived estimate, not a clock. Wall time, 30 interleaved runs after 3 warmups in <code>bun</code> on an Apple M2 Pro, with the 1-minute load average at 2.97 when the timing started (other work was running on the machine before that, so the figure may carry some contention): GD path median 5.39 ms (min 5.01, max 7.02), delivery transform median 3.93 ms (min 3.72, max 4.12). The GD host function took about 1.4 times as long as the delivery transform for this one image. These are bun timings of the host function alone, not a request through PHP and not Workers CPU time.</p>
+</li>
+<li><p><strong>Not measured.</strong> Production Workers CPU for either path. Memory at the 128 MB isolate limit: the GD path holds the decoded
+source, the destination canvas and the queue&#39;s intermediate canvases as RGBA at once, and nothing here measured that peak. The
+PHP side (base64 and JSON of the request, the park round trips) was not timed. The workerd clock does not advance inside a
+request, so timings come from bun running the same host function with the same wasm, not from workerd.</p>
+</li>
+</ul>
+<p>GD2 reading (<code>imagecreatefromgd2</code>) is not shimmed. A palette GD2 is not written either: the host holds decoded pixels, not
+palette indices, so <code>imagegd2()</code> on an indexed handle answers false and records a degradation. Core, WordPress and Joomla do not
+write GD2.</p>
 			</div>
 		</main>
 		<footer>

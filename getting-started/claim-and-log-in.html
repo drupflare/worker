@@ -484,6 +484,14 @@ routes directly, without turning on <code>PW_DIAGNOSTICS</code>. These are the o
 <td><code>/git</code></td>
 <td>remotes, branches, pull requests and the working-tree diff</td>
 </tr>
+<tr>
+<td><code>/writemark</code></td>
+<td>start, read or end the count of writes accepted since a mark</td>
+</tr>
+<tr>
+<td><code>/writechanges</code></td>
+<td>the rows changed since the mark, as a manifest or as SQL</td>
+</tr>
 </tbody></table></div>
 </details><p><code>OWNER_ROUTES</code> in <code>src/site/routes.ts</code> is the whole list. Without the token these routes answer 401
 with a <code>WWW-Authenticate: Bearer</code> challenge; a diagnostic route answers 404 to the same caller.</p>

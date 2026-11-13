@@ -411,14 +411,16 @@ with a recorded degradation and not a fatal. <code>sleep()</code> parks the call
 cfwpark, ctype, date, dom, filter, hash, json, lexbor, libxml, mbstring, pcre, pib, random,
 session, standard, tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by
 default; see <a href="../configuration/runtime.html#opcache_mode"><code>OPCACHE_MODE</code></a>. <code>mbstring</code> is the native
-extension; <code>iconv</code> is a PHP polyfill. There is no <code>gd</code> and no <code>pdo_sqlite</code>. <code>/php</code> reports the live
-list.</li>
+extension; <code>iconv</code> is a PHP polyfill. <code>gd</code> is not compiled in and a stand-in covers 40 of its
+functions; there is no <code>pdo_sqlite</code>. <code>/php</code> reports the live list.</li>
 <li><strong><code>extension_loaded()</code> is true for a stand-in only when the stand-in covers the extension&#39;s whole
 API.</strong> The check is gated by a manifest of the extension&#39;s functions, constants and classes, and
 the shim answers false for any name outside it. <code>sodium</code> answers true: the stand-in covers the
 whole of ext-sodium and a conformance gate holds it to native libsodium, except that password
 hashing refuses work above a 64 MiB memory cap (see <a href="modules.html#verified">Modules</a>). <code>zstd</code> and
-<code>brotli</code> answer false because their streaming API is not shimmed, and <code>gd</code> answers false.</li>
+<code>brotli</code> answer false because their streaming API is not shimmed. <code>gd</code> answers true for the 40 functions the
+WordPress, Joomla and Drupal image paths call, held to native gd by a differential; <code>imagecolorat()</code>, the drawing
+functions and text stay undefined.</li>
 </ul>
 <h2 id="behavior-differences">Behavior Differences</h2>
 <ul>
@@ -446,7 +448,9 @@ conversion, and encodes JPEG, PNG and WebP. It does not encode AVIF: core asks t
 applying an AVIF effect and falls through to the style&#39;s <code>webp</code> fallback. Cloudflare Images is
 reachable with <a href="../configuration/serving/files-and-images.html#image_engine"><code>IMAGE_ENGINE=images</code></a> on a zone that wants
 AVIF. Styles at or below 480 px on the long edge are produced during the request; larger ones are
-produced on the alarm chain. A public image style URL is rewritten to the <code>/cfw-img/</code> delivery path.</li>
+produced on the alarm chain. A public image style URL is rewritten to the <code>/cfw-img/</code> delivery path. A site can
+select Drupal&#39;s <code>GDToolkit</code> by hand, which builds each derivative at save time; see
+<a href="../configuration/serving/files-and-images.html#choosing-gdtoolkit">Choosing GDToolkit</a>.</li>
 <li><strong>Outbound HTTP completes inside the request that asks.</strong> <code>Drupal::httpClient()</code> and a Symfony HTTP
 client park the PHP call while the Worker performs the fetch, and the same call resumes with the
 answer. Where a park is refused (a call made from inside an internal function such as

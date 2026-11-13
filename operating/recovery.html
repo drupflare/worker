@@ -436,7 +436,7 @@ restores.</p>
 It lives in the same place as the data it protects, so a deleted namespace, a deleted Worker or a
 lost account takes the recovery log with it. The <code>/export</code> dump is the only thing on this page that
 leaves the platform, and it is the only thing that answers &quot;the object is gone&quot;.</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#point-in-time-recovery">Point-in-Time Recovery</a></li><li><a href="#the-export-dump">The Export Dump</a></li><li><a href="#restore">Restore</a></li><li><a href="#the-recovery-matrix">The Recovery Matrix</a></li><li><a href="#keeping-a-dump">Keeping a Dump</a></li><li><a href="#related">Related</a></li></ol></nav><h2 id="point-in-time-recovery">Point-in-Time Recovery</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#point-in-time-recovery">Point-in-Time Recovery</a></li><li><a href="#the-export-dump">The Export Dump</a></li><li><a href="#changes-since-a-mark">Changes Since a Mark</a></li><li><a href="#restore">Restore</a></li><li><a href="#the-recovery-matrix">The Recovery Matrix</a></li><li><a href="#keeping-a-dump">Keeping a Dump</a></li><li><a href="#related">Related</a></li></ol></nav><h2 id="point-in-time-recovery">Point-in-Time Recovery</h2>
 <p>SQLite-backed Durable Objects can be restored to any point in the past 30 days. The window
 covers the whole of <code>ctx.storage</code>, both SQL tables and key-value pairs.</p>
 <p>Recovery is addressed by bookmarks, not timestamps. A bookmark is a mostly alphanumeric string
@@ -515,7 +515,8 @@ REAL is the one class read directly.</p>
 <code>search_total</code> and <code>cfw_page</code>. A restored <code>cache_container</code> would boot the site on the previous
 site&#39;s service container, and <code>cachetags</code> checksums that disagree with the bins they describe leave
 rows that are present and permanently rejected.</li>
-<li><strong>Nothing at all</strong> from <code>cfw_migrate</code>, <code>cfw_import</code> and <code>cfw_import_chunk</code>. A dump carrying
+<li><strong>Nothing at all</strong> from <code>cfw_mark</code>, <code>cfw_wj</code> or the <code>cfw_wt_*</code> triggers (a dump must not start a
+mark on the site that restores it), nor from <code>cfw_migrate</code>, <code>cfw_import</code> and <code>cfw_import_chunk</code>. A dump carrying
 <code>cfw_import_chunk</code> would contain itself, and one carrying <code>cfw_migrate</code> would have a replay
 overwrite the cursor that makes the replay resumable.</li>
 <li><strong>No secrets by default.</strong> The owner token, the Cloudflare OAuth token and client id, the SMTP
@@ -562,6 +563,70 @@ reads as a backup while being useless. <code>?all=1</code> includes the <code>ca
 960,544 characters against the 100,000-character Durable Object statement ceiling, so a dump carrying
 it is not replayable. A chunked export also answers 409 on a shape mismatch, so two dumps cannot be
 spliced into one file unnoticed.</p>
+<h2 id="changes-since-a-mark">Changes Since a Mark</h2>
+<p>A site that has just taken over from another can say how many writes it has accepted since, and
+export them. Both are owner routes, and a site with no mark holds no trigger and no journal row.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>call</th>
+<th>answers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>POST /writemark?mark=&lt;id&gt;</code></td>
+<td><code>{mark, startedAt}</code>, 201; the same id again answers 200 and resets nothing</td>
+</tr>
+<tr>
+<td><code>POST /writemark?mark=&lt;id&gt;&amp;replace=1</code></td>
+<td>takes over a different active mark, with a count of zero</td>
+</tr>
+<tr>
+<td><code>GET /writemark</code></td>
+<td><code>{mark, startedAt, writes, cap, incomplete, reason?}</code>, 404 with no mark</td>
+</tr>
+<tr>
+<td><code>DELETE /writemark?mark=&lt;id&gt;</code></td>
+<td>removes the triggers, the journal and the mark</td>
+</tr>
+<tr>
+<td><code>GET /writechanges</code></td>
+<td>the manifest: <code>through</code>, <code>writes</code>, <code>keys</code> per table, <code>cannotCarry</code></td>
+</tr>
+<tr>
+<td><code>GET /writechanges?body=1&amp;through=N</code></td>
+<td>the changes as SQL, read up to write <code>N</code>; <code>dialect=mysql</code> (default) or <code>sqlite</code></td>
+</tr>
+</tbody></table></div>
+<p>A mark is a counter row and a journal in the object&#39;s own SQLite, so both survive an eviction.
+Starting one puts three triggers on every table that counts. A write counts when it lands on an
+application table: every table does except the ones that regenerate (<code>cache_*</code>, <code>cachetags</code>,
+<code>sessions</code>, <code>semaphore</code>, <code>flood</code>, <code>queue</code>, <code>watchdog</code>, <code>history</code>, <code>search_*</code>), the derived and
+host tables in <code>src/ops/state-inventory.ts</code>, <code>sequences</code>, <code>batch</code>, <code>key_value</code>, <code>key_value_expire</code>
+and every <code>cfw_*</code> table. An unlisted contrib table counts, because the other choice lets a move look
+undoable after a visitor posted a comment. A replace counts as one insert. A change of key counts
+twice, the old key leaving and the new one arriving. Creating, altering or dropping a counted table
+counts once. A signed-in visit can count, since Drupal writes the last-access time to
+<code>users_field_data</code>.</p>
+<p>The journal keeps the first 500,000 writes, which is 50 MB at an assumed 100 bytes each and so a
+small share of the 1 GB a Free-plan object may hold (Durable Objects, Limits). Width per entry is
+unmeasured. Past the cap the count keeps going, <code>incomplete</code> reads <code>true</code> with <code>reason</code> set to
+<code>journal_full</code>, and the export carries what the journal holds. A capture that failed to follow a
+schema change reads <code>capture_failed</code> and adds one write, so it never reads as zero. While a mark is
+active each counted write costs two more rows (the counter and the journal), and one more once an
+export has built its key index. Whether trigger writes bill as rows written is unverified.</p>
+<p>The export reads each changed key as it is now: a present row becomes <code>REPLACE INTO</code> with its full
+current values and an absent one becomes <code>DELETE FROM</code>. <code>through</code> is the write number the count and
+the body both stop at, so a key first changed after it waits for the next export and a key changed
+again after it appears once with the newer values. The last statements are drangler&#39;s re-seed of
+<code>sequences</code> and a <code>-- end</code> line with the statement count; a body without that line was cut short.
+<code>REPLACE</code> runs on MySQL, MariaDB and SQLite and not on PostgreSQL. This is not the file <code>drush sql:dump --tables-list</code> writes (full tables with <code>DROP</code> and <code>CREATE</code>), because a partial table
+cannot be dropped and recreated.</p>
+<p><code>cannotCarry</code> names what the body does not hold: <code>sessions</code>, settings and state kept in key-value
+storage, the bytes of new, replaced or removed files, structure changes to a table, and rows in a
+table with no key. Class: <code>safe</code> for every call here, since none changes what a visitor sees.</p>
+<p>A restore over a marked site drops and recreates tables, so the count rises by the rows it loads
+and the export reads <code>journal_full</code> or carries structure changes. It never reads as zero.</p>
 <h2 id="restore">Restore</h2>
 <p><code>POST /restore</code> with the dump as the request body. It takes the owner token (<code>Authorization: Bearer &lt;token&gt;</code>) or <code>PW_DIAGNOSTICS=1</code>. It was diagnostic-only until v1.0.5, because a body overwrites a whole
 database; the owner token already runs code the site did not ship (<code>/modify</code>, <code>/install</code>), so
@@ -569,8 +634,8 @@ restoring a dump gives it no further reach, and a backup into a new site no long
 and <code>/php</code> to do it.</p>
 <p>The dump is one body. <code>/export</code> pages as JSON, so a client joins the <code>sql</code> field of every page, in
 order, and sends the result. The body ceiling is <code>MAX_RESTORE_BYTES</code>, 16 MiB by default, separate from
-<code>MAX_BODY_BYTES</code>; a fresh site&#39;s dump is 1.9 MB (n=1). A site whose dump exceeds the ceiling cannot be
-restored through this route until a paged restore exists. The reply is <code>{ok, id, chunks, statements, generation}</code>. The route only stores the dump; the alarm replays it a few chunks at a time, and the
+<code>MAX_BODY_BYTES</code>; a fresh site&#39;s dump is 1.9 MB (n=1). A dump above the ceiling goes through
+<a href="#restore-in-parts">Restore in Parts</a>. The reply is <code>{ok, id, chunks, statements, generation}</code>. The route only stores the dump; the alarm replays it a few chunks at a time, and the
 site answers 503 from the first chunk until the last.</p>
 <p><code>GET /health</code> carries an <code>import</code> object for the newest stored dump, or <code>null</code> when none exists:
 <code>{id, generation, state, chunk, chunks, error}</code>. <code>state</code> is <code>pending</code> until the replay has finished,
@@ -612,6 +677,87 @@ any statement exceeds the 100,000-character ceiling, and writes the parent row a
 invocation that accepts the upload is never the one holding a half-overwritten site open.</p>
 <p><code>?label=</code> names the restore point; it defaults to the current time. <code>GET /health</code> reports the newest
 stored import in its <code>import</code> field.</p>
+<h3 id="restore-in-parts">Restore in Parts</h3>
+<p><code>/restore-parts</code> takes the same dump as parts, so a dump above <code>MAX_RESTORE_BYTES</code> can be restored
+and no request holds more than one part. It takes the owner token, like <code>/restore</code>, and the result
+is the same stored import: <code>GET /health</code> reports it as <code>pending</code>, then <code>applied</code>, and the alarm
+replays it the same way.</p>
+<p>A part is a whole number of statements: each ends in <code>;</code> and no statement is cut across two parts.
+Joined in order, the parts are the dump. Every call names its action in <code>?action=</code>.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Call</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>POST ?action=begin</code>, JSON <code>{bytes, parts, sha256, label}</code></td>
+<td>declares the dump: its size, the number of parts and the sha256 of the whole dump. <code>label</code> defaults to the current time.</td>
+</tr>
+<tr>
+<td><code>PUT ?action=put&amp;upload=&lt;id&gt;&amp;part=&lt;n&gt;</code></td>
+<td>stores part <code>n</code> (counting from 0). The body is the part and <code>x-part-sha256</code> is its hex digest. Parts may arrive in any order.</td>
+</tr>
+<tr>
+<td><code>GET ?action=status[&amp;upload=&lt;id&gt;]</code></td>
+<td>lists the parts the site holds. Without <code>upload</code> it answers for the one open upload, or <code>{ok: true, upload: null}</code>.</td>
+</tr>
+<tr>
+<td><code>POST ?action=commit&amp;upload=&lt;id&gt;</code></td>
+<td>verifies the whole digest, then writes the replay chunks. Repeat it until the reply says <code>done: true</code>.</td>
+</tr>
+<tr>
+<td><code>POST ?action=abort&amp;upload=&lt;id&gt;</code></td>
+<td>removes the parts and anything the commit had written.</td>
+</tr>
+</tbody></table></div>
+<p><code>begin</code> answers <code>{ok, created, upload, state, label, bytes, parts, sha256, receivedParts, bytesReceived, assembledParts, expiresAt, maxPartBytes}</code>. The same declaration sent again returns the
+open upload with <code>created: false</code>, so a client that lost the reply resumes instead of starting over.
+A different declaration while one is open answers 409 with <code>code: &quot;busy&quot;</code> and the open upload&#39;s id.</p>
+<p>A part is at most 1 MiB (<code>RESTORE_PART_MAX_BYTES</code>), and a request that declares more is refused
+with 413 at the edge before it reaches the object. A part is held whole in one row, so 1 MiB sits
+well under the 8 MB string, BLOB and row size the Durable Object limits page gives for SQLite
+storage; the figure is a chosen default, not a measured one. The same part sent twice stores once
+(<code>stored: false</code> on the repeat). A different body for a part number replaces it until the commit
+starts.</p>
+<p>A part is refused when its bytes do not match <code>x-part-sha256</code> (422, <code>digest</code>), when it ends inside a
+statement (422, <code>not_aligned</code>), when a statement is over the 100,000 characters a Durable Object
+runs (422, <code>statement_too_long</code>), or when it is not UTF-8 (422, <code>not_utf8</code>).</p>
+<p>A commit answers 409 with <code>code: &quot;incomplete&quot;</code> and the missing part numbers if any part is absent,
+and 422 with <code>code: &quot;whole_digest&quot;</code> if the parts in order do not match the declared sha256. Both
+leave the upload open. An unfinished commit reports <code>{ok, done: false, state, assembledParts, parts}</code>; each call turns up to 16 MiB of parts into chunks and deletes each part once its chunks are
+written. The call that finishes answers <code>{ok, done: true, id, chunks, statements, generation}</code> and
+arms the alarm. A half-built import is not offered as a restore point until that call, so a commit
+interrupted between calls leaves nothing to replay. A site out of storage answers 507 with
+<code>code: &quot;storage_full&quot;</code> and keeps the upload; abort it or free space and commit again.</p>
+<p>The dump may be at most 128 MiB, set by <code>MAX_RESTORE_PAGED_BYTES</code>. The raw parts, the replay chunks
+and the restored tables can sit in the object together, and a Durable Object holds 1 GB on the Free
+plan and 10 GB on Paid (Durable Objects limits page), so the default leaves room for the three on a
+Free site. It is a chosen value, not a measured one. An upload is kept for six hours after the last
+call that changed it. Any later call and the alarm remove an expired upload with its parts, and
+<code>begin</code>, <code>commit</code> and <code>abort</code> are recorded in the <a href="../configuration/operations/owner-access.html#owner-audit-log">audit log</a>.
+Parts are not, since a large dump would push every older entry out of it.</p>
+<h3 id="files-held-only-in-r2">Files Held Only in R2</h3>
+<p>Under <code>FILE_STORE=r2</code> an evicted file has a row in the object and its bytes only in R2, so <code>/export</code>
+does not carry them. <code>GET /offloaded</code> lists those files and <code>GET /offloaded?uri=&lt;uri&gt;</code> streams one,
+with the owner token.</p>
+<p>The listing answers <code>{ok, files, next, total}</code>. Each file is <code>{uri, scheme, path, size, contentType, sha256, modified}</code>, plus <code>foreign: true</code> when the row names another site&#39;s objects. <code>limit</code> defaults
+to 500 and is at most 1,000, and <code>after=&lt;uri&gt;</code> continues from the <code>next</code> of the previous page, which
+is <code>null</code> on the last page. Pages are in URI order. Only the first page carries <code>total</code>
+(<code>{files, bytes}</code>), so a client reads the count once.</p>
+<p>The stream answers the file&#39;s bytes with <code>content-type</code>, <code>content-length</code>, <code>etag</code> and
+<code>x-cfw-file-sha256</code> when a verified put recorded one, and <code>x-cfw-file-store: r2</code> or <code>object</code>. It takes
+one <code>Range: bytes=</code> span and answers 206 with <code>content-range</code>, or 416 past the end; several spans
+answer the whole file. <code>HEAD</code> answers from the row without calling R2. A file the object holds
+again by the time of the read answers from its chunk rows, so a client that built its list from an
+earlier dump still gets every byte. Both paths stream: an R2 body passes through, and a resident file
+is read one chunk row at a time.</p>
+<p>Only a row of the site&#39;s own file table is read, and a URI that climbs with <code>..</code> is refused with 400.
+A row that names another site&#39;s objects answers 403 unless the platform granted that site, the same
+rule the copy in <a href="#restore">Restore</a> follows. A missing or unreadable object answers 502. The listing
+is recorded in the audit log once per sweep, a read of a <code>private://</code> file is recorded, and a read of
+a public file is not, since its bytes are public already.</p>
 <h2 id="the-recovery-matrix">The Recovery Matrix</h2>
 <div class="table"><table>
 <thead>

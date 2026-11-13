@@ -497,8 +497,10 @@ meant for a deployed site.</li>
 <h2 id="owner-audit-log">Owner Audit Log</h2>
 <p>The object records every owner call that changes state or reads a secret, and <code>GET /audit</code> returns
 the log. A call is recorded when it carries the owner token and reaches one of these: <code>/install</code>,
-<code>/enable</code>, <code>/modify</code>, <code>/restore</code>, <code>/export</code>, <code>/migrate</code>, <code>/bump</code>, <code>/invalidate</code>, <code>/pitr</code> (POST),
-<code>/updb</code> (POST), <code>/reconcile</code> (POST), <code>/firstrun?force=1</code>, <code>/git</code> with any action but <code>list</code>,
+<code>/enable</code>, <code>/modify</code>, <code>/restore</code>, <code>/restore-parts</code> (<code>begin</code>, <code>commit</code> and <code>abort</code>), <code>/export</code>, <code>/offloaded</code> (the
+listing, and a read of a <code>private://</code> file), <code>/migrate</code>, <code>/bump</code>, <code>/invalidate</code>, <code>/pitr</code> (POST),
+<code>/updb</code> (POST), <code>/reconcile</code> (POST), <code>/writemark</code> (POST and DELETE), <code>/writechanges?body=1</code>,
+<code>/firstrun?force=1</code>, <code>/git</code> with any action but <code>list</code>,
 <code>check</code>, <code>branches</code>, <code>prs</code>, <code>diff</code> and <code>status</code>, <code>/queue?action=drop</code>, <code>/ops</code> with an <code>op</code>, the
 <code>/setup/*</code> pages when they write, <code>/health?clear=1</code>, and a <code>/settings</code> write. A token recovery is
 recorded with the actor <code>proof</code>, since it presents no token. Reads and polling (<code>/serve-stats</code>,
@@ -506,7 +508,7 @@ recorded with the actor <code>proof</code>, since it presents no token. Reads an
 <p>An entry is <code>{seq, at, route, method, status, actor, prev, hash}</code>. <code>actor</code> is the first 8 hex
 characters of the SHA-256 of the presented token, and <code>hash</code> is the SHA-256 of <code>prev</code> followed by
 the entry&#39;s JSON without its hash, keys in that order. The route carries only <code>action</code>, <code>force</code>,
-<code>secrets</code>, <code>all</code>, <code>op</code> and <code>clear</code> from the query. The log lives in <code>ctx.storage</code> key-value storage,
+<code>secrets</code>, <code>all</code>, <code>op</code>, <code>clear</code> and <code>replace</code> from the query. The log lives in <code>ctx.storage</code> key-value storage,
 which the SQL bridge cannot read or write (the platform reserves the <code>_cf_</code> tables behind it), as a
 ring of the last 1,000 entries, a head pointer, and the hash of the last entry the ring dropped.
 Each entry costs two key-value writes, three when it overwrites an older one.</p>

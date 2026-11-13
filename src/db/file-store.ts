@@ -556,7 +556,15 @@ export type StoredObject = {
 };
 
 /** a bucket that can also be read, which `FILE_STORE=r2` needs once bytes leave the object */
-export type FileBucket = MirrorBucket & { get(key: string): Promise<StoredObject | null> };
+export type FileBucket = MirrorBucket & {
+	get(
+		key: string,
+		options?: { range?: { offset: number; length: number } }
+	): Promise<StoredObject | null>;
+};
+
+/** a byte range of a file, as R2 takes it */
+export type ByteRange = { offset: number; length: number };
 
 /** the two buckets a file can live in; `private` has no custom domain */
 export type FileBuckets = { public?: FileBucket; private?: FileBucket };
@@ -808,7 +816,8 @@ export async function fetchOffloaded(
 	buckets: FileBuckets,
 	meta: FileStat,
 	site = 'site',
-	trust?: FileTrust
+	trust?: FileTrust,
+	range?: ByteRange
 ): Promise<StoredObject> {
 	if (meta.r2site !== undefined && meta.r2site !== site && !(await trust?.())?.has(meta.r2site)) {
 		throw new Error(
@@ -819,8 +828,9 @@ export async function fetchOffloaded(
 	if (!bucket) throw new Error(`${meta.uri} is offloaded and its R2 bucket is not bound`);
 	// the object sits under the prefix of the site that verified it, which a restore changes
 	const key = mirrorKey(meta.uri, meta.r2site ?? site) as string;
-	const object = await bucket.get(key);
+	const object = await (range === undefined ? bucket.get(key) : bucket.get(key, { range }));
 	if (object === null) throw new Error(`${meta.uri} is missing from R2 (${key})`);
+	// a ranged read still reports the whole object's size
 	if (object.size !== meta.size) {
 		throw new Error(`${meta.uri} is ${object.size} bytes in R2, expected ${meta.size}`);
 	}
@@ -1105,6 +1115,62 @@ export function privateUriForPath(path: string): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/** one offloaded file as the listing reports it */
+export type OffloadedFile = {
+	uri: string;
+	size: number;
+	mime: string | null;
+	/** hex sha256 recorded when the put was verified; evicted rows always carry one */
+	sha256: string | null;
+	modified: number;
+	/** the row names another site's R2 prefix */
+	foreign: boolean;
+};
+
+/**
+ * Files whose bytes live only in R2 (`evicted = 1`), in URI order after `after`.
+ * A keyset page, not an offset: `uri` is the primary key, so each page is one index range.
+ */
+export function listOffloaded(
+	sql: FileSql,
+	opts: { after?: string; limit: number; site: string }
+): OffloadedFile[] {
+	ensureFileTables(sql);
+	const limit = Math.max(1, Math.floor(opts.limit));
+	return rows<{
+		uri: string;
+		size: number;
+		mime: string | null;
+		hash: string | null;
+		modified: number;
+		r2site: string | null;
+	}>(
+		sql,
+		`SELECT uri, size, mime, hash, modified, r2site FROM cfw_file
+		 WHERE evicted = 1 AND uri > ? ORDER BY uri LIMIT ?`,
+		opts.after ?? '',
+		limit
+	).map((r) => ({
+		uri: String(r.uri),
+		size: Number(r.size),
+		mime: r.mime === null ? null : String(r.mime),
+		sha256: r.hash === null ? null : String(r.hash),
+		modified: Number(r.modified),
+		foreign: r.r2site !== null && r.r2site !== undefined && String(r.r2site) !== opts.site
+	}));
+}
+
+/** the sha256 a verified put recorded for a file, or undefined */
+export function recordedHash(sql: FileSql, uri: string): string | undefined {
+	ensureFileTables(sql);
+	const row = rows<{ hash: string | null }>(
+		sql,
+		'SELECT hash FROM cfw_file WHERE uri = ?',
+		uri
+	)[0];
+	return row?.hash === null || row?.hash === undefined ? undefined : String(row.hash);
 }
 
 /**

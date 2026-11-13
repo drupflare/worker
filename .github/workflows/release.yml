@@ -109,6 +109,7 @@ jobs:
             echo "TAG=v${VERSION}${{ github.event.inputs.suffix }}"
             echo "PAYLOAD=drupflare-worker-${VERSION}.tar.gz"
             echo "BUNDLE=drupflare-managed-bundle-${VERSION}.tar.gz"
+            echo "BOX=drupflare-box-bundle-${VERSION}.tar.gz"
           } >> "$GITHUB_ENV"
       - name: Resolve Drupal Version
         id: drupalver
@@ -152,6 +153,11 @@ jobs:
           cd dist
           sha256sum "$BUNDLE" >> SHA256SUMS
           sha256sum -c SHA256SUMS
+      - name: Pack the Box Bundle
+        run: |
+          bun scripts/build-box-bundle.ts --outdir=dist/dry-run/wrangler --out=dist --version="$VERSION" --sums=dist/SHA256SUMS
+          cd dist
+          sha256sum -c SHA256SUMS
       # AFTER the checks, not before them. A release prefix is what `hydrate` prefers over the
       # GitHub release, so publishing it early would leave a resolvable `payloads/v<version>/` for
       # a version whose checks then failed and which no release ever carried
@@ -188,6 +194,7 @@ jobs:
           path: |
             dist/${{ env.PAYLOAD }}
             dist/${{ env.BUNDLE }}
+            dist/${{ env.BOX }}
             dist/SHA256SUMS
           retention-days: 1
           if-no-files-found: error
@@ -252,6 +259,7 @@ jobs:
           files: |
             dist/drupflare-worker-${{ env.VERSION }}.tar.gz
             dist/drupflare-managed-bundle-${{ env.VERSION }}.tar.gz
+            dist/drupflare-box-bundle-${{ env.VERSION }}.tar.gz
             dist/SHA256SUMS
           draft: false
           prerelease: ${{ github.ref_name != 'master' }}
@@ -281,6 +289,7 @@ jobs:
           {
             echo "TAG=v${VERSION}${{ github.event.inputs.suffix }}"
             echo "PAYLOAD=drupflare-worker-${VERSION}.tar.gz"
+            echo "BOX=drupflare-box-bundle-${VERSION}.tar.gz"
           } >> "$GITHUB_ENV"
       - name: Wait for the Asset to Be Downloadable
         run: |
@@ -306,6 +315,22 @@ jobs:
         run: bunx wrangler deploy --dry-run --outdir=/tmp/deploy-path -c wrangler.jsonc
       - name: Bundle the Managed Config
         run: bunx wrangler deploy --dry-run --outdir=/tmp/deploy-path-managed -c wrangler.managed.jsonc
+      - name: Check the Box Bundle as a Box Would Fetch It
+        run: |
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          curl -sfL -o /tmp/SHA256SUMS "$BASE/SHA256SUMS"
+          EXPECTED=$(grep -F "  $BOX" /tmp/SHA256SUMS | cut -d ' ' -f 1)
+          test -n "$EXPECTED" || { echo "::error::SHA256SUMS has no line for $BOX." >&2; exit 1; }
+          curl -sfL -o /tmp/box.tar.gz "$BASE/$BOX"
+          ACTUAL=$(sha256sum /tmp/box.tar.gz | cut -d ' ' -f 1)
+          test "$EXPECTED" = "$ACTUAL" || { echo "::error::$BOX hashes to $ACTUAL, the release sums say $EXPECTED." >&2; exit 1; }
+          tar -tzf /tmp/box.tar.gz > /tmp/box.list
+          grep -qx 'site.js' /tmp/box.list || { echo "::error::$BOX has no site.js at its root." >&2; exit 1; }
+          grep -qx 'assets.manifest' /tmp/box.list || { echo "::error::$BOX has no assets.manifest at its root." >&2; exit 1; }
+          grep -qx 'box.vars' /tmp/box.list || { echo "::error::$BOX has no box.vars at its root." >&2; exit 1; }
+          grep -qx 'assets/drupal-pf/core.pf.bin' /tmp/box.list || { echo "::error::$BOX has no asset pack." >&2; exit 1; }
+          if grep -q '^assets/bootimage/' /tmp/box.list; then echo "::error::$BOX carries the boot image." >&2; exit 1; fi
+          echo "$BOX matches its sum and carries site.js, the asset manifest, the vars and the asset pack"
       - name: Deploy Path to Job Summary
         if: ${{ !cancelled() }}
         run: |
@@ -328,4 +353,7 @@ jobs:
             echo
             echo "The managed config, \`wrangler.managed.jsonc\`, is bundled in the step before this"
             echo "one. It adds the R2 and \`send_email\` bindings the control plane provisions."
+            echo
+            echo "The canonical bundle is also the box bundle, \`$BOX\`: the step above fetched it"
+            echo "from the release and checked it against \`SHA256SUMS\`."
           } >> "$GITHUB_STEP_SUMMARY"

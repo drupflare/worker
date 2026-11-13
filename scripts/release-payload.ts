@@ -603,7 +603,9 @@ export const DEPLOY_CONFIGS = ['wrangler.jsonc', 'wrangler.managed.jsonc'] as co
 
 /** Dry-runs one deploy config and prices the bundle. Needs no credential; measured, not assumed. */
 function checkBundle(root: string, config: string): number {
-	const outdir = join(root, 'dist/dry-run');
+	// one folder per config, so the canonical output outlives the managed run: the box bundle is
+	// packed from `dist/dry-run/wrangler` without wrangler building the same config twice
+	const outdir = join(root, 'dist/dry-run', config.replace(/\.jsonc$/, ''));
 	// a stale artifact in the outdir is counted by measureBundle: a leftover 11 MB probe wasm read
 	// 6,542,971 against a real 2,876,078
 	rmSync(outdir, { recursive: true, force: true });

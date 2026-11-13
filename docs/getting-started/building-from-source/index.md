@@ -86,6 +86,36 @@ its checksum is a second line in `SHA256SUMS`, below the payload's. `hydrate` re
 line. GitHub release assets cannot be added after a release is cut, so v1.0.5's tarball and its own
 `drupflare-managed-bundle-1.0.5.SHA256SUMS` sit under `payloads/v1.0.5/` on the CDN instead.
 
+## The Box Bundle
+
+A release also carries `drupflare-box-bundle-<version>.tar.gz`, the Worker a bastion box runs. It is
+the output of `wrangler deploy --dry-run --outdir` for `wrangler.jsonc`, with the modules at the
+archive root: `site.js`, the three `.wasm` modules and the hashed `composer.lock` text module. A box
+lists the top level of the unpacked archive only, so the packer, `scripts/build-box-bundle.ts`,
+refuses a nested folder, a file ending the box does not load, and a module that `site.js` imports
+but the archive lacks. It leaves out source maps.
+
+The archive also carries the site's static files under `assets/`, the same set the release payload
+holds for the edge: the files `assets/.assetsignore` lets through, read from the payload plan and
+never from a walk of `assets/`. A box serves static files from its own state directory, and a site
+with none answers 503 `pack not reachable`, so `bastion` copies this folder there when it adds the
+site. `assets.manifest` at the root lists each file with its size and sha-256, and the box refuses a
+tree that differs from it. The packer fails when a required asset is missing, so a short tree never
+ships. The box bundle leaves out `assets/bootimage/`: `BOOT_IMAGE` is not in `wrangler.jsonc`, so a
+box never opens it. The archive holds about 4,600 files, 39 MB unpacked and 26 MB packed. A baked
+boot image would add 80 MB unpacked and 24 MB packed.
+
+`box.vars` at the root holds the `vars` block of `wrangler.jsonc` as a flat json object, read when
+the archive is built. A bundle carries no config, so `bastion` writes these values as the site's
+bindings when it adds the site, and the site renders PHP pages. Vars that only
+`wrangler.managed.jsonc` sets, such as `CACHE_API` and `FILE_STORE`, are not in the canonical block
+and never reach a box.
+
+The release job packs it from the dry-run `release:check` already runs, which `release:check` now
+keeps at `dist/dry-run/wrangler`, so wrangler builds the canonical config once. Its checksum is the
+last line of `SHA256SUMS`. The job that follows publishing downloads the asset and checks its sum and
+that `site.js` sits at the root.
+
 ## Quick Start
 
 ```sh

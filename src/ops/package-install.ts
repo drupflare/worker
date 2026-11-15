@@ -602,6 +602,9 @@ export const DROP = [
 /** the record cap in bytes; a larger file is refused rather than truncated */
 export const RECORD_CAP = 2_199_995;
 
+/** packages one `/install` or `/install-lock` call fetches before it answers */
+export const INSTALL_BATCH = 40;
+
 /** one kept file, at its mounted path */
 export type UnpackedFile = { path: string; bytes: Uint8Array };
 

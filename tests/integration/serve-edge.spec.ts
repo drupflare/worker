@@ -617,20 +617,24 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 
 	// owner routes answer 401, not 404: the route's existence is documented, and the token is the secret
 	// an uncredentialed caller must get neither the route's work nor a 200
-	it.each(['/migrate', '/armfill', '/invalidate', '/bump'])(
-		'refuses %s without a credential, with diagnostics off',
-		async (route) => {
-			const res = await worker.fetch(
-				new Request(`https://cfw.local${route}?site=x&path=%2F`),
-				{
-					...env,
-					PW_DIAGNOSTICS: '0'
-				}
-			);
-			expect(res.status).toBe(401);
-			expect(res.status).not.toBe(200);
-		}
-	);
+	it.each([
+		'/migrate',
+		'/armfill',
+		'/invalidate',
+		'/bump',
+		'/recycle',
+		'/ledger-gc',
+		'/strata-config',
+		'/strata-store',
+		'/install-lock'
+	])('refuses %s without a credential, with diagnostics off', async (route) => {
+		const res = await worker.fetch(new Request(`https://cfw.local${route}?site=x&path=%2F`), {
+			...env,
+			PW_DIAGNOSTICS: '0'
+		});
+		expect(res.status).toBe(401);
+		expect(res.status).not.toBe(200);
+	});
 
 	it('does NOT 404 /firstrun with diagnostics off, or the token is unobtainable', async () => {
 		const res = await worker.fetch(new Request('https://cfw.local/firstrun?site=x'), {

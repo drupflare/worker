@@ -734,7 +734,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	lastRecycle?: {
 		at: number;
 		bytes: number;
-		reason: 'request' | 'alarm' | 'upload';
+		reason: 'request' | 'alarm' | 'upload' | 'owner';
 		rebuild?: boolean;
 	};
 	/**
@@ -4006,6 +4006,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.dropInterpreter();
 		this.rebuildBoot = false;
 		this.lastRecycle = { at: this.nowMs(), bytes, reason, ...(rebuild ? { rebuild } : {}) };
+		this.recycles = (this.recycles ?? 0) + 1;
+		return true;
+	}
+
+	/** drops the interpreter on an owner's call; false when none is resident to drop */
+	recycleForOwner(): boolean {
+		if (!this.php?.binary) return false;
+		this.lastRecycle = { at: this.nowMs(), bytes: this.heapNow(), reason: 'owner' };
+		this.dropInterpreter();
 		this.recycles = (this.recycles ?? 0) + 1;
 		return true;
 	}

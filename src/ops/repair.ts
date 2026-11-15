@@ -11,6 +11,14 @@ export const RUNGS = [
 /** one rung of the repair ladder */
 export type Rung = (typeof RUNGS)[number];
 
+/** what a repair checks before it acts; an absent depth is unknown */
+export type RepairFacts = { transactionDepth?: number; gateHeld?: boolean };
+
+/** mirrors `RepairLadder::maySafelyRepair()`: an unknown or open transaction refuses */
+export function maySafelyRepair(facts: RepairFacts): boolean {
+	return facts.transactionDepth === 0 && facts.gateHeld !== true;
+}
+
 /** consecutive same-code failures before quarantine; below this the lower rungs own the problem */
 export const QUARANTINE_STRIKES = 3;
 

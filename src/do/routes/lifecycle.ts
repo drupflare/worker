@@ -7,11 +7,14 @@ import {
 	opsRun,
 	packConsistencyRun
 } from '../../drupal/site-php';
+import { strataConfigPhp, strataStorePhp } from '../../drupal/strata-php';
 import { CRON_CLAIM_GRACE_MS, cronIntervalMs } from '../../ops/cron-drive';
 import { type DeploymentKv, recordClaimed } from '../../ops/deployment-site';
 import { healthTree, reconcileNode, repairNode, supervisorNode } from '../../ops/health-tree';
+import { noteAuditDetail } from '../../ops/owner-audit';
 import {
 	isQuarantined,
+	maySafelyRepair,
 	parseState,
 	release,
 	serialiseState,
@@ -25,6 +28,17 @@ import {
 	ownerTokenMatches,
 	randomKeyBase64
 } from '../../ops/site-secrets';
+import {
+	capturesStatements,
+	parseStoreRequest,
+	readStrataStore,
+	storeAuditDetail,
+	storeMatches,
+	strataEnabled,
+	strataS3Enabled,
+	type StrataStoreRequest
+} from '../../ops/strata-config';
+import { gcHealthLedger, LEDGER_MAX_ROWS } from '../../ops/supervisor';
 import { updbStatus } from '../../ops/updb';
 import type { SitePhpDurableObject } from '../../site-do';
 import { jsonError } from '../../util/reply';
@@ -32,6 +46,7 @@ import { firstRow } from '../../util/sql';
 import { DEPLOYMENT_RECORDED_KEY } from '../keys';
 import { migrateEngine } from '../levers';
 import { OPS_DRIVERS } from '../limits';
+import { dropHeapImages } from '../reconcile';
 import type { Payload, Row } from '../types';
 
 /**
@@ -119,6 +134,171 @@ export async function health(
 			.toArray(),
 		ledgerRows: site.countOrNull('cfw_health')
 	});
+}
+
+/**
+ * Drops the PHP interpreter, so the next request pays a full boot and starts from a clean heap.
+ * `POST` only. Refuses while a transaction is open, by the same rule as the repair ladder.
+ */
+export async function recycle(
+	site: SitePhpDurableObject,
+	request: Request,
+	url: URL
+): Promise<Response> {
+	if (request.method !== 'POST') return jsonError('use POST', 405, { allow: 'POST' });
+	const before = site.recycles ?? 0;
+	const facts = {
+		transactionDepth: site.speculating ? 1 : 0,
+		gateHeld: site.gate.stats().active > 1
+	};
+	if (!maySafelyRepair(facts)) {
+		return jsonError('a transaction is open', 409, { recycles: before });
+	}
+	const recycled = site.recycleForOwner();
+	return Response.json({
+		ok: true,
+		recycled,
+		recyclesBefore: before,
+		recyclesAfter: site.recycles ?? 0
+	});
+}
+
+/** Trims the health ledger to its row cap, newest kept. `POST` only. */
+export async function ledgergc(
+	site: SitePhpDurableObject,
+	request: Request,
+	url: URL
+): Promise<Response> {
+	if (request.method !== 'POST') return jsonError('use POST', 405, { allow: 'POST' });
+	site.ensureServeTables();
+	const rowsBefore = site.countOrNull('cfw_health') ?? 0;
+	const rowsDeleted = rowsBefore > 0 ? gcHealthLedger(site.sql) : 0;
+	return Response.json({ ok: true, rowsBefore, rowsDeleted, cap: LEDGER_MAX_ROWS });
+}
+
+/**
+ * Strata's `capture.statements`. `GET` reads the stored value; `POST {captureStatements}` sets it
+ * through `ConfigFactory` and drops the interpreter and heap images so the next boot reads it.
+ * Answers 409 `strata_not_enabled` when the module is not in `core.extension` or has no config row,
+ * and 409 while a transaction is open. Setting the stored value writes nothing.
+ */
+export async function strataconfig(
+	site: SitePhpDurableObject,
+	request: Request,
+	url: URL
+): Promise<Response> {
+	if (request.method !== 'GET' && request.method !== 'POST') {
+		return jsonError('use GET or POST', 405, { allow: 'GET, POST' });
+	}
+	let wanted: boolean | undefined;
+	if (request.method === 'POST') {
+		const body = (await request.json().catch(() => null)) as {
+			captureStatements?: unknown;
+		} | null;
+		if (typeof body?.captureStatements !== 'boolean') {
+			return jsonError('body must be {"captureStatements": true | false}', 400);
+		}
+		wanted = body.captureStatements;
+		const facts = {
+			transactionDepth: site.speculating ? 1 : 0,
+			gateHeld: site.gate.stats().active > 1
+		};
+		if (!maySafelyRepair(facts)) return jsonError('a transaction is open', 409);
+	}
+	const current = strataEnabled(site.sql) ? capturesStatements(site.sql) : undefined;
+	if (current === undefined) return jsonError('strata_not_enabled', 409);
+	if (wanted === undefined) return Response.json({ captureStatements: current });
+	if (wanted === current) {
+		return Response.json({ captureStatements: current, previous: current, applied: true });
+	}
+	const reply = await site.runJson(strataConfigPhp(wanted, site.canonicalOrigin(url.origin)));
+	if (reply?.absent === true) return jsonError('strata_not_enabled', 409);
+	// the success condition is the stored row, as in a reconcile step
+	const after = capturesStatements(site.sql);
+	if (reply?.ok !== true || after !== wanted) {
+		return jsonError('strata config write failed', 500, { php: reply ?? null });
+	}
+	site.dropInterpreter();
+	dropHeapImages(site);
+	return Response.json({ captureStatements: after, previous: current, applied: true });
+}
+
+/**
+ * Strata's S3 store. `GET` reads what the row holds, never a key or a secret. `POST` sets
+ * `provider: s3` and the `s3.*` keys through `ConfigFactory`, makes the encryption key through
+ * Strata's `KeyMaker` when `key` is empty, then drops the interpreter and heap images. A body
+ * `enable: true` also sets Strata's `enabled`; false or absent never changes it.
+ * Answers 409 `strata_not_enabled`, 409 `strata_s3_not_enabled` and 409 while a transaction is
+ * open. Setting what the row already holds writes nothing. No answer or error repeats a body value.
+ */
+export async function stratastore(
+	site: SitePhpDurableObject,
+	request: Request,
+	url: URL
+): Promise<Response> {
+	if (request.method !== 'GET' && request.method !== 'POST') {
+		return jsonError('use GET or POST', 405, { allow: 'GET, POST' });
+	}
+	let want: StrataStoreRequest | undefined;
+	if (request.method === 'POST') {
+		const parsed = parseStoreRequest(await request.json().catch(() => null));
+		if (!parsed.ok) return jsonError(parsed.code, 400);
+		want = parsed.value;
+		noteAuditDetail(request, storeAuditDetail(want));
+		const facts = {
+			transactionDepth: site.speculating ? 1 : 0,
+			gateHeld: site.gate.stats().active > 1
+		};
+		if (!maySafelyRepair(facts)) return jsonError('a transaction is open', 409);
+	}
+	const before = strataEnabled(site.sql) ? readStrataStore(site.sql) : undefined;
+	if (before === undefined) return jsonError('strata_not_enabled', 409);
+	if (want === undefined) {
+		const { provider, enabled, bucket, endpoint, region, hasKey, hasCredentials } = before;
+		return Response.json({
+			provider,
+			enabled,
+			bucket,
+			endpoint,
+			region,
+			hasKey,
+			hasCredentials
+		});
+	}
+	if (!strataS3Enabled(site.sql)) return jsonError('strata_s3_not_enabled', 409);
+	const wanted: StrataStoreRequest = want;
+	const previous = { provider: before.provider, bucket: before.bucket };
+	const answer = (keyCreated: boolean) =>
+		Response.json({
+			provider: 's3',
+			bucket: wanted.bucket,
+			endpoint: wanted.endpoint,
+			region: wanted.region,
+			applied: true,
+			previous,
+			keyCreated,
+			enabled: readStrataStore(site.sql)?.enabled === true
+		});
+	if (storeMatches(site.sql, want)) return answer(false);
+	let reply: Payload | undefined;
+	try {
+		reply = await site.runJson(strataStorePhp(want, site.canonicalOrigin(url.origin)));
+	} catch {
+		// a thrown message is not forwarded: the fragment text holds the secret
+		reply = undefined;
+	}
+	if (reply?.absent === true) return jsonError('strata_not_enabled', 409);
+	if (reply?.s3absent === true) return jsonError('strata_s3_not_enabled', 409);
+	// the success condition is the stored row, as in a reconcile step
+	if (reply?.ok !== true || !storeMatches(site.sql, want)) {
+		const phpClass = typeof reply?.class === 'string' ? reply.class : '';
+		return jsonError('strata_store_write_failed', 500, {
+			...(/^[A-Za-z0-9_\\]{1,120}$/.test(phpClass) ? { phpClass } : {})
+		});
+	}
+	site.dropInterpreter();
+	dropHeapImages(site);
+	return answer(reply.keyCreated === true);
 }
 
 /**

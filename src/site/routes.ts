@@ -114,12 +114,20 @@ export const OWNER_ROUTES = new Set([
 	// install and enable execute code the site did not ship with, so both take the owner token
 	'/installable',
 	'/install',
+	'/install-lock',
 	'/enable',
 	// site maintenance (cache purge, migration, fill); the owner token is per site, the flag is not
 	'/armfill',
 	'/invalidate',
 	'/bump',
 	'/migrate',
+	// repair levers with no diagnostics path: a fresh interpreter, and the ledger cut to its cap
+	'/recycle',
+	'/ledger-gc',
+	// Strata's statement capture; the one Drupal config value an owner route writes
+	'/strata-config',
+	// Strata's S3 endpoint, bucket and credentials; the one route that writes a secret into config
+	'/strata-store',
 	// the update chain the alarm already runs; `site-do.ts` names "/updb" as its driver
 	'/updb',
 	// the file offload: queue, restore of offloaded files (`?rehydrate=1`) before leaving `FILES`
@@ -194,6 +202,7 @@ export const DO_ROUTE: Record<string, string> = {
 	'/ops': '/__ops',
 	'/installable': '/__installable',
 	'/install': '/__install',
+	'/install-lock': '/__install-lock',
 	'/writes': '/__writes',
 	'/replica': '/__replica',
 	'/files': '/__files',
@@ -247,7 +256,11 @@ export const DO_ROUTE: Record<string, string> = {
 	'/reconcile': '/__reconcile',
 	'/sweep': '/__sweep',
 	'/modify': '/__modify',
-	'/audit': '/__audit'
+	'/audit': '/__audit',
+	'/recycle': '/__recycle',
+	'/ledger-gc': '/__ledger-gc',
+	'/strata-config': '/__strata-config',
+	'/strata-store': '/__strata-store'
 };
 
 /** paths a redirect must never capture (worker and object routes, the surface, derivatives) */

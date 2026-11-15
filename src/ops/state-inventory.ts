@@ -133,6 +133,10 @@ const AUTHORITATIVE_TABLES: ReadonlySet<string> = new Set([
 	'cfw_module_rev',
 	// delivered libraries' autoload maps; settings.php needs them at boot or a class fatals
 	'cfw_package_autoload',
+	// the lock-install ledger and the rows it can restore
+	'cfw_lock_session',
+	'cfw_lock_package',
+	'cfw_lock_undo',
 	'file_usage',
 	'inline_block_usage',
 	'taxonomy_index',

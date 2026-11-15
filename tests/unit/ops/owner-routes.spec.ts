@@ -28,10 +28,15 @@ const MOVED = [
 const OWNER_ONLY = [
 	'/updb',
 	'/modify',
+	'/install-lock',
 	'/mirror',
 	'/offloaded',
 	'/writemark',
-	'/writechanges'
+	'/writechanges',
+	'/recycle',
+	'/ledger-gc',
+	'/strata-config',
+	'/strata-store'
 ] as const;
 
 describe('site maintenance is reachable with an owner token', () => {

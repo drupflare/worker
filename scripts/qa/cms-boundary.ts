@@ -38,6 +38,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/db/integer-bindings.ts': 'host',
 	'src/db/migrate-sql.ts': 'host',
 	'src/db/pg-exec.ts': 'host',
+	'src/db/restore-parts.ts': 'host',
 	'src/db/wide-integers.ts': 'host',
 	// reads the router table's statement count
 	'src/db/write-tally.ts': 'mixed',
@@ -63,6 +64,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	// reads the cron and mail queues to pick the next firing
 	'src/do/alarm/rearm.ts': 'mixed',
 	'src/do/alarm/reconcile.ts': 'host',
+	'src/do/alarm/restore-parts.ts': 'host',
 	'src/do/alarm/restore.ts': 'host',
 	// carries Drupal's database update chain
 	'src/do/alarm/stepped.ts': 'mixed',
@@ -89,6 +91,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/do/limits.ts': 'mixed',
 	'src/do/mail-setup.ts': 'host',
 	'src/do/meters.ts': 'host',
+	'src/do/install-lock.ts': 'mixed',
 	'src/do/modify.ts': 'mixed',
 	'src/do/outbound.ts': 'mixed',
 	'src/do/module-files.ts': 'mixed',
@@ -108,9 +111,11 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/do/routes/lifecycle.ts': 'mixed',
 	'src/do/routes/mail.ts': 'host',
 	'src/do/routes/mark.ts': 'host',
+	'src/do/routes/offloaded.ts': 'host',
 	'src/do/routes/owner.ts': 'mixed',
 	'src/do/routes/packages.ts': 'mixed',
 	'src/do/routes/replica.ts': 'mixed',
+	'src/do/routes/restore-parts.ts': 'host',
 	'src/do/routes/retire.ts': 'host',
 	'src/do/routes/serve.ts': 'mixed',
 	'src/do/routes/spool.ts': 'host',
@@ -140,6 +145,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	// src/site/php and html
 	'src/site/generated/assets.ts': 'mixed',
 	// the ext-sodium inventory and the names its conformance gate passed
+	'src/site/generated/gd-manifest.ts': 'host',
 	'src/site/generated/sodium-api.ts': 'host',
 	'src/site/generated/sodium-manifest.ts': 'host',
 	// the scanner deny list and the core entry point redirects
@@ -219,6 +225,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/image-transform.ts': 'host',
 	'src/ops/inflate-raw.ts': 'host',
 	'src/ops/json-reply.ts': 'host',
+	'src/ops/lock-install.ts': 'mixed',
 	'src/ops/lock-map.ts': 'mixed',
 	'src/ops/log-level.ts': 'host',
 	'src/ops/mail-onboard.ts': 'host',
@@ -284,6 +291,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	// Drupal's entity and config tables by name
 	'src/ops/state-inventory.ts': 'mixed',
 	'src/ops/statement-census.ts': 'mixed',
+	'src/ops/strata-config.ts': 'cms',
 	'src/ops/supervisor.ts': 'host',
 	// node_field_data, users_field_data and the router as sweep sources
 	'src/ops/sweep.ts': 'mixed',
@@ -320,6 +328,7 @@ export const ROUTE_SIDES: Readonly<Record<string, Side>> = {
 	'/ops': 'mixed',
 	'/installable': 'cms',
 	'/install': 'mixed',
+	'/install-lock': 'mixed',
 	'/writes': 'host',
 	'/replica': 'host',
 	'/files': 'host',
@@ -334,6 +343,10 @@ export const ROUTE_SIDES: Readonly<Record<string, Side>> = {
 	'/sql': 'host',
 	'/txnprobe': 'host',
 	'/armfill': 'host',
+	'/recycle': 'host',
+	'/ledger-gc': 'host',
+	'/strata-config': 'mixed',
+	'/strata-store': 'mixed',
 	'/audit': 'host',
 	'/keepwarm': 'host',
 	'/serve': 'mixed',
@@ -349,6 +362,8 @@ export const ROUTE_SIDES: Readonly<Record<string, Side>> = {
 	'/bump': 'host',
 	'/export': 'mixed',
 	'/restore': 'mixed',
+	'/restore-parts': 'host',
+	'/offloaded': 'host',
 	'/pitr': 'host',
 	'/writemark': 'host',
 	'/writechanges': 'mixed',

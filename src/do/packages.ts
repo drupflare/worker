@@ -9,6 +9,7 @@ import {
 	devMetadataUrl,
 	distOf,
 	fallbackMetadataUrl,
+	INSTALL_BATCH,
 	isMetapackage,
 	metadataUrl,
 	type PackageAutoload,
@@ -16,6 +17,8 @@ import {
 	pickVersion,
 	portFibers,
 	type Registry,
+	type ResolvedPackage,
+	type UnpackResult,
 	unpackZip
 } from '../ops/package-install';
 import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS, SHIPPED_PROVIDES } from '../ops/shipped-lock';
@@ -105,7 +108,7 @@ export async function installTree(
 	registry: Registry,
 	name: string,
 	constraint?: string,
-	budget = { left: 40 },
+	budget = { left: INSTALL_BATCH },
 	stability?: string,
 	ignoreCore = false
 ): Promise<Record<string, unknown>[]> {
@@ -159,6 +162,54 @@ export async function installTree(
 		queue.push(...Object.entries((out['requires'] ?? {}) as Record<string, string>));
 	}
 	return results;
+}
+
+/**
+ * Writes an unpacked package: one row per file, and for a vendor package its autoload map.
+ *
+ * Nothing here awaits, so a Durable Object commits it as one write. `dropContainer` is false for
+ * a caller that drops the compiled container once, after its last package.
+ */
+export function storePackageFiles(
+	site: SitePhpDurableObject,
+	name: string,
+	dist: Pick<ResolvedPackage, 'version' | 'mount'>,
+	autoload: PackageAutoload['autoload'],
+	unpacked: UnpackResult,
+	dropContainer = true
+): void {
+	const decoder = new TextDecoder();
+	site.rowsSinceFlush =
+		(site.rowsSinceFlush ?? 0) +
+		changeModuleFiles(site, name, {
+			put: unpacked.files.map((file) => ({
+				path: file.path,
+				version: dist.version,
+				source: portFibers(file.path, decoder.decode(file.bytes))
+			})),
+			installedAt: site.nowMs()
+		});
+	const extension = /^(modules|themes|profiles)\//.test(dist.mount);
+	if (extension && dropContainer) site.dropCompiledContainer();
+	// an extension's own classes are registered by Drupal's discovery, not a vendor autoload
+	if (!extension) {
+		const classmap = classmapOf(
+			dist.mount,
+			autoload,
+			unpacked.files.map((f) => ({ path: f.path, source: decoder.decode(f.bytes) }))
+		);
+		site.sql.exec(
+			`INSERT INTO cfw_package_autoload (package, version, mount, autoload, classmap)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(package) DO UPDATE SET version = excluded.version, mount = excluded.mount,
+             autoload = excluded.autoload, classmap = excluded.classmap`,
+			name,
+			dist.version,
+			dist.mount,
+			JSON.stringify(autoload),
+			JSON.stringify(classmap)
+		);
+	}
 }
 
 /**
@@ -263,38 +314,13 @@ export async function installPackage(
 		if (!checked.ok) return { ok: false, name, error: checked.error };
 		const unpacked = unpackZip(archiveBytes, dist.mount);
 
-		const decoder = new TextDecoder();
-		site.rowsSinceFlush =
-			(site.rowsSinceFlush ?? 0) +
-			changeModuleFiles(site, name, {
-				put: unpacked.files.map((file) => ({
-					path: file.path,
-					version: dist.version,
-					source: portFibers(file.path, decoder.decode(file.bytes))
-				})),
-				installedAt: site.nowMs()
-			});
-		if (/^(modules|themes|profiles)\//.test(dist.mount)) site.dropCompiledContainer();
-		const autoload = (entry['autoload'] ?? {}) as PackageAutoload['autoload'];
-		// an extension's own classes are registered by Drupal's discovery, not a vendor autoload
-		if (!/^(modules|themes|profiles)\//.test(dist.mount)) {
-			const classmap = classmapOf(
-				dist.mount,
-				autoload,
-				unpacked.files.map((f) => ({ path: f.path, source: decoder.decode(f.bytes) }))
-			);
-			site.sql.exec(
-				`INSERT INTO cfw_package_autoload (package, version, mount, autoload, classmap)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(package) DO UPDATE SET version = excluded.version, mount = excluded.mount,
-             autoload = excluded.autoload, classmap = excluded.classmap`,
-				name,
-				dist.version,
-				dist.mount,
-				JSON.stringify(autoload),
-				JSON.stringify(classmap)
-			);
-		}
+		storePackageFiles(
+			site,
+			name,
+			dist,
+			(entry['autoload'] ?? {}) as PackageAutoload['autoload'],
+			unpacked
+		);
 		return {
 			ok: true,
 			name,

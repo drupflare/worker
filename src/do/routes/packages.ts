@@ -12,12 +12,14 @@ import { BOOT_KERNEL } from '../../drupal/site-php';
 import { hasApi, readHookEvent, verifyHook } from '../../ops/git-provider';
 import type { Registry } from '../../ops/package-install';
 import { derivativeUri } from '../../ops/render-lane';
+import { maySafelyRepair } from '../../ops/repair';
 import { SHIPPED_CORE_VERSION } from '../../ops/shipped-lock';
 import { bearerToken, ownerTokenIsSet, ownerTokenMatches } from '../../ops/site-secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
 import { jsonError } from '../../util/reply';
 import { firstRow } from '../../util/sql';
+import { installLockPost, installLockRollback } from '../install-lock';
 import { lazyMountBytes } from '../lazy-mount';
 import type { Row } from '../types';
 
@@ -60,6 +62,38 @@ export async function modify(
 		return jsonError('owner token required', 401);
 	}
 	return site.handleModify(url, request);
+}
+
+/**
+ * Installs the packages of a composer lock, a window per `POST`; `DELETE ?session=` undoes one.
+ *
+ * Owner only, by the same rule as `/modify`. Refuses while a transaction is open.
+ */
+export async function installLock(
+	site: SitePhpDurableObject,
+	request: Request,
+	url: URL
+): Promise<Response> {
+	if (request.method !== 'POST' && request.method !== 'DELETE') {
+		return jsonError('use POST or DELETE', 405, { allow: 'POST, DELETE' });
+	}
+	const store = site.secretStore();
+	const unclaimedRig = site.env.PW_DIAGNOSTICS === '1' && !(await ownerTokenIsSet(store));
+	const presented = bearerToken(request.headers.get('authorization'));
+	if (!unclaimedRig && !(await ownerTokenMatches(store, presented))) {
+		return jsonError('owner token required', 401);
+	}
+	const facts = {
+		transactionDepth: site.speculating ? 1 : 0,
+		gateHeld: site.gate.stats().active > 1
+	};
+	if (!maySafelyRepair(facts)) return jsonError('a transaction is open', 409);
+	if (request.method === 'DELETE') {
+		const session = url.searchParams.get('session') ?? '';
+		if (!/^[0-9a-f]{16}$/.test(session)) return jsonError('name the session to roll back', 400);
+		return installLockRollback(site, session);
+	}
+	return installLockPost(site, request);
 }
 
 /**

@@ -98,6 +98,18 @@ export async function reconcileStepOnce(site: SitePhpDurableObject): Promise<Pay
 	}
 }
 
+/**
+ * Drops every heap snapshot and the image key. The generation does not move on a config write, so
+ * a restore would otherwise bring back the kernel the write replaces. Returns the snapshots dropped.
+ */
+export function dropHeapImages(site: SitePhpDurableObject): number {
+	ensureHeapTables(site.sql);
+	const dropped = dropAllSnapshots(site.sql);
+	pruneHeapRecords(site.secretStore().sealed, site.sql);
+	site.sql.exec('DELETE FROM cfw_meta WHERE k = ?', HEAP_IMAGE_KEY);
+	return dropped;
+}
+
 /** the expensive half: one step's apply, its end-state check, and the image drop that follows */
 export async function applyReconcileStep(
 	site: SitePhpDurableObject,
@@ -120,13 +132,8 @@ export async function applyReconcileStep(
 	const after = step.verdict(site.sql, host);
 	state = recordStep(state, step, after);
 	site.metaSet(RECONCILE_KEY, serialiseReconcileState(state));
-	// drop the snapshot as well as the meta key: the generation does not move here, so a restore
-	// would bring back the kernel this step replaces
 	if (step.freshKernel) site.dropInterpreter();
-	ensureHeapTables(site.sql);
-	const dropped = dropAllSnapshots(site.sql);
-	pruneHeapRecords(site.secretStore().sealed, site.sql);
-	site.sql.exec('DELETE FROM cfw_meta WHERE k = ?', HEAP_IMAGE_KEY);
+	const dropped = dropHeapImages(site);
 	return {
 		reconcile: {
 			...applied,

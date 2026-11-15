@@ -10,7 +10,7 @@ Settings for maintenance, owner access, audit, runtime overrides, database updat
 
 ## Site Maintenance
 
-`/armfill`, `/invalidate`, `/bump`, `/migrate` and `/updb` take the owner token. Purging your own page
+`/armfill`, `/invalidate`, `/bump`, `/migrate`, `/recycle`, `/ledger-gc`, `/strata-config`, `/strata-store` and `/updb` take the owner token. Purging your own page
 cache does not expose arbitrary SQL or a whole-database overwrite, which are separate routes.
 
 `/updb` drives a database update run. `GET` reports the run and its units; `POST` advances exactly
@@ -49,9 +49,52 @@ on its own, and `stateful` changes what the site serves.
 | `/invalidate`           | rebuild  | drops stored pages for a path or a tag                                 |
 | `/bump`                 | rebuild  | advances the generation, retiring every stored page                    |
 | `/migrate`              | stateful | resumes first-run migration on a site that stalled                     |
+| `/recycle` (POST)       | rebuild  | drops the PHP interpreter; the next request pays a full boot           |
+| `/ledger-gc` (POST)     | safe     | trims the health ledger to 500 rows, newest kept                       |
+| `/strata-config`        | safe     | reads Strata's `capture.statements`                                    |
+| `/strata-config` (POST) | stateful | sets Strata's `capture.statements`; the next request boots fresh       |
+| `/strata-store`         | safe     | reads Strata's store: provider, bucket, endpoint, region, key flags    |
+| `/strata-store` (POST)  | stateful | points Strata at an S3 or R2 bucket; makes the key; `enable` starts it |
 | `/writemark`            | safe     | reads the accepted-write count; POST and DELETE start and end the mark |
 | `/writechanges`         | safe     | reads the rows changed since the mark                                  |
 | `/git?action=unpin`     | stateful | releases a preview pin without reaching the remote                     |
+
+`/recycle` and `/ledger-gc` take the owner token only; `PW_DIAGNOSTICS` does not reach them, and a
+`GET` answers 405. `/recycle` answers `{ok, recycled, recyclesBefore, recyclesAfter}`, with
+`recycled: false` when no interpreter was resident. While a transaction is open it answers 409 and
+drops nothing. `/ledger-gc` answers `{ok, rowsBefore, rowsDeleted, cap}`; each deleted row counts
+against the day's rows written.
+
+`/strata-config` takes the owner token only. `GET` answers `{captureStatements}`. `POST` takes
+`{"captureStatements": true | false}` and answers `{captureStatements, previous, applied: true}`.
+It writes `capture.statements` on `strata.settings` through `ConfigFactory`, then drops the
+interpreter and the heap images so the next request reads the new value. Setting the value the site
+already holds answers the same body and writes nothing. It answers 409 `strata_not_enabled` when
+`strata` is not in `core.extension` or has no `strata.settings` row, and 409 while a transaction is
+open. A body that is not a boolean answers 400.
+
+`/strata-store` takes the owner token only. `GET` answers
+`{provider, enabled, bucket, endpoint, region, hasKey, hasCredentials}`; `enabled` is Strata's own
+`enabled` setting. It never returns a key or a secret. `POST` takes
+`{"endpoint", "bucket", "region", "accessKeyId", "secretAccessKey", "pathStyle"}` and an optional
+`"enable": true | false` (default false), and answers
+`{provider, bucket, endpoint, region, applied: true, previous: {provider, bucket}, keyCreated, enabled}`,
+with no key or secret in it. `enable: true` also sets Strata's `enabled` setting in the same write, so
+the journal starts; `false` or absent never changes `enabled`, and the route never turns Strata off.
+`enabled` in the answer is the stored value after the call. `endpoint` is an `https` origin with no path, `bucket` is 3 to 63 characters
+of `a-z`, `0-9` and `-`, `region` is non-empty (R2 uses `auto`), and each key is 1 to 256 printable
+characters with no space. A refused body answers 400 with one of `invalid_body`, `invalid_endpoint`,
+`invalid_bucket`, `invalid_region`, `invalid_access_key_id`, `invalid_secret_access_key` or
+`invalid_path_style` or `invalid_enable`. It sets `provider` to `s3` and the `s3.*` keys on `strata.settings` through
+`ConfigFactory`, then drops the interpreter and the heap images. When `key` is empty it also creates
+the encryption key through Strata's `KeyMaker`, the service behind `drush strata:new-key`, and
+reports `keyCreated: true`; a key that exists is never replaced, and the cipher is never changed. A
+repeat of the stored body answers the same shape and writes nothing; with `enable: true` it writes
+only while `enabled` is still false. It answers 409
+`strata_not_enabled` when `strata` is not in `core.extension` or has no `strata.settings` row, 409
+`strata_s3_not_enabled` when `strata_s3` is not enabled (enable it through `/enable` first), and 409
+while a transaction is open. A failed write answers 500 `strata_store_write_failed` with at most the
+PHP exception class, never its message.
 
 `/git?action=unpin` exists because `unpreview` cannot help here: it re-syncs to the branch head, so it
 needs the remote to answer, and a pin held against a remote that is down is exactly what an operator

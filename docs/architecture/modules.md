@@ -96,6 +96,7 @@ token>`, the token `/firstrun` mints when the site is claimed.
 | ----------------------- | ---------------------------------------------------------------------- |
 | `/installable?module=X` | resolves the package and names any conflict with the shipped lock      |
 | `/install?module=X`     | fetches it and writes its files; runs the check first unless `force=1` |
+| `/install-lock`         | installs the packages of a composer lock, in windows (see below)       |
 | `/enable?module=X`      | installs it through Drupal's own module installer                      |
 
 `drupal/*` resolves against `packages.drupal.org/8`, and everything else against
@@ -103,6 +104,48 @@ token>`, the token `/firstrun` mints when the site is claimed.
 flags, branch aliases, branch archives, metapackages and virtual packages. Composer plugins are
 skipped. Installing does not enable a module. The two are separate steps, because a package that
 lands is not yet a module Drupal knows about.
+
+### Installing a Lock
+
+`POST /install-lock` takes a `composer.lock` as the JSON body and installs the packages it names, so a
+site restored from a template bundle gets the code its database expects. The body may also carry
+`dev: true` (to include `packages-dev`), `profile` (a Drupal machine name, recorded with the session)
+and `cursor`. The route is owner-token only; `GET` answers 405.
+
+One call handles a window of 40 packages, the same count `/install` takes, and answers
+`{ session, done, cursor, total, installed, skipped, failed, patches, cache }`. Send the same body
+with the returned `cursor` until `done` is true. The session id comes from the lock's packages, so the
+same lock always maps to the same session. A package already installed at the locked version and
+digest counts as `installed` with `reused: true` and writes nothing, and repeating a call returns the
+same answer. A cursor ahead of the session answers 409.
+
+A package is skipped, and listed by name with its reason, when it is a `composer-plugin` (the worker
+cannot run PHP plugins), a `metapackage`, a `path` package (the template delivers its own package in
+its files tar), part of Drupal core, carried by the shipped pack, or has no `dist` URL. If the pack
+carries a skipped package at a different version, the pack's copy stays and the reason names both.
+Composer patches are not applied: a lock does not hold them, so the answer says
+`patches: 'not applied'` and lists none.
+
+Each archive is checked before anything is unpacked. A `dist.shasum` must match. Where the lock has
+only a `dist.reference` that is a commit and the archive is a GitHub zipball, the commit recorded in
+the archive comment must equal it. Other archives with neither install as `unverified`. A mismatch
+fails that package, stops the session and writes nothing for it; sending the same call again retries
+it. Any other failure (a fetch error, an archive type that is not a zip) also stops the session.
+
+The route refuses, with the reason in the body, a lock for a different Drupal core (major and minor
+are compared, and the answer names both versions), a lock with no `drupal/core` entry, a lock of
+more than 400 packages, a body above the request ceiling (413), and any call while a transaction is
+open (409).
+
+After the last package the route drops the compiled container once, when any module, theme or
+profile was installed, and reports it in `cache`. It does not enable anything; `/enable` stays a
+separate step.
+
+`DELETE /install-lock?session=<id>` rolls a session back. It removes every file and autoload entry
+the session wrote and restores the rows it replaced, which the session saved before writing. Those
+saved rows exist only for a package that replaced files, and they stay until the session is rolled
+back. A session that failed and was not rolled back stays resumable. Roll back the newest session
+first when two share packages.
 
 A module you wrote yourself arrives through a git remote or through `/modify`. A git pull fetches
 one commit at depth one and boots the kernel against the new tree, rolling back if it fatals. See

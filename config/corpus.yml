@@ -38,9 +38,9 @@ repos:
       ]
   - id: farmos
     repo: https://github.com/farmOS/farmOS
-    sha: 41f6e4091dba924a781cee4759bfd2d99bfc00f3
+    sha: 414a671338bebc22eea7dd942108092cfebb8c4a
     shape: profile
-    core: '11.4.7'
+    core: '11.4.10'
     install: profile
     assessment: needs-runtime
     needs: [core-patches, project-delivery, install-profile, openssl, exif, declared-extensions]
@@ -97,9 +97,9 @@ repos:
     needs: [project-delivery, install-profile, background-workers]
   - id: govcms
     repo: https://github.com/govCMS/GovCMS
-    sha: 8fbe9c748e7a441abab5488b7d40dc01fad5d697
+    sha: b68803ff8d0f71d62a58a747b3dfac3a992f3991
     shape: profile
-    core: '11.4.5'
+    core: '11.4.10'
     install: profile
     assessment: needs-runtime
     needs: [core-version, project-delivery, install-profile, openssl, zip, saml, mail-transport]

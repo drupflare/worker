@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { needsSetup, setupHtml, setupResponse } from '../../../src/ops/setup-page';
+import {
+	claimed,
+	FIRST_RUN_KEY,
+	needsSetup,
+	setupHtml,
+	setupResponse
+} from '../../../src/ops/setup-page';
 
 /**
  * The page an unclaimed site shows instead of its front page.
@@ -107,5 +113,23 @@ describe('the page itself', () => {
 		const res = setupResponse('https://site.example', { 'x-cfw-serve-ms': '4' });
 		expect(res.headers.get('x-cfw-serve-ms')).toBe('4');
 		expect(res.headers.get('x-cfw-setup')).toBe('required');
+	});
+});
+
+describe('which sites wait on a claim', () => {
+	const site = (cms: string | undefined, stamped: boolean) => ({
+		env: cms === undefined ? {} : { CMS: cms },
+		metaGet: (key: string) => (stamped && key === FIRST_RUN_KEY ? '1' : null)
+	});
+
+	it('holds Drupal and WordPress behind the claim until first_run_at is set', () => {
+		for (const cms of [undefined, 'drupal', 'wordpress']) {
+			expect(claimed(site(cms, false)), String(cms)).toBe(false);
+			expect(claimed(site(cms, true)), String(cms)).toBe(true);
+		}
+	});
+
+	it('does not hold a CMS that has no claim step', () => {
+		expect(claimed(site('joomla', false))).toBe(true);
 	});
 });

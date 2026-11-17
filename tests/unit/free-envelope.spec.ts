@@ -49,6 +49,8 @@ import {
 	STEADY_STATE_WARMTH,
 	storageCeiling,
 	WARM_INTERVAL_MS,
+	WORDPRESS_RENDER_SECONDS,
+	WORDPRESS_ROWS_PER_FILL,
 	WORKFLOW_STEP_CPU_MS
 } from '../../scripts/measure/free-envelope';
 
@@ -1214,5 +1216,34 @@ describe('the meter flush interval', () => {
 				SECONDS_PER_DAY / METER_FLUSH_SECONDS) *
 				FREE_QUOTAS.rowsPerMeterFlush
 		);
+	});
+});
+
+describe('the WordPress fill priced on a deployed render', () => {
+	const wordpress = (renderSeconds?: number) =>
+		envelope(DEFAULT_MIX, { rowsPerFill: WORDPRESS_ROWS_PER_FILL, renderSeconds });
+
+	it('leaves the Drupal figures where they were when no render time is given', () => {
+		expect(envelope(DEFAULT_MIX).duration.perFillGbS).toBeCloseTo(0.308 * DO_GB_ALLOCATED, 9);
+		expect(envelope(DEFAULT_MIX, { renderSeconds: undefined })).toEqual(envelope(DEFAULT_MIX));
+	});
+
+	it('prices a fill at the seconds it is given, which is the duration ceiling', () => {
+		const env = wordpress(WORDPRESS_RENDER_SECONDS.p50);
+		expect(env.duration.perFillGbS).toBeCloseTo(
+			WORDPRESS_RENDER_SECONDS.p50 * DO_GB_ALLOCATED,
+			9
+		);
+		const byDuration = Math.floor(env.duration.availableGbS / env.duration.perFillGbS);
+		expect(byDuration).toBe(45_138);
+	});
+
+	it('is bound by duration at the deployed wall and by rows at the local one', () => {
+		expect(wordpress(WORDPRESS_RENDER_SECONDS.p50).regenerationBoundBy).toBe('duration');
+		expect(wordpress(WORDPRESS_RENDER_SECONDS.local).regenerationBoundBy).toBe('rows');
+		const rows = Math.floor(
+			wordpress().writeBudget.regenerationRows / wordpress().writeBudget.rowsPerFill
+		);
+		expect(wordpress(WORDPRESS_RENDER_SECONDS.p50).regenerationsPerDay).toBeLessThan(rows);
 	});
 });

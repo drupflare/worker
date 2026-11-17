@@ -291,6 +291,26 @@ export const ROWS_PER_FILL_MEMORY_BINS = {
 	firstFillOnFreshObject: 87
 } as const;
 
+/**
+ * The fill classes for WordPress, in the Drupal table's own names so `rowsForWarmthMix()` prices
+ * either. WordPress has no cache bins, so `warmReassemble` is the same render as `realRender` and
+ * `firstFillAfterMigrate` is the first fill of a fresh object. `purgeRowsPerPage` is what a save adds
+ * for each stored page it reaches, on top of what the save writes anyway.
+ */
+export const ROWS_PER_FILL_WORDPRESS = {
+	/** the same render as `realRender`: WordPress keeps no bin to reassemble from */
+	warmReassemble: 1,
+	/** a fill of a stored path upserts one `cfw_page` row and writes nothing else */
+	realRender: 1,
+	firstFillAfterMigrate: 44,
+	/** a path never routed on this object, once the object has filled something else */
+	firstEverForPath: 1,
+	/** the first render of a baked site writes WordPress's bookkeeping options and is not stored */
+	firstFillOnFreshObject: 44,
+	/** rows a purge adds per stored page it reaches: the row (deleted or marked stale) and its refill */
+	purgeRowsPerPage: 2
+} as const;
+
 export type FillWarmth = keyof typeof ROWS_PER_FILL;
 
 /** how a day's fills are spread across the warmth classes; fractions, not counts */
@@ -414,6 +434,8 @@ export function envelope(
 		replicaMode?: ReplicaMode;
 		/** which render a fill pays for; a cold object pays the boot again */
 		fillWarmth?: 'warm' | 'cold';
+		/** wall seconds of one fill, when it is not one of the two Drupal figures; wins over `fillWarmth` */
+		renderSeconds?: number;
 		/** whether the site keeps itself resident; spends the budget being divided up */
 		warmed?: boolean;
 		/** the warming interval, when it is not the shipping `WARM_INTERVAL_MS` */
@@ -455,7 +477,8 @@ export function envelope(
 	// duration, the meter nothing counted: an off-Worker read never wakes the object, a DO hit is one read,
 	// and a miss holds the object for a whole render
 	const renderSeconds =
-		opts.fillWarmth === 'cold' ? SECONDS_PER.coldRender : SECONDS_PER.warmRender;
+		opts.renderSeconds ??
+		(opts.fillWarmth === 'cold' ? SECONDS_PER.coldRender : SECONDS_PER.warmRender);
 	const perViewSeconds =
 		(mix.edgeHit - offEdge) * SECONDS_PER.edgeHit +
 		(mix.doHit - offDo) * SECONDS_PER.doHit +
@@ -680,6 +703,26 @@ export function optimalOffWorker(
 export const SHIPPING_ROWS_PER_FILL = rowsForWarmthMix(
 	STEADY_STATE_WARMTH,
 	ROWS_PER_FILL_MEMORY_BINS
+);
+
+/**
+ * Wall seconds of one uncached WordPress render, from one deployed run: `x-worker-ms` p50 2,250 ms
+ * on 10 uncached front-page requests (min 1,830, max 3,061), a fresh interpreter each. It is an
+ * assumption here, not a measurement of this model: duration bills wall clock, and `x-worker-ms`
+ * tracked the platform's own `wallTimeMs` to within 5 ms on the phase rows of that run.
+ */
+export const WORDPRESS_RENDER_SECONDS = { p50: 2.25, max: 3.061, local: 0.473 } as const;
+
+/** a WordPress day's spread of fills: no warm class exists, so a fill is a real render or a new path; ASSUMED */
+export const WORDPRESS_STEADY_STATE_WARMTH: WarmthMix = {
+	realRender: 0.95,
+	firstEverForPath: 0.05
+};
+
+/** rows a WordPress fill writes at the shipping rule, priced on its warmth mix */
+export const WORDPRESS_ROWS_PER_FILL = rowsForWarmthMix(
+	WORDPRESS_STEADY_STATE_WARMTH,
+	ROWS_PER_FILL_WORDPRESS
 );
 
 /** requests one first page load of the demo site makes, n=1: the page and 65 assets */
@@ -1056,6 +1099,25 @@ if (import.meta.main) {
 	console.log(
 		`\nshipping default  ${shipping.regenerationsPerDay.toLocaleString()}/day (bound by ${shipping.regenerationBoundBy}), ` +
 			`dynamic_page_cache and menu in memory, priced on the warmth mix at ${SHIPPING_ROWS_PER_FILL.toFixed(2)} rows/fill`
+	);
+
+	// WordPress at its shipping rule (`WORDPRESS_PAGE_CACHE=1`), priced the same way as the line above
+	const wordpress = envelope(DEFAULT_MIX, {
+		rowsPerFill: WORDPRESS_ROWS_PER_FILL,
+		renderSeconds: WORDPRESS_RENDER_SECONDS.p50
+	});
+	const wordpressRows =
+		wordpress.writeBudget.regenerationRows / wordpress.writeBudget.rowsPerFill;
+	const wordpressDuration = wordpress.duration.availableGbS / wordpress.duration.perFillGbS;
+	console.log(
+		`wordpress         serving ${wordpress.servingViewsPerDay.toLocaleString()}/day (bound by ${wordpress.servingBoundBy}), ` +
+			`regeneration ${wordpress.regenerationsPerDay.toLocaleString()}/day (bound by ${wordpress.regenerationBoundBy}), ` +
+			`priced on the warmth mix at ${WORDPRESS_ROWS_PER_FILL.toFixed(2)} rows/fill (ASSUMED weights)`
+	);
+	console.log(
+		`wordpress ceilings by rows ${Math.floor(wordpressRows).toLocaleString()}/day, ` +
+			`by duration ${Math.floor(wordpressDuration).toLocaleString()}/day at ${WORDPRESS_RENDER_SECONDS.p50} s a fill ` +
+			`(ASSUMED from one deployed run, n=10, max ${WORDPRESS_RENDER_SECONDS.max} s)`
 	);
 
 	// the two off-Worker arms, each under the observed no-billing case and the Workers Cache exception

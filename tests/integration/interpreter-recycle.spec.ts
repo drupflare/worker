@@ -12,7 +12,14 @@ import {
 	noteResident,
 	retainInterpreterEnabled
 } from '../../src/site-do';
-import { freshSite, inObject, queuePath, serveDirect, type ServeDo } from '../helpers/serve-do';
+import {
+	freshSite,
+	inObject,
+	provisionedSite,
+	queuePath,
+	serveDirect,
+	type ServeDo
+} from '../helpers/serve-do';
 
 /**
  * Linear memory across ONE incarnation, and the drop that keeps it inside the isolate.
@@ -1024,6 +1031,129 @@ describe('a boot after a drop instantiates into the dropped memory instead of be
 			});
 			// two before: each boot fetched its own 12 MB copy and the dropped one stayed until a GC
 			expect(out).toEqual({ fetched: 1, first: true, second: true });
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+/**
+ * `exit()` ends the program before the harness echoes its JSON, and every later run on that
+ * interpreter then executes nothing and prints nothing. The drop is the fallback; the real fix is
+ * in the interpreter build.
+ */
+describe('a request that ends in exit()', () => {
+	const harness = (body: string) => `<?php ${body}`;
+	const OK = harness('echo json_encode(["ok" => true]);');
+
+	it(
+		'drops the interpreter, says why, and lets the next run answer',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await site.ensurePhp();
+				const before = Number((await stats(site)).exitedRuns ?? 0);
+				const replies: Record<string, unknown>[] = [];
+				const dropped: boolean[] = [];
+				const next: unknown[] = [];
+				for (const body of [
+					'echo "partial"; exit(0);',
+					'die("msg");',
+					'eval(\'call_user_func(function () { echo "x"; exit(0); });\');'
+				]) {
+					await site.ensurePhp();
+					replies.push(await site.runJson(harness(body)));
+					dropped.push(site.php === undefined);
+					next.push((await site.runJson(OK)).ok);
+				}
+				const after = await stats(site);
+				return { replies, dropped, next, counted: Number(after.exitedRuns) - before };
+			});
+
+			for (const reply of out.replies) {
+				expect(String(reply.error)).toContain('exit()');
+				expect(reply.exited).toBe(true);
+			}
+			expect(out.dropped).toEqual([true, true, true]);
+			expect(out.next).toEqual([true, true, true]);
+			expect(out.counted).toBe(3);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'keeps the interpreter after a fatal error or an uncaught exception',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				const inst = await site.ensurePhp();
+				const before = Number((await stats(site)).exitedRuns ?? 0);
+				const replies: Record<string, unknown>[] = [];
+				for (const body of [
+					'throw new Exception("boom");',
+					'trigger_error("boom", E_USER_ERROR);'
+				]) {
+					replies.push(await site.runJson(harness(body)));
+				}
+				const same = site.php === inst;
+				const next = (await site.runJson(OK)).ok;
+				const after = await stats(site);
+				return { replies, same, next, counted: Number(after.exitedRuns) - before };
+			});
+
+			for (const reply of out.replies) expect(reply.exited).toBeUndefined();
+			expect(out.same).toBe(true);
+			expect(out.next).toBe(true);
+			expect(out.counted).toBe(0);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'keeps the interpreter when the harness finished but printed nothing parseable',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				const inst = await site.ensurePhp();
+				const reply = await site.runJson(harness('echo "no json here";'));
+				return { reply, same: site.php === inst, next: (await site.runJson(OK)).ok };
+			});
+
+			expect(out.reply.error).toBe('no JSON in output');
+			expect(out.reply.exited).toBeUndefined();
+			expect(out.same).toBe(true);
+			expect(out.next).toBe(true);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+describe('a served page whose PHP ends in exit()', () => {
+	it(
+		'answers a 500 that names exit(), drops the interpreter and boots a working one next',
+		async () => {
+			const out = await inObject(await provisionedSite(), async (site: ServeDo) => {
+				const inst = await site.ensurePhp();
+				const real = inst.php._run.bind(inst.php);
+				// the render is the one fragment that carries the page: parked, it is base64 inside
+				// cfw_park_run(); unparked, it calls cfw_serve()
+				inst.php._run = (code: string) =>
+					real(
+						/cfw_park_run\(base64_decode|cfw_serve\(/.test(code)
+							? '<?php echo "partial"; exit(0);'
+							: code
+					);
+				const served = await serveDirect(site, '/', '&inline=1&edge=0');
+				const dropped = site.php === undefined;
+				const exited = Number((await stats(site)).exitedRuns);
+				const recovered = await site.runJson('<?php echo json_encode(["ok" => true]);');
+				return { served, dropped, exited, recovered, fresh: site.php !== inst };
+			});
+
+			expect(out.served.status).toBe(500);
+			expect(out.served.body).toContain('exit()');
+			expect(out.served.body).not.toContain('partial');
+			expect(out.served.header('x-cfw-cache')).toBe('ERROR');
+			expect(out.dropped).toBe(true);
+			expect(out.exited).toBe(1);
+			expect(out.recovered.ok).toBe(true);
+			expect(out.fresh).toBe(true);
 		},
 		REQUEST_TIMEOUT
 	);

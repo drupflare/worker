@@ -85,6 +85,9 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 		// a size drop is routine, a trap drop is a defect; non-zero means the interpreter faulted
 		trappedRuns: site.trappedRuns ?? 0,
 		lastTrap: site.lastTrap ?? null,
+		// a run that ended in exit() leaves a dead interpreter, which the serve path drops
+		exitedRuns: site.exitedRuns ?? 0,
+		lastExit: site.lastExit ?? null,
 		// the whole isolate: the 128 MiB ceiling covers the JS side as well as linear memory
 		isolateBytes: {
 			linear: site.heapNow(),

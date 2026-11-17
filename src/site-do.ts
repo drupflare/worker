@@ -232,7 +232,7 @@ import {
 import { discoverRefs, requestRefs, type Advertisement, type SmartRemote } from './ops/git-smart';
 import { DEFAULT_POLL_MINUTES, backoffMs, clampInterval, type PollState } from './ops/git-sync';
 import { type HeapIntegrityStats } from './ops/heap-integrity';
-import { parseJsonReply } from './ops/json-reply';
+import { EXIT_ERROR, endedInExit, parseJsonReply } from './ops/json-reply';
 import { type MailEnv } from './ops/mail';
 import { type IntegrityStats } from './ops/module-integrity';
 import {
@@ -750,6 +750,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	trappedRuns?: number;
 	/** the last VM trap */
 	lastTrap?: { at: number; message: string };
+	/** drops taken because a run ended in `exit()`; see {@link settleReply} */
+	exitedRuns?: number;
+	/** the last run that ended in `exit()`, with the first bytes it printed */
+	lastExit?: { at: number; partial: string };
+	/** what the last `_run()` returned: 0 for a normal end or an exit, 1 or 2 for a fatal */
+	lastRet?: number;
 	/** consecutive failing batches, for the capped backoff; reset by any batch that progressed */
 	consecutiveFillFailures?: number;
 	/** the class of the last alarm outcome */
@@ -3629,8 +3635,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	async run(code: string): Promise<string> {
 		const inst = await this.ensurePhp();
 		this.out.length = 0;
+		this.lastRet = undefined;
 		try {
-			await inst.php._run(code);
+			const ret = await inst.php._run(code);
+			this.lastRet = typeof ret === 'number' ? ret : undefined;
 		} catch (e) {
 			// name rather than instanceof alone: the pool and the worker are different realms
 			if (e instanceof WebAssembly.RuntimeError || (e as Error)?.name === 'RuntimeError') {
@@ -3645,7 +3653,25 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 	/** runs a fragment and parses the JSON object it printed */
 	async runJson(code: string): Promise<Payload> {
-		return parseJsonReply(await this.run(code));
+		return this.settleReply(parseJsonReply(await this.run(code)));
+	}
+
+	/**
+	 * Answers an `exit()` for a reply that carries no JSON, and drops the interpreter it left behind.
+	 *
+	 * `exit()` returns 0 and leaves an instance that runs nothing and prints nothing, so every later
+	 * request would answer empty until something recycled it. Headers, cookies and shutdown functions
+	 * set before the exit are not recoverable from PHP, so the request fails rather than answering
+	 * without them.
+	 */
+	async settleReply(reply: Payload): Promise<Payload> {
+		if (!(await endedInExit(this.lastRet, reply, (code) => this.run(code)))) return reply;
+		const partial = String(reply['raw'] ?? '').slice(0, 200);
+		this.exitedRuns = (this.exitedRuns ?? 0) + 1;
+		this.lastExit = { at: this.nowMs(), partial };
+		this.dropInterpreter();
+		// the render path logs `raw` and answers with `error` alone
+		return { error: EXIT_ERROR, exited: true, ...(partial ? { raw: partial } : {}) };
 	}
 
 	/** the 421 sending the caller to the primary; `neverRan` marks an uncommitted forward */

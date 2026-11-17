@@ -348,6 +348,20 @@ describe('the deployed run order', () => {
 		const { deps } = rig([baseline, baseline], async () => {});
 		expect(await runDeployed(opts, env, deps, '/repo')).toBe(0);
 	});
+
+	it('deploys the config a caller builds instead of the Drupal one', async () => {
+		const { deps } = rig([baseline, baseline], async () => {});
+		const code = await runDeployed(opts, env, deps, '/repo', (name) => ({
+			name,
+			marker: 'custom'
+		}));
+		expect(code).toBe(0);
+		const written = readFileSync(
+			join(tmpdir(), `headlines-${opts.name}`, 'wrangler.jsonc'),
+			'utf8'
+		);
+		expect(JSON.parse(written)).toEqual({ name: opts.name, marker: 'custom' });
+	});
 });
 
 describe('event classes', () => {

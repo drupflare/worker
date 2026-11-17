@@ -665,7 +665,8 @@ export async function runDeployed(
 	opts: Options,
 	env: Record<string, string | undefined>,
 	deps: Deps,
-	root: string
+	root: string,
+	buildConfig: (name: string, root: string) => Record<string, unknown> = throwawayConfig
 ): Promise<number> {
 	const creds = studentCredentials(env);
 	const secrets = [creds.id, creds.token];
@@ -682,7 +683,7 @@ export async function runDeployed(
 	const dir = join(tmpdir(), `headlines-${opts.name}`);
 	mkdirSync(dir, { recursive: true });
 	const config = join(dir, 'wrangler.jsonc');
-	writeFileSync(config, JSON.stringify(throwawayConfig(opts.name, root), null, '\t'));
+	writeFileSync(config, JSON.stringify(buildConfig(opts.name, root), null, '\t'));
 
 	let code = 0;
 	let deployed = false;

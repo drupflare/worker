@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { COLD_BOOT_MS } from '../../scripts/economics/measured';
 import { DO_REQ_RATE, WFP_BASE } from '../../scripts/economics/pricing';
 import { DURABLE_OBJECTS, WORKERS_FOR_PLATFORMS } from '../../scripts/economics/rates';
 import {
@@ -674,7 +675,7 @@ describe('THE ANSWER: the realRender default is CONSERVATIVE once the classes ar
 	});
 
 	it('keeps the once-per-object fill out of any per-day mix', () => {
-		// firstFillOnFreshObject is 157 rows, paid once per object; the fleet model charges it per site, never per day
+		// firstFillOnFreshObject is paid once per object; the fleet model charges it per site, never per day
 		expect(ROWS_PER_FILL.firstFillOnFreshObject).toBeGreaterThan(
 			ROWS_PER_FILL.firstEverForPath
 		);
@@ -1024,11 +1025,12 @@ describe('what a cold url costs its first visitor', () => {
 
 	it('refuses the inline boot on the CAP rather than on a budget', () => {
 		const inline = coldUrlCost().find((m) => m.mechanism === 'inlineBoot');
-		// cheapest on every meter and still refused: 1,398 ms against a 10 ms cap is 140x, which is
+		// cheapest on every meter and still refused: 1,264 ms against a 10 ms cap is 126x, which is
 		// why raising RENDER_BUDGET_MS moved nothing
 		expect(inline!.worker).toBe(1);
 		expect(inline!.do).toBe(1);
 		expect(inline!.fitsFreeCap).toBe(false);
+		expect(inline!.peakInvocationMs).toBe(COLD_BOOT_MS);
 		expect(inline!.peakInvocationMs / FREE_CPU_MS_CAP).toBeGreaterThan(100);
 	});
 

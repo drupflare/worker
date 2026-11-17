@@ -3,6 +3,7 @@
  */
 
 import { meterFlushBudget } from '../../src/ops/day-meters';
+import { COLD_BOOT_MS } from '../economics/measured';
 import { DURABLE_OBJECTS } from '../economics/rates';
 import { GENERATED_FREE_QUOTAS } from '../generated/quotas';
 
@@ -204,9 +205,6 @@ export const COST_PER_VIEW = {
 /** rows per fill once `dblog` is uninstalled; the report measures both */
 export const ROWS_PER_FILL_NO_DBLOG = 8;
 
-/** the boot a cold object pays before it can render, edge `cpuTime`, n=3 */
-export const COLD_BOOT_CPU_MS = 1_398;
-
 /** free's per-invocation CPU cap; the burst allowance is why a single shot is not a measurement */
 export const FREE_CPU_MS_CAP = 10;
 
@@ -239,13 +237,13 @@ export function coldUrlCost(rowsPerFill: number = ROWS_PER_FILL.realRender): Col
 			available: true
 		},
 		{
-			// one invocation boots and renders: the whole 1,398 ms in one place
+			// one invocation boots and renders: the whole boot in one place
 			mechanism: 'inlineBoot',
 			worker: 1,
 			do: 1,
 			rows: rowsPerFill,
-			peakInvocationMs: COLD_BOOT_CPU_MS,
-			fitsFreeCap: COLD_BOOT_CPU_MS <= FREE_CPU_MS_CAP,
+			peakInvocationMs: COLD_BOOT_MS,
+			fitsFreeCap: COLD_BOOT_MS <= FREE_CPU_MS_CAP,
 			available: true
 		},
 		{
@@ -281,7 +279,7 @@ export const ROWS_PER_FILL = {
 	/** a path never routed on this object, once the object has filled something else */
 	firstEverForPath: 14,
 	/** the first fill on a fresh object, which pays the shared-bin warm-up once; not a per-path rate */
-	firstFillOnFreshObject: 83
+	firstFillOnFreshObject: 91
 } as const;
 
 /** the four classes at the shipping default, with `dynamic_page_cache` and `menu` in memory */
@@ -290,7 +288,7 @@ export const ROWS_PER_FILL_MEMORY_BINS = {
 	realRender: 1,
 	firstFillAfterMigrate: ROWS_PER_FILL.firstFillAfterMigrate,
 	firstEverForPath: 11,
-	firstFillOnFreshObject: 79
+	firstFillOnFreshObject: 87
 } as const;
 
 export type FillWarmth = keyof typeof ROWS_PER_FILL;

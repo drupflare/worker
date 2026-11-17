@@ -588,3 +588,25 @@ the interpreter is the one input no context names, so `tests/node/boot-image-agr
 compares the index to the wasm on disk. The image is NOT in `build-local.ts` yet, which is the
 `ASSET_AGGREGATES` shape (a lever with no producer in the build); it degrades to a plain boot, and
 it is a step to add before the lever defaults on.
+
+## `exit()` under `pib_run`
+
+`pib_run` runs no request startup or shutdown, so `exit()` and `die()` end the script before the
+harness echoes its JSON. The run returns 0 with the partial output, and every later run on that
+instance executes nothing and prints nothing. A fatal (ret 1) or an uncaught exception (ret 2)
+leaves the instance alive. Measured on the shipping interpreter, n=10 per case, local and deployed
+agreeing, then pinned by `tests/node/exit-lifecycle.spec.ts`. The cause is php-src, not a hang:
+`exit` leaves an unwind-exit in `EG(exception)`, `pib_run` skips the call that clears it, and
+`zend_execute()` returns at once while one is pending.
+
+The host fallback is `settleReply()` in `src/site-do.ts`. An exit is a return code of 0, a reply with
+no JSON, and a probe run that prints nothing. It drops the interpreter, answers a 500 that names
+`exit()`, and counts `exitedRuns` in `/serve-stats`. A fill whose render exited is recorded
+unstorable and not retried, and no live miss or purge queues it. Headers, cookies and shutdown
+functions set before the exit are not recoverable from PHP.
+
+A fixed interpreter exists as a build only: phasm `long64.pibfix-1`, built on paisley-park
+2026-11-17. On it the next run answers after an exit, and shutdown functions, output-buffer
+callbacks and `header_register_callback` all fire. The reply still has no JSON, because the harness
+echo does not run, so the harness has to emit it from a shutdown function before the fallback can
+go. Its glue is 23% larger than the shipping glue, so it is a different pin and not a drop-in.

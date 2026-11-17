@@ -11,6 +11,7 @@ import {
 	fenceAllows,
 	isProvenRead,
 	isReplicaLocalTable,
+	mysqlStatementAllowedOnReplica,
 	statementAllowedOnReplica
 } from '../../../src/ops/replica';
 
@@ -304,6 +305,79 @@ describe('a refusal happens before the inner call, which is what makes the retry
 		expect(seen).toHaveLength(1);
 		expect(seen[0]?.capability).toBe('cfwSqlExec');
 		expect(seen[0]?.detail).toContain('INSERT INTO key_value');
+	});
+});
+
+describe('the MySQL capability is classified per call, on MySQL text', () => {
+	const mysql = (binary: Fake) => binary.cfwMysqlExec as (j: string) => unknown;
+
+	it('is per-call and is not on the list of capabilities that need no check', () => {
+		expect(classifyCapability('cfwMysqlExec')).toBe('per-call');
+		expect(enforceReadOnly(fakeBinary({ cfwMysqlExec: () => '{}' })).wrapped.cfwMysqlExec).toBe(
+			'per-call'
+		);
+	});
+
+	it('lets the connect statements and the catalog reads through to the host', () => {
+		const binary = fakeBinary({ cfwMysqlExec: (json: string) => `mysql:${json}` });
+		enforceReadOnly(binary);
+		for (const sql of [
+			'SELECT option_value FROM wp_options WHERE option_name = ?',
+			'SELECT FOUND_ROWS()',
+			"SET SESSION sql_mode='NO_ZERO_IN_DATE'",
+			'SET NAMES utf8mb4',
+			'SHOW FULL COLUMNS FROM wp_options',
+			'DESCRIBE wp_options'
+		]) {
+			expect(mysqlStatementAllowedOnReplica(sql), sql).toBe(true);
+			expect(mysql(binary)(exec(sql))).toBe(`mysql:${exec(sql)}`);
+		}
+	});
+
+	it('refuses every write and every other SET before the inner call', () => {
+		let reached = 0;
+		const binary = fakeBinary({
+			cfwMysqlExec: () => {
+				reached += 1;
+				return '{}';
+			}
+		});
+		const guard = enforceReadOnly(binary);
+		for (const sql of [
+			"INSERT INTO wp_options (option_name) VALUES ('a')",
+			"UPDATE wp_options SET option_value = 'x'",
+			'DELETE FROM wp_options',
+			'REPLACE INTO wp_options (option_name) VALUES (1)',
+			'CREATE TABLE t (a int)',
+			'SET autocommit = 0',
+			'SELECT 1; DELETE FROM wp_options',
+			'/* x */ DELETE FROM wp_options'
+		]) {
+			expect(mysqlStatementAllowedOnReplica(sql), sql).toBe(false);
+			expect(() => mysql(binary)(exec(sql)), sql).toThrow(ReplicaRequiresPrimary);
+		}
+		expect(reached).toBe(0);
+		expect(guard.didMutate()).toBe(false);
+	});
+
+	it('names the exec bridge, not a transaction, when a write cannot be forwarded', () => {
+		const binary = fakeBinary({ cfwMysqlExec: () => '{}' });
+		enforceReadOnly(binary, undefined, () => {});
+		expect(() => mysql(binary)(exec('DELETE FROM wp_options'))).toThrow(
+			/a write on the exec bridge cannot be rolled back/
+		);
+	});
+
+	it('keeps the SQLite guard strict, where SET and SHOW are not reads', () => {
+		for (const sql of ['SET NAMES utf8mb4', 'SHOW TABLES', 'DESCRIBE wp_options']) {
+			expect(statementAllowedOnReplica(sql), sql).toBe(false);
+		}
+	});
+
+	it('refuses a payload it cannot read', () => {
+		const binary = fakeBinary({ cfwMysqlExec: () => '{}' });
+		enforceReadOnly(binary);
+		expect(() => mysql(binary)('not json')).toThrow(/statement payload could not be read/);
 	});
 });
 

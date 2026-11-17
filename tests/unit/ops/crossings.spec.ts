@@ -81,6 +81,12 @@ describe('tally arithmetic', () => {
 		expect(share).toEqual({ batchable: 1, serial: 3, fraction: 0.25 });
 	});
 
+	it('counts cfwMysqlExec as serial, because each reply feeds the next statement', () => {
+		expect(CROSSING_NAMES).toContain('cfwMysqlExec');
+		const share = batchableShare({ total: 5, byName: { cfwLog: 1, cfwMysqlExec: 4 } });
+		expect(share).toEqual({ batchable: 1, serial: 4, fraction: 0.2 });
+	});
+
 	it('batchableShare of an empty tally is zero, not NaN', () => {
 		expect(batchableShare(emptyCrossings()).fraction).toBe(0);
 	});

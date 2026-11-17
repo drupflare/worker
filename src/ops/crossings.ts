@@ -36,6 +36,8 @@ export function emptyCrossings(): CrossingTally {
 export const CROSSING_NAMES = [
 	'cfwSqlExec',
 	'cfwSqlTxn',
+	'cfwMysqlExec',
+	'cfwWpTags',
 	'cfwZlib',
 	'cfwLog',
 	'cfwStats',
@@ -125,13 +127,17 @@ export function snapshotCrossings(tally: CrossingTally): CrossingTally {
  * Which capabilities a batching change could coalesce.
  *
  * Batchable means calls within a render do not depend on each other's replies; serial means the
- * next call's arguments come from the previous reply (`cfwSqlExec`; `cfwSqlTxn` is already its
- * batched form).
+ * next call's arguments come from the previous reply (`cfwSqlExec` and `cfwMysqlExec`;
+ * `cfwSqlTxn` is already the batched form).
  */
 export const BATCHABLE: Record<CrossingName, boolean> = {
 	// the write path already batches through `cfwSqlTxn`; reads are read-decide-read
 	cfwSqlExec: false,
 	cfwSqlTxn: false,
+	// wpdb runs one statement and reads its reply (insert id, FOUND_ROWS, rows) before the next
+	cfwMysqlExec: false,
+	// an announcement is purged before the run ends, and the settle call must come after the writes
+	cfwWpTags: false,
 	// a compress call's output is the caller's next input
 	cfwZlib: false,
 	// fire and forget; a render could hand over an array of entries at the end

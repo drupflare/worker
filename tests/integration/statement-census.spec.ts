@@ -160,7 +160,7 @@ describe('the statement census of one warm render', () => {
 		'shows a REPEAT render of the same path is a different workload from the first',
 		async () => {
 			const { first, repeat } = await warmRender();
-			// measured 18 against 48. The 48 that P36 opened is the first render of a path on an
+			// measured 18 against 48. The 48 is the first render of a path on an
 			// object whose interpreter is warm, so it pays every per-path bin as a miss. A
 			// regeneration re-renders a page that already existed, which is the workload the
 			// ceiling is computed from -- pricing it at the warm-up overstates it

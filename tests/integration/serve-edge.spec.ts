@@ -21,6 +21,7 @@ import {
 	inObject,
 	namedSite,
 	pageFor,
+	probe,
 	provisionedNamedSite,
 	queuePath,
 	seedPage,
@@ -35,23 +36,34 @@ import {
 // caches.default is the real cache api, isolated per test file by the pool
 const GEN_BUCKET_MS = 5000;
 
-// retries until the edge answers; the pointer is discovered once per window, so an early request goes to the object
-async function untilEdge(site: string, path: string, tries = 6): Promise<ServeProbe | null> {
-	return untilTier(site, path, (hit) => hit.cache === 'EDGE', tries);
-}
+// the generation pointer is keyed by a wall-clock window; a bucket this wide is always window 0, so
+// two serves of one test never straddle a boundary and read a pointer nobody has learned yet
+const ONE_WINDOW_ENV = {
+	...env,
+	GEN_BUCKET_MS: String(Number.MAX_SAFE_INTEGER)
+} as unknown as typeof env;
 
-/** the same retry for any tier; the generation pointer makes every tier arrive on its own window */
-async function untilTier(
+/**
+ * One serve through the front worker that returns after its deferred cache writes have landed,
+ * so the next serve reads the page and the pointer this one stored
+ */
+async function serveSettled(
 	site: string,
 	path: string,
-	wanted: (hit: ServeProbe) => boolean,
-	tries = 6
-): Promise<ServeProbe | null> {
-	for (let i = 0; i < tries; i++) {
-		const hit = await serveThroughWorker(site, path);
-		if (wanted(hit)) return hit;
-	}
-	return null;
+	query = '',
+	headers: Record<string, string> = {}
+): Promise<ServeProbe> {
+	const ctx = createExecutionContext();
+	const res = await worker.fetch(
+		new Request(
+			`https://cfw.local/serve?site=${site}&path=${encodeURIComponent(path)}${query}`,
+			{ headers }
+		),
+		ONE_WINDOW_ENV,
+		ctx
+	);
+	await waitOnExecutionContext(ctx);
+	return probe(res);
 }
 
 const serveRequestsOf = (site: string) =>
@@ -278,14 +290,14 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		const site = 'tiers';
 		// provisioned first: without a database the first request is the first-run placeholder, not the miss
 		await provisionedNamedSite(site);
-		const miss = await serveThroughWorker(site, '/');
+		const miss = await serveSettled(site, '/');
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>tiers</title>'));
 
-		const doHit = await serveThroughWorker(site, '/');
-		const warmed = await untilEdge(site, '/');
+		const doHit = await serveSettled(site, '/');
+		const warmed = await serveSettled(site, '/');
 		expect(warmed?.cache, 'the edge copy never became readable').toBe('EDGE');
 		const before = await serveRequestsOf(site);
-		const edge = await serveThroughWorker(site, '/');
+		const edge = await serveSettled(site, '/');
 		const after = await serveRequestsOf(site);
 
 		expect(miss.cache).toBe('MISS');
@@ -387,8 +399,8 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 	it('re-validates at the client so a generation bump is not defeated by a browser cache', async () => {
 		const site = 'revalidate';
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>rv</title>'));
-		await serveThroughWorker(site, '/');
-		const edge = await untilEdge(site, '/');
+		await serveSettled(site, '/');
+		const edge = await serveSettled(site, '/');
 		expect(edge?.cacheControl).toBe('public, max-age=0, must-revalidate');
 	});
 
@@ -397,8 +409,8 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 	it('answers the same stored page whatever Accept, User-Agent or Origin the visitor sent', async () => {
 		const site = 'keyvariance';
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>one page</title>'));
-		await serveThroughWorker(site, '/');
-		const plain = await untilEdge(site, '/');
+		await serveSettled(site, '/');
+		const plain = await serveSettled(site, '/');
 		expect(plain?.cache, 'the edge copy never became readable').toBe('EDGE');
 
 		const variants: Record<string, string>[] = [
@@ -412,17 +424,11 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 			}
 		];
 		for (const headers of variants) {
-			const res = await SELF.fetch(
-				`https://cfw.local/serve?site=${site}&path=${encodeURIComponent('/')}`,
-				{ headers }
-			);
-			const body = await res.text();
-			expect(body, JSON.stringify(headers)).toBe(plain?.body);
+			const res = await serveSettled(site, '/', '', headers);
+			expect(res.body, JSON.stringify(headers)).toBe(plain?.body);
 			expect(res.status).toBe(200);
 			// an edge tier answered; none of the three sent it to the object
-			expect(['EDGE', 'MEM'], JSON.stringify(headers)).toContain(
-				res.headers.get('x-cfw-cache')
-			);
+			expect(['EDGE', 'MEM'], JSON.stringify(headers)).toContain(res.cache);
 		}
 	});
 
@@ -430,10 +436,10 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		const site = 'edgeoff';
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>x</title>'));
 		// warm the pointer and the edge copy first, so an EDGE hit is available to decline
-		await serveThroughWorker(site, '/');
-		expect((await untilEdge(site, '/'))?.cache).toBe('EDGE');
+		await serveSettled(site, '/');
+		expect((await serveSettled(site, '/'))?.cache).toBe('EDGE');
 
-		const bypass = await serveThroughWorker(site, '/', '&edge=0');
+		const bypass = await serveSettled(site, '/', '&edge=0');
 		// which is what makes it the right instrument for "did the OBJECT think this was a HIT":
 		// the answer cannot be a copy the poll itself cached
 		expect(bypass.cache).toBe('HIT');
@@ -447,13 +453,13 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		const site = 'deferred';
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>d</title>'));
 
-		const first = await serveThroughWorker(site, '/');
+		const first = await serveSettled(site, '/');
 		expect(first.edgePut).toBe('deferred');
 		// the deferred write is the only thing that could have produced this
-		expect((await untilEdge(site, '/'))?.cache).toBe('EDGE');
+		expect((await serveSettled(site, '/'))?.cache).toBe('EDGE');
 
 		// a path the object refuses is refused synchronously, not handed to waitUntil
-		const denied = await serveThroughWorker(site, '/.env');
+		const denied = await serveSettled(site, '/.env');
 		expect(denied.edgePut).not.toBe('deferred');
 	});
 });
@@ -485,16 +491,22 @@ describe('the generation pointer survives a response that carries no generation'
 	it('keeps serving from the edge across a /serve-stats call between two serves', async () => {
 		const site = 'pointer';
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>ptr</title>'));
-		await serveThroughWorker(site, '/');
-		const edge = await untilEdge(site, '/');
+		await serveSettled(site, '/');
+		const edge = await serveSettled(site, '/');
 		expect(edge?.cache).toBe('EDGE');
 
 		// a missing header read through Number() is 0, not NaN, which once overwrote the generation pointer
-		const stats = await SELF.fetch(`https://cfw.local/serve-stats?site=${site}`);
+		const ctx = createExecutionContext();
+		const stats = await worker.fetch(
+			new Request(`https://cfw.local/serve-stats?site=${site}`),
+			ONE_WINDOW_ENV,
+			ctx
+		);
+		await waitOnExecutionContext(ctx);
 		expect(stats.headers.get('x-cfw-generation')).toBeNull();
 
-		const after = await serveThroughWorker(site, '/');
-		// MEM rather than EDGE because `untilEdge` above warmed this isolate's page memo; what the
+		const after = await serveSettled(site, '/');
+		// MEM rather than EDGE because the second serve above warmed this isolate's page memo; what the
 		// test is about is that the pointer survived, and both tiers require a pointer to build a key
 		expect(after.cache).toBe('MEM');
 	});
@@ -503,9 +515,9 @@ describe('the generation pointer survives a response that carries no generation'
 		const site = 'window';
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>w</title>'));
 		// the first request in a window learns the generation off a response it already paid for
-		const learn = await serveThroughWorker(site, '/');
+		const learn = await serveSettled(site, '/');
 		expect(learn.generation).toBe(1);
-		const edge = await untilEdge(site, '/');
+		const edge = await serveSettled(site, '/');
 		expect(edge?.generation).toBe(1);
 		// the bucket width is what bounds cross-colo invalidation lag; see src/site.js
 		expect(GEN_BUCKET_MS).toBe(Number(env.GEN_BUCKET_MS));
@@ -701,6 +713,81 @@ describe('the deny list is a table per CMS and Drupal is the default', () => {
 			'/wp-login.php?redirect_to=%2F'
 		]) {
 			expect(isNeverDrupal(path, 'wordpress'), path).toBe(false);
+		}
+	});
+
+	// one row per rule of the WordPress guard: the paths that row serves or denies, and why
+	const WORDPRESS_ROWS: [string, boolean, string[]][] = [
+		['index.php, the front controller', false, ['/index.php', '/index.php/2026/post']],
+		['wp-login.php', false, ['/wp-login.php', '/wp-login.php?action=logout']],
+		['wp-cron.php, which WordPress locks itself', false, ['/wp-cron.php']],
+		['wp-comments-post.php', false, ['/wp-comments-post.php']],
+		[
+			'wp-admin scripts, one level down',
+			false,
+			['/wp-admin/', '/wp-admin/index.php', '/wp-admin/options-general.php']
+		],
+		['admin-ajax.php', false, ['/wp-admin/admin-ajax.php', '/wp-admin/admin-post.php']],
+		[
+			'the REST API',
+			false,
+			['/wp-json/', '/wp-json/wp/v2/users/me', '/?rest_route=/wp/v2/posts']
+		],
+		[
+			'xmlrpc.php, a pingback and brute force amplifier',
+			true,
+			['/xmlrpc.php', '/xmlrpc.php?rsd']
+		],
+		[
+			'wp-config.php and its backups',
+			true,
+			['/wp-config.php', '/wp-config.php~', '/wp-config.bak']
+		],
+		[
+			'a php file under uploads',
+			true,
+			['/wp-content/uploads/shell.php', '/wp-content/uploads/2026/01/a.php']
+		],
+		[
+			'php inside wp-includes and wp-admin/includes, which is never a route',
+			true,
+			['/wp-includes/version.php', '/wp-includes/rest-api.php', '/wp-admin/includes/file.php']
+		],
+		[
+			'readme.html and license.txt, which print the version',
+			true,
+			['/readme.html', '/license.txt']
+		],
+		[
+			'installation and schema upgrade scripts, which are host-driven',
+			true,
+			['/wp-admin/install.php', '/wp-admin/setup-config.php', '/wp-admin/upgrade.php']
+		],
+		[
+			'dotfiles and version control state',
+			true,
+			['/.env', '/.git/config', '/wp-content/.htaccess']
+		],
+		[
+			'dumps, logs and archives',
+			true,
+			['/dump.sql', '/backup.zip', '/site.tar.gz', '/wp-content/debug.log', '/db.sql.gz']
+		]
+	];
+	for (const [name, denied, paths] of WORDPRESS_ROWS) {
+		it(`${denied ? 'denies' : 'serves'} ${name}`, () => {
+			for (const path of paths) {
+				expect(isNeverDrupal(path, 'wordpress'), path).toBe(denied);
+			}
+		});
+	}
+
+	it('leaves the Drupal list alone: wp paths denied, an install script is a redirect not a deny', () => {
+		for (const path of ['/wp-login.php', '/wp-admin/', '/wp-content/x.png', '/wp-config.php']) {
+			expect(isNeverDrupal(path), path).toBe(true);
+		}
+		for (const path of ['/readme.html', '/license.txt']) {
+			expect(isNeverDrupal(path), path).toBe(false);
 		}
 	});
 
@@ -1886,8 +1973,9 @@ describe("a reset object is not the visitor's 1101", () => {
 
 describe('an attempt the object has started is never run twice', () => {
 	const ID = '11111111-2222-4333-8444-555555555555';
+	const CRON_PATH = '/admin/config/system/cron';
 	const post = (id: string | null) =>
-		new Request('https://do.local/__serve?path=%2Fadmin%2Fconfig%2Fsystem%2Fcron', {
+		new Request(`https://do.local/__serve?path=${encodeURIComponent(CRON_PATH)}`, {
 			method: 'POST',
 			body: 'op=Run+cron',
 			headers: {
@@ -1907,7 +1995,9 @@ describe('an attempt the object has started is never run twice', () => {
 		const first = await inObject(namedSite(site), async (obj) => {
 			const seen: (string | null)[] = [];
 			stubRender(obj, ({ path }) => {
-				seen.push(obj.metaGet(`attempt:${ID}`));
+				// the object arms its own alarm, and an alarm that fires while the stub is installed
+				// renders through it too; only this request's path is the attempt under test
+				if (path === CRON_PATH) seen.push(obj.metaGet(`attempt:${ID}`));
 				return pageFor(path);
 			});
 			const res = await obj.fetch(post(ID));
@@ -1923,7 +2013,7 @@ describe('an attempt the object has started is never run twice', () => {
 			return {
 				status: res.status,
 				said: res.headers.get(ATTEMPT_HEADER),
-				rendered: calls.length
+				rendered: calls.filter((call) => call.path === CRON_PATH).length
 			};
 		});
 		expect(again).toEqual({ status: 503, said: 'started', rendered: 0 });
@@ -1952,5 +2042,105 @@ describe('an attempt the object has started is never run twice', () => {
 			return markers(obj);
 		});
 		expect(left).toEqual([`attempt:${ID}`]);
+	});
+});
+
+// a WordPress front worker over an object that holds a page: nothing is stored without the test
+// switch, and a visitor with an identity is never answered from a shared copy
+describe('the front worker keeps WordPress identity out of the shared tiers', () => {
+	const H = 'a'.repeat(32);
+	const through = async (
+		site: string,
+		extra: Record<string, string>,
+		headers: Record<string, string> = {},
+		path = '/'
+	) => {
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(
+			new Request(`https://cfw.local/serve?site=${site}&path=${encodeURIComponent(path)}`, {
+				headers
+			}),
+			{ ...env, CMS: 'wordpress', ...extra } as unknown as typeof env,
+			ctx
+		);
+		await waitOnExecutionContext(ctx);
+		return res;
+	};
+	const STORE = { WORDPRESS_PAGE_CACHE: '1' };
+
+	it('stores and replays nothing while the switch is off', async () => {
+		const site = 'wp-off';
+		await provisionedNamedSite(site);
+		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>wp</title>'));
+		for (let i = 0; i < 4; i++) {
+			const res = await through(site, {});
+			expect(res.status).toBe(200);
+			expect(res.headers.get('x-cfw-edge-put')).toBe('skipped:page-cache-off');
+			expect(res.headers.get('x-cfw-kv-put')).toBe('skipped:page-cache-off');
+			expect(['EDGE', 'MEM', 'KV']).not.toContain(res.headers.get('x-cfw-cache'));
+		}
+	});
+
+	it('never reads or writes the shared tiers for a path the rule refuses, and does for one it accepts', async () => {
+		const site = 'wp-paths';
+		await provisionedNamedSite(site);
+		await inObject(namedSite(site), async (obj) => {
+			await seedPage(obj, '/planted/', '<title>planted</title>');
+			await seedPage(obj, '/?s=planted', '<title>planted</title>');
+		});
+		let accepted = false;
+		for (let i = 0; i < 6; i++) {
+			const res = await through(site, STORE, {}, '/planted/');
+			accepted = accepted || ['EDGE', 'MEM'].includes(res.headers.get('x-cfw-cache') ?? '');
+		}
+		expect(accepted, 'an accepted path never became readable').toBe(true);
+		for (let i = 0; i < 6; i++) {
+			const res = await through(site, STORE, {}, '/?s=planted');
+			expect(['EDGE', 'MEM', 'KV']).not.toContain(res.headers.get('x-cfw-cache'));
+			expect(res.headers.get('x-cfw-edge-put')).toBe('skipped:query-param:s');
+			expect(res.headers.get('x-cfw-kv-put')).toBe('skipped:query-param:s');
+		}
+	});
+
+	it('serves an identity-bearing request from the object even when an anonymous copy is stored', async () => {
+		const site = 'wp-on';
+		await provisionedNamedSite(site);
+		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>wp</title>'));
+		let warmed = false;
+		for (let i = 0; i < 6 && !warmed; i++) {
+			const res = await through(site, STORE);
+			warmed = ['EDGE', 'MEM'].includes(res.headers.get('x-cfw-cache') ?? '');
+		}
+		expect(warmed, 'the anonymous copy never became readable').toBe(true);
+		const identities: Record<string, string>[] = [
+			{ cookie: `wordpress_logged_in_${H}=x` },
+			{ cookie: `wordpress_sec_${H}=x` },
+			{ cookie: `comment_author_${H}=x` },
+			{ cookie: 'wp-settings-1=x' },
+			{ cookie: 'unclassified=1' },
+			{ authorization: 'Basic YWRtaW46eHh4eA==' }
+		];
+		for (const headers of identities) {
+			const res = await through(site, STORE, headers);
+			expect(['EDGE', 'MEM', 'KV'], JSON.stringify(headers)).not.toContain(
+				res.headers.get('x-cfw-cache')
+			);
+			expect(res.headers.get('x-cfw-edge-put'), JSON.stringify(headers)).not.toBe('deferred');
+		}
+		// switched off again, the copy that is still in the cache is not read
+		for (let i = 0; i < 4; i++) {
+			const res = await through(site, {});
+			expect(
+				['EDGE', 'MEM', 'KV'],
+				'a stored copy was read with the switch off'
+			).not.toContain(res.headers.get('x-cfw-cache'));
+		}
+		// and the anonymous copy is still there afterwards (the pointer is rediscovered once a window)
+		let kept = false;
+		for (let i = 0; i < 6 && !kept; i++) {
+			const res = await through(site, STORE);
+			kept = ['EDGE', 'MEM'].includes(res.headers.get('x-cfw-cache') ?? '');
+		}
+		expect(kept, 'the anonymous copy was lost').toBe(true);
 	});
 });

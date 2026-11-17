@@ -3,8 +3,12 @@ import { emptyTally } from '../../src/db/write-tally';
 import {
 	inObject,
 	markProvisioned,
+	pageFor,
 	provisionedSite,
 	seedDailyRows,
+	serveDirect,
+	SESSION_COOKIE,
+	stubRender,
 	type ServeDo
 } from '../helpers/serve-do';
 
@@ -239,6 +243,72 @@ describe('the daily alarm count the spend report reads', () => {
 			});
 			expect(seen.counted).toBe(3);
 			expect(seen.stored).toBeGreaterThanOrEqual(3);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+describe('the alarm a cache miss pulls in', () => {
+	const armsOf = async (
+		cms: 'wordpress' | 'drupal',
+		path: string,
+		init: RequestInit = {}
+	): Promise<{ armed: number; queued: number; status: number }> =>
+		inObject(await provisionedSite(), async (site: ServeDo) => {
+			markProvisioned(site);
+			site.ensureServeTables();
+			Object.assign(site.env, { CMS: cms, WORDPRESS_PAGE_CACHE: '1' });
+			if (cms === 'wordpress') {
+				site.php = { stubbed: true };
+				site.parkInstall = { state: 'ready', armed: [] };
+				site.runJson = async () => pageFor(path) as unknown as Record<string, unknown>;
+			} else {
+				stubRender(site, (call) => pageFor(call.path));
+			}
+			// consume what provisioning armed, so only the request below can arm one
+			await site.alarm();
+			await site.ctx.storage.deleteAlarm();
+			site.alarmDueMs = undefined;
+			site.writeTally = emptyTally();
+			const res = await serveDirect(site, path, '', init);
+			const armed = site.writeTally?.byTable[ALARM_ROW] ?? 0;
+			site.writeTally = undefined;
+			return { armed, queued: site.queueDepth(), status: res.status };
+		});
+
+	it(
+		'is not armed by a WordPress request the page cache will not store',
+		async () => {
+			for (const path of ['/wp-login.php', '/?s=hello', '/wp-admin/']) {
+				const seen = await armsOf('wordpress', path);
+				expect(seen.status, path).toBe(200);
+				expect(seen.queued, path).toBe(0);
+				expect(seen.armed, `${path} armed an alarm with nothing queued`).toBe(0);
+			}
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'is armed for a WordPress path the page cache will store, which is what drains its fill',
+		async () => {
+			const seen = await armsOf('wordpress', '/hello-world/');
+			expect(seen.status).toBe(200);
+			expect(seen.armed).toBe(1);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'is armed for Drupal whether or not the request queued anything',
+		async () => {
+			const stored = await armsOf('drupal', '/node/1');
+			expect(stored.armed).toBe(1);
+			const session = await armsOf('drupal', '/node/1', {
+				headers: { cookie: SESSION_COOKIE }
+			});
+			expect(session.queued).toBe(0);
+			expect(session.armed).toBe(1);
 		},
 		REQUEST_TIMEOUT
 	);

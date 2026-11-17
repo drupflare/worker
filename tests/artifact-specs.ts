@@ -33,6 +33,10 @@ export const ARTIFACT_SPECS = [
 	// the ROUTE token rather than the form token; it signs in twice and renders a real admin page
 	'tests/integration/csrf-route-token.spec.ts',
 	'tests/integration/degrade-serve.spec.ts',
+	'tests/integration/boot-golden.spec.ts',
+	'tests/integration/wordpress-boot.spec.ts',
+	'tests/integration/wordpress-tags.spec.ts',
+	'tests/integration/wordpress-rows-per-fill.spec.ts',
 	'tests/integration/deployment-env.spec.ts',
 	'tests/integration/effect-census.spec.ts',
 	'tests/integration/enable-memory.spec.ts',
@@ -66,6 +70,7 @@ export const ARTIFACT_SPECS = [
 	'tests/integration/inherited-extensions.spec.ts',
 	'tests/integration/mb-native.spec.ts',
 	'tests/integration/modify-upload.spec.ts',
+	'tests/integration/mysql-bridge.spec.ts',
 	'tests/integration/park-dispatch.spec.ts',
 	// the create-node POST half needs a provisioned site from the pack
 	'tests/integration/park-double-run.spec.ts',

@@ -1034,7 +1034,8 @@ describe('ASSET_AGGREGATES rewrites what is stored', () => {
 				renderMs: 5,
 				bytes: PAGE.length,
 				pageCache: 'MISS',
-				dynamicCache: 'MISS'
+				dynamicCache: 'MISS',
+				cacheTags: ['rendered']
 			}));
 			queuePath(site, '/aggregated', { arm: false });
 			await site.fillOne('/aggregated');

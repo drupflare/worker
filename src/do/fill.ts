@@ -168,8 +168,14 @@ export async function fillOne(
 		const error = installerRedirect
 			? 'the site is not installed yet; Drupal redirected to the installer'
 			: String(result.error ?? 'render produced no html').slice(0, 400);
+		// an exit() repeats on every retry and each one boots a fresh interpreter, so strike it out
+		// at once; a live request still renders it
+		const exited = result.exited === true;
+		if (exited && !request.cookie && (request.method ?? 'GET').toUpperCase() === 'GET') {
+			site.noteStorable(path, false, true, true);
+		}
 		// three strikes, then drop it, so one poisoned path cannot own the alarm
-		if (attempts + 1 >= 3) {
+		if (exited || attempts + 1 >= 3) {
 			site.sql.exec('DELETE FROM cfw_fill_queue WHERE path = ?', path);
 		} else {
 			site.sql.exec(
@@ -208,19 +214,22 @@ export async function fillOne(
 	// an active session is a warming signal the anonymous rate estimate cannot see (uid from
 	// Drupal, not the cookie)
 	if (renderedFor > 0) site.lastAuthenticatedAt = site.nowMs();
-	// honour what Drupal asked for (`page_cache_kill_switch` and other opt-outs), and a response
-	// that says it varies by a header the page key does not carry
+	const pageTags = Array.isArray(result.cacheTags) ? result.cacheTags.map((t) => String(t)) : [];
+	const storableStatus = status < 500 && !(status >= 300 && status < 400);
+	// honour what Drupal asked for (`page_cache_kill_switch` and other opt-outs), a response that
+	// says it varies by a header the page key does not carry, and a render that named no tag: a
+	// scoped purge could never reach its row
 	const refused =
-		/(^|,)\s*(no-store|private)\s*(,|$)/i.test(String(result.cacheControl ?? '')) ||
-		variesByRequest(result.vary);
+		/(^|,)\s*(no-store|no-cache|private)\s*(,|$)/i.test(String(result.cacheControl ?? '')) ||
+		variesByRequest(result.vary) ||
+		(pageTags.length === 0 && storableStatus);
 	const cacheable =
 		(request.method ?? 'GET').toUpperCase() === 'GET' &&
 		!request.cookie &&
 		setCookie.length === 0 &&
 		renderedFor === 0 &&
 		!refused &&
-		status < 500 &&
-		!(status >= 300 && status < 400);
+		storableStatus;
 	// aggregates applied at store time, so the saving lands in the row (needs `ASSET_AGGREGATES=1`
 	// and `bun run assets:agg`)
 	if (!cacheable && typeof result.html === 'string' && site.env?.ASSET_AGGREGATES === '1') {
@@ -267,9 +276,6 @@ export async function fillOne(
 	// never elided for an unchanged body: a stale `rendered_at` would age the page out and
 	// re-render it every alarm
 	if (cacheable) {
-		const pageTags = Array.isArray(result.cacheTags)
-			? result.cacheTags.map((t) => String(t))
-			: [];
 		site.sql.exec(
 			`INSERT INTO cfw_page (path, status, content_type, html, rendered_at, render_ms, tags, tag_checksum, headers)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -291,8 +297,7 @@ export async function fillOne(
 			Number(result.renderMs ?? 0),
 			// same statement, not a second update (a separate write cost a row per fill, 9 to 10)
 			pageTagList(pageTags),
-			// null for no tags: a zero sum would read as never stale
-			pageTags.length === 0 ? null : tagChecksum(site.sql, pageTags),
+			tagChecksum(site.sql, pageTags),
 			// the module-set policy headers, in the same statement (no extra row per fill)
 			encodeModuleHeaders(result.passHeaders)
 		);

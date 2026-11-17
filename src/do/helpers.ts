@@ -6,8 +6,9 @@ export { forwardTo } from '../util/forward';
 /**
  * A render's cache tags, as the one string a page row carries.
  *
- * `[]` rather than NULL for a page that declares none, so a scoped purge can tell "depends on
- * nothing" from "stored before the column existed" (only the latter is unsafe to scope against).
+ * A list that declares none is `[]`. `pathsForTags()` treats that like NULL for a page row, since
+ * an empty list matches no tag and the page would outlive every scoped purge, and `fillOne()` never
+ * stores a page render with no tags. Only a shell row (`cfw_shell`) still carries `[]`.
  */
 export function pageTagList(tags: unknown): string {
 	const list = Array.isArray(tags)

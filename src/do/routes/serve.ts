@@ -152,8 +152,13 @@ export async function serve(
 	}
 
 	// queued before the inline attempt as the safety net; never for a session (the chain would
-	// publish an admin's 403); `FILL_QUEUE_MAX` bounds the table
-	const queueable = !authenticated && degraded.queue && site.queueDepth() < FILL_QUEUE_MAX;
+	// publish an admin's 403) or a path observed unstorable (each queue entry costs a boot);
+	// `FILL_QUEUE_MAX` bounds the table
+	const queueable =
+		!authenticated &&
+		degraded.queue &&
+		site.queueDepth() < FILL_QUEUE_MAX &&
+		!site.isUnstorable(path);
 	if (queueable) {
 		// priority 0: a visitor is holding a connection open (a FIFO queue served misses after
 		// every prefill: p50 19,004 ms); `DO UPDATE` promotes a queued path

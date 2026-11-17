@@ -22,7 +22,7 @@
  * **INTERLEAVED, NEVER BLOCKED BY ARM.** This project has twice published a number that was an
  * artifact of a fixed order. Every k is sampled once per round.
  *
- *   bun scripts/measure/v101-arms.ts --base=https://<worker>.workers.dev --site=m1 --n=5
+ *   bun scripts/measure/deployed-readings.ts --base=https://<worker>.workers.dev --site=m1 --n=5
  */
 
 type Args = Record<string, string | undefined>;
@@ -254,7 +254,7 @@ const median = (xs: number[]): number => {
 /** enough addressable URLs that the sweep can queue the largest k */
 async function seed(want: number): Promise<void> {
 	for (let i = 0; i < want; i++) {
-		await hit(url('/savenode', { title: `v101-${RUN}-${i}` }), 240_000);
+		await hit(url('/savenode', { title: `seed-${RUN}-${i}` }), 240_000);
 	}
 }
 

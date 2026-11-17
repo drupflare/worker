@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 /**
- * Spec 66 gate 1: does a worker_loaders binding deploy on a free account, and does a Dynamic
+ * Does a worker_loaders binding deploy on a free account, and does a Dynamic
  * Worker load with globalOutbound null and one host capability.
  *
- *   bun scripts/measure/g66-dynamic-workers.ts run --out=<dir>
+ *   bun scripts/measure/dynamic-workers-free.ts run --out=<dir>
  *
- * Reads STUDENT_CLOUDFLARE_* and never prints them. Deploys scripts/e2e/g66-probe once, drives
- * it, reads the account meters, then tears down and diffs the inventory.
+ * Reads STUDENT_CLOUDFLARE_* and never prints them. Deploys scripts/e2e/dynamic-workers-free-probe
+ * once, drives it, reads the account meters, then tears down and diffs the inventory.
  */
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -15,9 +15,9 @@ import { join } from 'node:path';
 const account = process.env.STUDENT_CLOUDFLARE_ACCOUNT_ID ?? '';
 const token = process.env.STUDENT_CLOUDFLARE_API_TOKEN ?? '';
 const root = join(import.meta.dir, '..', '..');
-const probe = join(root, 'scripts', 'e2e', 'g66-probe');
+const probe = join(root, 'scripts', 'e2e', 'dynamic-workers-free-probe');
 const flag = (n: string) => process.argv.find((a) => a.startsWith(`--${n}=`))?.slice(n.length + 3);
-const out = flag('out') ?? join(root, '.g66-out');
+const out = flag('out') ?? join(root, '.dynamic-workers-free-out');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const log: string[] = [];
 const say = (s: string) => {
@@ -101,7 +101,7 @@ function deploy(config: string, name: string) {
 async function main() {
 	if (!account || !token) throw new Error('STUDENT_CLOUDFLARE_* not set');
 	mkdirSync(out, { recursive: true });
-	const name = `cfw-e2e-g66-${Date.now()}`;
+	const name = `cfw-e2e-dynamic-free-${Date.now()}`;
 	const before = await inventory();
 	writeFileSync(join(out, 'inventory-before.json'), JSON.stringify(before, null, 2));
 	const spendBefore = await spentToday();
@@ -139,7 +139,7 @@ async function main() {
 			const calls: { label: string; q: string }[] = [];
 			for (let i = 0; i < 5; i++) calls.push({ label: 'load-cap', q: 'mode=load&p=cap' });
 			for (let i = 0; i < 5; i++)
-				calls.push({ label: 'get-cap', q: 'mode=get&id=g66-a&p=cap' });
+				calls.push({ label: 'get-cap', q: 'mode=get&id=dynamic-a&p=cap' });
 			for (let i = 0; i < 3; i++) calls.push({ label: 'load-net', q: 'mode=load&p=net' });
 			for (let i = 0; i < 3; i++) calls.push({ label: 'load-env', q: 'mode=load&p=env' });
 			calls.push({ label: 'load-limits', q: 'mode=load&p=cap&limits=1' });

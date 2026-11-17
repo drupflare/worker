@@ -21,7 +21,7 @@
  *     --rounds=3
  */
 
-import { coveringSpread, pathsForBucket } from './v101-arms';
+import { coveringSpread, pathsForBucket } from './deployed-readings';
 
 type Args = Record<string, string | undefined>;
 const args = (): Args => {

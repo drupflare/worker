@@ -1,14 +1,16 @@
 #!/usr/bin/env bun
 /**
- * Spec 65 measure-first gates on a throwaway paid-account worker.
+ * Measure-first gates on a throwaway paid-account worker.
  *
- *   CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... bun scripts/measure/g65-assets.ts run \
+ *   CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... \
+ *     bun scripts/measure/assets-billing-republish.ts run \
  *     --out=<dir> [--views=3000] [--control=20000] [--conc=48] [--arms=N,A,A,A,B,A,A,N,B]
- *   CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... bun scripts/measure/g65-assets.ts bill \
+ *   CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... \
+ *     bun scripts/measure/assets-billing-republish.ts bill \
  *     --from=2026-10-12 --to=2026-11-06 --out=<file>
- *   bun scripts/measure/g65-assets.ts selftest
+ *   bun scripts/measure/assets-billing-republish.ts selftest
  *
- * `run` deploys the canonical config as `cfw-e2e-g65-*` with its assets directory cloned to a
+ * `run` deploys the canonical config as `cfw-e2e-assets-*` with its assets directory cloned to a
  * scratch path, claims the site, then (1) drives a Worker-answered control path and a 66-asset
  * page view mix so the account's billed usage can be read afterwards, (2) republishes the script
  * with a changed asset (and, in arm B, a changed var) while watching the warm object's alarm
@@ -156,7 +158,7 @@ async function events(name: string, from: number, to: number): Promise<Ev[]> {
 			{
 				method: 'POST',
 				body: JSON.stringify({
-					queryId: `g65-${name}-${t}`,
+					queryId: `assets-${name}-${t}`,
 					view: 'events',
 					limit: 2000,
 					timeframe: { from: t, to: Math.min(to, t + 300_000) },
@@ -391,7 +393,7 @@ async function main(): Promise<void> {
 	const controlN = Number(flag('control') ?? 20_000);
 	const conc = Number(flag('conc') ?? 48);
 	const arms = (flag('arms') ?? 'N,A,A,A,B,A,A,N,B').split(',') as Arm[];
-	const name = `cfw-e2e-g65-${Date.now()}`;
+	const name = `cfw-e2e-assets-${Date.now()}`;
 	const config = join(root, `wrangler.${name}.jsonc`);
 	const scratch = join(out, 'assets-pub');
 
@@ -404,8 +406,8 @@ async function main(): Promise<void> {
 	rmSync(scratch, { recursive: true, force: true });
 	cpSync(join(root, 'assets'), scratch, { recursive: true });
 	const ignorePath = join(scratch, '.assetsignore');
-	writeFileSync(ignorePath, `${readFileSync(ignorePath, 'utf8')}\n!/g65-fresh.txt\n`);
-	writeFileSync(join(scratch, 'g65-fresh.txt'), 'v0\n');
+	writeFileSync(ignorePath, `${readFileSync(ignorePath, 'utf8')}\n!/fresh-asset.txt\n`);
+	writeFileSync(join(scratch, 'fresh-asset.txt'), 'v0\n');
 
 	const base = JSON.parse(readFileSync(join(root, 'wrangler.jsonc'), 'utf8'));
 	base.name = name;
@@ -414,7 +416,7 @@ async function main(): Promise<void> {
 	delete base.build;
 	const writeConfig = (nonce?: string) => {
 		const c = structuredClone(base);
-		if (nonce !== undefined) c.vars = { ...(c.vars ?? {}), G65_NONCE: nonce };
+		if (nonce !== undefined) c.vars = { ...(c.vars ?? {}), REPUBLISH_NONCE: nonce };
 		writeFileSync(config, JSON.stringify(c, null, '\t'));
 	};
 	writeConfig();
@@ -462,7 +464,7 @@ async function main(): Promise<void> {
 		await sleep(60_000);
 
 		const site = new Site(origin);
-		const pass = `g65-${crypto.randomUUID()}`;
+		const pass = `assets-${crypto.randomUUID()}`;
 		owner = await provision(site, pass);
 		requestsTotal += site.requests;
 
@@ -488,14 +490,14 @@ async function main(): Promise<void> {
 			}
 		};
 		for (let i = 0; i < 5; i++) {
-			await site.hit(`/?g65warm=${i}`);
+			await site.hit(`/?warm=${i}`);
 			await sleep(1000);
 		}
 		const s0 = await stats();
 		summary.statsAtStart = s0;
 		console.log(`stats at start ${JSON.stringify(s0)}`);
 
-		// #region measurement 1: billing drive
+		// #region billing drive
 		const mix = await assetMix(origin);
 		const ctl = await controlPath(origin);
 		summary.assetMixCount = mix.length;
@@ -514,7 +516,7 @@ async function main(): Promise<void> {
 		writeFileSync(join(out, 'm1.json'), JSON.stringify({ mix, m1 }, null, 1));
 		// #endregion
 
-		// #region measurements 2 and 3: republish arms
+		// #region republish runs
 		const dryOut = (s: string) =>
 			s
 				.split('\n')
@@ -543,8 +545,8 @@ async function main(): Promise<void> {
 				while (!stop.done) {
 					const t = Date.now();
 					const [a, b] = await Promise.all([
-						one('/g65-fresh.txt'),
-						one(`/g65-fresh.txt?b=${t}`)
+						one('/fresh-asset.txt'),
+						one(`/fresh-asset.txt?b=${t}`)
 					]);
 					fresh.a.push({ t, ...a });
 					fresh.b.push({ t, ...b });
@@ -564,7 +566,7 @@ async function main(): Promise<void> {
 			let outText = '';
 			let status: number | null = null;
 			if (arm !== 'N') {
-				writeFileSync(join(scratch, 'g65-fresh.txt'), `${marker}\n`);
+				writeFileSync(join(scratch, 'fresh-asset.txt'), `${marker}\n`);
 				writeConfig(arm === 'B' ? `n${k}` : undefined);
 				const proc = Bun.spawn(['bunx', 'wrangler', 'deploy', '-c', config], {
 					cwd: root,
@@ -593,7 +595,7 @@ async function main(): Promise<void> {
 			const pt = Date.now();
 			let probe: Record<string, string> = {};
 			try {
-				const r = await fetch(`${origin}/user/login?g65=${k}`, {
+				const r = await fetch(`${origin}/user/login?bust=${k}`, {
 					signal: AbortSignal.timeout(60_000)
 				});
 				await r.text();
@@ -758,5 +760,7 @@ if (import.meta.main) {
 	else if (mode === 'run') await main();
 	else if (mode === 'bill') await bill();
 	else
-		throw new Error('usage: g65-assets.ts run --out=<dir> | bill --from=.. --to=.. | selftest');
+		throw new Error(
+			'usage: assets-billing-republish.ts run --out=<dir> | bill --from=.. --to=.. | selftest'
+		);
 }

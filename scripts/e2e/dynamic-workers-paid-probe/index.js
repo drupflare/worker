@@ -129,7 +129,7 @@ function spec(ctx, q) {
 
 async function call(env, ctx, q, path) {
 	const via = q.get('via') ?? 'load';
-	const id = q.get('id') ?? 'g66p-a';
+	const id = q.get('id') ?? 'dynamic-a';
 	const s = spec(ctx, q);
 	const stub = via === 'get' ? env.LOADER.get(id, () => s) : env.LOADER.load(s);
 	const res = await stub.getEntrypoint().fetch('http://dyn' + path);
@@ -160,9 +160,9 @@ export default {
 		if (url.pathname === '/tenants') {
 			const out = [];
 			const steps = [
-				['get', 'g66p-ta', 'A'],
-				['get', 'g66p-tb', 'B'],
-				['get', 'g66p-ta', 'A2'],
+				['get', 'dynamic-ta', 'A'],
+				['get', 'dynamic-tb', 'B'],
+				['get', 'dynamic-ta', 'A2'],
 				['load', '', 'L1'],
 				['load', '', 'L2']
 			];
@@ -223,7 +223,7 @@ export default {
 					? { via: 'load' }
 					: {
 							via: 'get',
-							id: kind === 'heavy' ? 'g66p-heavy' : 'g66p-site-' + site,
+							id: kind === 'heavy' ? 'dynamic-heavy' : 'dynamic-site-' + site,
 							cpu: kind === 'heavy' ? '1000' : '50'
 						}
 			);

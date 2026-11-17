@@ -18,7 +18,7 @@
  * distinct objects answered has measured the primary N times and called it scaling.
  */
 
-import { coveringSpread } from './v101-arms';
+import { coveringSpread } from './deployed-readings';
 
 type Reply = { status: number; text: string; json?: Record<string, unknown> };
 

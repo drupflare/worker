@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 /**
- * Spec 64 gate 1 (and gate 2's arm A baseline): what a visitor meets on a path a save invalidated.
+ * What a visitor meets on a path a save invalidated.
  *
- *   CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... bun scripts/measure/g64-save-drive.ts run \
+ *   CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... \
+ *     bun scripts/measure/save-invalidation-drive.ts run \
  *     --out=<dir> [--saves=10] [--visits=100] [--spacing=300] [--nodes=6]
- *   bun scripts/measure/g64-save-drive.ts selftest
+ *   bun scripts/measure/save-invalidation-drive.ts selftest
  *
- * Deploys the canonical config under a `cfw-e2e-g64-*` name, claims the site, seeds promoted
+ * Deploys the canonical config under a `cfw-e2e-save-*` name, claims the site, seeds promoted
  * nodes and warms their pages. Each save edits one node, reads the invalidated set from the
  * owner's `/serve-stats` (the fill queue plus the stored pages that vanished), then drives
  * anonymous visits over exactly that set on a fixed schedule and tags every answer by its cache
@@ -163,7 +164,7 @@ async function events(name: string, from: number, to: number): Promise<Invocatio
 			{
 				method: 'POST',
 				body: JSON.stringify({
-					queryId: `g64-${name}-${t}`,
+					queryId: `save-${name}-${t}`,
 					view: 'events',
 					limit: 2000,
 					timeframe: { from: t, to: Math.min(to, t + 300_000) },
@@ -262,7 +263,7 @@ async function main(): Promise<void> {
 	const nodes = Number(flag('nodes') ?? 6);
 	const baseSaves = Number(flag('base-saves') ?? 5);
 	const rowCap = Number(flag('row-cap') ?? 60_000);
-	const name = `cfw-e2e-g64-${Date.now()}`;
+	const name = `cfw-e2e-save-${Date.now()}`;
 	const config = join(root, `wrangler.${name}.jsonc`);
 
 	const before = await inventory();
@@ -296,7 +297,7 @@ async function main(): Promise<void> {
 		await sleep(60_000);
 
 		const site = new Site(origin);
-		const pass = `g64-${crypto.randomUUID()}`;
+		const pass = `save-${crypto.randomUUID()}`;
 		const owner = await provision(site, pass);
 
 		const stats = async (): Promise<Stats> => {
@@ -340,7 +341,7 @@ async function main(): Promise<void> {
 			const add = await site.hit('/node/add/page', { auth: true });
 			const created = await site.post('/node/add/page', {
 				...hiddenFields(add.body),
-				'title[0][value]': `g64 seed ${n}`,
+				'title[0][value]': `save seed ${n}`,
 				'body[0][value]': `seed body ${n}`,
 				'status[value]': '1',
 				'promote[value]': '1',
@@ -386,12 +387,12 @@ async function main(): Promise<void> {
 		};
 
 		const save = async (s: number, node: number) => {
-			const marker = `g64s${s}x${Date.now().toString(36)}`;
+			const marker = `s${s}x${Date.now().toString(36)}`;
 			const nid = nids[node % nids.length] as number;
 			const edit = await site.hit(`/node/${nid}/edit`, { auth: true });
 			const res = await site.post(`/node/${nid}/edit`, {
 				...hiddenFields(edit.body),
-				'title[0][value]': `g64 ${marker}`,
+				'title[0][value]': `save ${marker}`,
 				'body[0][value]': `edited ${marker}`,
 				'status[value]': '1',
 				'promote[value]': '1',
@@ -632,5 +633,5 @@ if (import.meta.main) {
 	const mode = process.argv[2];
 	if (mode === 'selftest') selftest();
 	else if (mode === 'run') await main();
-	else throw new Error('usage: g64-save-drive.ts run --out=<dir> | selftest');
+	else throw new Error('usage: save-invalidation-drive.ts run --out=<dir> | selftest');
 }

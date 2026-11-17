@@ -24,7 +24,7 @@ export default {
 		const url = new URL(request.url);
 		if (url.pathname === '/plain') return new Response('ok');
 		const mode = url.searchParams.get('mode') ?? 'load';
-		const id = url.searchParams.get('id') ?? 'g66-a';
+		const id = url.searchParams.get('id') ?? 'dynamic-a';
 		const path = url.searchParams.get('p') ?? 'cap';
 		const code = () => ({
 			compatibilityDate: '2026-03-01',

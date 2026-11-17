@@ -6765,7 +6765,7 @@ other -- opaque, and every form page carrying a view has that shape.
  * request, so the middle branch here returns one key however many paths it rotates through --
  * measured on a local rig, an anonymous drive reported `x-cfw-replica` as `{r3: 662}`, one object
  * for 100% of samples. Real traffic has the spread for free;
- * `scripts/measure/v101-arms.ts --clients=N` is how a rig gets it.
+ * `scripts/measure/deployed-readings.ts --clients=N` is how a rig gets it.
  *
  * It does NOT explain a pool whose lanes answer nothing, and it was wrongly blamed for one. An
  * AUTHENTICATED drive keys on the path, and the eight paths that rig rotates cover 4 of 4 buckets

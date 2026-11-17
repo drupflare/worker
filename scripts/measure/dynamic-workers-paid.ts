@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 /**
- * Spec 66 gates 2 to 4 on the paid default account.
+ * Dynamic Worker checks on the paid default account.
  *
- *   bun scripts/measure/g66p-dynamic-workers.ts <step> --out=<dir> [--name=<worker>]
+ *   bun scripts/measure/dynamic-workers-paid.ts <step> --out=<dir> [--name=<worker>]
  *
- * steps: deploy, call <query>, gate2, gate4, lat, mix, meters, teardown, inventory
+ * steps: deploy, call <query>, isolation, page-failures, lat, mix, meters, teardown, inventory
  * Reads CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN and never prints them. State lives in
  * <out>/state.json so a step can be repeated while the probe is being debugged.
  */
@@ -15,10 +15,10 @@ import { join } from 'node:path';
 const account = process.env.CLOUDFLARE_ACCOUNT_ID ?? '';
 const token = process.env.CLOUDFLARE_API_TOKEN ?? '';
 const root = join(import.meta.dir, '..', '..');
-const probe = join(root, 'scripts', 'e2e', 'g66p-probe');
+const probe = join(root, 'scripts', 'e2e', 'dynamic-workers-paid-probe');
 const step = process.argv[2] ?? '';
 const flag = (n: string) => process.argv.find((a) => a.startsWith(`--${n}=`))?.slice(n.length + 3);
-const out = flag('out') ?? join(root, '.g66p-out');
+const out = flag('out') ?? join(root, '.dynamic-workers-paid-out');
 const statePath = join(out, 'state.json');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const scrub = (s: string) => s.split(token).join('<token>').split(account).join('<account>');
@@ -109,7 +109,7 @@ function stats(xs: number[]) {
 
 async function deploy() {
 	mkdirSync(out, { recursive: true });
-	const name = flag('name') ?? `cfw-e2e-g66p-${Date.now()}`;
+	const name = flag('name') ?? `cfw-e2e-dynamic-paid-${Date.now()}`;
 	const before = await inventory();
 	writeFileSync(join(out, 'inventory-before.json'), JSON.stringify(before, null, 2));
 	say(
@@ -175,7 +175,7 @@ async function probeCase(label: string, query: Record<string, string | number>, 
 	return row;
 }
 
-async function gate2() {
+async function isolation() {
 	const n = 3;
 	for (let i = 0; i < n; i++) await probeCase('A-bindings', { p: '/bindings', via: 'load' }, i);
 	for (let i = 0; i < n; i++) {
@@ -200,7 +200,7 @@ async function gate2() {
 	for (let i = 0; i < n; i++) await probeCase('Z-after', { p: '/ok', via: 'load' }, i);
 }
 
-async function gate4() {
+async function pageFailures() {
 	const modes = [
 		'ok',
 		'throw',
@@ -259,12 +259,12 @@ async function lat() {
 		{ label: 'none', query: { handler: 'none' } },
 		{
 			label: 'inline-get-warm',
-			query: { handler: 'ok', via: 'get', id: 'g66p-lat', where: 'inline' }
+			query: { handler: 'ok', via: 'get', id: 'dynamic-lat', where: 'inline' }
 		},
 		{ label: 'inline-load', query: { handler: 'ok', via: 'load', where: 'inline' } },
 		{ label: 'defer-load', query: { handler: 'ok', via: 'load', where: 'defer' } }
 	];
-	await hit(`/page?${q({ handler: 'ok', via: 'get', id: 'g66p-lat', where: 'inline' })}`);
+	await hit(`/page?${q({ handler: 'ok', via: 'get', id: 'dynamic-lat', where: 'inline' })}`);
 	const res: Record<string, { wall: number[]; pageMs: number[]; handlerMs: number[] }> = {};
 	for (const a of arms) res[a.label] = { wall: [], pageMs: [], handlerMs: [] };
 	for (let i = 0; i < 12; i++) {
@@ -498,8 +498,8 @@ async function main() {
 	mkdirSync(out, { recursive: true });
 	if (step === 'deploy') return deploy();
 	if (step === 'call') return call(process.argv[3] ?? 'plain');
-	if (step === 'gate2') return gate2();
-	if (step === 'gate4') return gate4();
+	if (step === 'isolation') return isolation();
+	if (step === 'page-failures') return pageFailures();
 	if (step === 'lat') return lat();
 	if (step === 'mix') return mix();
 	if (step === 'conc') return conc();

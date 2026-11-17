@@ -88,7 +88,12 @@ export const PAYLOAD_ASSETS: readonly PlanEntry[] = [
 	{ path: 'assets/drupal-opc', dir: true, optional: true },
 	// the shared boot image `BOOT_IMAGE=1` restores; opt-in, and absent it every site boots plain
 	{ path: 'assets/bootimage', dir: true, optional: true },
-	{ path: 'assets/drupal-sql', dir: true }
+	{ path: 'assets/drupal-sql', dir: true },
+	// WordPress's pack; optional because a Drupal build never makes it
+	{ path: 'assets/wordpress/driver.json', optional: true },
+	{ path: 'assets/wordpress/pf/core.pf.json', optional: true },
+	{ path: 'assets/wordpress/pf/core.pf.bin', optional: true },
+	{ path: 'assets/wordpress/sql', dir: true, optional: true }
 ];
 
 /**

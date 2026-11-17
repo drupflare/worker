@@ -62,10 +62,15 @@ const source = positional[0];
 const outDir = positional[1];
 if (!source || !outDir) {
 	console.error(
-		'usage: pack-sql.ts <site.sqlite> <out-dir> [--max-statements=N] [--max-bytes=N]'
+		'usage: pack-sql.ts <site.sqlite> <out-dir> [--max-statements=N] [--max-bytes=N] [--cms=wordpress]'
 	);
 	process.exit(1);
 }
+
+// the steps below that name Drupal tables (bake history, node indexes, `sessions`, the container
+// bin) do not apply to another CMS's database
+const drupalSteps =
+	(args.find((a: string) => a.startsWith('--cms=')) ?? '--cms=drupal') === '--cms=drupal';
 
 const MAX_STATEMENTS = flag('max-statements', 200);
 const MAX_BYTES = flag('max-bytes', 64 * 1024);
@@ -134,8 +139,9 @@ async function openRewritten(path: string) {
 	);
 	db.exec(`PRAGMA schema_version=${Number(before) + 1}`);
 	db.exec('PRAGMA writable_schema=OFF');
-	const dropped = dropBakeHistory(db);
-	for (const index of UNREAD_NODE_INDEXES) db.exec(`DROP INDEX IF EXISTS ${index}`);
+	const dropped = drupalSteps ? dropBakeHistory(db) : { watchdog: 0, state: 0 };
+	if (drupalSteps)
+		for (const index of UNREAD_NODE_INDEXES) db.exec(`DROP INDEX IF EXISTS ${index}`);
 	db.close();
 	return {
 		db: new DatabaseSync(tmp, { readOnly: true }),
@@ -370,7 +376,7 @@ for (const o of master) {
 const SESSIONS_DDL =
 	"CREATE TABLE sessions (uid INTEGER NOT NULL DEFAULT 0, sid VARCHAR(128) NOT NULL PRIMARY KEY, hostname VARCHAR(128) NOT NULL DEFAULT '', timestamp INTEGER NOT NULL DEFAULT 0, session BLOB)";
 let sessionsSynthesised = false;
-if (!tables.includes('sessions')) {
+if (drupalSteps && !tables.includes('sessions')) {
 	tableDdl.push({ s: SESSIONS_DDL, p: [] });
 	laterDdl.push({ s: 'CREATE INDEX sessions_timestamp ON sessions (timestamp)', p: [] });
 	laterDdl.push({ s: 'CREATE INDEX sessions_uid ON sessions (uid)', p: [] });
@@ -493,9 +499,13 @@ for (const table of tables) {
 // read before the close; published beside the manifest below. The pack's own variant is the
 // `cache_container` row, fingerprinted by the pack's `core.extension`; the rest are the bake's table
 // a database fresh from an install may not have created the bin yet; then there is no packed variant
-const hasContainerBin = db
-	.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cache_container'")
-	.get();
+const hasContainerBin = drupalSteps
+	? db
+			.prepare(
+				"SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cache_container'"
+			)
+			.get()
+	: undefined;
 const packRow = hasContainerBin
 	? (db
 			.prepare(
@@ -503,17 +513,21 @@ const packRow = hasContainerBin
 			)
 			.get() as Record<string, SQLOutputValue> | undefined)
 	: undefined;
-const packExtension = db
-	.prepare(
-		"SELECT CAST(data AS BLOB) AS data FROM config WHERE collection = '' AND name = 'core.extension'"
-	)
-	.get() as { data?: Uint8Array } | undefined;
+const packExtension = drupalSteps
+	? (db
+			.prepare(
+				"SELECT CAST(data AS BLOB) AS data FROM config WHERE collection = '' AND name = 'core.extension'"
+			)
+			.get() as { data?: Uint8Array } | undefined)
+	: undefined;
 const packModules = extensionFingerprint(
 	packExtension?.data ? new TextDecoder().decode(packExtension.data) : ''
 );
-const hasVariants = db
-	.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
-	.get(PACKED_CONTAINER_TABLE);
+const hasVariants = drupalSteps
+	? db
+			.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+			.get(PACKED_CONTAINER_TABLE)
+	: undefined;
 const variantRows = hasVariants
 	? (db
 			.prepare(
@@ -659,7 +673,9 @@ const packedContainer: PackedContainer = {
 		})
 	)
 };
-await writeFile(join(outAbs, 'container.json'), JSON.stringify(packedContainer));
+if (drupalSteps) {
+	await writeFile(join(outAbs, 'container.json'), JSON.stringify(packedContainer));
+}
 // #endregion
 
 const biggest = [...chunkMeta].sort((a, b) => b.bytes - a.bytes).slice(0, 5);

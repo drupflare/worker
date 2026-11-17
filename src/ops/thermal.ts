@@ -22,10 +22,12 @@ export const ARRIVAL_RING = 64;
 /**
  * What a cold boot costs, in ms of billed wall clock.
  *
- * Measured on a deployed worker: 1,398 ms for the interpreter, mount and kernel; the only reason
- * to pay for a firing.
+ * Measured 2026-11-16 on a deployed free worker: cpuTime p50 2,362 ms (n=8, `/fill` of a cold
+ * object, so the first render is inside it); the only reason to pay for a firing. It replaces
+ * 1,398, and it is not like for like with `scripts/economics/measured.ts` `COLD_BOOT_MS` (1,264),
+ * which `measure:headlines` did not reproduce.
  */
-export const COLD_BOOT_MS = 1398;
+export const COLD_BOOT_MS = 2362;
 
 /**
  * How long an authenticated request keeps the object warm on its own, in ms.
@@ -40,9 +42,11 @@ export const AUTH_WARM_WINDOW_MS = 1_800_000;
  *
  * Not a duration (an idle object waiting on an alarm is not billed for duration); a firing spends a
  * request and a row. Derived from the measured ~505 renders/day crossing: `P(render within 10 s)`
- * there is 0.05678, and break-even `P x COLD_BOOT_MS = C_warm` gives 79.
+ * there is 0.05678, and break-even `P x COLD_BOOT_MS = C_warm` gives 134. Re-derived when
+ * `COLD_BOOT_MS` moved to 2,362 so the recorded crossing stays put; leaving it at 79 would drop
+ * the crossing to about 294 renders a day.
  */
-export const WARM_FIRING_COST_MS = 79;
+export const WARM_FIRING_COST_MS = 134;
 
 /** the crossing the constant above reproduces, kept so the derivation is checkable */
 export const BREAK_EVEN_RENDERS_PER_DAY = 505;

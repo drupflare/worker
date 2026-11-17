@@ -417,7 +417,7 @@ because the FIRING resets the idle clock. Arming does not warm; firing under the
 
 **Duration is not the meter.** An object waiting on an armed alarm is idle and ELIGIBLE to hibernate,
 and an idle-eligible object is not billed for duration. Warming spends requests and rows, one of each
-per firing, which is 10,800/day. What it removes is the 1,398 ms boot from pages that render; a
+per firing, which is 10,800/day. What it removes is the cold boot (2,362 ms of cpuTime, 2026-11-16) from pages that render; a
 cached page answers off `ctx.storage.sql` without booting PHP, so warming cannot make one faster by
 any amount.
 
@@ -429,14 +429,15 @@ stopped, not every idle site. The figure that argued for off was a thousand-site
 is the wrong lever for a default -- see `no-per-site-pricing` in project memory.
 
 **The interval is decided by `src/ops/thermal.ts` now, not by a constant.** It prices
-P(render inside the hibernation threshold) x 1,398 ms against a firing, over a 64-entry in-memory ring
+P(render inside the hibernation threshold) x 2,362 ms against a firing, over a 64-entry in-memory ring
 of arrivals that costs no rows, and declines below the measured ~505 renders/day crossing. An explicit
 `SITE_WARM` still wins in both directions. Two things to keep straight: only RENDERS count toward the
 rate, because a cached page needs no warm object, and the rate divides by the WINDOW rather than by
 the observed span -- dividing by the span reads a ten-second burst as ten renders per second.
 
-**`WARM_FIRING_COST_MS` was invented at 130 and moved the crossing to 845 renders/day.** It is 79
-now, derived from the crossing rather than guessed, and the spec asserts the two agree. A constant in
+**`WARM_FIRING_COST_MS` was invented at 130 and moved the crossing to 845 renders/day.** It was 79,
+derived from the crossing rather than guessed, and is 134 since `COLD_BOOT_MS` moved to 2,362 on
+2026-11-16 so the crossing stays at 505; the spec asserts the two agree. A constant in
 a policy comparison needs the same provenance as a published figure.
 
 ## EVERY HEAP PEAK IN THIS REPO IS AN ALLOCATOR RUNG, NOT A DEMAND
@@ -605,8 +606,8 @@ no JSON, and a probe run that prints nothing. It drops the interpreter, answers 
 unstorable and not retried, and no live miss or purge queues it. Headers, cookies and shutdown
 functions set before the exit are not recoverable from PHP.
 
-A fixed interpreter exists as a build only: phasm `long64.pibfix-1`, built on paisley-park
-2026-11-17. On it the next run answers after an exit, and shutdown functions, output-buffer
+A fixed interpreter exists as a build only: phasm `long64` with `PIB_RUN_EXIT=1`, built on
+paisley-park 2026-11-17 and kept in `.interp/` as `php8.5-pibfix1*`. On it the next run answers after an exit, and shutdown functions, output-buffer
 callbacks and `header_register_callback` all fire. The reply still has no JSON, because the harness
 echo does not run, so the harness has to emit it from a shutdown function before the fallback can
 go. Its glue is 23% larger than the shipping glue, so it is a different pin and not a drop-in.

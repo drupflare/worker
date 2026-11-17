@@ -116,7 +116,7 @@ export function serialisedInt(value: string): number | undefined {
 }
 
 /** a column value as text; `config.data` is a BLOB, so the platform returns bytes, not a string */
-function columnText(value: unknown): string | undefined {
+export function columnText(value: unknown): string | undefined {
 	if (typeof value === 'string') return value;
 	if (value instanceof Uint8Array) return new TextDecoder().decode(value);
 	if (value instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(value));

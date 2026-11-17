@@ -478,7 +478,7 @@ describe('the GD2 writer', () => {
 		const out = await runParkImage({
 			source: null,
 			canvas: { width: 3, height: 2 },
-			ops: [{ op: 'fill', color: 0x40ff8000 }],
+			ops: [{ op: 'fill', x: 0, y: 0, color: 0x40ff8000 }],
 			format: 'gd2',
 			quality: -1,
 			gd2: { chunk: 128, mode: 1 },

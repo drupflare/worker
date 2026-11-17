@@ -19,18 +19,24 @@ import { integrityReport } from '../../ops/module-integrity';
 import { isPaid } from '../../ops/plan';
 import { planProfile } from '../../ops/plan-profile';
 import { ReplicaRequiresPrimary } from '../../ops/replica';
-import { FIRST_RUN_KEY, needsSetup, setupResponse } from '../../ops/setup-page';
+import { claimed, needsSetup, setupResponse } from '../../ops/setup-page';
 import { bearerToken, ownerTokenMatches } from '../../ops/site-secrets';
+import { storesPath } from '../../ops/store-rule';
 import { warmingResponse } from '../../ops/warming-page';
 import type { SitePhpDurableObject } from '../../site-do';
 import { DIAG_EXEC_COUNTERS_PHP } from '../../site/generated/assets';
+import { type Cms, cmsOf } from '../../util/cms';
 import { phpScript } from '../../util/php';
 import { jsonError } from '../../util/reply';
 import { firstRow } from '../../util/sql';
 import { isolateResidency, retainInterpreterEnabled } from '../isolate';
 import { fillSettleMs, shellAssemblyEnabled } from '../levers';
 import { CFW_HEADER_VERSION, FILL_QUEUE_MAX, SERVE_REQUESTS_FLUSH } from '../limits';
+import { handsBackSession } from '../role';
 import type { PageRow } from '../types';
+
+/** the values of `x-cfw-phase` a WordPress request may carry, sent by the owner token only */
+const WORDPRESS_PHASES = new Set(['boot-only', 'load', 'render', 'probe']);
 
 /**
  * The serving path; `x-cfw-cache` says which of three outcomes answered.
@@ -117,7 +123,7 @@ export async function serve(
 
 	// an unclaimed site shows its owner the way in: uid 1 ships with an empty hash, so nothing
 	// can sign in until `/firstrun` mints a password; after the migration guards and the counter
-	if (needsSetup(request, site.metaGet(FIRST_RUN_KEY) !== null)) {
+	if (needsSetup(request, claimed(site))) {
 		return setupResponse(site.canonicalOrigin(url.origin), {
 			'x-cfw-serve-ms': String(Date.now() - t0),
 			'x-cfw-v': CFW_HEADER_VERSION
@@ -133,8 +139,12 @@ export async function serve(
 
 	// a submission is never answered from `cfw_page` (the row holds an anonymous `GET`, so a `POST`
 	// would get the empty form back with a 200 and never run Drupal); sessions likewise
-	const authenticated = isAuthenticatedRequest(request);
-	const cacheable = (request.method === 'GET' || request.method === 'HEAD') && !authenticated;
+	const cms = cmsOf(site.env) as Cms;
+	const authenticated = isAuthenticatedRequest(request, cms);
+	// a CMS that stores nothing in this environment has no row to read and no fill to wait for
+	const stores = storesPath(cms, site.env, path);
+	const cacheable =
+		(request.method === 'GET' || request.method === 'HEAD') && !authenticated && stores;
 	const hit = cacheable
 		? firstRow(
 				site.sql.exec<PageRow>(
@@ -152,8 +162,14 @@ export async function serve(
 	}
 
 	// queued before the inline attempt as the safety net; never for a session (the chain would
-	// publish an admin's 403); `FILL_QUEUE_MAX` bounds the table
-	const queueable = !authenticated && degraded.queue && site.queueDepth() < FILL_QUEUE_MAX;
+	// publish an admin's 403) or a path observed unstorable (each queue entry costs a boot);
+	// `FILL_QUEUE_MAX` bounds the table
+	const queueable =
+		!authenticated &&
+		stores &&
+		degraded.queue &&
+		site.queueDepth() < FILL_QUEUE_MAX &&
+		!site.isUnstorable(path);
 	if (queueable) {
 		// priority 0: a visitor is holding a connection open (a FIFO queue served misses after
 		// every prefill: p50 19,004 ms); `DO UPDATE` promotes a queued path
@@ -166,10 +182,14 @@ export async function serve(
 	}
 	// a pending alarm is not enough: the queue drains and `alarm()` re-arms 240 s out, so pull
 	// it in whenever it is further away than the next tick
-	const soon = site.nowMs() + 1;
-	const existing = await site.storage.getAlarm();
-	if (existing === null || existing > soon + 50) {
-		await site.setAlarmAt(soon);
+	// a WordPress request that queued nothing leaves the alarm no fill to drain, and the firing
+	// still costs a row, a billed invocation and a wait on the gate for the whole render
+	if (cms !== 'wordpress' || queueable || site.queueDepth() > 0) {
+		const soon = site.nowMs() + 1;
+		const existing = await site.storage.getAlarm();
+		if (existing === null || existing > soon + 50) {
+			await site.setAlarmAt(soon);
+		}
 	}
 
 	// `fetch()` holds the gate, so `fillOne()` must not re-enter it; `ctx.waitUntil()` would put
@@ -185,7 +205,7 @@ export async function serve(
 	const submission = request.method !== 'GET' && request.method !== 'HEAD';
 	// a path the chain proved it cannot store (Drupal marks `/user/password` `private, no-store`)
 	// never converges on an idle object, so lift the refusal for paths observed unstorable
-	const unfillable = submission || authenticated || site.isUnstorable(path);
+	const unfillable = submission || authenticated || !stores || site.isUnstorable(path);
 	const mayBoot = planProfile(site.env).bootInline || unfillable;
 	const coldBoot = !site.php && mayBoot;
 	let inline = '0';
@@ -275,10 +295,13 @@ export async function serve(
 		// response in a textarea
 		const accept = request.headers.get('accept') ?? '';
 		const bearer = bearerToken(request.headers.get('authorization'));
-		const forwarded = forwardedHeaders(
-			request.headers,
-			bearer !== undefined && (await ownerTokenMatches(site.secretStore(), bearer))
-		);
+		const bearerIsOwner =
+			bearer !== undefined && (await ownerTokenMatches(site.secretStore(), bearer));
+		const forwarded = forwardedHeaders(request.headers, bearerIsOwner);
+		const phase = request.headers.get('x-cfw-phase') ?? '';
+		if (bearerIsOwner && cms === 'wordpress' && WORDPRESS_PHASES.has(phase)) {
+			forwarded['x-cfw-phase'] = phase;
+		}
 		const headers = Object.keys(forwarded).length === 0 ? {} : { headers: forwarded };
 		const posted =
 			request.method === 'GET' || request.method === 'HEAD'
@@ -304,11 +327,7 @@ export async function serve(
 					};
 		// asked before the render, since a lane without the session hands back anyway;
 		// `holdsSession()` chases one catch-up (closes the 20-62 s window)
-		if (
-			site.isPoolLane() &&
-			hasSessionCookie(cookie) &&
-			(await site.sessionReach(cookie)) === 'absent'
-		) {
+		if (handsBackSession(site, cookie) && (await site.sessionReach(cookie)) === 'absent') {
 			return site.replicaHandoff(
 				new ReplicaRequiresPrimary('session', 'the session has not reached this lane')
 			);
@@ -329,8 +348,7 @@ export async function serve(
 		// a lane without the session hands back rather than serving anonymous (the row arrives by
 		// replication: 41 of 240 logged out on a 16-lane pool); a uid 0 `GET` mutated nothing
 		if (
-			site.isPoolLane() &&
-			hasSessionCookie(cookie) &&
+			handsBackSession(site, cookie) &&
 			!(outcome.roles ?? []).some((role) => role !== 'anonymous')
 		) {
 			// returned, never thrown: outside the try that converts `ReplicaRequiresPrimary`, a

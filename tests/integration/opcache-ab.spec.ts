@@ -13,7 +13,7 @@ import {
 import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-do';
 
 /**
- * P30: what the write-only opcache file cache actually costs, arm by arm.
+ * What the write-only opcache file cache actually costs, arm by arm.
  *
  * The file cache is measurably write-only on this runtime -- 1,301 `.bin` files after one render,
  * nothing ever reads them -- and it was left in place because `file_cache_only=1` makes it opcache's
@@ -92,7 +92,7 @@ async function armProfile(mode: string) {
 	});
 }
 
-describe('P30: the opcache arms', () => {
+describe('the opcache arms', () => {
 	it('names four arms and falls back to the shipping one', () => {
 		expect([...OPCACHE_MODES]).toEqual(['file', 'shm', 'off', 'pack']);
 		// the shipped cache is read and never written, or a miss spends the MEMFS `file` spends

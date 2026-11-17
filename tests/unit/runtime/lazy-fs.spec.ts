@@ -2,6 +2,7 @@ import { _mergeLayerIndexes, _normaliseLayers } from '@drupflare/cartridge/fs';
 import { describe, expect, it } from 'vitest';
 import lazyFsSource from '../../../node_modules/@drupflare/cartridge/src/lazy-fs.ts?raw';
 import mountSource from '../../../node_modules/@drupflare/cartridge/src/mount.ts?raw';
+import drupalBootSource from '../../../src/drupal/boot.ts?raw';
 import { siteDoFiles } from '../../helpers/source-raw';
 
 /**
@@ -79,9 +80,10 @@ describe('the lazy mount does not fetch a database nobody can open', () => {
 describe('both mounts answer the database question the same way', () => {
 	it('gives the lazy and streaming call sites the same condition', () => {
 		// the receiver is `this` in the class and `site` in a function moved out of it
-		const boot = siteDoFiles().find(({ text }) =>
-			/\b(?:this|site)\.mountInfo\.driver/.test(text)
-		);
+		const boot = [
+			...siteDoFiles(),
+			{ file: 'src/drupal/boot.ts', text: drupalBootSource }
+		].find(({ text }) => /\b(?:this|site)\.mountInfo\.driver/.test(text));
 		const region = between(
 			boot?.text ?? '',
 			/\bconst lazyOptions =/,

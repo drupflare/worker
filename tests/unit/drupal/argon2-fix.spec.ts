@@ -11,7 +11,7 @@ import {
 } from '../../../src/site/shims/argon2-fix';
 
 /**
- * P25's host half.
+ * The argon2 shim's host side.
  *
  * The RFC vector is the whole correctness argument. Everything else here is about the parameters
  * this runtime will and will not accept, and about the encoded form staying PHP's own so a hash

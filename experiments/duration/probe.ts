@@ -3,7 +3,7 @@ import { DurableObject } from 'cloudflare:workers';
 /**
  * What the DURATION meter actually charges, measured against a known wall clock.
  *
- * P35 recorded that Cloudflare's GraphQL exposes requests, body size, stored bytes and cpuTime "but
+ * An earlier note recorded that Cloudflare's GraphQL exposes requests, body size, stored bytes and cpuTime "but
  * not duration", so every GB-s figure in the model was derived from cpuTime and carried a caveat.
  * That was wrong: `durableObjectsInvocationsAdaptiveGroups` has no duration, and
  * `durableObjectsPeriodicGroups` has `duration`, `activeTime`, `rowsRead`, `rowsWritten` and

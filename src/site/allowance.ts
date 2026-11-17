@@ -7,6 +7,7 @@ import {
 	secondsUntilUtcReset,
 	type AuthBudgetEnv
 } from '../ops/auth-budget';
+import { cmsOf, type Cms } from '../util/cms';
 import { readAuthSpend } from './memos';
 import type { AuthState, FrontContext } from './types';
 
@@ -19,7 +20,7 @@ export async function decideAllowance(
 	// #region the authenticated allowance, decided before any DO hop
 	// an authenticated page is per-user, so every one is a full render (13 rows, ~500 ms); a check
 	// after the hop has already spent the DO request it protects
-	const authenticated = neverDrupal ? false : isAuthenticatedRequest(request);
+	const authenticated = neverDrupal ? false : isAuthenticatedRequest(request, cmsOf(env) as Cms);
 	let authMode: 'render' | 'stale' | 'read-only' = 'render';
 	let authReason = '';
 	// enforced on free only (reading the counter on paid cost a 9.5 ms `cache.match` per isolate);

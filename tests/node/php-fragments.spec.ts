@@ -3,8 +3,8 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { settingsOverride } from '../../src/do/settings';
 import { cronHookList, runCronHook, runCronQueue } from '../../src/drupal/cron-php';
+import { settingsOverride } from '../../src/drupal/settings';
 import {
 	abandonTransaction,
 	BOOT_KERNEL,

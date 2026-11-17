@@ -6,7 +6,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 /**
  * What a WRITE costs on the meter that binds the free-tier regeneration ceiling.
  *
- * P29, reframed. The original item asked whether dropping `AUTOINCREMENT` reduces rows per page
+ * The original question asked whether dropping `AUTOINCREMENT` reduces rows per page
  * FILL; `autoincrement.spec.ts` measured no and the item was closed on it. That answer is correct
  * and it settles one workload out of a dozen. Rows written is charged on every write a site makes,
  * and 14 of the shipped schema's 17 `AUTOINCREMENT` tables are content-entity tables that only a

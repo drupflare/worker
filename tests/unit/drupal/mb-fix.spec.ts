@@ -252,10 +252,10 @@ describe('mb-fix: the controls', () => {
 		}
 	});
 
-	// the P24 additions, each closing a divergence a table alone could not: mb_chr and mb_ord
+	// the added functions, each closing a divergence a table alone could not: mb_chr and mb_ord
 	// have no range validation in the polyfill at all, and the four case-insensitive searches
 	// return an index into the polyfill's own lowercased copy rather than into the haystack
-	it('wraps the functions P24 added, and routes the searches through the safe fold', () => {
+	it('wraps the added functions, and routes the searches through the safe fold', () => {
 		for (const fn of ['mb_chr', 'mb_ord', 'mb_stripos', 'mb_strripos', 'mb_stristr']) {
 			expect(MB_FIX, fn).toContain(`function ${fn}(`);
 		}

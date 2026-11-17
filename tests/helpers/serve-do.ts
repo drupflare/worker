@@ -8,6 +8,7 @@ import {
 	readDayMeters,
 	writeDayMeters
 } from '../../src/ops/day-meters';
+import type { SitePhpDurableObject } from '../../src/site-do';
 
 /**
  * The harness the ported serve-chain specs drive: a REAL `SitePhpDurableObject`, with the PHP
@@ -39,14 +40,18 @@ export type RenderResult = {
 	dynamicCache?: string;
 	destructed?: unknown;
 	error?: string;
+	/** the render ended in `exit()` or `die()`, so the interpreter was dropped; see `settleReply()` */
+	exited?: boolean;
 	/** where a 3xx points; `renderPage()` has always reported it and the stub could not */
 	location?: string | null;
 	/** `Set-Cookie` lines, which is what makes a response uncacheable from the other direction */
 	setCookie?: string[];
 	/** who Drupal decided the render was for; anything but 0 must never reach the shared cache */
 	uid?: number | null;
-	/** Drupal's own `Cache-Control`; `no-store` or `private` is an explicit refusal to store */
+	/** Drupal's own `Cache-Control`; `no-store`, `no-cache` or `private` is a refusal to store */
 	cacheControl?: string | null;
+	/** the cache tags the render bubbled; a render with none is never stored */
+	cacheTags?: string[];
 	/** the request headers Drupal says the response depends on; `Cookie` alone on the stock pack */
 	vary?: string | null;
 	/** the response headers the fragment reports, which the host filters through its boundary */
@@ -188,6 +193,8 @@ export type ServeDo = {
 	ensureServeTables: () => void;
 	ensureHttpTables: () => void;
 	queueDepth: () => number;
+	/** the paths a render has proven cannot be stored */
+	unstorablePaths: () => string[];
 	/** the migration cursor as the object holds it, readable DURING an alarm rather than after */
 	migrateCursorOrNull: () => { state?: string; chunk?: number; chunks?: number } | null;
 	/** whether the object should drop its interpreter; reads the WHOLE isolate, not linear alone */
@@ -337,7 +344,10 @@ export type ServeDo = {
 	storedMeters: (nowMs?: number) => import('../../src/ops/day-meters').DayMeters;
 	flushMeters: (nowMs?: number) => import('../../src/ops/day-meters').DayMeters;
 	dailyRows: (nowMs?: number) => number;
-	bumpGeneration: (reason?: string) => BumpResult;
+	bumpGeneration: (
+		reason?: string,
+		options?: { arm?: boolean; invalidatedTags?: string[]; scopedTo?: string[] }
+	) => BumpResult;
 	/** the version vector spool syncs from */
 	spoolVector: () => import('../../src/ops/spool').SpoolStamps;
 	/**
@@ -412,6 +422,13 @@ export type ServeDo = {
 	renderClockUnmeasurable?: boolean;
 	heapRestore?: Record<string, unknown> | null;
 };
+
+type Expect<T extends true> = T;
+
+/** fails to typecheck when ServeDo names a member the class does not have */
+export type ServeDoIsClassSubset = Expect<
+	[Exclude<keyof ServeDo, keyof SitePhpDurableObject>] extends [never] ? true : false
+>;
 
 /** every `x-cfw-*` header the original suite's `serve()` read, plus the body */
 export type ServeProbe = {
@@ -594,7 +611,8 @@ export function pageFor(path: string, renderMs = 42): RenderResult {
 		renderMs,
 		bytes: html.length,
 		pageCache: 'MISS',
-		dynamicCache: 'MISS'
+		dynamicCache: 'MISS',
+		cacheTags: ['rendered']
 	};
 }
 

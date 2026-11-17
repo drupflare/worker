@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { packCachedEnv } from '../../../src/do/lazy-mount';
+import { assetRequestCounts, packCachedEnv } from '../../../src/do/lazy-mount';
 
 type Calls = string[];
 
@@ -71,5 +71,24 @@ describe('the per-file pack fetch cache', () => {
 		await packCachedEnv({ ASSETS: assets }).ASSETS.fetch('https://assets.local/core.pf.bin');
 		await packCachedEnv({ ASSETS: assets }).ASSETS.fetch('https://assets.local/core.pf.bin');
 		expect(calls).toHaveLength(1);
+	});
+});
+
+describe('the asset request counts', () => {
+	it('counts a fetched member, a reused member and a passthrough apart, and the sum equals the binding calls', async () => {
+		const calls: Calls = [];
+		const assets = assetsFor(calls, () => new Response('p'));
+		const cached = packCachedEnv({ ASSETS: assets });
+		const before = assetRequestCounts();
+		await cached.ASSETS.fetch('https://assets.local/count/core.pf.bin');
+		await cached.ASSETS.fetch('https://assets.local/count/core.pf.json');
+		await cached.ASSETS.fetch('https://assets.local/count/core.pf.bin');
+		await cached.ASSETS.fetch('https://assets.local/count/driver.json');
+		const after = assetRequestCounts();
+		expect(after.packFetched - before.packFetched).toBe(2);
+		expect(after.packReused - before.packReused).toBe(1);
+		expect(after.other - before.other).toBe(1);
+		// a reused member is not a subrequest: the binding saw only the fetched ones and the passthrough
+		expect(calls).toHaveLength(3);
 	});
 });

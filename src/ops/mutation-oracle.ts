@@ -103,7 +103,7 @@ export function recordCapabilities(
 		if (typeof fn !== 'function') continue;
 		if (classifyCapability(name) === 'safe') continue;
 		// SQL is counted through the write tally (here every read would count as an effect)
-		if (name === 'cfwSqlExec' || name === 'cfwSqlTxn') continue;
+		if (name === 'cfwSqlExec' || name === 'cfwSqlTxn' || name === 'cfwMysqlExec') continue;
 		const inner = fn as (...args: unknown[]) => unknown;
 		binary[name] = (...args: unknown[]) => {
 			sink.set(name, (sink.get(name) ?? 0) + 1);

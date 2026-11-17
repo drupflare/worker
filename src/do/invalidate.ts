@@ -13,8 +13,9 @@ import type { Row } from './types';
  * The stored pages that depend on any of `tags`, or undefined when the index cannot answer.
  *
  * Undefined is not an empty set: an unindexed tag may mean no page depends on it or that the site
- * served before the index existed. A missed scoped purge shows visibly wrong content, worse than
- * an extra fill, so undefined sends the caller to a wholesale purge.
+ * served before the index existed, and a page with no recorded tags depends on something this
+ * index cannot name. A missed scoped purge shows visibly wrong content, worse than an extra fill,
+ * so undefined sends the caller to a wholesale purge.
  */
 export function pathsForTags(
 	site: SitePhpDurableObject,
@@ -32,7 +33,8 @@ export function pathsForTags(
 		let held: string[];
 		try {
 			const parsed: unknown = JSON.parse(String(row.tags));
-			if (!Array.isArray(parsed)) return undefined;
+			// `[]` matches no tag, so a row an earlier release stored that way would outlive every purge
+			if (!Array.isArray(parsed) || parsed.length === 0) return undefined;
 			held = parsed.map((t) => String(t));
 		} catch {
 			return undefined;
@@ -122,6 +124,7 @@ export function purgeScopedPaths(
 	let requeued = 0;
 	if (prefillOnSave(site.env)) {
 		for (const path of paths.slice(0, decision.requeue)) {
+			if (site.isUnstorable(path)) continue;
 			site.sql.exec(
 				'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING',
 				path,
@@ -132,6 +135,7 @@ export function purgeScopedPaths(
 		// a family representative is queued even when lazy: one path buys the boot for the family
 		for (const path of families) {
 			if (site.queueDepth() >= FILL_QUEUE_MAX) break;
+			if (site.isUnstorable(path)) continue;
 			site.sql.exec(
 				'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING',
 				path,
@@ -241,6 +245,7 @@ export function bumpGeneration(
 	let requeued = 0;
 	if (prefillOnSave(site.env)) {
 		for (const path of requeue) {
+			if (site.isUnstorable(path)) continue;
 			site.sql.exec(
 				'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING',
 				path,

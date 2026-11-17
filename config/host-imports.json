@@ -187,6 +187,10 @@
 			"note": "queues a message; the from-domain and size caps apply"
 		},
 		"cfwModules": { "class": "io", "note": "read only" },
+		"cfwMysqlExec": {
+			"class": "io",
+			"note": "MySQL text translated to SQL on the object's own SQLite"
+		},
 		"cfwOidcClaims": { "class": "io", "note": "redeems one ticket row" },
 		"cfwParkFetch": {
 			"class": "io",
@@ -211,6 +215,10 @@
 		"cfwTcp": {
 			"class": "io",
 			"note": "Redis and syslog at the endpoint the operator configured"
+		},
+		"cfwWpTags": {
+			"class": "io",
+			"note": "records cache tags the CMS says it changed and purges the object's own stored pages"
 		},
 		"cfwZlib": { "class": "compute" },
 		"cfwZstd": { "class": "compute" }

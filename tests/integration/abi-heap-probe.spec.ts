@@ -4,7 +4,7 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
 /**
  * The heap through migrate, install and a render, on whichever pointer ABI the lane was given.
  *
- * TEMPORARY, for the P26 wasm64 measurement. `heap-growth.spec.ts` opens every profile with
+ * TEMPORARY, for the wasm64 measurement. `heap-growth.spec.ts` opens every profile with
  * `/__migrate?all=1`, which does the whole migration in ONE invocation and does not complete on
  * wasm64 -- and it takes the invocation with it, so nothing can be read afterwards. Measured here,
  * the same migration driven in CHUNKS completes on wasm64 at a flat 96.00 MiB, so `all=1` is what

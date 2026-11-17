@@ -17,8 +17,8 @@ import {
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
- * P7's remaining half, measured end to end: what varies between two people, and what a fragment
- * render costs against the render it replaces.
+ * The unfinished half of the shared shell, measured end to end: what varies between
+ * two people, and what a fragment render costs against the render it replaces.
  *
  * ## The holes are gated by the `render` bin, not by how many renders an interpreter has served
  *
@@ -196,7 +196,7 @@ async function harvestRun(): Promise<Harvest> {
 
 const html = (p: Payload) => String(p['html'] ?? '');
 
-describe('P7: harvesting and normalising a shared shell', () => {
+describe('harvesting and normalising a shared shell', () => {
 	it(
 		'gives every persona holes once the render bin is empty',
 		async () => {
@@ -275,7 +275,7 @@ describe('P7: harvesting and normalising a shared shell', () => {
 	);
 });
 
-describe('P7: the object stores and serves a shell', () => {
+describe('the object stores and serves a shell', () => {
 	it(
 		'harvests under two sessions, refuses one, and answers an authenticated GET',
 		async () => {
@@ -395,12 +395,12 @@ describe('P7: the object stores and serves a shell', () => {
 	);
 });
 
-describe('P7: the authentication boundary', () => {
+describe('the authentication boundary', () => {
 	it(
 		'never lets an anonymous visitor near the authenticated body',
 		async () => {
 			const r = await harvestRun();
-			// the structural fact that moved P7's blocker: BigPipe only placeholders a request that
+			// the structural fact about the blocker: BigPipe only placeholders a request that
 			// HAS a session, so the anonymous artifact `cfw_page` stores is not a shell and never
 			// can be. Harvesting is an authenticated operation by construction
 			expect(placeholderIds(html(r.anon))).toEqual([]);
@@ -431,7 +431,7 @@ describe('P7: the authentication boundary', () => {
 	);
 });
 
-describe('P7: the fragment source', () => {
+describe('the fragment source', () => {
 	it(
 		'replays a harvested recipe for a DIFFERENT session',
 		async () => {
@@ -510,7 +510,7 @@ describe('P7: the fragment source', () => {
 		'refuses a recipe naming an untrusted callback',
 		async () => {
 			const r = await harvestRun();
-			// P7's security premise is STRUCTURAL: a recipe never comes from a visitor, it comes
+			// the security premise is STRUCTURAL: a recipe never comes from a visitor, it comes
 			// from the host's own storage, so a forged placeholder id has nowhere to enter. This is
 			// the layer BELOW that, measured rather than assumed -- core enforces
 			// TrustedCallbackInterface on #lazy_builder, so even a recipe that did get in cannot

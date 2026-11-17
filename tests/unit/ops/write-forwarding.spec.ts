@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { maxLanes } from '../../../src/ops/replica-demand';
 import { replicaCount } from '../../../src/ops/replica-routing';
+import { classifyState } from '../../../src/ops/state-inventory';
 import {
 	cacheTagIncrement,
 	deferrable,
@@ -452,5 +453,143 @@ describe('the partition covers every lane the router can address', () => {
 		// `maxLanes()` bounds the pool the primary grows on its own, so it is the other end of the
 		// same question: a lane it can create must be one the partition covers
 		expect(ID_PARTITION_LANES).toBeGreaterThanOrEqual(maxLanes({ REPLICA_MAX_LANES: '999' }));
+	});
+});
+
+describe('the write tables are a table per CMS and Drupal is the default', () => {
+	// the hazard rule as it stood before the table lists were keyed by CMS
+	const legacyHazard = (table: string, collection?: string, name?: string) => {
+		if (table === '') return 'origination';
+		if (table === 'sequences' || table === 'sqlite_sequence') return 'origination';
+		const status = classifyState(table, collection, name);
+		if (status === 'LOCAL_EPHEMERAL') return 'none';
+		if (status === 'AUTHORITATIVE') return collection === 'state' ? 'origination' : 'ordering';
+		if (status === 'REPLICABLE_DERIVED') return 'ordering';
+		return 'origination';
+	};
+	const TABLES: [string, string?, string?][] = [
+		['sequences'],
+		['sqlite_sequence'],
+		['key_value', 'state', 'system.private_key'],
+		['key_value', 'state', 'system.cron_key'],
+		['key_value', 'cache', 'x'],
+		['node_field_data'],
+		['node'],
+		['config'],
+		['users_field_data'],
+		['sessions'],
+		['cache_config'],
+		['cache_render'],
+		['cache_data'],
+		['cfw_page'],
+		['cfw_meta'],
+		['watchdog'],
+		['cachetags'],
+		['semaphore'],
+		['flood'],
+		['queue'],
+		['file_managed'],
+		['path_alias'],
+		['menu_link_content_data'],
+		['some_contrib_thing'],
+		['wp_options'],
+		['']
+	];
+	const watchdog: ForwardStatement = {
+		sql: 'INSERT INTO watchdog ("wid", "type") VALUES (5, ?)',
+		params: ['php'],
+		table: 'watchdog',
+		minted: 'watchdog'
+	};
+
+	it('gives Drupal the same hazard as the old rule for every table in the corpus', () => {
+		expect(TABLES.length).toBeGreaterThanOrEqual(25);
+		for (const [table, collection, name] of TABLES) {
+			const want = legacyHazard(table, collection, name);
+			expect(hazardClass(table, collection, name), table).toBe(want);
+			expect(hazardClass(table, collection, name, 'drupal'), table).toBe(want);
+		}
+	});
+
+	it('defers a Drupal watchdog row and partitions its minted id, as before', () => {
+		expect(deferrable(watchdog)).toEqual(deferrable(watchdog, 'drupal'));
+		expect(deferrable(watchdog)?.sql).toBe('INSERT INTO watchdog ("type") VALUES (?)');
+		expect(splitForward([watchdog]).deferred).toHaveLength(1);
+		expect(splitForward([watchdog], 'drupal').commit).toHaveLength(0);
+		expect(partitionedTables([{ ...watchdog, minted: 'node' }])).toEqual(
+			partitionedTables([{ ...watchdog, minted: 'node' }], 'drupal')
+		);
+	});
+
+	it('calls every WordPress and Joomla table an origination, including ones Drupal orders', () => {
+		for (const cms of ['wordpress', 'joomla'] as const) {
+			for (const [table, collection, name] of TABLES) {
+				expect(hazardClass(table, collection, name, cms), `${cms} ${table}`).toBe(
+					'origination'
+				);
+			}
+			expect(hazardClass('node_field_data', undefined, undefined, cms)).toBe('origination');
+			expect(hazardClass('cfw_page', undefined, undefined, cms)).toBe('origination');
+		}
+	});
+
+	it('defers no WordPress or Joomla row and partitions no table for either', () => {
+		for (const cms of ['wordpress', 'joomla'] as const) {
+			expect(deferrable(watchdog, cms), cms).toBeUndefined();
+			expect(splitForward([watchdog], cms), cms).toEqual({
+				commit: [watchdog],
+				deferred: []
+			});
+			expect(partitionedTables([{ ...watchdog, minted: 'wp_posts' }], cms), cms).toEqual([]);
+			expect(partitionedTables([{ ...watchdog, minted: 'node' }], cms), cms).toEqual([]);
+			expect(
+				partitionedTables([{ ...watchdog, minted: 'sqlite_sequence' }], cms),
+				cms
+			).toEqual([]);
+		}
+	});
+
+	it('refuses a WordPress or Joomla batch that Drupal would commit', () => {
+		const content: ForwardStatement[] = [
+			{ sql: 'UPDATE node_field_data SET title = ?', params: ['x'], table: 'node_field_data' }
+		];
+		expect(planForward({ statements: content, parent: 1, primaryGeneration: 1 }).action).toBe(
+			'commit'
+		);
+		for (const cms of ['wordpress', 'joomla'] as const) {
+			const out = planForward({ statements: content, parent: 1, primaryGeneration: 1, cms });
+			expect(out.action, cms).toBe('refuse');
+		}
+	});
+
+	it('does not trust a partition list a WordPress batch carries', () => {
+		const stmt: ForwardStatement = {
+			sql: 'INSERT INTO wp_posts (ID) VALUES (7)',
+			table: 'wp_posts'
+		};
+		const out = planForward({
+			statements: [stmt],
+			parent: 1,
+			primaryGeneration: 1,
+			partitioned: ['wp_posts'],
+			cms: 'wordpress'
+		});
+		expect(out.action).toBe('refuse');
+	});
+
+	it('fails closed for a CMS name the table does not hold', () => {
+		const odd = 'plone' as never;
+		expect(hazardClass('node_field_data', undefined, undefined, odd)).toBe('origination');
+		expect(hazardClass('cfw_page', undefined, undefined, odd)).toBe('origination');
+		expect(deferrable(watchdog, odd)).toBeUndefined();
+		expect(partitionedTables([watchdog], odd)).toEqual([]);
+		expect(
+			planForward({
+				statements: [{ sql: 'UPDATE x SET a = 1', table: 'x' }],
+				parent: 1,
+				primaryGeneration: 1,
+				cms: odd
+			}).action
+		).toBe('refuse');
 	});
 });

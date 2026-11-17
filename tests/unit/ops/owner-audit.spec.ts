@@ -181,6 +181,8 @@ describe('which calls are recorded', () => {
 
 	it.each([
 		['/__install', 'POST', '', '/__install'],
+		['/__install-lock', 'POST', '', '/__install-lock'],
+		['/__install-lock', 'DELETE', 'session=0123456789abcdef', '/__install-lock'],
 		['/__enable', 'POST', 'module=x', '/__enable'],
 		['/__modify', 'POST', 'action=commit', '/__modify?action=commit'],
 		['/__restore', 'POST', '', '/__restore'],
@@ -193,6 +195,10 @@ describe('which calls are recorded', () => {
 		['/__git', 'GET', 'action=add', '/__git?action=add'],
 		['/__updb', 'POST', 'action=beat', '/__updb?action=beat'],
 		['/__reconcile', 'POST', '', '/__reconcile'],
+		['/__recycle', 'POST', '', '/__recycle'],
+		['/__ledger-gc', 'POST', '', '/__ledger-gc'],
+		['/__strata-config', 'POST', '', '/__strata-config'],
+		['/__strata-store', 'POST', '', '/__strata-store'],
 		['/__queue', 'GET', 'action=drop', '/__queue?action=drop'],
 		['/__ops', 'POST', 'op=cim', '/__ops?op=cim'],
 		['/__bump', 'GET', 'reason=x', '/__bump'],
@@ -225,6 +231,10 @@ describe('which calls are recorded', () => {
 		['/__mailonboard', 'GET', 'action=status'],
 		['/__sweep', 'GET', ''],
 		['/__armfill', 'GET', ''],
+		['/__recycle', 'GET', ''],
+		['/__ledger-gc', 'GET', ''],
+		['/__strata-config', 'GET', ''],
+		['/__strata-store', 'GET', ''],
 		['/__writemark', 'GET', ''],
 		['/__writechanges', 'GET', '']
 	])('leaves %s %s ?%s alone', (path, method, query) => {

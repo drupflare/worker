@@ -213,8 +213,8 @@ export async function runJsonMaybeParked(
 	if (driven.state !== 'done') totals.refused += 1;
 	// one request runs its PHP once: never re-run `code` when the answer is hard to read, because
 	// everything it did before that point is already committed
-	const reply = parseJsonReply(driven.output);
-	if (driven.state !== 'done' && 'raw' in reply) {
+	const reply = await site.settleReply(parseJsonReply(driven.output));
+	if (driven.state !== 'done' && 'raw' in reply && reply['exited'] !== true) {
 		return {
 			...reply,
 			error: `the park ended ${driven.state}: ${driven.why ?? String(reply['error'])}`

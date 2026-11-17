@@ -86,6 +86,25 @@ const MODULE_PARTS = [
 ] as const;
 
 /**
+ * One module in a pack: its checkout, its mount, the parts it carries and the subtrees it leaves out.
+ *
+ * `skip` entries are paths from the checkout root, matched as directory prefixes on a path-segment
+ * boundary, so `src/Wp` skips `src/Wp/db.php` and keeps `src/Wpx/a.php`.
+ *
+ * @internal
+ */
+export interface ModuleRow {
+	/** the checkout, relative to this repo or absolute */
+	src: string;
+	/** where it lands in the mounted tree */
+	mount: string;
+	/** the files a repository checkout contributes; the whole directory when absent */
+	parts?: readonly string[];
+	/** subtrees under the checkout that are never packed */
+	skip?: readonly string[];
+}
+
+/**
  * Every host-side module, and where it lands in the mounted tree.
  *
  * drupflare rides in the same asset as the driver: it mounts
@@ -93,12 +112,18 @@ const MODULE_PARTS = [
  * subrequest at boot and no deploy change. The settings.php override in
  * src/site-do.js points a PSR-4 root at each of these paths.
  */
-const MODULES: { src: string; mount: string; parts?: readonly string[] }[] = [
+export const MODULES: ModuleRow[] = [
 	// `parts` because these two are now whole REPOSITORY checkouts rather than the module-shaped
 	// copies that used to sit under drupal/. Without it the walk would reach node_modules/, vendor/
 	// and coverage/, every one of which contains .php
-	{ src: ROM_SRC, mount: 'modules/custom/cfw_do_sqlite', parts: MODULE_PARTS },
-	{ src: DRUPFLARE_SRC, mount: 'modules/custom/drupflare', parts: MODULE_PARTS },
+	// `skip` names code under src/ that another CMS loads, so it never reaches a Drupal site
+	{ src: ROM_SRC, mount: 'modules/custom/cfw_do_sqlite', parts: MODULE_PARTS, skip: ['src/Sql'] },
+	{
+		src: DRUPFLARE_SRC,
+		mount: 'modules/custom/drupflare',
+		parts: MODULE_PARTS,
+		skip: ['src/Wp']
+	},
 	// drupflare/stream-http, read from the SIBLING REPO rather than copied under drupal/.
 	//
 	// Composer never runs on the edge, so a `require` in drupflare's composer.json ships nothing
@@ -111,8 +136,48 @@ const MODULES: { src: string; mount: string; parts?: readonly string[] }[] = [
 	{ src: STREAM_HTTP_SRC, mount: 'libraries/drupflare-stream-http/src' }
 ];
 
+/**
+ * The WordPress drop-in, bridge and host plugin, read from the same sibling that Drupal skips them in.
+ *
+ * `db.php` and `Bridge.php` sit side by side because the drop-in requires the bridge by `__DIR__`.
+ * The plugin directory mounts where WordPress loads must-use plugins from, and its siblings stay
+ * under `drupflare-host/` because WordPress runs every top-level file there as a plugin.
+ */
+export const WORDPRESS_MODULES: ModuleRow[] = [
+	{ src: `${DRUPFLARE_SRC}/src/Wp`, mount: 'wp-content', parts: ['db.php', 'Bridge.php'] },
+	{ src: `${DRUPFLARE_SRC}/src/Wp/mu`, mount: 'wp-content/mu-plugins' }
+];
+
 /** the module set each CMS packs */
-const CMS_MODULES: Record<Cms, typeof MODULES> = { drupal: MODULES };
+const CMS_MODULES: Partial<Record<Cms, ModuleRow[]>> = {
+	drupal: MODULES,
+	wordpress: WORDPRESS_MODULES
+};
+
+/**
+ * Where a CMS's pack and digest are written. Drupal keeps the paths the edge reads; the others
+ * write the pack under `assets/<cms>/` and the digest module under `src/<cms>/`.
+ *
+ * @internal
+ */
+export function driverOutputPaths(cms: Cms): { asset: string; digest: string } {
+	if (cms === 'drupal') {
+		return {
+			asset: join(repo, 'assets/driver.json'),
+			digest: join(repo, 'src/ops/driver-digest.ts')
+		};
+	}
+	return {
+		asset: join(repo, `assets/${cms}/driver.json`),
+		digest: join(repo, `src/${cms}/driver-digest.ts`)
+	};
+}
+
+function moduleSet(cms: Cms): ModuleRow[] {
+	const set = CMS_MODULES[cmsSelection(cms)];
+	if (set === undefined) throw new Error(`CMS=${cms} has no module set to pack yet`);
+	return set;
+}
 
 /**
  * The CMS this build packs: `CMS` from the environment, else the shipping config's var.
@@ -159,9 +224,12 @@ async function walk(dir: string): Promise<string[]> {
  *
  * @internal
  */
-export async function buildDriverAssets(cms: Cms = buildCms()): Promise<Record<string, string>> {
+export async function buildDriverAssets(
+	cms: Cms = buildCms(),
+	modules: ModuleRow[] = moduleSet(cms)
+): Promise<Record<string, string>> {
 	const files: Record<string, string> = {};
-	for (const { src, mount, parts } of CMS_MODULES[cmsSelection(cms)]) {
+	for (const { src, mount, parts, skip = [] } of modules) {
 		// resolve, not join: the sibling paths may be absolute
 		const from = resolve(repo, src);
 		// a suffix like `.info.yml` names `<machine name>.info.yml`, and the machine name comes from
@@ -187,6 +255,7 @@ export async function buildDriverAssets(cms: Cms = buildCms()): Promise<Record<s
 		}
 		for (const path of found.sort()) {
 			const rel = relative(from, path);
+			if (skip.some((dir) => rel.startsWith(`${dir}/`))) continue;
 			// the test fixtures and runner are host-side only; the FakeHost would shadow
 			// nothing but it has no business in a deployed tree
 			if (rel.startsWith('tests/')) continue;
@@ -300,6 +369,16 @@ ${Object.entries(permissions)
 `;
 }
 
+/** the exact bytes that belong in a non-Drupal CMS's digest module, which carries no routes */
+export function serialiseDigestOnly(digest: string): string {
+	return `/**
+ * The packed driver's identity. GENERATED -- run \`CMS=<cms> bun run assets:driver\` after any
+ * change in a sibling.
+ */
+export const DRIVER_DIGEST = '${digest}';
+`;
+}
+
 /**
  * Writes the mounted tree to a real Drupal root, so a NATIVE install can enable these modules.
  *
@@ -346,15 +425,20 @@ if (import.meta.main) {
 		console.log(JSON.stringify({ root: to, files: written.length }, null, 2));
 		process.exit(0);
 	}
-	const files = await buildDriverAssets();
+	const cms = buildCms();
+	const out = driverOutputPaths(cms);
+	const files = await buildDriverAssets(cms);
 	const body = serialiseDriverAssets(files);
-	await mkdir(join(repo, 'assets'), { recursive: true });
-	await writeFile(dest, body);
+	await mkdir(dirname(out.asset), { recursive: true });
+	await writeFile(out.asset, body);
 	const digest = driverDigest(body);
 	const routes = declaredRouteNames(files);
+	await mkdir(dirname(out.digest), { recursive: true });
 	await writeFile(
-		DRIVER_DIGEST_PATH,
-		serialiseDriverDigest(digest, routes, declaredRoutePermissions(files))
+		out.digest,
+		cms === 'drupal'
+			? serialiseDriverDigest(digest, routes, declaredRoutePermissions(files))
+			: serialiseDigestOnly(digest)
 	);
 	const bytes = Object.values(files).reduce((n, s) => n + s.length, 0);
 	console.log(
@@ -364,7 +448,7 @@ if (import.meta.main) {
 				sourceBytes: bytes,
 				digest,
 				routes: routes.length,
-				dest
+				dest: out.asset
 			},
 			null,
 			2

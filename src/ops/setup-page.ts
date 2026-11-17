@@ -8,11 +8,28 @@
  * @module
  */
 import { SETUP_PAGE_CSS, SETUP_PAGE_HTML, SETUP_PAGE_JS } from '../site/generated/assets';
+import { cmsOf } from '../util/cms';
 import { renderTemplate } from '../util/template';
 import { wantsHtml } from './warming-page';
 
 /** the `cfw_meta` key `/firstrun` stamps once a site has been configured */
 export const FIRST_RUN_KEY = 'first_run_at';
+
+/** the CMSs whose first administrator is created by `/firstrun`, so an unclaimed site has no way in */
+const CLAIMED_BY_FIRSTRUN = new Set(['drupal', 'wordpress']);
+
+/**
+ * Whether the setup page is out of the way: the owner has claimed the site, or the CMS has no claim
+ * step. The claim creates the first administrator; nothing in another CMS waits on it.
+ */
+export function claimed(site: {
+	env?: unknown;
+	metaGet(key: string): string | null | undefined;
+}): boolean {
+	return (
+		!CLAIMED_BY_FIRSTRUN.has(cmsOf(site.env)) || (site.metaGet(FIRST_RUN_KEY) ?? null) !== null
+	);
+}
 
 /**
  * Whether this request should be answered with the setup page.

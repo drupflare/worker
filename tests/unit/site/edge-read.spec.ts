@@ -38,6 +38,7 @@ function context(site: string, kv: PageKv): FrontContext {
 		t0: Date.now(),
 		site,
 		path: PATH,
+		request: new Request(`${ORIGIN}${PATH}`),
 		serving: true,
 		cache: emptyCache,
 		origin: ORIGIN,

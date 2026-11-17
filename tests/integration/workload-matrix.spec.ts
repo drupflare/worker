@@ -6,7 +6,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 /**
  * What each workload class costs, on the meters the product is actually scored against.
  *
- * P31. The report admits authenticated traffic is largely unmeasured, and P7 is half built and
+ * The report admits authenticated traffic is largely unmeasured; the shared shell is half built and
  * cannot be SCORED without this -- so this is the input two other items were both waiting on.
  *
  * FOUR COLUMNS, and the reason each is here rather than a fifth:
@@ -23,7 +23,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * column would be the exact instrument error this project has made five times. The columns above
  * are COUNTS, and a count is the same number locally and on the edge.
  *
- * THE MEASUREMENT IS RELATIVE. Absolutes move with the pack; what P7 needs to know is
+ * THE MEASUREMENT IS RELATIVE. Absolutes move with the pack; what the shared shell needs to know is
  * whether an authenticated render costs enough MORE than an anonymous one to be worth a shell, and
  * that is a ratio. Each case asserts its shape rather than its value, and the docblock carries the
  * readings so a later run can be compared against them.
@@ -157,7 +157,7 @@ describe('the authenticated workload matrix', () => {
 	);
 
 	it(
-		'shows an AUTHENTICATED render is the case P7 exists for',
+		'shows an AUTHENTICATED render is the case the shared shell exists for',
 		async () => {
 			const costs = await matrix();
 			const anon = by(costs, 'anonymous front page');

@@ -192,12 +192,12 @@ describe('attribute', () => {
 
 describe('repeatSlope', () => {
 	const TSV = `
-p4-repeat1-s0	1000
-p4-repeat1-s1	1100
-p4-repeat1-s2	1200
-p4-repeat10-s0	2800
-p4-repeat10-s1	2900
-p4-repeat10-s2	3000
+boot-repeat1-s0	1000
+boot-repeat1-s1	1100
+boot-repeat1-s2	1200
+boot-repeat10-s0	2800
+boot-repeat10-s1	2900
+boot-repeat10-s2	3000
 `;
 
 	it('divides by the SPAN between the two counts, not by the high count', () => {
@@ -210,13 +210,13 @@ p4-repeat10-s2	3000
 	});
 
 	it('uses the widest pair when more than two counts are present', () => {
-		const s = repeatSlope(parseTsv(TSV + 'p4-repeat3-s0\t1400\n'));
+		const s = repeatSlope(parseTsv(TSV + 'boot-repeat3-s0\t1400\n'));
 		expect(s.lowN).toBe(1);
 		expect(s.highN).toBe(10);
 	});
 
 	it('refuses a single repeat count rather than dividing by zero', () => {
-		expect(() => repeatSlope(parseTsv('p4-repeat1-s0\t1000'))).toThrow(/two distinct/);
+		expect(() => repeatSlope(parseTsv('boot-repeat1-s0\t1000'))).toThrow(/two distinct/);
 	});
 
 	it('ignores boot-phase tags mixed into the same file', () => {

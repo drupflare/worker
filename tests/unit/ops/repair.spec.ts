@@ -5,6 +5,7 @@ import {
 	ROLLBACK_DWELL_MS,
 	RUNGS,
 	isQuarantined,
+	maySafelyRepair,
 	parseState,
 	recordOutcome,
 	release,
@@ -174,5 +175,18 @@ describe('state survives a round trip and a corrupt row', () => {
 
 	it('clamps a negative strike count rather than trusting it', () => {
 		expect(parseState('{"rung":"observe","strikes":-5}').strikes).toBe(0);
+	});
+});
+
+describe('maySafelyRepair', () => {
+	it('allows a repair only at depth zero with the gate free', () => {
+		expect(maySafelyRepair({ transactionDepth: 0 })).toBe(true);
+		expect(maySafelyRepair({ transactionDepth: 0, gateHeld: false })).toBe(true);
+	});
+
+	it('refuses an open, unknown or held state', () => {
+		expect(maySafelyRepair({ transactionDepth: 1 })).toBe(false);
+		expect(maySafelyRepair({})).toBe(false);
+		expect(maySafelyRepair({ transactionDepth: 0, gateHeld: true })).toBe(false);
 	});
 });

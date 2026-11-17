@@ -55,12 +55,11 @@ function memberNames(archive: string): string[] {
 	const names: string[] = [];
 	for (let at = 0; at + 512 <= tar.length && tar[at] !== 0;) {
 		names.push(
-			tar
-				.subarray(at, at + 100)
+			Buffer.from(tar.subarray(at, at + 100))
 				.toString('latin1')
 				.replace(/\0.*$/s, '')
 		);
-		const size = parseInt(tar.subarray(at + 124, at + 136).toString('latin1'), 8);
+		const size = parseInt(Buffer.from(tar.subarray(at + 124, at + 136)).toString('latin1'), 8);
 		at += 512 + Math.ceil(size / 512) * 512;
 	}
 	return names;

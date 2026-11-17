@@ -11,13 +11,13 @@ import {
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
- * P8: every capability vector, executed against the interpreter that ships.
+ * Every capability vector, executed against the interpreter that ships.
  *
  * ## What this file is FOR
  *
  * `capability-contract.ts` is a table of claims, and a table of claims about a runtime is exactly
- * the thing this project keeps catching itself getting wrong -- [[decorative-configuration]],
- * [[inert-shim-guard]], [[tested-but-never-called]] are all the same shape. So the table is not
+ * the thing this project keeps catching itself getting wrong: options nothing reads, shims that
+ * ship as no-ops, and tested code nothing calls are all the same shape. So the table is not
  * allowed to be a reading. Every row carries a PROBE, this runs all of them in one boot, and each
  * answer must equal the row's `expected`.
  *
@@ -49,7 +49,7 @@ async function runVectors(): Promise<Answers> {
 	return out;
 }
 
-describe('P8: the contract is well-formed before it is measured', () => {
+describe('the contract is well-formed before it is measured', () => {
 	it('has unique ids, a known group and evidence on every vector', () => {
 		const ids = VECTORS.map((v) => v.id);
 		expect(new Set(ids).size, 'a duplicate id makes one row unreachable').toBe(ids.length);
@@ -122,7 +122,7 @@ describe('P8: the contract is well-formed before it is measured', () => {
 	});
 });
 
-describe('P8: every vector, on the interpreter that ships', () => {
+describe('every vector, on the interpreter that ships', () => {
 	it(
 		'answers exactly what the contract says it answers',
 		async () => {
@@ -166,7 +166,7 @@ describe('P8: every vector, on the interpreter that ships', () => {
 	);
 });
 
-describe('P8: scoring a module against the contract', () => {
+describe('scoring a module against the contract', () => {
 	it('installs a module whose needs are all satisfied', () => {
 		const verdict = scoreModule(['http.outbound.deferred', 'async.queue']);
 		expect(verdict.installable).toBe(true);

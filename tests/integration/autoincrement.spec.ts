@@ -4,7 +4,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 /**
  * What `AUTOINCREMENT` costs on the rows-written meter.
  *
- * P29. SQLite's `INTEGER PRIMARY KEY AUTOINCREMENT` keeps a high-water mark in `sqlite_sequence`,
+ * SQLite's `INTEGER PRIMARY KEY AUTOINCREMENT` keeps a high-water mark in `sqlite_sequence`,
  * so every insert into such a table writes the row AND updates that table. `INTEGER PRIMARY KEY`
  * alone reuses rowids after a delete and writes nothing extra.
  *
@@ -13,7 +13,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * in the same object and driven with identical statements, so the difference is the keyword.
  *
  * **THE FIRST VERSION OF THIS FILE ASKED THE WRONG QUESTION AND THEN CLOSED THE ITEM ON IT.** It
- * asked "does this reduce rows per page FILL", measured no, and wrote P29 up as not worth doing.
+ * asked "does this reduce rows per page FILL", measured no, and wrote that up as not worth doing.
  * That answer is correct and it settles one workload out of a dozen. Rows written is charged on
  * every write the site makes, not only on regeneration: a node save, a revision, a user creation, a
  * path alias and a file record all pay it, and none of them appears in the fill path the
@@ -137,8 +137,8 @@ describe('the shipped schema, and where the charge actually lands', () => {
 	 *
 	 * Rows written binds regeneration, and a fill writes cache bins plus `cfw_page`. Neither
 	 * declares `AUTOINCREMENT`, so the 2.00x above is charged on the CONTENT path -- a node save --
-	 * and not on the path the ceiling is computed from. C34 already measured zero rows to
-	 * `watchdog` in a fill, which removes the one hot table that does declare it.
+	 * and not on the path the ceiling is computed from. An earlier measurement showed zero
+	 * rows to `watchdog` in a fill, which removes the one hot table that does declare it.
 	 */
 	it('does NOT touch the cache bins or the page store, which is what a fill writes', async () => {
 		const declared = await inObject(freshSite(), async (site: ServeDo) => {

@@ -11,7 +11,7 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
 /**
  * How many times one render crosses from PHP into the host, and which capability it crosses for.
  *
- * P36. The docs say an RPC method call on a Durable Object stub is its own RPC session and is
+ * The docs say an RPC method call on a Durable Object stub is its own RPC session and is
  * BILLED AS A DO REQUEST. This project reaches the object through `stub.fetch()`, so one request is
  * one billed request today -- but the bridge INSIDE the object had never been counted, and that
  * number has to exist before any RPC migration, or the migration converts a free inner call into a

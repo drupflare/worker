@@ -142,7 +142,7 @@ export function resetLaneBeliefs(): void {
  * compiled on 6/8 paths keyed on the path against 5/8 and 4/8 keyed on the session).
  *
  * An anonymous one-machine client presents one address, so it cannot spread across a pool (one rig
- * drive read `{r3: 662}`); `scripts/measure/v101-arms.ts --clients=N` gives a rig the spread.
+ * drive read `{r3: 662}`); `scripts/measure/deployed-readings.ts --clients=N` gives a rig the spread.
  */
 export function affinityKey(input: {
 	session?: string;

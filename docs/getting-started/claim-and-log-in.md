@@ -70,6 +70,7 @@ routes directly, without turning on `PW_DIAGNOSTICS`. These are the ones this pa
 | `/setup/oidc`   | set the OpenID Connect issuer and client id                         |
 | `/installable`  | whether a package can be installed here                             |
 | `/install`      | fetch a package from a registry and write its files                 |
+| `/install-lock` | install the packages of a composer lock; `DELETE` rolls one back    |
 | `/enable`       | turn an installed module on                                         |
 | `/modify`       | upload a module tree as a revision                                  |
 | `/reconcile`    | what a site still owes the shipping pack, and one step of it        |

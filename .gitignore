@@ -9,6 +9,8 @@ package-lock.json
 # ftp.drupal.org plus the four pinned contrib modules. One command rebuilds it:
 # bun run fetch:drupal (the same script .github/workflows/build.yml calls)
 drupal-src
+# the WordPress tree, pinned by config/wordpress.lock.json: bun run fetch:wordpress
+wordpress-src
 # no producer; read only by src/probes/min.ts and scripts/stage-edge-assets.sh
 drupal-min-src
 

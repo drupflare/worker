@@ -206,7 +206,7 @@ reading to routing**; a fitting explanation ends the investigation, which is wha
 than no explanation at all.
 
 **The affinity fact still holds for ANONYMOUS load** and is measured: a one-address drive answered
-`{r3: 662}`, one object for every sample. `v101-arms.ts --clients=N` presents N synthetic addresses,
+`{r3: 662}`, one object for every sample. `deployed-readings.ts --clients=N` presents N synthetic addresses,
 honoured by a local `wrangler dev` only.
 
 **A SCHEDULED ALARM FIRES BY ITSELF IN THE WORKERS POOL, so an assertion taken after

@@ -40,6 +40,7 @@ site is claimed.
 | ----------------------- | ---------------------------------------------------------------------- |
 | `/installable?module=X` | resolves the package and names any conflict with the shipped lock      |
 | `/install?module=X`     | fetches it and writes its files; runs the check first unless `force=1` |
+| `/install-lock`         | installs the packages of a composer lock; `DELETE ?session=` undoes it |
 | `/enable?module=X`      | installs it through Drupal's own module installer                      |
 
 Separate steps, because a package that has landed is not yet a module Drupal knows about and the two

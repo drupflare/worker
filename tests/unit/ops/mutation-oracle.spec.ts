@@ -141,6 +141,17 @@ describe('recording capabilities', () => {
 		expect(sink.get('cfwMail')).toBe(2);
 		expect(sink.has('cfwLog')).toBe(false);
 	});
+
+	it('leaves both exec bridges to the write tally, so a MySQL read is not an effect', () => {
+		const binary: Record<string, unknown> = {
+			cfwMysqlExec: () => '{}',
+			cfwSqlTxn: () => '{}'
+		};
+		const sink = new Map<string, number>();
+		expect(recordCapabilities(binary, sink)).toEqual([]);
+		(binary.cfwMysqlExec as () => string)();
+		expect(sink.size).toBe(0);
+	});
 });
 
 describe('building a profile', () => {

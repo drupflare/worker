@@ -1,21 +1,35 @@
 import {
 	authHeaders,
 	type BuildState,
+	cloneUrl,
 	createHookRequest,
 	defaultBranchRequest,
 	hasApi,
 	parseRemote,
 	type ProviderId,
 	PROVIDERS,
+	type PullRequest,
+	pullsRequest,
 	type Remote,
-	remoteId
+	remoteId,
+	smartAuth,
+	statusRequest
 } from '../ops/git-provider';
-import { type Advertisement, branchNames, discoverRefs, refSha } from '../ops/git-smart';
+import {
+	type Advertisement,
+	branchNames,
+	discoverRefs,
+	refSha,
+	requestRefs,
+	type SmartRemote
+} from '../ops/git-smart';
 import { clampInterval, DEFAULT_POLL_MINUTES, duePolls, safeMount } from '../ops/git-sync';
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage } from '../util/errors';
 import { jsonError } from '../util/reply';
 
+import { gitBackoff, gitClearBackoff, gitCredential } from './git-remotes';
+import type { GitHost } from './host';
 import { changeModuleFiles, renameModulePackage } from './module-files';
 
 export { gitApply, gitRestore, gitSync, gitVerifyBoot } from './git-delivery';
@@ -491,4 +505,89 @@ export async function handleGit(
 		site.metaSet(`git_lasterror_${id}`, errorMessage(e).slice(0, 300));
 		return jsonError(errorMessage(e), 400);
 	}
+}
+
+/** the git transport's view of a remote, which authenticates as Basic, unlike the API */
+export function gitSmart(host: GitHost, remote: Remote): SmartRemote {
+	const auth = smartAuth(remote, gitCredential(host, remote.id));
+	return { url: cloneUrl(remote), username: auth.username, token: auth.token };
+}
+
+/** one authenticated API GET, returning parsed JSON or a refusal */
+export async function gitGet(
+	host: GitHost,
+	remote: Remote,
+	url: string
+): Promise<{ ok: boolean; body: unknown; status: number }> {
+	const res = await fetch(url, {
+		headers: authHeaders(remote, gitCredential(host, remote.id))
+	});
+	let body: unknown;
+	try {
+		body = await res.json();
+	} catch {
+		body = undefined;
+	}
+	if (res.status === 429)
+		gitBackoff(host, remote.id, res.headers.get('retry-after') ?? undefined);
+	return { ok: res.ok, body, status: res.status };
+}
+
+/** the ref advertisement, which is the poll and works against any remote that speaks git */
+export async function gitRefs(host: GitHost, remote: Remote): Promise<Advertisement> {
+	try {
+		const ad = await discoverRefs(gitSmart(host, remote));
+		gitClearBackoff(host, remote.id);
+		return ad;
+	} catch (e) {
+		const message = errorMessage(e);
+		if (/ answered 4(29|03)/.test(message)) gitBackoff(host, remote.id);
+		throw e;
+	}
+}
+
+/**
+ * Writes one commit status, never a check run (a pasted token is refused by the check-run
+ * endpoints on all three providers).
+ */
+export async function gitWriteStatus(
+	host: GitHost,
+	remote: Remote,
+	sha: string,
+	state: BuildState,
+	description: string,
+	targetUrl: string
+): Promise<boolean> {
+	const post = statusRequest(remote, sha, state, description, targetUrl);
+	if (!post) return false;
+	const res = await fetch(post.url, {
+		method: 'POST',
+		headers: {
+			...authHeaders(remote, gitCredential(host, remote.id)),
+			'content-type': 'application/json'
+		},
+		body: JSON.stringify(post.body)
+	});
+	return res.ok;
+}
+
+/** every open request, from the provider API where there is one, else from the refs */
+export async function gitPulls(host: GitHost, remote: Remote): Promise<PullRequest[]> {
+	if (!hasApi(remote.provider)) {
+		const ad = await gitRefs(host, remote);
+		return requestRefs(ad).map((r) => ({
+			id: r.id,
+			title: `request ${r.id}`,
+			branch: r.ref,
+			target: remote.branch,
+			sha: r.sha,
+			author: '',
+			url: '',
+			draft: false
+		}));
+	}
+	const request = pullsRequest(remote);
+	const got = await gitGet(host, remote, request.url);
+	if (!got.ok) throw new Error(`the provider answered ${got.status}`);
+	return request.pick(got.body);
 }

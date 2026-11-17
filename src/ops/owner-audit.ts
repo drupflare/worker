@@ -220,6 +220,18 @@ export function readAudit(store: SealedStore): AuditLog {
 	};
 }
 
+const details = new WeakMap<Request, string>();
+
+/** attaches a handler-built `key=value` string to the route label of this request's entry */
+export function noteAuditDetail(request: Request, detail: string): void {
+	details.set(request, detail);
+}
+
+/** the detail a handler attached to this request, if any */
+export function takeAuditDetail(request: Request): string | undefined {
+	return details.get(request);
+}
+
 /** the query parameters a label may carry, since the rest can hold a token or a path */
 const LABEL_PARAMS = ['action', 'force', 'secrets', 'all', 'op', 'clear', 'replace'];
 
@@ -232,6 +244,7 @@ const GIT_READS = new Set(['list', 'check', 'branches', 'prs', 'diff', 'status']
 /** object routes recorded whatever the method or query */
 const ALWAYS = new Set([
 	'/__install',
+	'/__install-lock',
 	'/__enable',
 	'/__modify',
 	'/__restore',
@@ -262,6 +275,10 @@ export function auditedRoute(
 		case '/__pitr':
 		case '/__updb':
 		case '/__reconcile':
+		case '/__recycle':
+		case '/__ledger-gc':
+		case '/__strata-config':
+		case '/__strata-store':
 			audited = method === 'POST';
 			break;
 		case '/__firstrun':

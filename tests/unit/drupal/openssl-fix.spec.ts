@@ -18,10 +18,10 @@ import {
 /**
  * RSA and ECDSA signing over `node:crypto`, which is SYNCHRONOUS in workerd.
  *
- * P42.4 was scoped as "crypto.subtle covers RS256/ES256 but is async, so it takes the queue and
- * read-later pair" -- a two-invocation round trip for every signature. That premise is refuted:
- * `node:crypto` exposes `createSign`/`createVerify` here and they return in-line, so this is an
- * ordinary masked bridge like the zlib one and a caller sees a normal function.
+ * `crypto.subtle` covers RS256/ES256 but is async, which would cost a two-invocation round trip
+ * for every signature. `node:crypto` exposes `createSign`/`createVerify` here and they return
+ * in-line, so this is an ordinary masked bridge like the zlib one and a caller sees a normal
+ * function.
  *
  * ROUND TRIP RATHER THAN A FIXED VECTOR, for RSA. PSS/PKCS#1 v1.5 padding is deterministic for
  * RSA and a pinned signature WOULD be checkable, but the same test then cannot cover ECDSA, whose

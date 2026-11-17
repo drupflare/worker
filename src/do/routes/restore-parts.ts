@@ -13,6 +13,7 @@ import { DEFAULT_MAX_PAGED_RESTORE_BYTES, RESTORE_PART_MAX_BYTES } from '../../o
 import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
 import { jsonError } from '../../util/reply';
+import { keepsMark, MARK_REFUSAL } from '../role';
 
 /** the part body, counted as it arrives; one part is the most this route ever holds */
 async function readPartBody(request: Request): Promise<Uint8Array> {
@@ -138,8 +139,8 @@ export async function restoreParts(
 						code: 'bad_request'
 					});
 				}
-				if (mark !== null && site.isReplica()) {
-					return jsonError('a replica lane keeps no mark', 409);
+				if (mark !== null && keepsMark(site)) {
+					return jsonError(MARK_REFUSAL.message, MARK_REFUSAL.status);
 				}
 				const result = commitUpload(sql, storage, { id: uploadId, nowMs });
 				// noted under the label the upload was declared with, which the import carries

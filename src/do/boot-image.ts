@@ -131,7 +131,7 @@ export type BootImagePlan = {
  */
 export async function planBootImage(site: SitePhpDurableObject): Promise<BootImagePlan> {
 	if (!bootImageEnabled(site.env)) return { reason: 'off' };
-	if (site.isReplica() || site.isPoolLane()) return { reason: 'a replica boots plain' };
+	if (site.isReplica()) return { reason: 'a replica boots plain' };
 	const assets = assetsOf(site);
 	if (!assets) return { reason: 'no ASSETS binding' };
 	const strict = siteBootContext(site);

@@ -23,7 +23,7 @@
  *   bun scripts/measure/lane-sweep.ts --workers=1@a.workers.dev,32@b.workers.dev --rounds=3
  */
 
-import { coveringSpread } from './v101-arms';
+import { coveringSpread } from './deployed-readings';
 
 type Args = Record<string, string | undefined>;
 const args = (): Args => {

@@ -31,7 +31,7 @@ import { artifactGate } from './helpers/artifact-gate';
 const oracle = oracleMatchesArtifact();
 
 /**
- * P27's corpus, asserted rather than described.
+ * The unicode corpus, asserted rather than described.
  *
  * The 1,232 hand-chosen cases in `mb-parity.php` sample. They cannot see a wrong TABLE, which is
  * why a one-off sweep of every scalar value found 95 lower, 95 upper and 273 titlecase mappings
@@ -232,7 +232,7 @@ describeIfSubject('the shipping tables', () => {
 	it('reduces the BARE polyfill by the amounts on record', () => {
 		const c = readArtifact();
 		const s = subjectSweep();
-		// the four figures P27 was opened with. They are a property of the pinned polyfill
+		// the four figures this case started from. They are a property of the pinned polyfill
 		// version, so a change here means upstream regenerated its unidata, not that this broke
 		expect(diffCase(expand(c.case.lower), expand(s.bare.case.lower as Packed)).length).toBe(95);
 		expect(diffCase(expand(c.case.upper), expand(s.bare.case.upper as Packed)).length).toBe(95);

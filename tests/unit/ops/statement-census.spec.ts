@@ -137,6 +137,41 @@ describe('recording one crossing', () => {
 		});
 	});
 
+	it('decodes a cfwMysqlExec as one statement, with backticks stripped and the reply meters', () => {
+		const log: CensusCall[] = [];
+		const reply = JSON.stringify({
+			ok: true,
+			kind: 'rows',
+			columns: ['option_value'],
+			rows: [['a'], ['b']],
+			rowsRead: 2,
+			rowsWritten: 0
+		});
+		const sql = "SELECT option_value FROM `wp_options` WHERE option_name = 'x'";
+		recordCrossing(log, 'cfwMysqlExec', JSON.stringify({ sql }), reply);
+		expect(log).toEqual([
+			{
+				name: 'cfwMysqlExec',
+				fingerprint: 'SELECT option_value FROM `wp_options` WHERE option_name = ?',
+				table: 'wp_options',
+				rowsRead: 2,
+				rowsWritten: 0,
+				rows: 2,
+				resultBytes: reply.length,
+				viaTxn: false,
+				key: null
+			}
+		]);
+		const write: CensusCall[] = [];
+		recordCrossing(
+			write,
+			'cfwMysqlExec',
+			JSON.stringify({ sql: "INSERT INTO `wp_options` (option_name) VALUES ('a')" }),
+			JSON.stringify({ ok: true, kind: 'write', affected: 1, insertId: 4, rowsWritten: 3 })
+		);
+		expect(write[0]).toMatchObject({ table: 'wp_options', rowsWritten: 3 });
+	});
+
 	it('expands a cfwSqlTxn into one record per statement, so the two counts can diverge', () => {
 		const log: CensusCall[] = [];
 		recordCrossing(

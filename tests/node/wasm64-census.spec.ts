@@ -11,7 +11,7 @@ import {
 } from '../../scripts/measure/wasm64-census';
 
 /**
- * The one-sided bound that decides whether P26 needs a build.
+ * The one-sided bound that decides whether the wasm64 arm needs a build.
  *
  * The arithmetic is the whole instrument, so it is what gets asserted -- including the direction of
  * its own conclusion, because a bound that could only ever say "fits" would be decoration. The
@@ -133,7 +133,7 @@ describe('the bound', () => {
 	 * on arithmetic that proves nothing, so the authenticated workload MUST come back over the cap at
 	 * today's figures -- that is what says a build is still required.
 	 */
-	it('does NOT accept the authenticated render, which is why P26 still needs a build', () => {
+	it('does NOT accept the authenticated render, which is why wasm64 still needs a build', () => {
 		const floor = 3_011_523 + 4_646_863; // the shipping data section plus the MEMFS ceiling
 		expect(boundFor(PEAKS.auth, floor, 0).fits).toBe(false);
 		expect(boundFor(PEAKS.render, floor, 0).fits).toBe(true);

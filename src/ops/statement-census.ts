@@ -10,7 +10,7 @@ import { writeTargetTable } from '../db/write-tally';
 
 /** one statement, decomposed far enough to classify it */
 export type CensusCall = {
-	/** the capability crossed for; `cfwSqlExec` and `cfwSqlTxn` are the only ones carrying SQL */
+	/** the capability crossed for; `cfwSqlExec`, `cfwSqlTxn` and `cfwMysqlExec` carry SQL */
 	name: string;
 	/** the statement's shape with literals and bindings as `?`; null when it carried no SQL */
 	fingerprint: string | null;
@@ -204,7 +204,8 @@ export function recordCrossing(
 	const request = parseJson(arg);
 	const reply = parseJson(result);
 
-	if (name === 'cfwSqlExec') {
+	// the MySQL text is recorded as sent; its reply carries the meters of the SQLite it became
+	if (name === 'cfwSqlExec' || name === 'cfwMysqlExec') {
 		log.push(statementRecord(name, request?.sql, request?.params, reply, resultBytes, false));
 		return;
 	}

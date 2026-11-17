@@ -1,6 +1,8 @@
 import { MODULE_HEADER_NAMES } from '../ops/module-headers';
 import { lookupPageMemo, pageMemoHeaders, storePageMemo } from '../ops/page-memo';
 import { readPage, readStalePage } from '../ops/page-store';
+import { storesPath } from '../ops/store-rule';
+import { cmsOf } from '../util/cms';
 import { pageKeyUrl, readGeneration } from './edge-cache';
 import { primeLanes } from './memos';
 import type { AuthState, EdgeRead, FrontContext } from './types';
@@ -12,7 +14,12 @@ export async function readEdgeTiers(
 ): Promise<Response | EdgeRead> {
 	const { env, url, t0, site, path, serving, cache, origin, bucket } = f;
 	const { personalised } = auth;
-	const edgeWanted = serving && url.searchParams.get('edge') !== '0' && !personalised;
+	const edgeWanted =
+		serving &&
+		url.searchParams.get('edge') !== '0' &&
+		!personalised &&
+		// a CMS that stores nothing in this environment has no copy to read
+		storesPath(cmsOf(env), env, path);
 
 	// before the first routing decision, so a cold isolate routes to the pool on request one;
 	// concurrent with the generation read (separate maps, and only a miss routes)

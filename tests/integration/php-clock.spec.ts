@@ -4,18 +4,18 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 /**
  * What PHP's wall clock actually reads inside workerd, and what a caller does to it next.
  *
- * P41 SCHEDULED A SECURITY FIX ON A PREMISE NOBODY HAD MEASURED. RULE 0 records that in-PHP
+ * A SECURITY FIX WAS SCHEDULED ON A PREMISE NOBODY HAD MEASURED. RULE 0 records that in-PHP
  * `microtime()` "returns 0 on the edge", and every reading behind that sentence is a DELTA --
  * `steadySeqMs: [0]`, `wallMs: 0`, `/clock`'s own `busyMicrotimeMs`. Workers freeze `Date.now()`
  * between I/O boundaries; frozen is not zero, and the report says so itself two sections away. The
  * ABSOLUTE had never been read out of PHP anywhere, and it is a real epoch.
  *
  * WHAT IS REALLY BROKEN IS THE INT WIDTH, AND IT IS NOT THE CLOCK. `PHP_INT_SIZE` is 4 here, so
- * `(int) (microtime(true) * 1000)` and `(int) round(microtime(true) * 1e6)` -- the two idioms P41
- * names a real module uses -- both overflow and wrap. Measured, the cast is modular rather
+ * `(int) (microtime(true) * 1000)` and `(int) round(microtime(true) * 1e6)` -- the two idioms
+ * a real module uses -- both overflow and wrap. Measured, the cast is modular rather
  * than saturating: 1787454172276.0 casts to 747777140, exactly `mod 2^32` into a signed range.
  * That reorders the fix: a `cfwNow` host bridge returning `Date.now()` would hand PHP the same
- * float `microtime()` already gives it and change nothing. A 64-bit `zend_long` (P28) is what
+ * float `microtime()` already gives it and change nothing. A 64-bit `zend_long` is what
  * closes it.
  *
  * The two consequences, each the opposite of what was written down:

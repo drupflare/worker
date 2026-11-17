@@ -3,7 +3,7 @@ import { argon2HostCall } from '../../src/site/shims/argon2-fix';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
- * The two P42 host bridges as PHP sees them, on the interpreter that ships.
+ * The host bridges as PHP sees them, on the interpreter that ships.
  *
  * THIS FILE IS THE WIRING GATE, and that is its main job. Both shims are green in the workers lane
  * against their own JavaScript and both would stay green while `src/site-do.ts` installed neither

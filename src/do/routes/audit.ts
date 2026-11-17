@@ -5,6 +5,7 @@ import {
 	auditedRoute,
 	noteFailedAttempt,
 	readAudit,
+	takeAuditDetail,
 	verifyAuditChain
 } from '../../ops/owner-audit';
 import { sha256Hex } from '../../ops/owner-recovery';
@@ -84,9 +85,11 @@ export async function auditOwnerCall(
 			actor = await ownerActor(site, request);
 		}
 		if (actor === undefined) return;
-		const route =
+		let route =
 			(PUBLIC_NAME[url.pathname] ?? url.pathname.replace('/__', '/')) +
 			label.slice(url.pathname.length);
+		const detail = takeAuditDetail(request);
+		if (detail !== undefined) route += `${route.includes('?') ? '&' : '?'}${detail}`;
 		await appendAudit(auditStore(site), {
 			at: site.nowMs(),
 			route,

@@ -158,6 +158,22 @@ export function statementAllowedOnReplica(sql: string): boolean {
 	return target !== undefined && isReplicaLocalTable(target);
 }
 
+// session and catalog statements the MySQL bridge answers from this object's own tables or memory
+const MYSQL_SESSION_READ =
+	/^(?:SET\s+NAMES\b|SET\s+(?:SESSION\s+)?sql_mode\b|SHOW\b|DESCRIBE\b|DESC\b)/i;
+
+/**
+ * Whether a replica may run this MySQL statement: what {@link statementAllowedOnReplica} allows,
+ * plus the connect-time `SET` and the catalog reads (`SHOW`, `DESCRIBE`) that write nothing. The
+ * guard sees the statement before translation, and a replica that refused the connect would fail
+ * every request over to the primary.
+ */
+export function mysqlStatementAllowedOnReplica(sql: string): boolean {
+	const text = String(sql ?? '').trim();
+	if (compound(text)) return false;
+	return MYSQL_SESSION_READ.test(text) || statementAllowedOnReplica(sql);
+}
+
 /**
  * The generation fence: whether a replica's view is fresh enough to answer.
  *
@@ -216,13 +232,16 @@ export const REPLICA_SAFE_CAPABILITIES: ReadonlySet<string> = new Set([
 	'cfwFileRead',
 	'cfwFileList',
 	'cfwFileStat',
+	// a replica refuses its announcements itself (it takes no write), and its settle must not fail
+	'cfwWpTags',
 	// a configured string, identical on every lane
 	'cfwFilePublicBase',
 	// reads replicated `cfw_module_rev` rows; sibling `cfwSettings` is absent (writes account KV)
 	'cfwModules',
 	// classified per statement rather than wholesale; see below
 	'cfwSqlExec',
-	'cfwSqlTxn'
+	'cfwSqlTxn',
+	'cfwMysqlExec'
 ]);
 
 /** `per-call` is classified by statement; `mutating` is refused outright */
@@ -230,7 +249,7 @@ export type CapabilityVerdict = 'safe' | 'per-call' | 'mutating';
 
 /** the verdict for a bridge capability name; unnamed means mutating */
 export function classifyCapability(name: string): CapabilityVerdict {
-	if (name === 'cfwSqlExec' || name === 'cfwSqlTxn') return 'per-call';
+	if (name === 'cfwSqlExec' || name === 'cfwSqlTxn' || name === 'cfwMysqlExec') return 'per-call';
 	return REPLICA_SAFE_CAPABILITIES.has(name) ? 'safe' : 'mutating';
 }
 
@@ -346,11 +365,13 @@ export function enforceReadOnly(
 		}
 
 		const read = name === 'cfwSqlTxn' ? txnStatements : execStatements;
+		const allowed =
+			name === 'cfwMysqlExec' ? mysqlStatementAllowedOnReplica : statementAllowedOnReplica;
 		binary[name] = (...args: unknown[]) => {
 			const statements = read(args[0]);
 			// refuse an unreadable payload; the guard cannot see what it would authorise
 			if (statements === undefined) refuse(name, 'the statement payload could not be read');
-			const write = statements!.find((sql) => !statementAllowedOnReplica(sql));
+			const write = statements!.find((sql) => !allowed(sql));
 			if (write !== undefined) {
 				if (collect === undefined) {
 					refuse(
@@ -361,12 +382,12 @@ export function enforceReadOnly(
 				// run speculatively (`commit: false`, rolled back) so PHP reads its own write
 				const payload = speculative(args[0]);
 				if (payload === undefined) {
-					// `cfwSqlExec` has no rollback and the driver sends writes as transactions
+					// the exec bridges have no rollback; only the driver's transactions replay
 					refuse(
 						name,
-						name === 'cfwSqlExec'
-							? 'a write on the exec bridge cannot be rolled back, so it cannot be forwarded'
-							: 'the transaction payload could not be downgraded'
+						name === 'cfwSqlTxn'
+							? 'the transaction payload could not be downgraded'
+							: 'a write on the exec bridge cannot be rolled back, so it cannot be forwarded'
 					);
 				}
 				// a replay resends the whole buffer beside each read; collect only the commit

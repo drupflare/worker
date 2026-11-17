@@ -1,5 +1,7 @@
 import { IMAGE_ROUTE_PREFIX } from '../ops/image-runtime';
+import { storeKeyFor } from '../ops/store-rule';
 import { LOGIN_PATH } from '../ui/admin';
+import { cmsOf } from '../util/cms';
 import {
 	moduleAssetPath,
 	publicFileUri,
@@ -52,7 +54,14 @@ export function pageRewrite(f: FrontEntry): Response | undefined {
 		rewritten.searchParams.set('site', resolvedSite);
 		f.pageRequest = true;
 		// built from the origin so the visitor's query stays inside `path`
-		rewritten.searchParams.set('path', url.pathname + url.search);
+		const asked = url.pathname + url.search;
+		// a page is keyed, and rendered, under one form of its path; a submission is left as sent
+		rewritten.searchParams.set(
+			'path',
+			request.method === 'GET' || request.method === 'HEAD'
+				? storeKeyFor(cmsOf(f.env), asked)
+				: asked
+		);
 		request = new Request(rewritten, request);
 		url = rewritten;
 		f.request = request;

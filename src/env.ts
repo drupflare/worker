@@ -28,6 +28,11 @@ export interface SiteEnv extends BaseSiteEnv {
 	 */
 	ISOLATE_ABOVE_BYTES?: string | number;
 	PREFILL?: string;
+	/**
+	 * WordPress only: `1` lets an anonymous, cookie-free page enter the stores, which hold nothing
+	 * for WordPress otherwise. Off unless `1`; never set in `wrangler.jsonc` or `KV_OVERRIDABLE`.
+	 */
+	WORDPRESS_PAGE_CACHE?: string;
 	/** fragment assembly for authenticated GETs; on unless `0` */
 	SHELL_ASSEMBLY?: string;
 	/** the front worker's compiled-plan tier; on unless `0` */
@@ -126,6 +131,8 @@ export interface SiteEnv extends BaseSiteEnv {
 	/** argon2id password hashing; off unless `1`, because it rehashes every login */
 	ARGON2?: string;
 	DRUPAL_CRON?: string;
+	/** WordPress's cron drive; on unless `0` */
+	WORDPRESS_CRON?: string;
 	CRON_MAX_UNITS?: string | number;
 	CRON_MAX_ROWS?: string | number;
 	CRON_MAX_MS?: string | number;

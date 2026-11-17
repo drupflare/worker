@@ -16,6 +16,7 @@ import {
 import { fingerprintState, readStateRows } from '../../ops/state-fingerprint';
 import { type ForwardStatement, planForward, splitForward } from '../../ops/write-forwarding';
 import type { SitePhpDurableObject } from '../../site-do';
+import { refusesPrimaryRoutes, roleName } from '../role';
 
 /**
  * What this object publishes about its own authoritative state, and what it makes of a primary's.
@@ -57,7 +58,7 @@ export async function replica(
 		if (request.method !== 'POST') {
 			return Response.json({ error: 'readmit is a POST' }, { status: 405 });
 		}
-		if (site.isPoolLane()) {
+		if (refusesPrimaryRoutes(site)) {
 			return Response.json(
 				{
 					error: 'a lane is readmitted by the primary, not by another lane'
@@ -82,7 +83,7 @@ export async function replica(
 		if (request.method !== 'POST') {
 			return Response.json({ error: 'forward is a POST' }, { status: 405 });
 		}
-		if (site.isPoolLane()) {
+		if (refusesPrimaryRoutes(site)) {
 			return Response.json(
 				{ error: 'a lane forwards to the primary, not to another lane' },
 				{ status: 409 }
@@ -267,7 +268,7 @@ export async function replica(
 	});
 	const position = readPosition(site.logStore());
 	return Response.json({
-		role: site.isReplica() ? 'replica' : 'primary',
+		role: roleName(site),
 		generation: applied,
 		fingerprint,
 		schemaVersion,

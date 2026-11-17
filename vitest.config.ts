@@ -114,7 +114,7 @@ if (growthGlue && !existsSync(growthGlue)) {
 }
 
 /**
- * A pointer-ABI arm, selected by env so P26 is scored against the SAME specs as wasm32.
+ * A pointer-ABI arm, selected by env so wasm64 is scored against the SAME specs as wasm32.
  *
  * `DRUPFLARE_ABI=wasm64` points the seam at `.interp/php8.5-wasm64.{wasm,-worker.mjs}`, which
  * `phasm` builds from `src/rc/wasm64.rc.pending` -- the control rc with the ABI changed and nothing

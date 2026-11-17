@@ -111,16 +111,37 @@ describe('a scoped purge removes the dependent pages and nothing else', () => {
 	);
 
 	it(
-		'tells a page that depends on nothing from one that was never indexed',
+		'treats a page stored with an empty tag set as unsafe to scope against',
+		async () => {
+			// an earlier release stored `[]` for a render that declared no tags; it matches no tag,
+			// so a scoped purge would leave it served after every content change
+			const stub = freshSite();
+			const out = await inObject(stub, (raw) => {
+				const site = raw as unknown as Site;
+				store(site, '/node/1', ['node:1']);
+				store(site, '/static', []);
+				const scopedTo = site.pathsForTags(['node:1']);
+				const result = site.purgeForTags(['node:1'], 'cachetags', { bump: false });
+				return { scopedTo, result, remaining: paths(site) };
+			});
+			expect(out.scopedTo).toBeUndefined();
+			expect((out.result as Record<string, unknown>).scoped).toBe(false);
+			expect(out.remaining).toEqual([]);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'CONTROL: pages that all declare tags are still scoped',
 		async () => {
 			const stub = freshSite();
 			const answer = await inObject(stub, (raw) => {
 				const site = raw as unknown as Site;
-				// declares an EMPTY set, which is a real answer and not an absent one
-				store(site, '/static', []);
+				store(site, '/node/1', ['node:1']);
+				store(site, '/about', ['config:system.site']);
 				return site.pathsForTags(['node:1']);
 			});
-			expect(answer).toEqual([]);
+			expect(answer).toEqual(['/node/1']);
 		},
 		TIMEOUT
 	);

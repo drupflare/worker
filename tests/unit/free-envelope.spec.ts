@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { COLD_BOOT_MS } from '../../scripts/economics/measured';
 import { DO_REQ_RATE, WFP_BASE } from '../../scripts/economics/pricing';
 import { DURABLE_OBJECTS, WORKERS_FOR_PLATFORMS } from '../../scripts/economics/rates';
 import {
@@ -48,6 +49,8 @@ import {
 	STEADY_STATE_WARMTH,
 	storageCeiling,
 	WARM_INTERVAL_MS,
+	WORDPRESS_RENDER_SECONDS,
+	WORDPRESS_ROWS_PER_FILL,
 	WORKFLOW_STEP_CPU_MS
 } from '../../scripts/measure/free-envelope';
 
@@ -674,7 +677,7 @@ describe('THE ANSWER: the realRender default is CONSERVATIVE once the classes ar
 	});
 
 	it('keeps the once-per-object fill out of any per-day mix', () => {
-		// firstFillOnFreshObject is 157 rows, paid once per object; the fleet model charges it per site, never per day
+		// firstFillOnFreshObject is paid once per object; the fleet model charges it per site, never per day
 		expect(ROWS_PER_FILL.firstFillOnFreshObject).toBeGreaterThan(
 			ROWS_PER_FILL.firstEverForPath
 		);
@@ -1024,11 +1027,12 @@ describe('what a cold url costs its first visitor', () => {
 
 	it('refuses the inline boot on the CAP rather than on a budget', () => {
 		const inline = coldUrlCost().find((m) => m.mechanism === 'inlineBoot');
-		// cheapest on every meter and still refused: 1,398 ms against a 10 ms cap is 140x, which is
+		// cheapest on every meter and still refused: 1,264 ms against a 10 ms cap is 126x, which is
 		// why raising RENDER_BUDGET_MS moved nothing
 		expect(inline!.worker).toBe(1);
 		expect(inline!.do).toBe(1);
 		expect(inline!.fitsFreeCap).toBe(false);
+		expect(inline!.peakInvocationMs).toBe(COLD_BOOT_MS);
 		expect(inline!.peakInvocationMs / FREE_CPU_MS_CAP).toBeGreaterThan(100);
 	});
 
@@ -1212,5 +1216,34 @@ describe('the meter flush interval', () => {
 				SECONDS_PER_DAY / METER_FLUSH_SECONDS) *
 				FREE_QUOTAS.rowsPerMeterFlush
 		);
+	});
+});
+
+describe('the WordPress fill priced on a deployed render', () => {
+	const wordpress = (renderSeconds?: number) =>
+		envelope(DEFAULT_MIX, { rowsPerFill: WORDPRESS_ROWS_PER_FILL, renderSeconds });
+
+	it('leaves the Drupal figures where they were when no render time is given', () => {
+		expect(envelope(DEFAULT_MIX).duration.perFillGbS).toBeCloseTo(0.308 * DO_GB_ALLOCATED, 9);
+		expect(envelope(DEFAULT_MIX, { renderSeconds: undefined })).toEqual(envelope(DEFAULT_MIX));
+	});
+
+	it('prices a fill at the seconds it is given, which is the duration ceiling', () => {
+		const env = wordpress(WORDPRESS_RENDER_SECONDS.p50);
+		expect(env.duration.perFillGbS).toBeCloseTo(
+			WORDPRESS_RENDER_SECONDS.p50 * DO_GB_ALLOCATED,
+			9
+		);
+		const byDuration = Math.floor(env.duration.availableGbS / env.duration.perFillGbS);
+		expect(byDuration).toBe(45_138);
+	});
+
+	it('is bound by duration at the deployed wall and by rows at the local one', () => {
+		expect(wordpress(WORDPRESS_RENDER_SECONDS.p50).regenerationBoundBy).toBe('duration');
+		expect(wordpress(WORDPRESS_RENDER_SECONDS.local).regenerationBoundBy).toBe('rows');
+		const rows = Math.floor(
+			wordpress().writeBudget.regenerationRows / wordpress().writeBudget.rowsPerFill
+		);
+		expect(wordpress(WORDPRESS_RENDER_SECONDS.p50).regenerationsPerDay).toBeLessThan(rows);
 	});
 });

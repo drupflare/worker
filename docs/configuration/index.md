@@ -78,6 +78,7 @@ Every variable and binding on the configuration pages, once each.
 | `AGED_SERVE_MAX_MS`             | 60,000                                | [Serving](serving/index.md)                              |
 | `ASSET_AGGREGATES`              | unset                                 | [Serving](serving/static-assets.md#asset_aggregates)     |
 | `MEMORY_CACHE_BINS`             | unset                                 | [Serving](serving/page-cache.md#memory_cache_bins)       |
+| `WORDPRESS_PAGE_CACHE`          | off                                   | [Serving](serving/page-cache.md#wordpress_page_cache)    |
 | `MEMORY_CACHE_MAX_ITEMS`        | 64                                    | [Serving](serving/index.md)                              |
 | `RENDER_BUDGET_MS`              | per plan                              | [Serving](serving/index.md)                              |
 | `FILL_BATCH_SIZE`               | per plan                              | [Serving](serving/index.md)                              |

@@ -12,6 +12,7 @@
  * @module
  */
 
+import type { Cms } from '../util/cms';
 import { positionalBindings } from './replication-log';
 import { classifyState } from './state-inventory';
 
@@ -29,12 +30,26 @@ export function writeForwardEnabled(env?: { WRITE_FORWARD?: string }): boolean {
 }
 
 /**
- * Tables whose rows are an allocation rather than a value.
+ * The write tables each CMS names, as lower-cased table names.
  *
- * Enumerated rather than matched: a false positive costs a needless partition, a miss costs a
- * silent id collision.
+ * `allocation` holds tables whose rows are an allocation rather than a value; enumerated rather than
+ * matched, since a false positive costs a needless partition and a miss costs a silent id collision.
+ * `deferrable` holds tables whose rows record a request, not its result; the primary appends them
+ * after the commit. `sqlite_sequence` is the engine's, so every CMS carries it. WordPress and Joomla
+ * name no deferrable table yet and neither has a state inventory, so `classifyState` applies to
+ * Drupal alone and every other table of theirs is an origination.
  */
-const ALLOCATION_TABLES: ReadonlySet<string> = new Set(['sequences', 'sqlite_sequence']);
+const WRITE_TABLES: Record<
+	Cms,
+	{ allocation: ReadonlySet<string>; deferrable: ReadonlySet<string> }
+> = {
+	drupal: {
+		allocation: new Set(['sequences', 'sqlite_sequence']),
+		deferrable: new Set(['watchdog'])
+	},
+	wordpress: { allocation: new Set(['sqlite_sequence']), deferrable: new Set() },
+	joomla: { allocation: new Set(['sqlite_sequence']), deferrable: new Set() }
+};
 
 /**
  * What a lane risks by executing this statement's target itself.
@@ -42,9 +57,16 @@ const ALLOCATION_TABLES: ReadonlySet<string> = new Set(['sequences', 'sqlite_seq
  * `UNKNOWN` from the classifier answers `origination`: an unclassified write forwarded as merely
  * ordered is the one that corrupts.
  */
-export function hazardClass(table: string, collection?: string, name?: string): Hazard {
+export function hazardClass(
+	table: string,
+	collection?: string,
+	name?: string,
+	cms: Cms = 'drupal'
+): Hazard {
 	if (table === '') return 'origination';
-	if (ALLOCATION_TABLES.has(table)) return 'origination';
+	const tables = WRITE_TABLES[cms];
+	if (tables === undefined || tables.allocation.has(table) || cms !== 'drupal')
+		return 'origination';
 	const status = classifyState(table, collection, name);
 	if (status === 'LOCAL_EPHEMERAL') return 'none';
 	if (status === 'AUTHORITATIVE') {
@@ -103,11 +125,14 @@ export type ForwardStatement = {
  * allocation table is dropped even when reported, since a rowid stride says nothing about a counter
  * whose value is the allocation.
  */
-export function partitionedTables(statements: readonly ForwardStatement[]): string[] {
+export function partitionedTables(
+	statements: readonly ForwardStatement[],
+	cms: Cms = 'drupal'
+): string[] {
 	const out = new Set<string>();
 	for (const statement of statements) {
 		const table = (statement.minted ?? '').toLowerCase();
-		if (originable(table)) out.add(table);
+		if (originable(table, cms)) out.add(table);
 	}
 	return [...out].sort();
 }
@@ -119,8 +144,10 @@ export function partitionedTables(statements: readonly ForwardStatement[]): stri
  * own copy, which is zero for a table the restore refuses to copy (`watchdog`), so it re-mints ids
  * the primary already used. Refusing sends the batch to the primary, which allocates.
  */
-function originable(table: string): boolean {
-	if (table === '' || ALLOCATION_TABLES.has(table)) return false;
+function originable(table: string, cms: Cms): boolean {
+	const tables = WRITE_TABLES[cms];
+	if (tables === undefined || table === '' || tables.allocation.has(table)) return false;
+	if (cms !== 'drupal') return false;
 	return classifyState(table) !== 'PRIMARY_ONLY_SIDE_EFFECT';
 }
 
@@ -165,9 +192,6 @@ function tryBind(
 	}
 }
 
-/** tables whose rows record a request, not its result; the primary appends them after the commit */
-const DEFERRABLE_TABLES: ReadonlySet<string> = new Set(['watchdog']);
-
 /** a whole single-row insert and nothing after it, so a trailing clause cannot ride along */
 const WHOLE_INSERT =
 	/^\s*INSERT\s+INTO\s+("?[A-Za-z0-9_$]+"?)\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)\s*;?\s*$/i;
@@ -178,9 +202,12 @@ const WHOLE_INSERT =
  * A dblog row made every lane login an origination refusal. A lane-minted id the driver spliced in
  * is dropped so the primary allocates its own; any other shape is refused as before.
  */
-export function deferrable(statement: ForwardStatement): ForwardStatement | undefined {
+export function deferrable(
+	statement: ForwardStatement,
+	cms: Cms = 'drupal'
+): ForwardStatement | undefined {
 	const table = (statement.table ?? '').toLowerCase();
-	if (!DEFERRABLE_TABLES.has(table)) return undefined;
+	if (!WRITE_TABLES[cms]?.deferrable.has(table)) return undefined;
 	// drupal binds by name; reduce to `?` first
 	const bound = tryBind(statement);
 	if (bound === undefined) return undefined;
@@ -264,14 +291,17 @@ export function cacheTagIncrement(statement: ForwardStatement): ForwardStatement
 }
 
 /** a forwarded batch split into what the primary must sequence and what it may append afterwards */
-export function splitForward(statements: readonly ForwardStatement[]): {
+export function splitForward(
+	statements: readonly ForwardStatement[],
+	cms: Cms = 'drupal'
+): {
 	commit: ForwardStatement[];
 	deferred: ForwardStatement[];
 } {
 	const commit: ForwardStatement[] = [];
 	const deferred: ForwardStatement[] = [];
 	for (const statement of statements) {
-		const later = deferrable(statement);
+		const later = deferrable(statement, cms);
 		if (later) deferred.push(later);
 		else commit.push(cacheTagIncrement(statement) ?? statement);
 	}
@@ -301,7 +331,10 @@ export function planForward(input: {
 	 * Built by {@link partitionedTables} and re-filtered here because it crosses the wire.
 	 */
 	partitioned?: readonly string[];
+	/** the CMS whose tables the batch names; Drupal when absent */
+	cms?: Cms;
 }): ForwardPlan {
+	const cms = input.cms ?? 'drupal';
 	if (!Number.isFinite(input.parent) || input.parent < 0) {
 		return { action: 'refuse', reason: 'the batch carries no readable parent generation' };
 	}
@@ -311,13 +344,15 @@ export function planForward(input: {
 
 	// re-filtered, not trusted: an allocation table admitted on the sender's word is a collision
 	const partitioned = new Set(
-		(input.partitioned ?? []).map((table) => table.toLowerCase()).filter(originable)
+		(input.partitioned ?? [])
+			.map((table) => table.toLowerCase())
+			.filter((table) => originable(table, cms))
 	);
 	for (const statement of input.statements) {
 		const table = statement.table ?? '';
 		if (partitioned.has(table.toLowerCase())) continue;
 		const key = keyValueTarget(statement);
-		if (hazardClass(table, key?.collection, key?.name) === 'origination') {
+		if (hazardClass(table, key?.collection, key?.name, cms) === 'origination') {
 			const what = key ? `${table}:${key.collection}` : table || 'an unnamed table';
 			return { action: 'refuse', reason: `${what} originates a value a lane may not mint` };
 		}

@@ -15,6 +15,8 @@ const PRODUCED_BY: Record<string, string> = {
 	'assets/drupal/site.sqlite':
 		'bun run build:site-db <out> (verify with bun run check:site-db <out>)',
 	'assets/drupal-sql': 'bun run assets:sql',
+	'.interp/php8.5-worker.tuned.mjs': 'bun run restore:artifacts',
+	'.interp/php8.5.tuned.wasm': 'bun run restore:artifacts',
 	// not an asset but the same kind of dependency: the fetched Drupal tree, which
 	// `unicode-corpus.spec.ts` sweeps as its SUBJECT
 	'drupal-src/vendor/symfony/polyfill-iconv/Iconv.php': 'bun run fetch:drupal'

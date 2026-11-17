@@ -1,9 +1,3 @@
-import {
-	mkdirp,
-	mountDriver,
-	mountDrupalLazy,
-	mountDrupalStreaming
-} from '@drupflare/cartridge/fs';
 import { withMask } from '@drupflare/cartridge/mask';
 import { PHP_CODEC } from '@drupflare/durabledb/codec';
 import { PhpBase, type PhpBaseModuleFactory, type PhpRuntimeArgs } from 'php-wasm/PhpBase';
@@ -13,20 +7,13 @@ import { DISABLED, STANDIN_FIX } from '../drupal/standin-fix';
 import { SHIPPED_CAPABILITIES } from '../ops/catalog';
 import { recordEncounter } from '../ops/cold-encounter';
 import { emptyCrossings, wrapCrossings } from '../ops/crossings';
-import { DRIVER_DIGEST } from '../ops/driver-digest';
-import { OPCACHE_PACK } from '../ops/opcache-pack';
 import { parkEnabled } from '../ops/park';
 import { enforceReadOnly } from '../ops/replica';
-import { SHIPPED_LOCK_VERSIONS } from '../ops/shipped-lock';
-import { ensureHashSalt, hashSaltAssignment } from '../ops/site-secrets';
 import { writeForwardEnabled } from '../ops/write-forwarding';
 import {
 	DEFAULT_OPCACHE_MODE,
-	OPCACHE_PACK_ROOT,
 	opcacheIni,
 	opcacheMode,
-	opcacheSourceKey,
-	opcachePackState as packedOpcacheState,
 	type OpcacheMode
 } from '../runtime/opcache';
 import type { PhpInstance, SitePhpDurableObject } from '../site-do';
@@ -43,6 +30,7 @@ import { XMLWRITER_FIX } from '../site/shims/xmlwriter-fix';
 import { ZLIB_FIX, installZlib } from '../site/shims/zlib-fix';
 import { ZSTD_FIX, installZstd } from '../site/shims/zstd-fix';
 import { errorMessage } from '../util/errors';
+import { installTagBridge } from '../wordpress/tag-bridge';
 import { HeapRestoreIncomplete, heapRestoreChunkBudget, heapSnapshotEnabled } from './alarm';
 import {
 	bootImageBakeEnabled,
@@ -53,10 +41,8 @@ import {
 } from './boot-image';
 import { forwardTo } from './helpers';
 import { INTERPRETER_MEMORY, isolateResidency, shimGlobals, takeSpareMemory } from './isolate';
-import { packCachedEnv } from './lazy-mount';
-import { migrateEngine } from './levers';
-import { mountInstalledModules } from './packages';
-import { SERVICES_YAML, settingsOverride } from './settings';
+import { installMysqlBridge } from './mysql-bridge';
+import { treeBootFor } from './tree-boot';
 import type { PhpOutputEvent, SiteBinary } from './types';
 
 /** the binary seam; site-do.ts imports it because wrangler aliases that exact specifier */
@@ -149,6 +135,8 @@ export async function bootPhp(
 	opts: { skipRestore?: boolean },
 	seam: PhpSeam
 ): Promise<PhpInstance> {
+	// before any state moves, so a CMS with no boot leaves the object as it was
+	const bootTree = treeBootFor((site.env as { CMS?: string } | undefined)?.CMS);
 	site.encounters = recordEncounter(site.encounters, 'cold');
 	site.coldsSinceFlush = (site.coldsSinceFlush ?? 0) + 1;
 	// the heap a drop left behind, if any, so this boot never holds a second one beside it
@@ -210,6 +198,8 @@ export async function bootPhp(
 	// what the Worker knows (pool, meters, fill queue), handed to Drupal so it can be displayed
 	binary.cfwServeStats = () => JSON.stringify(self.serveStatsSync());
 	site.installCapabilities.call(self, binary);
+	// installed for every CMS: nothing calls it from Drupal, and the tallies list it by name
+	const mysql = installTagBridge(self, binary, installMysqlBridge(self, binary));
 	// ext-zlib over fflate, masked (a sync deflate is a long JS frame); installed even where
 	// zlib exists (the PHP half then defines nothing)
 	installZlib(binary as unknown as Record<string, unknown>, withMask);
@@ -266,83 +256,9 @@ export async function bootPhp(
 	// before any PHP runs: a handle minted before the pin cannot be pinned retroactively
 	site.pinHandles(binary);
 
-	// SITE_DB_PREFIX swaps only the database (the default pack has no node bundles)
-	// LAZY_MOUNT swaps the mount strategy: streaming inflates 39 MB up front (3,066 ms of a
-	// 3,754 ms cold start), lazy inflates on first open
-	const lazyOptions = {
-		dbPrefix: site.env?.SITE_DB_PREFIX || undefined,
-		// same condition as the streaming path below
-		database: migrateEngine(undefined, site.env) === 'php'
-	};
-	const opcachePackState = packedOpcacheState(
-		OPCACHE_PACK,
-		opcacheMode(site.env?.OPCACHE_MODE),
-		site.env?.LAZY_MOUNT === '1',
-		opcacheSourceKey(DRIVER_DIGEST, SHIPPED_LOCK_VERSIONS)
-	);
-	const packedOpcache = opcachePackState === 'usable';
-	const mountEnv = packCachedEnv(site.env);
-	site.mountInfo =
-		site.env?.LAZY_MOUNT === '1'
-			? packedOpcache
-				? await mountDrupalLazy(binary, mountEnv, {
-						...lazyOptions,
-						layers: [{ prefix: 'drupal-pf' }, { prefix: 'drupal-opc' }]
-					}).catch(() => mountDrupalLazy(binary, mountEnv, lazyOptions))
-				: await mountDrupalLazy(binary, mountEnv, lazyOptions)
-			: await mountDrupalStreaming(binary, site.env, {
-					dbPrefix: site.env?.SITE_DB_PREFIX || undefined,
-					// only the PHP migration engine opens the packed .sqlite (the JS engine
-					// would spend 6.47 MB and a subrequest)
-					database: migrateEngine(undefined, site.env) === 'php'
-				});
-	site.mountInfo.driver = await mountDriver(binary, site.env);
-	// opcache looks in /tmp/<system id>; the layer sits beside the tree, so a link joins them
-	const opcLayer =
-		'layers' in site.mountInfo && site.mountInfo.layers.some((l) => l.name === 'drupal-opc');
-	if (packedOpcache && opcLayer && OPCACHE_PACK) {
-		try {
-			(binary.FS as unknown as { symlink(target: string, path: string): void }).symlink(
-				`${OPCACHE_PACK_ROOT}/${OPCACHE_PACK.systemId}`,
-				`/tmp/${OPCACHE_PACK.systemId}`
-			);
-			site.mountInfo.opcachePack = OPCACHE_PACK.systemId;
-		} catch {
-			// an unlinked cache is a miss on every script, which is the `off` arm's cost
-		}
-	} else if (opcachePackState === 'stale') {
-		site.mountInfo.opcachePack = 'stale';
-	}
-	// at mount time, not settings.php: a restored heap never boots a kernel, so the override's
-	// `@mkdir()` would not run
-	try {
-		mkdirp(binary.FS, '/drupal/sites/default/files/config/sync');
-	} catch {
-		// a read-only or already-present node is not a boot failure
-	}
-	// after the packed driver, so an installed module overrides a packed file (the only place
-	// `cfw_module_file` reaches PHP)
-	site.installedModuleFiles = mountInstalledModules(site, binary);
+	await bootTree(site, binary);
 
-	// point the site at this driver, and at a salt only this site has
-	const settingsPath = '/drupal/sites/default/settings.php';
-	const existing = new TextDecoder().decode(binary.FS.readFile(settingsPath));
-	if (!existing.includes('cfw_do_sqlite')) {
-		// the pack ships no hash_salt, so this append is the only assignment (a failed override
-		// throws rather than sharing one salt)
-		const salt = hashSaltAssignment(ensureHashSalt(site.secretStore()));
-		// the pinned origin is interpolated here: settings.php runs once per boot and the pin
-		// belongs to the site
-		const override = settingsOverride({
-			origin: JSON.stringify(site.canonicalOrigin()),
-			...site.bootSettings()
-		});
-		binary.FS.writeFile(settingsPath, existing + override + salt);
-	}
-	// the path settings.php already registered but that never existed; see SERVICES_YAML
-	binary.FS.writeFile('/drupal/sites/default/services.yml', SERVICES_YAML);
-
-	site.php = { php, binary, out: site.out };
+	site.php = { php, binary, out: site.out, mysql };
 	site.phpBootedAt = site.nowMs();
 	site.bootMs = Date.now() - t0;
 	site.bootLinear = site.heapNow();

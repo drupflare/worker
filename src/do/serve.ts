@@ -1,12 +1,14 @@
-import { isAuthenticatedRequest } from '../ops/auth-budget';
+import { carriesAuthorization, isAuthenticatedRequest } from '../ops/auth-budget';
 import type { CacheTier } from '../ops/cache-tiers';
 import { ABSORBED_HEADER, foldAbsorbed, recordEncounter } from '../ops/cold-encounter';
 import { decodeModuleHeaders } from '../ops/module-headers';
 import { KV_GRANT_HEADER, kvWriteBudget, pageKvEnabled } from '../ops/page-store';
 import { ReplicaRequiresPrimary } from '../ops/replica';
-import { FIRST_RUN_KEY, needsSetup } from '../ops/setup-page';
+import { claimed, needsSetup } from '../ops/setup-page';
+import { servingFor, storesPath } from '../ops/store-rule';
 import { recordArrival } from '../ops/thermal';
 import type { SitePhpDurableObject } from '../site-do';
+import { cmsOf, type Cms } from '../util/cms';
 import { firstRow } from '../util/sql';
 import { openFillWindow } from './fill';
 import { noteResident } from './isolate';
@@ -106,9 +108,26 @@ export function withKvGrant(site: SitePhpDurableObject, request: Request, res: R
 		if (new URL(request.url).pathname !== '/__serve') return res;
 		const cache = res.headers.get('x-cfw-cache');
 		if (cache !== 'HIT' && cache !== 'RENDER') return res;
-		if (res.headers.has('set-cookie') || isAuthenticatedRequest(request)) {
+		const cms = cmsOf(site.env) as Cms;
+		if (res.headers.has('set-cookie') || isAuthenticatedRequest(request, cms)) {
 			return res;
 		}
+		// the CMS's own rule, on what the request and the response say
+		const refused = servingFor(cms).refuse(
+			{
+				method: request.method,
+				status: res.status,
+				hasCookie: request.headers.has('cookie'),
+				hasAuthorization: carriesAuthorization(request),
+				setsCookie: res.headers.has('set-cookie'),
+				cacheControl: res.headers.get('cache-control'),
+				path: new URL(request.url).searchParams.get('path') ?? '/',
+				contentType: res.headers.get('content-type'),
+				headerNames: [...request.headers.keys()]
+			},
+			site.env
+		);
+		if (refused !== undefined) return res;
 		if (site.isReplica() || !pageKvEnabled(site.env as never)) return res;
 		if (site.dailyKvWrites() >= kvWriteBudget(site.env)) return res;
 		site.kvGrantsSinceFlush = (site.kvGrantsSinceFlush ?? 0) + 1;
@@ -159,12 +178,14 @@ export async function route(site: SitePhpDurableObject, request: Request): Promi
 		// condition 1: no DDL from this lane, so it only runs once the tables exist
 		site.serveTablesReady === true &&
 		// the stored row is an anonymous render; `fillOne()` refuses to store one for a session
-		!isAuthenticatedRequest(request) &&
+		!isAuthenticatedRequest(request, cmsOf(site.env) as Cms) &&
+		// a CMS that stores nothing in this environment has no row to replay
+		storesPath(cmsOf(site.env), site.env, url.searchParams.get('path') ?? '/') &&
 		// a restore writes this cursor too: without the check a warm site answers 200 from
 		// `cfw_page` while a rollback overwrites the database (one indexed read, no DDL, no await)
 		site.migratePartial() === undefined &&
 		// the claim page is the gated lane's decision (the pack prefills `/`)
-		!needsSetup(request, site.metaGet(FIRST_RUN_KEY) !== null)
+		!needsSetup(request, claimed(site))
 	) {
 		const fast = site.serveFromStorage(url);
 		if (fast) return fast;

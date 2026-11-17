@@ -114,7 +114,7 @@ async function installProfile(): Promise<number> {
  * The AUTHENTICATED render, which is the third workload and the one nobody had scored.
  *
  * Same RULE 0c question as the install, asked again: a step chosen against an anonymous render and
- * an install has still not been scored against the workload P7 exists to serve. A logged-in render
+ * an install has still not been scored against the shared shell's workload. A logged-in render
  * carries a session, a user entity, an account menu and BigPipe's whole delivery path, none of
  * which an anonymous fill allocates.
  */

@@ -64,7 +64,7 @@ describe.skipIf(!haveAll)('the one-flag ABI arms, checked against the binaries',
 	});
 
 	it('applies 15,619 ACTIVE data segments, which is what refuses a pre-filled image', () => {
-		// P75's own refutation condition: active segments write into the imported memory DURING
+		// a pre-fill is refuted when active segments write into the imported memory DURING
 		// instantiation, so a pre-fill keeps everything above 3,413,674 and loses the static region
 		// under it -- SPLITTING the restore rather than removing it. Passive segments are the way out
 		const dataSection = (arm: string) => {

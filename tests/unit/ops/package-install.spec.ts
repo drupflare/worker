@@ -33,7 +33,7 @@ import type { SitePhpDurableObject } from '../../../src/site-do';
 import { freshSite, inObject } from '../../helpers/serve-do';
 
 /**
- * The installer P18's `composer require` and P40's git delivery share.
+ * The installer that `composer require` and git delivery share.
  *
  * The fixtures here are the SHAPES both repositories actually return, taken from live responses on
  * 2026-08-23 rather than invented: `packages.drupal.org` answers a `dist.url` pointing at

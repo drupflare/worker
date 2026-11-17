@@ -89,7 +89,15 @@ function checkout(seam: string, ignore?: string): string {
 				'!/drupal-pf/core.pf.bin',
 				'!/drupal-opc/',
 				'!/bootimage/',
-				'!/drupal-sql/'
+				'!/drupal-sql/',
+				'!/wordpress/',
+				'/wordpress/*',
+				'!/wordpress/driver.json',
+				'!/wordpress/pf/',
+				'/wordpress/pf/*',
+				'!/wordpress/pf/core.pf.json',
+				'!/wordpress/pf/core.pf.bin',
+				'!/wordpress/sql/'
 			].join('\n')
 	);
 	writeFileSync(join(root, 'assets/drupal/twig-bake.json'), '{"prefix":"x"}');

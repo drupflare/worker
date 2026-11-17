@@ -29,6 +29,9 @@ try {
   $manager = \Drupal::service('image.toolkit.manager');
   $out['gd'] = extension_loaded('gd') ? 1 : 0;
   $out['drupflareEnabled'] = \Drupal::moduleHandler()->moduleExists('drupflare') ? 1 : 0;
+  $out['shippedToolkit'] = \Drupal::config('system.image')->get('toolkit');
+  // a site that still names core's default, which is what the shipped seed no longer stores
+  \Drupal::configFactory()->getEditable('system.image')->set('toolkit', 'gd')->save();
   $out['configuredBefore'] = \Drupal::config('system.image')->get('toolkit');
   $out['replaced'] = \Drupal\drupflare\Image\ToolkitDefault::apply() ? 1 : 0;
   $out['replacedAgain'] = \Drupal\drupflare\Image\ToolkitDefault::apply() ? 1 : 0;
@@ -200,7 +203,8 @@ describe('image toolkit discovery on a shipped site', () => {
 		"replaces core's default gd once, and leaves the choice alone afterwards",
 		async () => {
 			const out = await measured();
-			expect(out['configuredBefore'], "a baked site stores core's default").toBe('gd');
+			expect(out['shippedToolkit'], 'the shipped seed stores cfw_images').toBe('cfw_images');
+			expect(out['configuredBefore'], "the probe site names core's default").toBe('gd');
 			expect(out['replaced']).toBe(1);
 			expect(out['replacedAgain']).toBe(0);
 			expect(out['configured']).toBe('cfw_images');

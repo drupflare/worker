@@ -17,6 +17,7 @@ import {
 	provisionedSite,
 	queuePath,
 	seedPage,
+	seedTaggedPage,
 	serveDirect,
 	statsOf,
 	stubRender,
@@ -550,6 +551,178 @@ describe('a path that can never render is retried and then dropped', () => {
 		expect(String(queued[0]?.last_error)).toContain('no route matched');
 	});
 
+	describe('a render that ended in exit()', () => {
+		it('is recorded unstorable and leaves the queue after one attempt', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				const calls = stubRender(site, () => ({
+					error: 'the request ended in exit()',
+					exited: true
+				}));
+				queuePath(site, '/exits');
+				const outcome = await site.fillOne();
+				return {
+					outcome,
+					calls: calls.length,
+					queued: site.sql.exec('SELECT path FROM cfw_fill_queue').toArray().length,
+					unstorable: site.unstorablePaths()
+				};
+			});
+			expect(out.calls).toBe(1);
+			expect(out.queued).toBe(0);
+			expect(out.unstorable).toEqual(['/exits']);
+			expect(out.outcome.failed).toBe('/exits');
+			expect(out.outcome.remaining).toBe(0);
+		});
+
+		it('is not rendered again by later alarm ticks', async () => {
+			const stub = await provisionedSite();
+			const calls = await inObject(stub, async (site) => {
+				const seen = stubRender(site, () => ({
+					error: 'the request ended in exit()',
+					exited: true
+				}));
+				queuePath(site, '/exits');
+				for (let i = 0; i < 3; i++) await site.fillOne();
+				return seen.length;
+			});
+			expect(calls).toBe(1);
+		});
+
+		it('CONTROL: an ordinary failure still takes three strikes and is not marked unstorable', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				const calls = stubRender(site, () => ({ error: 'no route matched' }));
+				queuePath(site, '/plain-failure');
+				for (let i = 0; i < 3; i++) await site.fillOne();
+				return { calls: calls.length, unstorable: site.unstorablePaths() };
+			});
+			expect(out).toEqual({ calls: 3, unstorable: [] });
+		});
+
+		it('CONTROL: a successful render is stored and not marked unstorable', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				stubRender(site, ({ path }) => pageFor(path));
+				queuePath(site, '/fine');
+				const outcome = await site.fillOne();
+				return {
+					filled: outcome.filled,
+					rows: site.sql.exec('SELECT path FROM cfw_page').toArray().length,
+					unstorable: site.unstorablePaths()
+				};
+			});
+			expect(out).toEqual({ filled: '/fine', rows: 1, unstorable: [] });
+		});
+
+		it('still renders for a live request on that path', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				const calls = stubRender(site, () => ({
+					error: 'the request ended in exit()',
+					exited: true
+				}));
+				queuePath(site, '/exits');
+				await site.fillOne();
+				const res = await serveDirect(site, '/exits');
+				return { status: res.status, calls: calls.length };
+			});
+			expect(out.calls).toBe(2);
+			expect(out.status).toBe(500);
+		});
+	});
+
+	describe('a path observed unstorable is not re-queued', () => {
+		const exited = () => ({ error: 'the request ended in exit()', exited: true });
+		const markUnstorable = async (site: ServeDo, path: string) => {
+			stubRender(site, exited);
+			queuePath(site, path, { arm: false });
+			await site.fillOne();
+		};
+
+		it('is not inserted into the queue by a live miss, and the request still renders', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				await markUnstorable(site, '/exits');
+				const depths: number[] = [];
+				stubRender(site, ({ path }) => {
+					depths.push(site.queueDepth());
+					return pageFor(path);
+				});
+				const res = await serveDirect(site, '/exits');
+				return { depths, status: res.status, cache: res.cache, queued: site.queueDepth() };
+			});
+			expect(out.depths).toEqual([0]);
+			expect(out.status).toBe(200);
+			expect(out.cache).toBe('RENDER');
+			expect(out.queued).toBe(0);
+		});
+
+		it('CONTROL: a storable path is still queued by a live miss', async () => {
+			const stub = await provisionedSite();
+			const depths = await inObject(stub, async (site) => {
+				const seen: number[] = [];
+				stubRender(site, ({ path }) => {
+					seen.push(site.queueDepth());
+					return pageFor(path);
+				});
+				await serveDirect(site, '/fine');
+				return seen;
+			});
+			expect(depths).toEqual([1]);
+		});
+
+		it('is queued again once a render stores it', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				await markUnstorable(site, '/changes');
+				const depths: number[] = [];
+				stubRender(site, ({ path }) => {
+					depths.push(site.queueDepth());
+					return pageFor(path);
+				});
+				// the live render of an unstorable path stores it, which clears the observation
+				await serveDirect(site, '/changes');
+				const cleared = site.unstorablePaths();
+				site.sql.exec('DELETE FROM cfw_page WHERE path = ?', '/changes');
+				await serveDirect(site, '/changes');
+				return { depths, cleared };
+			});
+			expect(out.cleared).toEqual([]);
+			expect(out.depths).toEqual([0, 1]);
+		});
+
+		it('is not re-queued by a tag purge', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				seedTaggedPage(site, '/exits', '<html>x</html>', ['node:1']);
+				seedTaggedPage(site, '/fine', '<html>y</html>', ['node:1']);
+				await markUnstorable(site, '/exits');
+				site.purgeForTags(['node:1'], 'cachetags', { bump: false });
+				return site.sql
+					.exec('SELECT path FROM cfw_fill_queue ORDER BY path')
+					.toArray()
+					.map((r) => String(r.path));
+			});
+			expect(out).toEqual(['/fine']);
+		});
+
+		it('is not re-queued by a scoped generation bump', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				seedTaggedPage(site, '/exits', '<html>x</html>', ['node:1']);
+				seedTaggedPage(site, '/fine', '<html>y</html>', ['node:1']);
+				await markUnstorable(site, '/exits');
+				site.bumpGeneration('manual', { scopedTo: ['/exits', '/fine'], arm: false });
+				return site.sql
+					.exec('SELECT path FROM cfw_fill_queue ORDER BY path')
+					.toArray()
+					.map((r) => String(r.path));
+			});
+			expect(out).toEqual(['/fine']);
+		});
+	});
+
 	// a render that threw answers 500; a warming 503 would retry the same failing render forever
 	// a warming 503 is right for a queued page and wrong for one that cannot render
 	it('answers 500 with the exception when the inline render threw', async () => {
@@ -883,6 +1056,83 @@ describe('the render origin is pinned, not believed', () => {
 			expect(Number(rows?.c ?? -1)).toBe(0);
 		}
 	);
+
+	it.each(['no-cache', 'must-revalidate, no-cache', 'max-age=0, NO-CACHE, public'])(
+		'refuses to store a render whose Cache-Control is %s',
+		async (header) => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				stubRender(site, ({ path }) => ({ ...pageFor(path), cacheControl: header }));
+				await serveDirect(site, '/no-cache');
+				const rows = site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/no-cache')
+					.toArray()[0];
+				return { rows: Number(rows?.c ?? -1), unstorable: site.unstorablePaths() };
+			});
+			expect(out).toEqual({ rows: 0, unstorable: ['/no-cache'] });
+		}
+	);
+
+	it.each(['public, max-age=300', 'max-age=300, x-no-cache-extension'])(
+		'CONTROL: a render whose Cache-Control is %s is still stored',
+		async (header) => {
+			const stub = await provisionedSite();
+			const rows = await inObject(stub, async (site) => {
+				stubRender(site, ({ path }) => ({ ...pageFor(path), cacheControl: header }));
+				await serveDirect(site, '/kept-cc');
+				return site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/kept-cc')
+					.toArray()[0];
+			});
+			expect(Number(rows?.c ?? -1)).toBe(1);
+		}
+	);
+
+	// a stored `[]` matches no tag purge, so the row would outlive every content change
+	it.each([
+		['an empty tag list', []],
+		['no tag list', undefined]
+	])(
+		'refuses to store a render with %s and records the path as unstorable',
+		async (_, cacheTags) => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				stubRender(site, ({ path }) => ({ ...pageFor(path), cacheTags }));
+				await serveDirect(site, '/untagged');
+				const rows = site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/untagged')
+					.toArray()[0];
+				return { rows: Number(rows?.c ?? -1), unstorable: site.unstorablePaths() };
+			});
+			expect(out).toEqual({ rows: 0, unstorable: ['/untagged'] });
+		}
+	);
+
+	it('does not mark an untagged 500 unstorable, since that answer is transient', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => ({ ...pageFor(path), status: 500, cacheTags: [] }));
+			await serveDirect(site, '/broken');
+			return site.unstorablePaths();
+		});
+		expect(out).toEqual([]);
+	});
+
+	it('CONTROL: a tagged render is stored with its tags and a checksum', async () => {
+		const stub = await provisionedSite();
+		const row = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => ({
+				...pageFor(path),
+				cacheTags: ['node:1', 'node_list']
+			}));
+			await serveDirect(site, '/tagged');
+			return site.sql
+				.exec('SELECT tags, tag_checksum FROM cfw_page WHERE path = ?', '/tagged')
+				.toArray()[0];
+		});
+		expect(row?.tags).toBe('["node:1","node_list"]');
+		expect(row?.tag_checksum).not.toBeNull();
+	});
 
 	// cfw_page is keyed by path alone, so a response varying by a header the key omits must not be stored
 	// the shipped pack varies only on Cookie (forwarded-headers.spec.ts); a module that varies says so in Vary

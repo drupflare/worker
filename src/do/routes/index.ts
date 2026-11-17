@@ -21,10 +21,14 @@ import {
 	deployment,
 	firstrun,
 	health,
+	ledgergc,
 	migrate,
 	ops,
 	originRoute,
 	reconcile,
+	recycle,
+	strataconfig,
+	stratastore,
 	updb
 } from './lifecycle';
 import { cfoauth, mailonboard } from './mail';
@@ -39,6 +43,7 @@ import {
 	githook,
 	install,
 	installable,
+	installLock,
 	modify,
 	moduleasset
 } from './packages';
@@ -82,6 +87,7 @@ export const ROUTES: Record<string, Route> = {
 	'/__export': exportRoute,
 	'/__installable': installable,
 	'/__install': install,
+	'/__install-lock': installLock,
 	'/__replica': replica,
 	'/__writemark': writemark,
 	'/__writechanges': writechanges,
@@ -113,6 +119,10 @@ export const ROUTES: Record<string, Route> = {
 	'/__serve-stats': serveStats,
 	'/__migrate': migrate,
 	'/__armfill': armfill,
+	'/__recycle': recycle,
+	'/__ledger-gc': ledgergc,
+	'/__strata-config': strataconfig,
+	'/__strata-store': stratastore,
 	'/__txnprobe': txnprobe,
 	'/__sql': sql,
 	'/__driver': driver,

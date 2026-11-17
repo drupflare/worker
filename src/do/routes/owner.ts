@@ -11,6 +11,7 @@ import { isBookmark, sealedExportRows } from '../../ops/site-secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
 import { jsonError } from '../../util/reply';
+import { keepsMark, MARK_REFUSAL } from '../role';
 
 /**
  * Point-in-time recovery, which the platform offers only as a runtime API (no wrangler
@@ -117,7 +118,8 @@ export async function restore(
 	if (mark !== null && !MARK_ID.test(mark)) {
 		return jsonError('mark must be 1 to 64 letters, digits or _.:-', 400);
 	}
-	if (mark !== null && site.isReplica()) return jsonError('a replica lane keeps no mark', 409);
+	if (mark !== null && keepsMark(site))
+		return jsonError(MARK_REFUSAL.message, MARK_REFUSAL.status);
 	const stored = storeImport(site.sql, await request.text(), {
 		storage: site.storage,
 		generation: url.searchParams.get('label') ?? String(site.nowMs()),

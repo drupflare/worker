@@ -2,13 +2,14 @@
 
 Four kinds of script live here, and the kind decides the language.
 
-| where              | what                                                   | language                  |
-| ------------------ | ------------------------------------------------------ | ------------------------- |
-| `scripts/*.ts`     | the live build and ops pipeline                        | TypeScript                |
-| `scripts/bench/`   | native-PHP price baselines, and build-variant A/B      | PHP, plus 2 `.mjs`        |
-| `scripts/probe/`   | paired experiment harnesses                            | shell, plus 2 PHP         |
-| `scripts/drupal/`  | Drupal tree manipulation, run under native PHP         | PHP                       |
-| `scripts/measure/` | instruments that produce a figure quoted in the report | TypeScript, plus 5 `.mjs` |
+| where              | what                                                        | language                  |
+| ------------------ | ----------------------------------------------------------- | ------------------------- |
+| `scripts/*.ts`     | the live build and ops pipeline                             | TypeScript                |
+| `scripts/bench/`   | native-PHP price baselines, and build-variant A/B           | PHP, plus 2 `.mjs`        |
+| `scripts/probe/`   | paired experiment harnesses                                 | shell, plus 2 PHP         |
+| `scripts/drupal/`  | Drupal tree manipulation, run under native PHP              | PHP                       |
+| `scripts/measure/` | instruments that produce a figure quoted in the report      | TypeScript, plus 5 `.mjs` |
+| `scripts/wp/`      | WordPress on the local PHP CLI through the MySQL translator | TypeScript, plus PHP      |
 
 ## The Build Pipeline
 
@@ -20,6 +21,18 @@ Each was converted with byte-identical output proven against the `.mjs` it repla
 output moves during a refactor invalidates every size figure downstream, so identity is the
 acceptance criterion. For `pack-drupal.ts` the proof is `tests/node/pack-drupal.spec.ts`, which
 carries the artifact digests the `.mjs` produced on a synthetic Drupal tree across all five modes.
+
+### The WordPress Pack
+
+`bun run assets:wordpress` builds what a `CMS=wordpress` site mounts, under `assets/wordpress/`:
+`gen-driver-assets.ts` with `CMS=wordpress` packs the drop-in, the bridge and the host plugin from the
+`drupflare` sibling, `pack-wordpress.ts` packs the tree (every `.php`, plus the non-PHP files PHP
+opens) through `pack-perfile.ts`, and `bake-wordpress.ts` runs WordPress's own installer through the
+translator, runs a second process that writes the rewrite rules (a taxonomy registers its archive
+rules only when the permalink option is already set at init), and cuts the database into chunks
+with `pack-sql.ts --cms=wordpress`. It is not part of
+`build-local.ts`, which builds Drupal. `scripts/wp/trace.php` lists the files PHP opens under a
+tree, which is how the non-PHP rule in `pack-wordpress.ts` is checked.
 
 ### Node Rather Than Bun
 

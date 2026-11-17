@@ -6,7 +6,7 @@ import { freshSite, inObject, provisionedSite, type ServeDo } from '../helpers/s
 /**
  * `Drupal::httpClient()` on the shipping binary, end to end.
  *
- * P39: the fetch succeeded and Guzzle threw the result away. `StreamHandler::createStream()` opens
+ * The fetch succeeded and Guzzle threw the result away. `StreamHandler::createStream()` opens
  * the URL through the registered https wrapper, gets a live resource, and then reads
  * `$http_response_header` -- which only PHP's own http wrapper populates -- so `lastHeaders` is
  * empty, `HeaderProcessor::parseHeaders([])` raises, and every call to every one of the ten core

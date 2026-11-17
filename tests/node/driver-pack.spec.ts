@@ -1,15 +1,27 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	writeFileSync
+} from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { cmsSelection } from '../../scripts/cms.ts';
 import {
 	DRIVER_ASSET_PATH,
+	DRIVER_DIGEST_PATH,
+	MODULES as DRUPAL_MODULES,
 	buildCms,
 	buildDriverAssets,
 	driverDigest,
+	driverOutputPaths,
 	serialiseDriverAssets,
 	serialiseDriverDigest
 } from '../../scripts/gen-driver-assets.ts';
@@ -275,6 +287,85 @@ describe('the packer ships the libraries a page attaches', () => {
 	});
 });
 
+describe('a module row can skip subtrees another CMS owns', () => {
+	it('never packs a skipped subtree, and skips on a path-segment boundary', async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'driver-pack-skip-'));
+		try {
+			for (const file of [
+				'src/Keep.php',
+				'src/Wp/db.php',
+				'src/Wp/deep/a.php',
+				'src/Wpx/a.php'
+			]) {
+				mkdirSync(dirname(join(dir, file)), { recursive: true });
+				writeFileSync(join(dir, file), '<?php\n');
+			}
+			const files = await buildDriverAssets('drupal', [
+				{ src: dir, mount: 'modules/custom/x', skip: ['src/Wp'] }
+			]);
+			expect(Object.keys(files)).toEqual([
+				'modules/custom/x/src/Keep.php',
+				'modules/custom/x/src/Wpx/a.php'
+			]);
+		} finally {
+			rmSync(dir, { recursive: true });
+		}
+	});
+
+	it('is set on the two Drupal rows, so the CMS-owned code under src stays out of the pack', async () => {
+		const skips = Object.fromEntries(DRUPAL_MODULES.map((row) => [row.mount, row.skip ?? []]));
+		expect(skips['modules/custom/cfw_do_sqlite']).toEqual(['src/Sql']);
+		expect(skips['modules/custom/drupflare']).toEqual(['src/Wp']);
+		const paths = Object.keys(await buildDriverAssets());
+		expect(paths.filter((p) => /\/src\/(Sql|Wp)\//.test(p))).toEqual([]);
+	});
+});
+
+describe('the WordPress row set packs the sibling code Drupal skips', () => {
+	it('puts the drop-in, the bridge and the host plugin where WordPress loads them from', async () => {
+		const paths = Object.keys(await buildDriverAssets('wordpress')).sort();
+		expect(paths).toEqual([
+			'wp-content/Bridge.php',
+			'wp-content/db.php',
+			'wp-content/mu-plugins/drupflare-host.php',
+			'wp-content/mu-plugins/drupflare-host/health.php',
+			'wp-content/mu-plugins/drupflare-host/status.php',
+			'wp-content/mu-plugins/drupflare-host/tags.php'
+		]);
+	});
+
+	it('leaves WordPress code out of the Drupal pack only because of the skip: without it the drop-in leaks', async () => {
+		const unskipped = DRUPAL_MODULES.map(({ skip: _skip, ...row }) => row);
+		const leaked = Object.keys(await buildDriverAssets('drupal', unskipped));
+		expect(leaked).toContain('modules/custom/drupflare/src/Wp/db.php');
+		const shipped = Object.keys(await buildDriverAssets('drupal'));
+		expect(shipped.some((p) => p.includes('/src/Wp/'))).toBe(false);
+	});
+
+	it('moves every path with the mount: a different mount is a different pack', async () => {
+		const rows = (await import('../../scripts/gen-driver-assets.ts')).WORDPRESS_MODULES;
+		const moved = await buildDriverAssets(
+			'wordpress',
+			rows.map((row) => ({ ...row, mount: `elsewhere/${row.mount}` }))
+		);
+		expect(Object.keys(moved).every((p) => p.startsWith('elsewhere/wp-content/'))).toBe(true);
+		expect(Object.keys(moved)).not.toContain('wp-content/db.php');
+	});
+
+	it('keeps the drop-in and the bridge side by side, since the drop-in requires the bridge by directory', async () => {
+		const files = await buildDriverAssets('wordpress');
+		expect(files['wp-content/db.php']).toContain("__DIR__ . '/Bridge.php'");
+	});
+
+	it('writes the digest module for WordPress under src/wordpress and the pack under assets/wordpress', async () => {
+		const stale = await readFile(driverOutputPaths('wordpress').asset, 'utf8').catch(
+			() => undefined
+		);
+		if (stale === undefined) return;
+		expect(stale).toBe(serialiseDriverAssets(await buildDriverAssets('wordpress')));
+	});
+});
+
 describe('the build packs the CMS the shipping config selects', () => {
 	it('reads CMS from wrangler.jsonc, which sets it explicitly', () => {
 		const vars = JSON.parse(
@@ -285,13 +376,32 @@ describe('the build packs the CMS the shipping config selects', () => {
 	});
 
 	it('fails on a value it cannot pack, and on a missing one', async () => {
-		expect(() => cmsSelection('wordpress')).toThrow(/not a CMS this build can pack/);
+		expect(() => cmsSelection('nope')).toThrow(/not a CMS this build can pack/);
 		expect(() => cmsSelection(undefined)).toThrow(/not a CMS this build can pack/);
-		expect(() => cmsSelection('Drupal')).toThrow();
-		await expect(buildDriverAssets('wordpress' as 'drupal')).rejects.toThrow(
-			/not a CMS this build can pack/
+		expect(() => cmsSelection('Drupal')).toThrow(/not a CMS this build can pack/);
+		expect(() => cmsSelection('WordPress')).toThrow(/not a CMS this build can pack/);
+		expect(() => buildCms('nope')).toThrow(/nope/);
+	});
+
+	it('accepts wordpress and joomla by name but refuses to pack a CMS with no module set', async () => {
+		for (const name of ['wordpress', 'joomla'] as const) {
+			expect(cmsSelection(name)).toBe(name);
+			expect(buildCms(name)).toBe(name);
+		}
+		await expect(buildDriverAssets('joomla')).rejects.toThrow(/no module set/);
+	});
+
+	it('keeps the Drupal outputs where the edge reads them and puts other CMSs under assets', () => {
+		expect(driverOutputPaths('drupal')).toEqual({
+			asset: DRIVER_ASSET_PATH,
+			digest: DRIVER_DIGEST_PATH
+		});
+		expect(driverOutputPaths('wordpress').asset).toBe(
+			join(ROOT, 'assets/wordpress/driver.json')
 		);
-		expect(() => buildCms('wordpress')).toThrow(/wordpress/);
+		expect(driverOutputPaths('wordpress').digest).toBe(
+			join(ROOT, 'src/wordpress/driver-digest.ts')
+		);
 	});
 
 	it('packs the same bytes whether the selection is explicit or read from the config', async () => {

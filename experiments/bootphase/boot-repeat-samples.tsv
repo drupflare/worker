@@ -1,0 +1,17 @@
+# cfw-bootphase, /drupal?path=/&repeat=N on FRESH migrated sites, one site per sample.
+# Both `page` and `dynamic_page_cache` emptied before every iteration, so all N are renders:
+# verified status 200 / 12,304 bytes / pageCache MISS / dynamicCache MISS on every run.
+# Source: Workers Observability, $workers.cpuTimeMs, executionModel=durableObject,
+# grouped by $workers.event.request.search.tag, 2026-08-12T21:05:30Z..21:09:00Z.
+boot-repeat1-s0	2536
+boot-repeat1-s1	1971
+boot-repeat1-s2	1349
+boot-repeat1-s3	1284
+boot-repeat1-s4	3479
+boot-repeat1-s5	1356
+boot-repeat10-s0	3062
+boot-repeat10-s1	3669
+boot-repeat10-s2	3738
+boot-repeat10-s3	1956
+boot-repeat10-s4	4030
+boot-repeat10-s5	4123

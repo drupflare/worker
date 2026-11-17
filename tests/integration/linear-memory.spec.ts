@@ -4,8 +4,8 @@ import { INTERPRETER_MEMORY, keepSpareMemory } from '../../src/site-do';
 import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-do';
 
 /**
- * The wasm heap's real shape on the SHIPPING interpreter, which P16 asked for before anything
- * proposes changing `INITIAL_MEMORY`.
+ * The wasm heap's real shape on the SHIPPING interpreter, measured before anything
+ * proposes changing `INITIAL_MEMORY`, as the resize proposal asked.
  *
  * MEASURED 2026-08-23, one object, PHP 8.5 from `.interp/`:
  *
@@ -15,7 +15,7 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
  * | after one real fill                | 105,709,568 | 100.81 |
  * | isolate limit                      | 134,217,728 | 128.00 |
  *
- * **THIS CONTRADICTS THE ITEM'S PREMISE.** P16 wants 96 -> 80 MB to buy room for a larger lazy-FS
+ * **THIS CONTRADICTS THE ITEM'S PREMISE.** The item wants 96 -> 80 MB to buy room for a larger lazy-FS
  * budget. But `INITIAL_MEMORY` is where the heap STARTS, not where it stops: the render reaches
  * 115.25 MiB by GROWING, and it would reach it from 80 MB too.
  *

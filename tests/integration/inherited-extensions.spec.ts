@@ -22,7 +22,7 @@ const SUBCLASS_CALLS = {
 
 const PROBE = `<?php
 $absent = [];
-foreach (['xmlwriter','xmlreader','zip','intl','bcmath','calendar','exif','phar','tidy','gd'] as $ext) {
+foreach (['xmlwriter','xmlreader','zip','intl','bcmath','calendar','exif','phar','tidy'] as $ext) {
   $absent[$ext] = !extension_loaded($ext);
 }
 $methods = class_exists('XMLWriter', false)
@@ -30,13 +30,14 @@ $methods = class_exists('XMLWriter', false)
   : null;
 echo json_encode([
   'absent' => $absent,
+  'gdLoaded' => extension_loaded('gd'),
   'xmlwriterClass' => $methods,
   'xmlreaderClass' => class_exists('XMLReader', false),
   'zipClass' => class_exists('ZipArchive', false),
 ]);`;
 
 describe('the inherited extensions, measured rather than inherited', () => {
-	it('is absent for all ten, and the XMLWriter stand-in covers every method its subclasses call', async () => {
+	it('is absent for all nine, reports the claimed gd, and the XMLWriter stand-in covers every method its subclasses call', async () => {
 		const seen = await inObject(freshSite(), async (site: ServeDo) => {
 			const text = await (site as Interp).run(PROBE);
 			const at = text.indexOf('{');
@@ -52,6 +53,10 @@ describe('the inherited extensions, measured rather than inherited', () => {
 				true
 			);
 		}
+
+		// gd left the list when the shim began claiming its 40 wrappers; the claim itself is held
+		// by loaded-extensions.spec.ts and the differential, this only keeps it out of the census
+		expect(seen['gdLoaded'], 'gd is claimed by the shim and must read loaded').toBe(true);
 
 		// `ext-xmlwriter` needs no build: the stand-in is the implementation, and the only thing
 		// that decides whether it is correct is whether it answers what its real callers call

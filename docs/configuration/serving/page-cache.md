@@ -130,3 +130,34 @@ Measured on a deployed paid worker, one session, one 100,748-byte authenticated 
 | ------------------------------- | ----------------------: | --------: | ---------: |
 | `EDGE_PLAN=0`, the object hop   | 10 median, 7 min (n=40) |         1 |         18 |
 | a plan in this isolate's memory |  0 median and max, n=57 |         0 |          1 |
+
+## `WORDPRESS_PAGE_CACHE`
+
+`1` lets a WordPress site answer anonymous page views from the object's stored copy and the shared
+tiers. Any other value, or no value, stores and replays nothing, which is the default. Drupal never
+reads it, and it is not on `KV_OVERRIDABLE`: a wrong stored page is a wrong answer, not a slow site.
+
+A response is stored only when every rule below passes, and each rule is a named row in
+`src/wordpress/store-rule.ts` with a test that removes it and shows the case then gets through.
+
+- The request is an anonymous `GET` with no cookie, no `Authorization` and none of the headers that
+  change a body (`Forwarded`, `X-Forwarded-Server`, `X-Original-URL`, `X-HTTP-Method-Override` and
+  similar). `X-Forwarded-Host`, `X-Forwarded-For` and `X-Forwarded-Proto` are not on that list:
+  proxies and `wrangler dev` add them, and the pinned origin keeps them out of the body.
+- The path is lowercase, has no doubled slash, dot segment or encoded slash, no file extension, no
+  `wp-*` first segment and is not under `/search/`. Only the query variables WordPress uses to choose
+  a page are allowed, each with a fixed value shape (`p`, `page_id`, `cat`, `tag`, `author`, `paged`,
+  `feed` and a few more). Any other variable, such as `s`, `preview` or `replytocom`, refuses the
+  path, so a visitor cannot mint a row per value.
+- `utm_*`, `fbclid`, `gclid` and the other campaign identifiers are removed from the key and from the
+  path PHP renders, and the remaining variables are sorted. Drupal keys the path as sent.
+- The response is a 200 with no `Set-Cookie`, no `private`, `no-store` or `no-cache`, and no `Vary`
+  but `Accept-Encoding`. A 404 or a redirect is never stored: a 404 is an unbounded key space, and
+  `cfw_page` has no `location` column.
+- The body is complete (`</html>`, or a feed that starts with `<?xml` and ends in its closing tag),
+  has the content type its path implies, carries no nonce, and is not a search or not-found page.
+- The render named at least one cache tag, so a write can purge it.
+
+`/wp-json/` and `?rest_route=` are refused. REST collections vary by authentication and some carry
+nonces; storing one needs a per-route allow-list, a check that the route is anonymous, and tags per
+collection.

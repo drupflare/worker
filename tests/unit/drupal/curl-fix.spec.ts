@@ -111,7 +111,7 @@ describe('the declared functions', () => {
 	});
 
 	it('DECLARES the gap rather than failing silently when the module is absent', () => {
-		// P45: shimmed, accommodated or declared. Without the module there is no deferred-HTTP
+		// a capability is shimmed, accommodated or declared. Without the module there is no deferred-HTTP
 		// queue, so the honest answer is curl's own FALSE plus a status-report row
 		expect(CURL_FIX).toContain('Degradation::record');
 		expect(CURL_FIX).toContain('function cfw_curl_absent');

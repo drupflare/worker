@@ -4,7 +4,7 @@ import { readTagList } from '../../src/ops/fragment-index';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
- * P92: no visitor is served an assembly that was not proven against their own render.
+ * No visitor is served an assembly that was not proven against their own render.
  *
  * ## What the harvest's two-session proof cannot see
  *
@@ -79,7 +79,7 @@ async function siteWithShell(site: ServeDo, members: readonly string[]) {
 	return jars;
 }
 
-describe('P92: a shell is proven per visitor before it is assembled for them', () => {
+describe('a shell is proven per visitor before it is assembled for them', () => {
 	it(
 		'proves a third member on first use, then assembles for them',
 		async () => {

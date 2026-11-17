@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { ENDPOINT, SITE, e2eGate, serve } from './helpers/endpoint';
 
 /**
- * The three shapes P9 named and the lane never covered: cron firing for real, several visitors at
+ * The three shapes no other e2e file covers: cron firing for real, several visitors at
  * once, and the requests an attacker sends.
  *
  * Every other e2e file drives ONE visitor doing something reasonable. These are the cases where a

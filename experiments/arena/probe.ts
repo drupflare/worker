@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 
 /**
- * P25: whether an argon2id arena fits beside a booted PHP inside one Durable Object.
+ * Whether an argon2id arena fits beside a booted PHP inside one Durable Object.
  *
  * The backlog closed argon2 on `PHP_PASSWORD_ARGON2_MEMORY_COST` defaulting to 64 MiB against a
  * 128 MB isolate that an install already takes to ~115 MiB. That closes ONE mechanism -- a 64 MiB

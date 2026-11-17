@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 /**
- * P28: can PHP's integer width be bought without the pointer width? No, and the reason is one
+ * Can PHP's integer width be bought without the pointer width? No, and the reason is one
  * typedef.
  *
  * The proposal was to force `ZEND_ENABLE_ZVAL_LONG64` on a wasm32 build and keep 32-bit pointers,
@@ -16,19 +16,19 @@ import { describe, expect, it } from 'vitest';
  *     struct _zend_string { zend_refcounted_h gc; zend_ulong h; size_t len; char val[1]; };
  *     typedef struct _Bucket { zval val; zend_ulong h; zend_string *key; } Bucket;
  *
- * So the growth P26 measured for wasm64 was never only about pointers: the hash is tied to
+ * So the growth measured for wasm64 was never only about pointers: the hash is tied to
  * `zend_long` and travels with it.
  *
  * MEASURED with a real compiler over an explicit wasm32-ABI model (pointer 4, size_t 4, double 8):
  *
- * | struct  | today | with LONG64 | delta   | P26's wasm64 figure |
+ * | struct  | today | with LONG64 | delta   | wasm64 figure       |
  * | ------- | ----- | ----------- | ------- | ------------------- |
  * | zval    | 16    | 16          | 0%      | -                   |
  * | Bucket  | 24    | 32          | **+33%**| **33%**             |
  * | string  | 20    | 24          | +20%    | 60%                 |
  *
- * **Bucket comes out at exactly the wasm64 number**, which is the finding: P28 pays P26's price on
- * the structure Drupal allocates most of, and P26 was rejected on that price. `zend_string` is the
+ * **Bucket comes out at exactly the wasm64 number**, which is the finding: forcing LONG64 pays the wasm64 price on
+ * the structure Drupal allocates most of, and wasm64 was rejected on that price. `zend_string` is the
  * cheaper half, because `len` is a `size_t` and stays 4 bytes.
  *
  * AND IT IS WORSE THAN "THE HASH IS THE CAUSE", which is what this file was written to show. The
@@ -93,7 +93,7 @@ describe('forcing ZEND_ENABLE_ZVAL_LONG64 on a wasm32 build', () => {
 		expect(long64.zval).toBe(16);
 	});
 
-	it('grows Bucket by exactly the 33% P26 measured for wasm64', () => {
+	it('grows Bucket by exactly the 33% measured for wasm64', () => {
 		expect(now.bucket).toBe(24);
 		expect(long64.bucket).toBe(32);
 		expect(long64.bucket / now.bucket - 1).toBeCloseTo(1 / 3, 6);
@@ -123,7 +123,7 @@ describe('forcing ZEND_ENABLE_ZVAL_LONG64 on a wasm32 build', () => {
 		expect(hashOnly).toBe(32);
 		expect(pointerOnly).toBe(32);
 		expect(hashOnly).toBe(long64.bucket);
-		// which is why P28 and P26 land on the same number for the structure that matters most
+		// which is why LONG64 and wasm64 land on the same number for the structure that matters most
 		expect(pointerOnly).toBe(long64.bucket);
 	});
 

@@ -9,9 +9,9 @@ import {
 /**
  * The duration billing boundary, which is eligibility rather than hibernation itself.
  *
- * P17 was closed on "two always-warm objects exceed the free duration allowance". True, and it
- * closed replicas entirely -- when a replica that HIBERNATES accrues no idle duration at all, so
- * that arithmetic never applied to it. These cases pin the distinction the closure lost.
+ * Two always-warm objects exceed the free duration allowance, which is true and does not apply to
+ * a replica that HIBERNATES, because that accrues no idle duration at all. Closing replicas on
+ * the first fact loses the second. These cases pin the distinction.
  *
  * THE ALARM CASE IS THE ONE WORTH READING, and its second half was wrong. A pending alarm is absent
  * from Cloudflare's condition list, so an object WAITING on one is idle-eligible and accrues no

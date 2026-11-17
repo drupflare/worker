@@ -10,7 +10,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 /**
  * What shell assembly and its per-visitor proof cost on the meter that binds.
  *
- * Rows written is the tighter of the two free-plan ceilings, so the whole case for P92 is an
+ * Rows written is the tighter of the two free-plan ceilings, so the whole case for the proof is an
  * arithmetic one and it is pinned here rather than asserted in prose: an assembly writes NOTHING,
  * a render writes a handful, and the verification harvest plus the render that repays its emptied
  * bin is the toll a visitor pays once. If assembly ever stops being free the justification changes,
@@ -40,7 +40,7 @@ function jarOf(result: Payload): string {
 	return session ? (session.split(';')[0] ?? '') : '';
 }
 
-describe('P92: the economics of proving a shell per visitor', () => {
+describe('the economics of proving a shell per visitor', () => {
 	it(
 		'prices assembly, render and verification in rows written',
 		async () => {

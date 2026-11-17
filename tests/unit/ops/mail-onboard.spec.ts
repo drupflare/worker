@@ -416,7 +416,7 @@ describe('the API surface', () => {
  * nothing about. The other five sit on the return-path host and the DKIM selector and exist because
  * of this feature, so those are unambiguous.
  *
- * P22's own entry had asked for "an upsert path for DMARC/BIMI". The live data says upsert is the
+ * The original request had asked for "an upsert path for DMARC/BIMI". The live data says upsert is the
  * wrong verb.
  */
 describe('records drupflare does not own', () => {

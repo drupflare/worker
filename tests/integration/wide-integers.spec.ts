@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
- * P33: reading a SQLite INTEGER wider than 2^53 exactly.
+ * Reading a SQLite INTEGER wider than 2^53 exactly.
  *
  * ## The platform, re-measured 2026-08-23 rather than quoted
  *
@@ -43,7 +43,7 @@ async function withTable<T>(fn: (site: ServeDo) => Promise<T> | T): Promise<T> {
 
 const bigs = (rows: Row[], key = 'big') => rows.map((r) => String(r[key]));
 
-describe('P33: the platform loses precision, and the repair gets it back', () => {
+describe('the platform loses precision, and the repair gets it back', () => {
 	it('reads a bare column exactly, where the raw cursor does not', async () => {
 		const seen = await withTable((site) => ({
 			raw: site.sql.exec('SELECT big FROM w ORDER BY id').toArray() as Row[],
@@ -66,7 +66,7 @@ describe('P33: the platform loses precision, and the repair gets it back', () =>
 	}, 300_000);
 });
 
-describe('P33: the shapes it covers', () => {
+describe('the shapes it covers', () => {
 	const shapes: Array<{ name: string; sql: string; key: string; want: string[] }> = [
 		{ name: 'SELECT *', sql: 'SELECT * FROM w ORDER BY id', key: 'big', want: [WIDE, MAX64] },
 		{

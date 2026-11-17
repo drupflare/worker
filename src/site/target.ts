@@ -9,6 +9,7 @@ import {
 } from '../ops/replica-routing';
 import { siteStubOptions } from '../ops/site-id';
 import { writeForwardEnabled } from '../ops/write-forwarding';
+import { cmsOf, type Cms } from '../util/cms';
 import { genBucketMs } from './edge-cache';
 import { siteFor } from './owner';
 import type { FrontContext, FrontEntry } from './types';
@@ -25,7 +26,7 @@ export async function openContext(entry: FrontEntry): Promise<FrontContext> {
 	// lane and stub are lazy and memoised: the tier answering 82% of traffic never reads either
 	let laneMemo: RoutingDecision | undefined;
 	// read once: a regex over the whole cookie header, on every request that reaches an object
-	const sessionValue = sessionCookieValue(request.headers.get('cookie'));
+	const sessionValue = sessionCookieValue(request.headers.get('cookie'), cmsOf(env) as Cms);
 	const laneOf = (): RoutingDecision =>
 		(laneMemo ??= chooseTarget({
 			site,

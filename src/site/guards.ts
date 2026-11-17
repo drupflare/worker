@@ -49,7 +49,13 @@ const NEVER_BY_CMS: Record<Cms, CmsGuards> = {
 	wordpress: {
 		deny: [
 			{ re: /(?:^|\/)wp-config/i, why: 'holds the database credentials and salts' },
-			{ re: /(?:^|\/)xmlrpc\.php/i, why: 'pingback and brute force amplifier; not served' }
+			{ re: /(?:^|\/)xmlrpc\.php/i, why: 'pingback and brute force amplifier; not served' },
+			{ re: /^\/(?:readme\.html|license\.txt)$/i, why: 'prints the WordPress version' },
+			{ re: /(?:^|\/)\.(?:htaccess|htpasswd|user\.ini)$/i, why: 'web server configuration' },
+			{
+				re: /^\/wp-admin\/(?:install|setup-config|upgrade)\.php$/i,
+				why: 'installation and schema upgrade are host-driven'
+			}
 		],
 		php: [
 			/^\/(?:index|wp-login|wp-cron|wp-comments-post)\.php$/i,

@@ -185,6 +185,7 @@ describe('the session classifier is a table per CMS and Drupal is the default', 
 	// neutral: set on anonymous traffic, changes nothing
 	it('treats the WordPress login cookies as a session', () => {
 		for (const name of [
+			`wordpress_${h}`,
 			`wordpress_logged_in_${h}`,
 			`wordpress_sec_${h}`,
 			`wordpress_rec_${h}`
@@ -541,7 +542,7 @@ describe('the wiring in the front worker', () => {
 		expect(decidedAt).toBeGreaterThan(-1);
 		expect(hopAt).toBeGreaterThan(-1);
 		expect(decidedAt).toBeLessThan(hopAt);
-		expect(sourceOf('src/site/allowance.ts')).toContain('isAuthenticatedRequest(request)');
+		expect(sourceOf('src/site/allowance.ts')).toContain('isAuthenticatedRequest(request,');
 		// `stubOf()`, because the stub is built lazily now: the tier answering 82% of traffic
 		// returns without a Durable Object stub ever being constructed
 		expect(sourceOf('src/site/hop.ts')).toContain('await stubOf().fetch(innerRequest)');
@@ -631,5 +632,67 @@ describe('the wiring in the front worker', () => {
 	it('reports the mode on the response, so a measurement can see which rung it took', () => {
 		expect(frontSource).toContain('AUTH_MODE_HEADER');
 		expect(frontSource).toContain('AUTH_REASON_HEADER');
+	});
+});
+
+describe('a request is authenticated by the CMS table it is read against', () => {
+	const h = 'a'.repeat(32);
+	const asked = (cms: 'drupal' | 'wordpress' | 'joomla', headers: Record<string, string>) =>
+		isAuthenticatedRequest(new Request('https://x.test/', { headers }), cms);
+
+	it('treats each WordPress session, personal and unknown cookie as authenticated', () => {
+		for (const cookie of [
+			`wordpress_${h}=v`,
+			`wordpress_logged_in_${h}=v`,
+			`wordpress_sec_${h}=v`,
+			`wordpress_rec_${h}=v`,
+			`wp-postpass_${h}=v`,
+			`comment_author_${h}=v`,
+			`comment_author_email_${h}=v`,
+			'wp-settings-1=v',
+			'wp-settings-time-1=v',
+			'some_plugin_cookie=1',
+			`wordpress_test_cookie=1; wp-settings-1=v`
+		]) {
+			expect(asked('wordpress', { cookie }), cookie).toBe(true);
+		}
+	});
+
+	it('treats the Authorization header as authenticated on WordPress', () => {
+		expect(asked('wordpress', { authorization: 'Basic YWRtaW46cGFzcw==' })).toBe(true);
+		expect(asked('wordpress', { authorization: '   ' })).toBe(false);
+	});
+
+	it('keeps a request with no cookie and the neutral test cookie anonymous on WordPress', () => {
+		expect(asked('wordpress', {})).toBe(false);
+		expect(asked('wordpress', { cookie: 'wordpress_test_cookie=WP%20Cookie%20check' })).toBe(
+			false
+		);
+	});
+
+	it('leaves Drupal exactly as it was: only a session or an Authorization header', () => {
+		expect(asked('drupal', { cookie: `wordpress_logged_in_${h}=v` })).toBe(false);
+		expect(asked('drupal', { cookie: 'wp-settings-1=v' })).toBe(false);
+		expect(asked('drupal', { cookie: 'foo=1' })).toBe(false);
+		expect(asked('drupal', { cookie: `SESS${h}=v` })).toBe(true);
+		expect(asked('drupal', { authorization: 'Bearer t' })).toBe(true);
+		const bare = new Request('https://x.test/', { headers: { cookie: `SESS${h}=v` } });
+		expect(isAuthenticatedRequest(bare)).toBe(true);
+		const plain = new Request('https://x.test/', { headers: { cookie: 'foo=1' } });
+		expect(isAuthenticatedRequest(plain)).toBe(false);
+	});
+
+	it('does not read a Drupal session as a WordPress login, nor the reverse', () => {
+		expect(hasSessionCookie(`SESS${h}=v`, 'wordpress')).toBe(false);
+		expect(hasSessionCookie(`wordpress_logged_in_${h}=v`)).toBe(false);
+	});
+
+	it('passes the CMS from the environment where a request is classified', () => {
+		for (const path of ['src/site/allowance.ts', 'src/do/serve.ts', 'src/do/routes/serve.ts']) {
+			expect(/isAuthenticatedRequest\(request\)/.test(sourceOf(path)), path).toBe(false);
+		}
+		expect(sourceOf('src/site/target.ts')).toContain(
+			"sessionCookieValue(request.headers.get('cookie'), cmsOf(env)"
+		);
 	});
 });

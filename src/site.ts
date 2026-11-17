@@ -26,6 +26,7 @@ import { throughSpool } from './site/spool';
 import { fillWindowRoute, surfaceRoute } from './site/surfaces';
 import { openContext } from './site/target';
 import type { Defer, FrontEntry, SiteWorkerEnv } from './site/types';
+import { cmsOf, type Cms } from './util/cms';
 
 export { RenderLane } from './ops/render-lane';
 export { moduleAssetPath, publicFileUri } from './site/files';
@@ -228,7 +229,7 @@ async function frontFetch(
 	if (oversized !== undefined) return oversized;
 
 	// one scan (a split plus up to six regex tests), shared with the authenticated check below
-	const neverDrupal = isNeverDrupal(f.path);
+	const neverDrupal = isNeverDrupal(f.path, cmsOf(env) as Cms);
 	const denied = denyProbe(f, neverDrupal);
 	if (denied !== undefined) return denied;
 

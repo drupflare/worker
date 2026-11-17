@@ -27,6 +27,8 @@ import {
 } from '../ops/edge-plan';
 import { moduleHeadersOf } from '../ops/module-headers';
 import { sessionCsrf } from '../ops/render-plan';
+import { servingFor } from '../ops/store-rule';
+import { cmsOf } from '../util/cms';
 import type { AuthState, FrontContext, Learned, PlanRead } from './types';
 
 /** Answers an authenticated page from a compiled plan with no object hop, or says why not. */
@@ -42,7 +44,12 @@ export async function readPlanTier(f: FrontContext, auth: AuthState): Promise<Re
 	// a write queues a Drupal message a plan compiled without one would drop, so spend the
 	// session's agreement (it costs one render)
 	if (request.method !== 'GET' && request.method !== 'HEAD') forgetWitness(planCookie);
-	const planWanted = serving && personalised && request.method === 'GET' && edgePlanEnabled(env);
+	const planWanted =
+		serving &&
+		personalised &&
+		request.method === 'GET' &&
+		edgePlanEnabled(env) &&
+		servingFor(cmsOf(env)).compiledPlans;
 	let planTier: PlanTier = planWanted ? 'miss' : 'skip:not-wanted';
 	if (planWanted) {
 		const planGeneration = believedGeneration(site, t0);

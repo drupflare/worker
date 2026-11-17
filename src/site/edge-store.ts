@@ -1,5 +1,8 @@
+import { carriesAuthorization } from '../ops/auth-budget';
 import { moduleHeadersOf } from '../ops/module-headers';
 import { KV_GRANT_HEADER, pageKvEnabled, writePage } from '../ops/page-store';
+import { servingFor } from '../ops/store-rule';
+import { cmsOf } from '../util/cms';
 import { putPage } from './edge-cache';
 import type { AuthState, FrontContext, Learned, StoreOutcome } from './types';
 
@@ -10,12 +13,32 @@ export function storeEdge(
 	res: Response,
 	learned: Learned
 ): StoreOutcome {
-	const { env, site, path, serving, cache, origin, defer } = f;
+	const { env, site, path, serving, cache, origin, defer, request } = f;
 	const { personalised } = auth;
 	const { doCache, generation: doGeneration } = learned;
-	const paged = serving
-		? putPage(cache, origin, site, path, res, doGeneration, doCache, personalised)
-		: { outcome: 'skipped:not-serving' };
+	// the CMS's own rule on what the request and the response say; the body is not read here, so
+	// the object's `private, no-store` on an uncacheable render is what keeps one out
+	const refusal = serving
+		? servingFor(cmsOf(env)).refuse(
+				{
+					method: request.method,
+					status: res.status,
+					hasCookie: request.headers.has('cookie'),
+					hasAuthorization: carriesAuthorization(request),
+					setsCookie: res.headers.has('set-cookie'),
+					cacheControl: res.headers.get('cache-control'),
+					path,
+					contentType: res.headers.get('content-type'),
+					headerNames: [...request.headers.keys()]
+				},
+				env
+			)
+		: undefined;
+	const paged = !serving
+		? { outcome: 'skipped:not-serving' }
+		: refusal !== undefined
+			? { outcome: `skipped:${refusal}` }
+			: putPage(cache, origin, site, path, res, doGeneration, doCache, personalised);
 	defer(paged.write);
 	const put = paged.outcome;
 
@@ -27,6 +50,8 @@ export function storeEdge(
 		kvPut = 'skipped:authenticated';
 	} else if (serving && res.headers.has('set-cookie')) {
 		kvPut = 'skipped:set-cookie';
+	} else if (serving && refusal !== undefined) {
+		kvPut = `skipped:${refusal}`;
 	} else if (serving && pageKvEnabled(env)) {
 		if (doGeneration === undefined) {
 			kvPut = 'skipped:no-generation';

@@ -57,6 +57,11 @@ const COOKIE_RULES: Record<Cms, readonly CookieRule[]> = {
 	],
 	wordpress: [
 		{
+			re: new RegExp(`^wordpress_${MD5}$`),
+			kind: 'session',
+			why: 'the login cookie WordPress sets for /wp-admin when the request is not https'
+		},
+		{
 			re: new RegExp(`^wordpress_logged_in_${MD5}$`),
 			kind: 'session',
 			why: 'the login cookie'
@@ -152,12 +157,25 @@ export function mayUseSharedCopy(
  * Whether a request is authenticated, decided from the request alone so it runs before the DO hop
  * it is meant to save.
  *
+ * Drupal: a session cookie or an `Authorization` header. Any other CMS also counts a cookie it
+ * classifies `personal` or has not classified, because such a request is per visitor and no shared
+ * tier may answer or store it.
+ *
  * @param request the inbound request
+ * @param cms the CMS the cookie names are read against
  */
-export function isAuthenticatedRequest(request: {
-	headers: { get(name: string): string | null };
-}): boolean {
-	return hasSessionCookie(request.headers.get('cookie')) || carriesAuthorization(request);
+export function isAuthenticatedRequest(
+	request: {
+		headers: { get(name: string): string | null };
+	},
+	cms: Cms = 'drupal'
+): boolean {
+	const cookie = request.headers.get('cookie');
+	return (
+		hasSessionCookie(cookie, cms) ||
+		carriesAuthorization(request) ||
+		(cms !== 'drupal' && !mayUseSharedCopy(cookie, cms))
+	);
 }
 
 /**

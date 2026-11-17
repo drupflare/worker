@@ -14,7 +14,7 @@
 <section class="tsd-panel">
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="partitionedtables"><span class="tsd-kind-call-signature">partitionedTables</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">statements</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <a href="../types/ops_write-forwarding.ForwardStatement.html" class="tsd-signature-type tsd-kind-type-alias">ForwardStatement</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><a href="#partitionedtables" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="partitionedtables"><span class="tsd-kind-call-signature">partitionedTables</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">statements</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <a href="../types/ops_write-forwarding.ForwardStatement.html" class="tsd-signature-type tsd-kind-type-alias">ForwardStatement</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">cms</span><span class="tsd-signature-symbol">?:</span> <a href="../types/util_cms.Cms.html" class="tsd-signature-type tsd-kind-type-alias">Cms</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><a href="#partitionedtables" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>The tables a batch may originate for, from what the driver says it actually minted.</p>
 <p>The driver reports a table only where it rewrote the insert to carry an id from this lane's
@@ -26,10 +26,11 @@ whose value is the allocation.</p>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
-<li><span><span class="tsd-kind-parameter">statements</span>: <span class="tsd-signature-keyword">readonly</span> <a href="../types/ops_write-forwarding.ForwardStatement.html" class="tsd-signature-type tsd-kind-type-alias">ForwardStatement</a><span class="tsd-signature-symbol">[]</span></span></li></ul></div>
+<li><span><span class="tsd-kind-parameter">statements</span>: <span class="tsd-signature-keyword">readonly</span> <a href="../types/ops_write-forwarding.ForwardStatement.html" class="tsd-signature-type tsd-kind-type-alias">ForwardStatement</a><span class="tsd-signature-symbol">[]</span></span></li>
+<li><span><span class="tsd-kind-parameter">cms</span>: <a href="../types/util_cms.Cms.html" class="tsd-signature-type tsd-kind-type-alias">Cms</a><span class="tsd-signature-symbol"> = &#39;drupal&#39;</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f79d316ce91c7fe45039b40e6dea40843a7b42c/src/ops/write-forwarding.ts#L106">src/ops/write-forwarding.ts:106</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/ops/write-forwarding.ts#L128">src/ops/write-forwarding.ts:128</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

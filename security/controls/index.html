@@ -476,9 +476,14 @@ deployed site only with the next deploy of the tuned glue.</p>
 </tr>
 </thead>
 <tbody><tr>
-<td><code>cfwSqlExec</code>, <code>cfwSqlTxn</code>, <code>cfwSqlPark</code></td>
+<td><code>cfwSqlExec</code>, <code>cfwSqlTxn</code>, <code>cfwSqlPark</code>, <code>cfwMysqlExec</code></td>
 <td>Any SQL on the site&#39;s own Durable Object SQLite</td>
-<td>It is Drupal&#39;s own database connection; <code>_cf_KV</code> answers <code>SQLITE_AUTH</code></td>
+<td>It is the CMS&#39;s own database connection; <code>_cf_KV</code> answers <code>SQLITE_AUTH</code></td>
+</tr>
+<tr>
+<td><code>cfwWpTags</code></td>
+<td>The site&#39;s own stored pages, by cache tag</td>
+<td>Tags are validated; a replica refuses it; the worst case is a purge of the site&#39;s cache</td>
 </tr>
 <tr>
 <td><code>cfwFetch</code>, <code>cfwHttpCacheGet</code></td>

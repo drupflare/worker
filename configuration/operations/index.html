@@ -397,7 +397,7 @@
 <li><a href="overrides.html">Runtime Overrides</a>: reading and writing overrides, and the three permissions.</li>
 </ul>
 <h2 id="site-maintenance">Site Maintenance</h2>
-<p><code>/armfill</code>, <code>/invalidate</code>, <code>/bump</code>, <code>/migrate</code> and <code>/updb</code> take the owner token. Purging your own page
+<p><code>/armfill</code>, <code>/invalidate</code>, <code>/bump</code>, <code>/migrate</code>, <code>/recycle</code>, <code>/ledger-gc</code>, <code>/strata-config</code>, <code>/strata-store</code> and <code>/updb</code> take the owner token. Purging your own page
 cache does not expose arbitrary SQL or a whole-database overwrite, which are separate routes.</p>
 <p><code>/updb</code> drives a database update run. <code>GET</code> reports the run and its units; <code>POST</code> advances exactly
 one beat and re-arms nothing, so a caller that wants the chain finished polls. The alarm chain drives
@@ -497,6 +497,36 @@ on its own, and <code>stateful</code> changes what the site serves.</p>
 <td>resumes first-run migration on a site that stalled</td>
 </tr>
 <tr>
+<td><code>/recycle</code> (POST)</td>
+<td>rebuild</td>
+<td>drops the PHP interpreter; the next request pays a full boot</td>
+</tr>
+<tr>
+<td><code>/ledger-gc</code> (POST)</td>
+<td>safe</td>
+<td>trims the health ledger to 500 rows, newest kept</td>
+</tr>
+<tr>
+<td><code>/strata-config</code></td>
+<td>safe</td>
+<td>reads Strata&#39;s <code>capture.statements</code></td>
+</tr>
+<tr>
+<td><code>/strata-config</code> (POST)</td>
+<td>stateful</td>
+<td>sets Strata&#39;s <code>capture.statements</code>; the next request boots fresh</td>
+</tr>
+<tr>
+<td><code>/strata-store</code></td>
+<td>safe</td>
+<td>reads Strata&#39;s store: provider, bucket, endpoint, region, key flags</td>
+</tr>
+<tr>
+<td><code>/strata-store</code> (POST)</td>
+<td>stateful</td>
+<td>points Strata at an S3 or R2 bucket; makes the key; <code>enable</code> starts it</td>
+</tr>
+<tr>
 <td><code>/writemark</code></td>
 <td>safe</td>
 <td>reads the accepted-write count; POST and DELETE start and end the mark</td>
@@ -512,6 +542,40 @@ on its own, and <code>stateful</code> changes what the site serves.</p>
 <td>releases a preview pin without reaching the remote</td>
 </tr>
 </tbody></table></div>
+<p><code>/recycle</code> and <code>/ledger-gc</code> take the owner token only; <code>PW_DIAGNOSTICS</code> does not reach them, and a
+<code>GET</code> answers 405. <code>/recycle</code> answers <code>{ok, recycled, recyclesBefore, recyclesAfter}</code>, with
+<code>recycled: false</code> when no interpreter was resident. While a transaction is open it answers 409 and
+drops nothing. <code>/ledger-gc</code> answers <code>{ok, rowsBefore, rowsDeleted, cap}</code>; each deleted row counts
+against the day&#39;s rows written.</p>
+<p><code>/strata-config</code> takes the owner token only. <code>GET</code> answers <code>{captureStatements}</code>. <code>POST</code> takes
+<code>{&quot;captureStatements&quot;: true | false}</code> and answers <code>{captureStatements, previous, applied: true}</code>.
+It writes <code>capture.statements</code> on <code>strata.settings</code> through <code>ConfigFactory</code>, then drops the
+interpreter and the heap images so the next request reads the new value. Setting the value the site
+already holds answers the same body and writes nothing. It answers 409 <code>strata_not_enabled</code> when
+<code>strata</code> is not in <code>core.extension</code> or has no <code>strata.settings</code> row, and 409 while a transaction is
+open. A body that is not a boolean answers 400.</p>
+<p><code>/strata-store</code> takes the owner token only. <code>GET</code> answers
+<code>{provider, enabled, bucket, endpoint, region, hasKey, hasCredentials}</code>; <code>enabled</code> is Strata&#39;s own
+<code>enabled</code> setting. It never returns a key or a secret. <code>POST</code> takes
+<code>{&quot;endpoint&quot;, &quot;bucket&quot;, &quot;region&quot;, &quot;accessKeyId&quot;, &quot;secretAccessKey&quot;, &quot;pathStyle&quot;}</code> and an optional
+<code>&quot;enable&quot;: true | false</code> (default false), and answers
+<code>{provider, bucket, endpoint, region, applied: true, previous: {provider, bucket}, keyCreated, enabled}</code>,
+with no key or secret in it. <code>enable: true</code> also sets Strata&#39;s <code>enabled</code> setting in the same write, so
+the journal starts; <code>false</code> or absent never changes <code>enabled</code>, and the route never turns Strata off.
+<code>enabled</code> in the answer is the stored value after the call. <code>endpoint</code> is an <code>https</code> origin with no path, <code>bucket</code> is 3 to 63 characters
+of <code>a-z</code>, <code>0-9</code> and <code>-</code>, <code>region</code> is non-empty (R2 uses <code>auto</code>), and each key is 1 to 256 printable
+characters with no space. A refused body answers 400 with one of <code>invalid_body</code>, <code>invalid_endpoint</code>,
+<code>invalid_bucket</code>, <code>invalid_region</code>, <code>invalid_access_key_id</code>, <code>invalid_secret_access_key</code> or
+<code>invalid_path_style</code> or <code>invalid_enable</code>. It sets <code>provider</code> to <code>s3</code> and the <code>s3.*</code> keys on <code>strata.settings</code> through
+<code>ConfigFactory</code>, then drops the interpreter and the heap images. When <code>key</code> is empty it also creates
+the encryption key through Strata&#39;s <code>KeyMaker</code>, the service behind <code>drush strata:new-key</code>, and
+reports <code>keyCreated: true</code>; a key that exists is never replaced, and the cipher is never changed. A
+repeat of the stored body answers the same shape and writes nothing; with <code>enable: true</code> it writes
+only while <code>enabled</code> is still false. It answers 409
+<code>strata_not_enabled</code> when <code>strata</code> is not in <code>core.extension</code> or has no <code>strata.settings</code> row, 409
+<code>strata_s3_not_enabled</code> when <code>strata_s3</code> is not enabled (enable it through <code>/enable</code> first), and 409
+while a transaction is open. A failed write answers 500 <code>strata_store_write_failed</code> with at most the
+PHP exception class, never its message.</p>
 <p><code>/git?action=unpin</code> exists because <code>unpreview</code> cannot help here: it re-syncs to the branch head, so it
 needs the remote to answer, and a pin held against a remote that is down is exactly what an operator
 is trying to release. Releasing without a sync leaves the site serving what it already serves and

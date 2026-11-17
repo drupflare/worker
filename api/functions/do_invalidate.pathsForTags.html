@@ -18,8 +18,9 @@
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>The stored pages that depend on any of <code>tags</code>, or undefined when the index cannot answer.</p>
 <p>Undefined is not an empty set: an unindexed tag may mean no page depends on it or that the site
-served before the index existed. A missed scoped purge shows visibly wrong content, worse than
-an extra fill, so undefined sends the caller to a wholesale purge.</p>
+served before the index existed, and a page with no recorded tags depends on something this
+index cannot name. A missed scoped purge shows visibly wrong content, worse than an extra fill,
+so undefined sends the caller to a wholesale purge.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -28,7 +29,7 @@ an extra fill, so undefined sends the caller to a wholesale purge.</p>
 <li><span><span class="tsd-kind-parameter">tags</span>: <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f79d316ce91c7fe45039b40e6dea40843a7b42c/src/do/invalidate.ts#L19">src/do/invalidate.ts:19</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/do/invalidate.ts#L20">src/do/invalidate.ts:20</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -14,11 +14,11 @@
 <div class="tsd-signature"><span class="tsd-kind-variable">BATCHABLE</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/ops_crossings.CrossingName.html" class="tsd-signature-type tsd-kind-type-alias">CrossingName</a><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol"> = ...</span></div>
 <div class="tsd-comment tsd-typography"><p>Which capabilities a batching change could coalesce.</p>
 <p>Batchable means calls within a render do not depend on each other's replies; serial means the
-next call's arguments come from the previous reply (<code>cfwSqlExec</code>; <code>cfwSqlTxn</code> is already its
-batched form).</p>
+next call's arguments come from the previous reply (<code>cfwSqlExec</code> and <code>cfwMysqlExec</code>;
+<code>cfwSqlTxn</code> is already the batched form).</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f79d316ce91c7fe45039b40e6dea40843a7b42c/src/ops/crossings.ts#L131">src/ops/crossings.ts:131</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/ops/crossings.ts#L133">src/ops/crossings.ts:133</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -11,14 +11,16 @@
 <li><a href="../modules/ops_thermal.html">ops/thermal</a></li>
 <li><a href="" aria-current="page">WARM_FIRING_COST_MS</a></li></ul>
 <h1>Variable WARM_FIRING_COST_MS<code class="tsd-tag">Const</code></h1></div>
-<div class="tsd-signature"><span class="tsd-kind-variable">WARM_FIRING_COST_MS</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">79</span></div>
+<div class="tsd-signature"><span class="tsd-kind-variable">WARM_FIRING_COST_MS</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">134</span></div>
 <div class="tsd-comment tsd-typography"><p>What one warming firing costs, in the same units as <code>COLD_BOOT_MS</code>.</p>
 <p>Not a duration (an idle object waiting on an alarm is not billed for duration); a firing spends a
 request and a row. Derived from the measured ~505 renders/day crossing: <code>P(render within 10 s)</code>
-there is 0.05678, and break-even <code>P x COLD_BOOT_MS = C_warm</code> gives 79.</p>
+there is 0.05678, and break-even <code>P x COLD_BOOT_MS = C_warm</code> gives 134. Re-derived when
+<code>COLD_BOOT_MS</code> moved to 2,362 so the recorded crossing stays put; leaving it at 79 would drop
+the crossing to about 294 renders a day.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f79d316ce91c7fe45039b40e6dea40843a7b42c/src/ops/thermal.ts#L45">src/ops/thermal.ts:45</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/ops/thermal.ts#L49">src/ops/thermal.ts:49</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

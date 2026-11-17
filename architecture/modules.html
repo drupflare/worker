@@ -525,6 +525,10 @@ that asks for them, so a new site stays small.</p>
 <td>fetches it and writes its files; runs the check first unless <code>force=1</code></td>
 </tr>
 <tr>
+<td><code>/install-lock</code></td>
+<td>installs the packages of a composer lock, in windows (see below)</td>
+</tr>
+<tr>
 <td><code>/enable?module=X</code></td>
 <td>installs it through Drupal&#39;s own module installer</td>
 </tr>
@@ -534,6 +538,40 @@ that asks for them, so a new site stays small.</p>
 flags, branch aliases, branch archives, metapackages and virtual packages. Composer plugins are
 skipped. Installing does not enable a module. The two are separate steps, because a package that
 lands is not yet a module Drupal knows about.</p>
+<h3 id="installing-a-lock">Installing a Lock</h3>
+<p><code>POST /install-lock</code> takes a <code>composer.lock</code> as the JSON body and installs the packages it names, so a
+site restored from a template bundle gets the code its database expects. The body may also carry
+<code>dev: true</code> (to include <code>packages-dev</code>), <code>profile</code> (a Drupal machine name, recorded with the session)
+and <code>cursor</code>. The route is owner-token only; <code>GET</code> answers 405.</p>
+<p>One call handles a window of 40 packages, the same count <code>/install</code> takes, and answers
+<code>{ session, done, cursor, total, installed, skipped, failed, patches, cache }</code>. Send the same body
+with the returned <code>cursor</code> until <code>done</code> is true. The session id comes from the lock&#39;s packages, so the
+same lock always maps to the same session. A package already installed at the locked version and
+digest counts as <code>installed</code> with <code>reused: true</code> and writes nothing, and repeating a call returns the
+same answer. A cursor ahead of the session answers 409.</p>
+<p>A package is skipped, and listed by name with its reason, when it is a <code>composer-plugin</code> (the worker
+cannot run PHP plugins), a <code>metapackage</code>, a <code>path</code> package (the template delivers its own package in
+its files tar), part of Drupal core, carried by the shipped pack, or has no <code>dist</code> URL. If the pack
+carries a skipped package at a different version, the pack&#39;s copy stays and the reason names both.
+Composer patches are not applied: a lock does not hold them, so the answer says
+<code>patches: &#39;not applied&#39;</code> and lists none.</p>
+<p>Each archive is checked before anything is unpacked. A <code>dist.shasum</code> must match. Where the lock has
+only a <code>dist.reference</code> that is a commit and the archive is a GitHub zipball, the commit recorded in
+the archive comment must equal it. Other archives with neither install as <code>unverified</code>. A mismatch
+fails that package, stops the session and writes nothing for it; sending the same call again retries
+it. Any other failure (a fetch error, an archive type that is not a zip) also stops the session.</p>
+<p>The route refuses, with the reason in the body, a lock for a different Drupal core (major and minor
+are compared, and the answer names both versions), a lock with no <code>drupal/core</code> entry, a lock of
+more than 400 packages, a body above the request ceiling (413), and any call while a transaction is
+open (409).</p>
+<p>After the last package the route drops the compiled container once, when any module, theme or
+profile was installed, and reports it in <code>cache</code>. It does not enable anything; <code>/enable</code> stays a
+separate step.</p>
+<p><code>DELETE /install-lock?session=&lt;id&gt;</code> rolls a session back. It removes every file and autoload entry
+the session wrote and restores the rows it replaced, which the session saved before writing. Those
+saved rows exist only for a package that replaced files, and they stay until the session is rolled
+back. A session that failed and was not rolled back stays resumable. Roll back the newest session
+first when two share packages.</p>
 <p>A module you wrote yourself arrives through a git remote or through <code>/modify</code>. A git pull fetches
 one commit at depth one and boots the kernel against the new tree, rolling back if it fatals. See
 <a href="../operating/git-remotes.html">Git Remotes</a> and <a href="#module-revisions">Module Revisions</a>. The same <code>/enable</code> step

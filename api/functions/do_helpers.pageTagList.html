@@ -17,8 +17,9 @@
 <div class="tsd-signature tsd-anchor-link" id="pagetaglist"><span class="tsd-kind-call-signature">pageTagList</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">tags</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><a href="#pagetaglist" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>A render's cache tags, as the one string a page row carries.</p>
-<p><code>[]</code> rather than NULL for a page that declares none, so a scoped purge can tell &quot;depends on
-nothing&quot; from &quot;stored before the column existed&quot; (only the latter is unsafe to scope against).</p>
+<p>A list that declares none is <code>[]</code>. <code>pathsForTags()</code> treats that like NULL for a page row, since
+an empty list matches no tag and the page would outlive every scoped purge, and <code>fillOne()</code> never
+stores a page render with no tags. Only a shell row (<code>cfw_shell</code>) still carries <code>[]</code>.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -26,7 +27,7 @@ nothing&quot; from &quot;stored before the column existed&quot; (only the latter
 <li><span><span class="tsd-kind-parameter">tags</span>: <span class="tsd-signature-type">unknown</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f79d316ce91c7fe45039b40e6dea40843a7b42c/src/do/helpers.ts#L12">src/do/helpers.ts:12</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/do/helpers.ts#L13">src/do/helpers.ts:13</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

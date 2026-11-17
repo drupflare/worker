@@ -11,13 +11,15 @@
 <li><a href="../modules/ops_thermal.html">ops/thermal</a></li>
 <li><a href="" aria-current="page">COLD_BOOT_MS</a></li></ul>
 <h1>Variable COLD_BOOT_MS<code class="tsd-tag">Const</code></h1></div>
-<div class="tsd-signature"><span class="tsd-kind-variable">COLD_BOOT_MS</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">1398</span></div>
+<div class="tsd-signature"><span class="tsd-kind-variable">COLD_BOOT_MS</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">2362</span></div>
 <div class="tsd-comment tsd-typography"><p>What a cold boot costs, in ms of billed wall clock.</p>
-<p>Measured on a deployed worker: 1,398 ms for the interpreter, mount and kernel; the only reason
-to pay for a firing.</p>
+<p>Measured 2026-11-16 on a deployed free worker: cpuTime p50 2,362 ms (n=8, <code>/fill</code> of a cold
+object, so the first render is inside it); the only reason to pay for a firing. It replaces
+1,398, and it is not like for like with <code>scripts/economics/measured.ts</code> <code>COLD_BOOT_MS</code> (1,264),
+which <code>measure:headlines</code> did not reproduce.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f79d316ce91c7fe45039b40e6dea40843a7b42c/src/ops/thermal.ts#L28">src/ops/thermal.ts:28</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/ops/thermal.ts#L30">src/ops/thermal.ts:30</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

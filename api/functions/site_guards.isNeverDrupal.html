@@ -14,19 +14,21 @@
 <section class="tsd-panel">
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="isneverdrupal"><span class="tsd-kind-call-signature">isNeverDrupal</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">pathname</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><a href="#isneverdrupal" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="isneverdrupal"><span class="tsd-kind-call-signature">isNeverDrupal</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">pathname</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">cms</span><span class="tsd-signature-symbol">?:</span> <a href="../types/util_cms.Cms.html" class="tsd-signature-type tsd-kind-type-alias">Cms</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><a href="#isneverdrupal" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>True when the path cannot be a Drupal route under any configuration.</p>
+<div class="tsd-comment tsd-typography"><p>True when the path cannot be a route of the CMS under any configuration.</p>
 <p>The query string is stripped first: four patterns are <code>$</code>-anchored and the caller passes
-<code>pathname + search</code>, so <code>/.env?x=1</code> would otherwise slip through to the object.</p>
+<code>pathname + search</code>, so <code>/.env?x=1</code> would otherwise slip through to the object. Drupal when no CMS
+is given, because the worker has no runtime CMS value yet; a name the table lacks refuses all.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
-<li><span><span class="tsd-kind-parameter">pathname</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
+<li><span><span class="tsd-kind-parameter">pathname</span>: <span class="tsd-signature-type">string</span></span></li>
+<li><span><span class="tsd-kind-parameter">cms</span>: <a href="../types/util_cms.Cms.html" class="tsd-signature-type tsd-kind-type-alias">Cms</a><span class="tsd-signature-symbol"> = &#39;drupal&#39;</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f79d316ce91c7fe45039b40e6dea40843a7b42c/src/site/guards.ts#L188">src/site/guards.ts:188</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/site/guards.ts#L234">src/site/guards.ts:234</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

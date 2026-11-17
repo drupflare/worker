@@ -390,7 +390,7 @@
 				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Serving and Caching Settings</a></p>
 <h1 id="page-cache-settings">Page Cache Settings</h1>
 <p>Settings for the KV page tier, stale serving, the in-memory cache bins and the compiled plan tier.</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-kv-page-tier">The KV Page Tier</a></li><li><a href="#never_stale"><code>NEVER_STALE</code></a></li><li><a href="#memory_cache_bins"><code>MEMORY_CACHE_BINS</code></a></li><li><a href="#edge_plan"><code>EDGE_PLAN</code></a></li></ol></nav><h2 id="the-kv-page-tier">The KV Page Tier</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-kv-page-tier">The KV Page Tier</a></li><li><a href="#never_stale"><code>NEVER_STALE</code></a></li><li><a href="#memory_cache_bins"><code>MEMORY_CACHE_BINS</code></a></li><li><a href="#edge_plan"><code>EDGE_PLAN</code></a></li><li><a href="#wordpress_page_cache"><code>WORDPRESS_PAGE_CACHE</code></a></li></ol></nav><h2 id="the-kv-page-tier">The KV Page Tier</h2>
 <p><code>PAGE_KV</code> is a cross-colo tier between the edge cache and the Durable Object, on for both plans
 whenever the namespace is bound. It still costs one Worker request, since the Worker has to run to
 consult it, so what it buys is latency and never serving ceiling. A missing binding always wins over
@@ -506,6 +506,34 @@ seen costs 46-140 ms whether it exists or not, which is more than the object hop
 <td align="right">1</td>
 </tr>
 </tbody></table></div>
+<h2 id="wordpress_page_cache"><code>WORDPRESS_PAGE_CACHE</code></h2>
+<p><code>1</code> lets a WordPress site answer anonymous page views from the object&#39;s stored copy and the shared
+tiers. Any other value, or no value, stores and replays nothing, which is the default. Drupal never
+reads it, and it is not on <code>KV_OVERRIDABLE</code>: a wrong stored page is a wrong answer, not a slow site.</p>
+<p>A response is stored only when every rule below passes, and each rule is a named row in
+<code>src/wordpress/store-rule.ts</code> with a test that removes it and shows the case then gets through.</p>
+<ul>
+<li>The request is an anonymous <code>GET</code> with no cookie, no <code>Authorization</code> and none of the headers that
+change a body (<code>Forwarded</code>, <code>X-Forwarded-Server</code>, <code>X-Original-URL</code>, <code>X-HTTP-Method-Override</code> and
+similar). <code>X-Forwarded-Host</code>, <code>X-Forwarded-For</code> and <code>X-Forwarded-Proto</code> are not on that list:
+proxies and <code>wrangler dev</code> add them, and the pinned origin keeps them out of the body.</li>
+<li>The path is lowercase, has no doubled slash, dot segment or encoded slash, no file extension, no
+<code>wp-*</code> first segment and is not under <code>/search/</code>. Only the query variables WordPress uses to choose
+a page are allowed, each with a fixed value shape (<code>p</code>, <code>page_id</code>, <code>cat</code>, <code>tag</code>, <code>author</code>, <code>paged</code>,
+<code>feed</code> and a few more). Any other variable, such as <code>s</code>, <code>preview</code> or <code>replytocom</code>, refuses the
+path, so a visitor cannot mint a row per value.</li>
+<li><code>utm_*</code>, <code>fbclid</code>, <code>gclid</code> and the other campaign identifiers are removed from the key and from the
+path PHP renders, and the remaining variables are sorted. Drupal keys the path as sent.</li>
+<li>The response is a 200 with no <code>Set-Cookie</code>, no <code>private</code>, <code>no-store</code> or <code>no-cache</code>, and no <code>Vary</code>
+but <code>Accept-Encoding</code>. A 404 or a redirect is never stored: a 404 is an unbounded key space, and
+<code>cfw_page</code> has no <code>location</code> column.</li>
+<li>The body is complete (<code>&lt;/html&gt;</code>, or a feed that starts with <code>&lt;?xml</code> and ends in its closing tag),
+has the content type its path implies, carries no nonce, and is not a search or not-found page.</li>
+<li>The render named at least one cache tag, so a write can purge it.</li>
+</ul>
+<p><code>/wp-json/</code> and <code>?rest_route=</code> are refused. REST collections vary by authentication and some carry
+nonces; storing one needs a per-route allow-list, a check that the route is anonymous, and tags per
+collection.</p>
 			</div>
 		</main>
 		<footer>

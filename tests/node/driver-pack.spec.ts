@@ -7,9 +7,11 @@ import { describe, expect, it } from 'vitest';
 import { cmsSelection } from '../../scripts/cms.ts';
 import {
 	DRIVER_ASSET_PATH,
+	DRIVER_DIGEST_PATH,
 	buildCms,
 	buildDriverAssets,
 	driverDigest,
+	driverOutputPaths,
 	serialiseDriverAssets,
 	serialiseDriverDigest
 } from '../../scripts/gen-driver-assets.ts';
@@ -285,13 +287,32 @@ describe('the build packs the CMS the shipping config selects', () => {
 	});
 
 	it('fails on a value it cannot pack, and on a missing one', async () => {
-		expect(() => cmsSelection('wordpress')).toThrow(/not a CMS this build can pack/);
+		expect(() => cmsSelection('nope')).toThrow(/not a CMS this build can pack/);
 		expect(() => cmsSelection(undefined)).toThrow(/not a CMS this build can pack/);
-		expect(() => cmsSelection('Drupal')).toThrow();
-		await expect(buildDriverAssets('wordpress' as 'drupal')).rejects.toThrow(
-			/not a CMS this build can pack/
+		expect(() => cmsSelection('Drupal')).toThrow(/not a CMS this build can pack/);
+		expect(() => cmsSelection('WordPress')).toThrow(/not a CMS this build can pack/);
+		expect(() => buildCms('nope')).toThrow(/nope/);
+	});
+
+	it('accepts wordpress and joomla by name but refuses to pack a CMS with no module set', async () => {
+		for (const name of ['wordpress', 'joomla'] as const) {
+			expect(cmsSelection(name)).toBe(name);
+			expect(buildCms(name)).toBe(name);
+			await expect(buildDriverAssets(name)).rejects.toThrow(/no module set/);
+		}
+	});
+
+	it('keeps the Drupal outputs where the edge reads them and puts other CMSs under assets', () => {
+		expect(driverOutputPaths('drupal')).toEqual({
+			asset: DRIVER_ASSET_PATH,
+			digest: DRIVER_DIGEST_PATH
+		});
+		expect(driverOutputPaths('wordpress').asset).toBe(
+			join(ROOT, 'assets/wordpress/driver.json')
 		);
-		expect(() => buildCms('wordpress')).toThrow(/wordpress/);
+		expect(driverOutputPaths('joomla').digest).toBe(
+			join(ROOT, 'assets/joomla/driver-digest.ts')
+		);
 	});
 
 	it('packs the same bytes whether the selection is explicit or read from the config', async () => {

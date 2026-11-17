@@ -1,10 +1,10 @@
 /**
  * The CMS a build packs, selected by the `CMS` var in `wrangler.jsonc`.
  *
- * One value today. The selection exists so the packer is keyed on it before a second CMS is, and an
- * unknown value fails the build rather than packing Drupal under another name.
+ * A name is accepted before its module set exists; the packer refuses one with no module set, so a
+ * build never packs Drupal under another name. An unknown value fails the build the same way.
  */
-export const CMS_VALUES = ['drupal'] as const;
+export const CMS_VALUES = ['drupal', 'wordpress', 'joomla'] as const;
 
 export type Cms = (typeof CMS_VALUES)[number];
 

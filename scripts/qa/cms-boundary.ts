@@ -204,7 +204,8 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/deployment-env.ts': 'mixed',
 	// one deployment is one site: the primary and the sites it lists
 	'src/ops/deployment-site.ts': 'host',
-	'src/ops/driver-digest.ts': 'host',
+	// generated: the Drupal pack's routes and permissions
+	'src/ops/driver-digest.ts': 'cms',
 	'src/ops/edge-plan.ts': 'host',
 	// header and redirect rules the front worker applies
 	'src/ops/edge-rules.ts': 'host',

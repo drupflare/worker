@@ -112,7 +112,32 @@ const MODULES: { src: string; mount: string; parts?: readonly string[] }[] = [
 ];
 
 /** the module set each CMS packs */
-const CMS_MODULES: Record<Cms, typeof MODULES> = { drupal: MODULES };
+const CMS_MODULES: Partial<Record<Cms, typeof MODULES>> = { drupal: MODULES };
+
+/**
+ * Where a CMS's pack and digest are written. Drupal keeps the paths the edge reads; the others
+ * write under `assets/<cms>/`.
+ *
+ * @internal
+ */
+export function driverOutputPaths(cms: Cms): { asset: string; digest: string } {
+	if (cms === 'drupal') {
+		return {
+			asset: join(repo, 'assets/driver.json'),
+			digest: join(repo, 'src/ops/driver-digest.ts')
+		};
+	}
+	return {
+		asset: join(repo, `assets/${cms}/driver.json`),
+		digest: join(repo, `assets/${cms}/driver-digest.ts`)
+	};
+}
+
+function moduleSet(cms: Cms): typeof MODULES {
+	const set = CMS_MODULES[cmsSelection(cms)];
+	if (set === undefined) throw new Error(`CMS=${cms} has no module set to pack yet`);
+	return set;
+}
 
 /**
  * The CMS this build packs: `CMS` from the environment, else the shipping config's var.
@@ -161,7 +186,7 @@ async function walk(dir: string): Promise<string[]> {
  */
 export async function buildDriverAssets(cms: Cms = buildCms()): Promise<Record<string, string>> {
 	const files: Record<string, string> = {};
-	for (const { src, mount, parts } of CMS_MODULES[cmsSelection(cms)]) {
+	for (const { src, mount, parts } of moduleSet(cms)) {
 		// resolve, not join: the sibling paths may be absolute
 		const from = resolve(repo, src);
 		// a suffix like `.info.yml` names `<machine name>.info.yml`, and the machine name comes from
@@ -346,14 +371,16 @@ if (import.meta.main) {
 		console.log(JSON.stringify({ root: to, files: written.length }, null, 2));
 		process.exit(0);
 	}
-	const files = await buildDriverAssets();
+	const cms = buildCms();
+	const out = driverOutputPaths(cms);
+	const files = await buildDriverAssets(cms);
 	const body = serialiseDriverAssets(files);
-	await mkdir(join(repo, 'assets'), { recursive: true });
-	await writeFile(dest, body);
+	await mkdir(dirname(out.asset), { recursive: true });
+	await writeFile(out.asset, body);
 	const digest = driverDigest(body);
 	const routes = declaredRouteNames(files);
 	await writeFile(
-		DRIVER_DIGEST_PATH,
+		out.digest,
 		serialiseDriverDigest(digest, routes, declaredRoutePermissions(files))
 	);
 	const bytes = Object.values(files).reduce((n, s) => n + s.length, 0);
@@ -364,7 +391,7 @@ if (import.meta.main) {
 				sourceBytes: bytes,
 				digest,
 				routes: routes.length,
-				dest
+				dest: out.asset
 			},
 			null,
 			2

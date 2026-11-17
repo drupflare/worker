@@ -8,6 +8,7 @@ import {
 	readDayMeters,
 	writeDayMeters
 } from '../../src/ops/day-meters';
+import type { SitePhpDurableObject } from '../../src/site-do';
 
 /**
  * The harness the ported serve-chain specs drive: a REAL `SitePhpDurableObject`, with the PHP
@@ -421,6 +422,13 @@ export type ServeDo = {
 	renderClockUnmeasurable?: boolean;
 	heapRestore?: Record<string, unknown> | null;
 };
+
+type Expect<T extends true> = T;
+
+/** fails to typecheck when ServeDo names a member the class does not have */
+export type ServeDoIsClassSubset = Expect<
+	[Exclude<keyof ServeDo, keyof SitePhpDurableObject>] extends [never] ? true : false
+>;
 
 /** every `x-cfw-*` header the original suite's `serve()` read, plus the body */
 export type ServeProbe = {

@@ -439,3 +439,34 @@ export async function restoreStepOnce(site: SitePhpDurableObject): Promise<Paylo
 	};
 	return { heapRestore: site.heapRestore };
 }
+
+/**
+ * The emscripten heap as bytes (`HEAPU8`, else `wasmMemory`; php-wasm types neither);
+ * undefined if neither exists.
+ */
+export function heapBytes(binary: SiteBinary): Uint8Array | undefined {
+	const b = binary as unknown as {
+		HEAPU8?: unknown;
+		wasmMemory?: { buffer?: ArrayBufferLike };
+	};
+	if (b.HEAPU8 instanceof Uint8Array) return b.HEAPU8;
+	const buf = b.wasmMemory?.buffer;
+	if (buf) return new Uint8Array(buf);
+	return undefined;
+}
+
+/**
+ * The vrzno handle table (`Module.targets`), shape-checked; undefined when absent, which a
+ * restore refuses on.
+ */
+export function handleIndex(binary: SiteBinary): HandleIndex | undefined {
+	const t = (binary as unknown as { targets?: unknown }).targets as HandleIndex | undefined;
+	if (!t || typeof t !== 'object') return undefined;
+	const ok =
+		typeof t.id === 'number' &&
+		typeof t.byObject?.set === 'function' &&
+		typeof t.byInteger?.set === 'function' &&
+		typeof (t.byInteger as unknown as { [Symbol.iterator]?: unknown })[Symbol.iterator] ===
+			'function';
+	return ok ? t : undefined;
+}

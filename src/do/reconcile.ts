@@ -1,19 +1,33 @@
 import { dropAllSnapshots, ensureHeapTables } from '../db/heap-store';
 import { cronHookList } from '../drupal/cron-php';
+import {
+	CORE_VERSION_KEY,
+	invalidateVersionPinnedCaches,
+	type InvalidationResult
+} from '../ops/core-version';
 import { type CronHookCache, cronHooksFor, cronHooksFromList } from '../ops/cron';
 import { dailyLimit } from '../ops/degrade';
 import { pruneHeapRecords } from '../ops/heap-integrity';
-import { extensionFingerprint } from '../ops/packed-container';
+import {
+	extensionFingerprint,
+	PACKED_CONTAINER_PATH,
+	type PackedContainer
+} from '../ops/packed-container';
 import {
 	DRIVER_DIGEST_KEY,
+	PACK_VERSION,
+	parseReconcileState,
 	planReconcile,
 	reconciled,
 	type ReconcileHost,
+	reconcileReport,
 	type ReconcileState,
 	recordStep,
 	recurringWork,
 	serialiseReconcileState
 } from '../ops/reconcile';
+import { FIRST_RUN_KEY } from '../ops/setup-page';
+import { SHIPPED_CORE_VERSION } from '../ops/shipped-lock';
 import {
 	readSweepCursor,
 	sweepDue,
@@ -34,10 +48,14 @@ import {
 	updbRollback
 } from '../ops/updb';
 import type { SitePhpDurableObject } from '../site-do';
+import { cmsOf } from '../util/cms';
 import { errorMessage, isMissingTable } from '../util/errors';
 import { columnText, firstRow } from '../util/sql';
+import type { ReconcileStateHost } from './host';
 import { CRON_HOOKS_KEY, HEAP_IMAGE_KEY, RECONCILE_KEY } from './keys';
 import { fillBatchSize } from './levers';
+import { refusesReconcile } from './role';
+import { phasesFor } from './tree-boot';
 import type { Payload } from './types';
 
 /**
@@ -48,9 +66,11 @@ import type { Payload } from './types';
  */
 export async function reconcileStepOnce(site: SitePhpDurableObject): Promise<Payload | undefined> {
 	if (String(site.env?.RECONCILE ?? '1') === '0') return undefined;
+	// the steps run Drupal PHP, so another CMS's tree never reaches them
+	if (!phasesFor(cmsOf(site.env)).reconcile) return undefined;
 	// a lane serves a copy of the primary's database; reconciling it separately would write
 	// authoritative rows from two places at once
-	if (site.isPoolLane()) return undefined;
+	if (refusesReconcile(site)) return undefined;
 	let state = site.reconcileState();
 	const host = site.reconcileHost();
 	// the version gate cannot retire the recurring work (`recurringWork()`)
@@ -241,7 +261,7 @@ export function sweepBeat(site: SitePhpDurableObject, { force = false } = {}): b
 /**
  * Whether a database-update run is in progress and owes the alarm chain work (one indexed read).
  */
-export function updbActive(site: SitePhpDurableObject): boolean {
+export function updbActive(site: Pick<SitePhpDurableObject, 'hasTable' | 'sql'>): boolean {
 	try {
 		// no DDL on a read: the status report reaches this, and an absent table means no run
 		if (!site.hasTable('cfw_updb_run')) return false;
@@ -290,5 +310,87 @@ export async function updbAction(
 			return (await updbDrain(deps, options)) as unknown as Payload;
 		default:
 			return { ok: false, reason: 'unknown-action', action };
+	}
+}
+
+/** what a reconciliation step may ask this object beyond plain SQL */
+export function reconcileHost(host: ReconcileStateHost): ReconcileHost {
+	return {
+		claimedAtMs: () => {
+			const raw = host.metaGet(FIRST_RUN_KEY);
+			const at = raw === null ? NaN : Number(raw);
+			return Number.isFinite(at) && at > 0 ? at : undefined;
+		},
+		meta: (key: string) => host.metaGet(key),
+		setMeta: (key: string, value: string) => host.metaSet(key, value),
+		origin: () => host.canonicalOrigin(),
+		packedContainer: () => host.packedContainer,
+		modules: () => host.enabledModulesFingerprint()
+	};
+}
+
+/** loads the pack's container row from `ASSETS` once */
+export async function loadPackedContainer(host: ReconcileStateHost): Promise<void> {
+	if (host.packedContainer) return;
+	try {
+		const res = await host.env.ASSETS.fetch(
+			new URL(`https://a.local/${PACKED_CONTAINER_PATH}`)
+		);
+		if (res.ok) host.packedContainer = await res.json<PackedContainer>();
+	} catch {
+		// absent means the step rebuilds, as it always did
+	}
+}
+
+/** the stored reconciliation state */
+export function reconcileState(host: ReconcileStateHost): ReconcileState {
+	return parseReconcileState(host.metaGet(RECONCILE_KEY));
+}
+
+/** the reconciliation report for this site */
+export function reconcileStatus(host: ReconcileStateHost): ReturnType<typeof reconcileReport> {
+	return reconcileReport(host.reconcileState(), host.sql, host.reconcileHost());
+}
+
+/**
+ * Why `reconcileStepOnce()` answered undefined, so a POST that did nothing is not mistaken for
+ * a silent failure.
+ */
+export function reconcileSkipReason(host: ReconcileStateHost): string {
+	if (String(host.env?.RECONCILE ?? '1') === '0') return 'RECONCILE is off';
+	if (!phasesFor(cmsOf(host.env)).reconcile) return 'this CMS has no reconciliation steps';
+	if (refusesReconcile(host)) return 'a replica lane serves a copy and does not reconcile';
+	const state = host.reconcileState();
+	if (
+		reconciled(state, host.metaGet(DRIVER_DIGEST_KEY)) &&
+		!recurringWork(state, host.sql, host.reconcileHost())
+	) {
+		return 'already at the shipping version';
+	}
+	// a deferred step answers undefined too; without this a site parked at version 0 of 2
+	// reads as shipping
+	const planned = planReconcile(state, host.sql, host.reconcileHost());
+	return planned.action === 'wait'
+		? `waiting on ${planned.step.id}: ${planned.reason}`
+		: `version ${state.version} of ${PACK_VERSION}, with no step left to try`;
+}
+
+/**
+ * Drops the caches that embed the Drupal core version, once per lifetime, when that version
+ * has moved.
+ */
+export function invalidateOnCoreUpgrade(host: ReconcileStateHost): InvalidationResult | undefined {
+	if (host.reconcileMemo.coreVersionChecked) return undefined;
+	host.reconcileMemo.coreVersionChecked = true;
+	try {
+		return invalidateVersionPinnedCaches(
+			host.sql,
+			host.metaGet(CORE_VERSION_KEY),
+			SHIPPED_CORE_VERSION,
+			(version) => host.metaSet(CORE_VERSION_KEY, version)
+		);
+	} catch {
+		// never take the serving path down over a cache-busting nicety
+		return undefined;
 	}
 }

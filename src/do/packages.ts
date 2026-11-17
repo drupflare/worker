@@ -4,6 +4,7 @@ import { defaultCache } from '../ops/cache-api';
 import { type OracleResult, resolveInstallable } from '../ops/oracle';
 import {
 	asksForBranch,
+	type AutoloadDeclaration,
 	checkArchiveDigest,
 	classmapOf,
 	devMetadataUrl,
@@ -25,6 +26,7 @@ import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS, SHIPPED_PROVIDES } from '.
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage, isMissingTable } from '../util/errors';
 import { firstRow } from '../util/sql';
+import type { AutoloadHost, SiteStore } from './host';
 import { INSTALLED_FS_BUDGET_BYTES, type LazyInstalledNode } from './lazy-mount';
 import { changeModuleFiles, prepareIntegrity } from './module-files';
 import type { SiteBinary } from './types';
@@ -455,4 +457,40 @@ export function mountInstalledModules(site: SitePhpDurableObject, binary: SiteBi
 		}
 	}
 	return written;
+}
+
+/** stores the autoload map a build-delivered vendor package asks composer to register */
+export function registerPackageAutoload(
+	host: AutoloadHost,
+	pkg: AutoloadDeclaration,
+	files: readonly { path: string; source: string }[]
+): void {
+	host.sql.exec(
+		`INSERT INTO cfw_package_autoload (package, version, mount, autoload, classmap)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(package) DO UPDATE SET version = excluded.version, mount = excluded.mount,
+         autoload = excluded.autoload, classmap = excluded.classmap`,
+		pkg.name,
+		pkg.version,
+		pkg.mount,
+		JSON.stringify(pkg.autoload),
+		JSON.stringify(classmapOf(pkg.mount, pkg.autoload, files))
+	);
+	host.rowsSinceFlush = (host.rowsSinceFlush ?? 0) + 1;
+}
+
+/**
+ * Drops the compiled container and plugin discovery so the next boot rebuilds both.
+ *
+ * Called when a delivery changes an extension's wiring; a container cached before a module's
+ * code arrives resolves routes to classes that cannot load.
+ */
+export function dropCompiledContainer(host: SiteStore): void {
+	for (const table of ['cache_container', 'cache_discovery']) {
+		try {
+			host.sql.exec(`DELETE FROM ${table}`);
+		} catch {
+			// a table the site has not created has nothing cached to drop
+		}
+	}
 }

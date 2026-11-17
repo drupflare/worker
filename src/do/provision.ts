@@ -13,8 +13,10 @@ import { STALE_DEPTH_MAX } from '../ops/page-store';
 import { DRIVER_DIGEST_KEY } from '../ops/reconcile';
 import { ensureHealthTable } from '../ops/supervisor';
 import type { SitePhpDurableObject } from '../site-do';
+import { cmsOf } from '../util/cms';
 import { errorMessage } from '../util/errors';
 import { migrationSelfDrives, prefillDefault } from './levers';
+import { phasesFor } from './tree-boot';
 import type { Payload, Row } from './types';
 
 /**
@@ -193,6 +195,10 @@ export async function prefillServingTable(
 	site: SitePhpDurableObject,
 	asked?: string
 ): Promise<Payload> {
+	// the pages in `prefill.json` are Drupal's, and one would be stored as another CMS's front page
+	if (!phasesFor(cmsOf(site.env)).prefill) {
+		return { prefilled: 0, prefillNote: 'prefill is not available for this CMS' };
+	}
 	const want = asked === '1' ? true : asked === '0' ? false : prefillDefault(site.env);
 	if (!want) {
 		return {

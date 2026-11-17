@@ -52,6 +52,14 @@ export function lazyMountBytes(info: SiteMountInfo | undefined): {
 	};
 }
 
+/** ASSETS requests `packCachedEnv` has seen in this isolate: pack members fetched, pack members answered from memory, and the rest */
+const assetRequests = { packFetched: 0, packReused: 0, other: 0 };
+
+/** a copy of the asset request counts, which a boot's subrequests are read from */
+export function assetRequestCounts(): typeof assetRequests {
+	return { ...assetRequests };
+}
+
 /** the per-file pack's index and blob, one copy per ASSETS binding for the life of the isolate */
 const packFiles = new WeakMap<object, Map<string, Promise<PackFile>>>();
 type PackFile = { ok: boolean; status: number; bytes: ArrayBuffer; parsed?: unknown };
@@ -70,10 +78,14 @@ export function packCachedEnv<E>(env: E): E {
 	const known = files;
 	const fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
 		const url = input instanceof Request ? input.url : String(input);
-		if (!/\/core\.pf\.(?:bin|json)$/.test(new URL(url).pathname))
+		if (!/\/core\.pf\.(?:bin|json)$/.test(new URL(url).pathname)) {
+			assetRequests.other += 1;
 			return assets.fetch(input, init);
+		}
 		let file = known.get(url);
-		if (!file) {
+		if (file) assetRequests.packReused += 1;
+		else {
+			assetRequests.packFetched += 1;
 			file = assets.fetch(url).then(async (r) => ({
 				ok: r.ok,
 				status: r.status,

@@ -1,7 +1,4 @@
-import { sessionCookieValue } from '../ops/auth-budget';
 import { dailyLimit, REDUCE_AT } from '../ops/degrade';
-import { drupalSessionRowId } from '../ops/replica';
-import type { ReplicaStage } from '../ops/replica-admission';
 import {
 	type DemandWindow,
 	laneFitsRows,
@@ -15,37 +12,45 @@ import {
 	type ProvisionOutcome,
 	type RestoreChunk
 } from '../ops/replica-restore';
-import { replicaName, replicaOf } from '../ops/replica-routing';
+import {
+	formatLanesPointer,
+	LANES_EPOCH_HEADER,
+	LANES_HEADER,
+	lanesKvKey,
+	replicaName
+} from '../ops/replica-routing';
 import { ensureHashSalt } from '../ops/site-secrets';
-import type { SitePhpDurableObject } from '../site-do';
+import { firstRow } from '../util/sql';
+import type { PoolHost, SiteStore } from './host';
 import {
 	DEMAND_WINDOWS_KEY,
 	LANE_CURSOR_KEY,
 	LANE_IN_FLIGHT_KEY,
-	LANES_PROVISIONED_KEY,
-	READMIT_ASKS_KEY
+	LANE_REPAIR_KEY,
+	LANES_EPOCH_KEY,
+	LANES_PROVISIONED_KEY
 } from './keys';
-import { SESSION_CATCHUP_MS } from './limits';
-import type { Payload } from './types';
+import { refusesPoolOwner } from './role';
+import type { Payload, Row } from './types';
 
 /**
  * Grows the pool when the site has been contended for several windows running, or repairs a
  * withdrawn lane. The copy runs a chunk per alarm, so no firing owns a whole table copy.
  */
-export async function autoScaleStep(site: SitePhpDurableObject): Promise<Payload | undefined> {
-	if (site.isPoolLane()) return undefined;
-	const peak = site.inflightPeak ?? 0;
-	site.inflightPeak = site.inflight ?? 0;
-	const pending = site.metaGet(LANE_CURSOR_KEY);
-	const stored = site.metaGet(DEMAND_WINDOWS_KEY) || '';
+export async function autoScaleStep(host: PoolHost): Promise<Payload | undefined> {
+	if (refusesPoolOwner(host)) return undefined;
+	const peak = host.inflightPeak ?? 0;
+	host.inflightPeak = host.inflight ?? 0;
+	const pending = host.metaGet(LANE_CURSOR_KEY);
+	const stored = host.metaGet(DEMAND_WINDOWS_KEY) || '';
 	// read before the idle return: a repair must also run on a quiet site
-	const repairs = site.laneRepairQueue();
+	const repairs = host.laneRepairQueue();
 
 	// an idle tick writes nothing (it would cost a row per warming firing); a quiet window
 	// clears the run, so only contended windows accumulate
 	if (peak < 2) {
 		if (stored !== '' && (pending === null || pending === '')) {
-			site.metaSet(DEMAND_WINDOWS_KEY, '');
+			host.metaSet(DEMAND_WINDOWS_KEY, '');
 		}
 		if ((pending === null || pending === '') && repairs.length === 0) return undefined;
 	}
@@ -53,38 +58,38 @@ export async function autoScaleStep(site: SitePhpDurableObject): Promise<Payload
 	if (!Array.isArray(windows)) windows = [];
 	if (peak >= 2) {
 		// queueing from `laneTimings`, the quantity a lane removes
-		const timings = site.laneTimings ?? [];
+		const timings = host.laneTimings ?? [];
 		const waiters = timings.filter((t) => t.ahead > 0);
 		windows = recordWindow(windows, {
 			peakInflight: peak,
-			at: site.nowMs(),
+			at: host.nowMs(),
 			queued: waiters.length,
 			// a floor (the clock is frozen across synchronous PHP); summed so `meanWaitMs()`
 			// weights by waiters
 			waitedMs: waiters.reduce((n, t) => n + t.queueMs, 0)
 		});
-		site.metaSet(DEMAND_WINDOWS_KEY, JSON.stringify(windows));
+		host.metaSet(DEMAND_WINDOWS_KEY, JSON.stringify(windows));
 	}
 
 	// a copy already in flight owns the decision until it finishes
-	const provisioned = Number(site.metaGet(LANES_PROVISIONED_KEY) ?? 0) || 0;
+	const provisioned = Number(host.metaGet(LANES_PROVISIONED_KEY) ?? 0) || 0;
 	// a repair outranks growth, and the row budget below gates growth only (a repaired lane is
 	// already paid for)
-	const now = site.nowMs();
+	const now = host.nowMs();
 	const rows: RowBudget = {
-		today: site.dailyRows(now),
-		replicatedToday: site.replicatedRowsSince(now - (now % 86_400_000)),
-		limit: dailyLimit('rows-written', site.env),
+		today: host.dailyRows(now),
+		replicatedToday: replicatedRowsSince(host, now - (now % 86_400_000)),
+		limit: dailyLimit('rows-written', host.env),
 		dayFraction: (now % 86_400_000) / 86_400_000
 	};
 	const lane =
 		pending !== null && pending !== ''
-			? Number(site.metaGet(LANE_IN_FLIGHT_KEY) ?? 0) || undefined
+			? Number(host.metaGet(LANE_IN_FLIGHT_KEY) ?? 0) || undefined
 			: (repairs[0] ??
-				nextLaneToProvision({ windows, provisioned, env: site.env, rows }) ??
+				nextLaneToProvision({ windows, provisioned, env: host.env, rows }) ??
 				undefined);
 	// whatever demand says: another lane would not fit today's rows
-	site.laneRowsCap =
+	host.laneRowsCap =
 		repairs.length === 0 && !laneFitsRows(rows, provisioned + 1, REDUCE_AT)
 			? { at: now, lanes: provisioned + 1, ...rows }
 			: undefined;
@@ -93,17 +98,17 @@ export async function autoScaleStep(site: SitePhpDurableObject): Promise<Payload
 
 	const cursor =
 		pending === null || pending === '' ? undefined : (JSON.parse(pending) as ProvisionCursor);
-	const out = await site.provisionLane(lane, cursor);
+	const out = await host.provisionLane(lane, cursor);
 	if (!out.ok) {
-		site.metaSet(LANE_CURSOR_KEY, '');
+		host.metaSet(LANE_CURSOR_KEY, '');
 		return {
 			autoScale: { lane, refused: out.reason, ...(repairing ? { repair: true } : {}) }
 		};
 	}
 	if (out.done) {
-		site.metaSet(LANE_CURSOR_KEY, '');
+		host.metaSet(LANE_CURSOR_KEY, '');
 		// dequeued only on a completed copy; a refused repair is still owed
-		if (repairing) site.dequeueLaneRepair(lane);
+		if (repairing) host.dequeueLaneRepair(lane);
 		return {
 			autoScale: {
 				lane,
@@ -113,43 +118,9 @@ export async function autoScaleStep(site: SitePhpDurableObject): Promise<Payload
 			}
 		};
 	}
-	site.metaSet(LANE_IN_FLIGHT_KEY, String(lane));
-	site.metaSet(LANE_CURSOR_KEY, JSON.stringify(out.cursor));
+	host.metaSet(LANE_IN_FLIGHT_KEY, String(lane));
+	host.metaSet(LANE_CURSOR_KEY, JSON.stringify(out.cursor));
 	return { autoScale: { lane, stage: out.stage, copied: out.copied } };
-}
-
-/**
- * Puts a withdrawn lane back to `CREATED` and asks the primary for a whole re-copy: its state is
- * untrusted, so it never resumes. The ask repeats each firing until the copy lands.
- */
-export async function requestReadmission(
-	site: SitePhpDurableObject
-): Promise<{ asked: boolean; reason: string; stage: ReplicaStage }> {
-	const lane = replicaOf(site.ctx.id.name ?? '');
-	if (lane === undefined) {
-		return { asked: false, reason: 'not a pool lane', stage: site.replicaStage() };
-	}
-	if (site.replicaStage() !== 'WITHDRAWN') {
-		return { asked: false, reason: 'not withdrawn', stage: site.replicaStage() };
-	}
-	const ns = site.env?.SITE;
-	if (!ns) return { asked: false, reason: 'the namespace is not bound', stage: 'WITHDRAWN' };
-
-	site.clearRestore();
-	site.setReplicaStage('CREATED');
-	// set before the hop, so a lane whose ask throws still reads as waiting
-	const asks = (Number(site.metaGet(READMIT_ASKS_KEY) ?? '0') || 0) + 1;
-	site.metaSet(READMIT_ASKS_KEY, String(asks));
-	const res = await ns.get(ns.idFromName(lane.site)).fetch(
-		new Request(`https://do.local/__replica?action=readmit&lane=${lane.lane}`, {
-			method: 'POST'
-		})
-	);
-	if (!res.ok) {
-		// stays `CREATED` (it is empty now); the ask retries next firing
-		return { asked: false, reason: `the primary answered ${res.status}`, stage: 'CREATED' };
-	}
-	return { asked: true, reason: '', stage: site.replicaStage() };
 }
 
 /**
@@ -159,21 +130,21 @@ export async function requestReadmission(
  * @param budget - rows to copy before handing control back; per invocation, not a total
  */
 export async function provisionLane(
-	self: SitePhpDurableObject,
+	host: PoolHost,
 	lane: number,
 	cursor: ProvisionCursor | undefined,
 	budget = 4_000
 ): Promise<ProvisionOutcome> {
-	const ns = self.env?.SITE;
-	const site = self.ctx.id.name;
-	if (self.isPoolLane() || site === undefined) {
+	const ns = host.env?.SITE;
+	const site = host.ctx.id.name;
+	if (refusesPoolOwner(host) || site === undefined) {
 		return { ok: false, reason: 'a lane is provisioned from the primary', done: false };
 	}
 	if (!ns) return { ok: false, reason: 'the namespace is not bound', done: false };
 	if (!Number.isInteger(lane) || lane < 1) {
 		return { ok: false, reason: 'a lane number starts at 1', done: false };
 	}
-	const gap = self.mandatoryGap();
+	const gap = host.mandatoryGap();
 	if (gap.length > 0) {
 		// refused once here rather than on every chunk
 		return { ok: false, reason: `the primary is missing ${gap.join(', ')}`, done: false };
@@ -181,8 +152,8 @@ export async function provisionLane(
 
 	// seal first, then copy at the last sealed record (not `commitSeq()`), or the next record
 	// chains from below the lane's position
-	await self.sealGeneration();
-	const generation = self.copyableGeneration();
+	await host.sealGeneration();
+	const generation = host.copyableGeneration();
 	if (cursor !== undefined && cursor.generation !== generation) {
 		return {
 			ok: false,
@@ -192,7 +163,7 @@ export async function provisionLane(
 		};
 	}
 
-	const tables = planRestore(self.tableNames())
+	const tables = planRestore(host.tableNames())
 		.filter((t) => t.copy)
 		.map((t) => t.table);
 	const target = ns.get(ns.idFromName(replicaName(site, lane)));
@@ -210,23 +181,23 @@ export async function provisionLane(
 	const PAGE = 400;
 	while (at.index < tables.length && copied < budget) {
 		const table = tables[at.index]!;
-		const page = self.snapshotRows(table, at.offset, PAGE);
+		const page = host.snapshotRows(table, at.offset, PAGE);
 		const last = at.index === tables.length - 1 && page.rows.length < PAGE;
 		const chunk: RestoreChunk = {
 			generation,
-			schemaVersion: self.packGeneration() ?? '',
+			schemaVersion: host.packGeneration() ?? '',
 			table,
 			// a table with no rows still has to land, or the lane keeps whatever it had there
 			columns: page.columns.length > 0 ? page.columns : ['x'],
 			rows: page.rows,
-			ddl: self.tableDdl(table),
+			ddl: host.tableDdl(table),
 			first: at.offset === 0,
 			// origin and salt ride the first chunk, or the lane pins its own and sees no session
 			...(at.index === 0 && at.offset === 0
 				? {
 						expect: tables,
-						origin: self.canonicalOrigin(),
-						hashSalt: ensureHashSalt(self.secretStore())
+						origin: host.canonicalOrigin(),
+						hashSalt: ensureHashSalt(host.secretStore())
 					}
 				: {}),
 			...(last ? { done: true } : {})
@@ -255,46 +226,103 @@ export async function provisionLane(
 				? { generation, index: at.index + 1, offset: 0 }
 				: { generation, index: at.index, offset: at.offset + page.rows.length };
 		if (last) {
-			self.noteLaneServing(lane);
+			host.noteLaneServing(lane);
 			return { ok: true, reason: '', done: true, copied, stage: outcome.stage };
 		}
 	}
 
 	const done = at.index >= tables.length;
-	if (done) self.noteLaneServing(lane);
+	if (done) host.noteLaneServing(lane);
 	return { ok: true, reason: '', done, cursor: at, copied };
 }
 
-/**
- * Whether this lane holds the session the cookie names, asked before the render. A miss nudges a
- * rate-limited catch-up that is not awaited (awaiting it queued lanes behind the primary).
- */
-export async function sessionReach(
-	site: SitePhpDurableObject,
-	cookie: string
-): Promise<'held' | 'absent' | 'unknown'> {
-	// `unknown` defers to the render: no table or no cookie value is not evidence of no session
-	if (!site.hasTable('sessions')) return 'unknown';
-	const value = sessionCookieValue(cookie);
-	if (value === undefined || value === '') return 'unknown';
-	const id = await drupalSessionRowId(value);
-	const present = () =>
-		site.sql.exec(`SELECT 1 FROM sessions WHERE sid = ? LIMIT 1`, id).toArray().length > 0;
-	if (present()) return 'held';
-	const now = site.nowMs();
-	if (now - (site.lastSessionCatchUpAt ?? 0) >= SESSION_CATCHUP_MS) {
-		site.lastSessionCatchUpAt = now;
-		const tally = (site.sessionCatchUps ??= { tried: 0, found: 0 });
-		tally.tried += 1;
-		site.ctx.waitUntil(
-			site
-				.catchUpOnce()
-				.then((caught) => {
-					if (caught.ran && caught.records > 0 && present()) tally.found += 1;
-				})
-				// this request hands back either way
-				.catch(() => {})
-		);
+/** lane numbers waiting to be copied again, lowest first; read on the primary */
+export function laneRepairQueue(host: SiteStore): number[] {
+	const raw = host.metaGet(LANE_REPAIR_KEY) ?? '';
+	const seen = new Set<number>();
+	for (const part of raw.split(',')) {
+		const lane = Number(part.trim());
+		if (Number.isInteger(lane) && lane >= 1) seen.add(lane);
 	}
-	return 'absent';
+	return [...seen].sort((a, b) => a - b);
+}
+
+/** records a lane as needing a fresh copy; idempotent, since a lane re-asks every firing */
+export function enqueueLaneRepair(host: PoolHost, lane: number): number[] {
+	if (!Number.isInteger(lane) || lane < 1) return host.laneRepairQueue();
+	const queue = [...new Set([...host.laneRepairQueue(), lane])].sort((a, b) => a - b);
+	host.metaSet(LANE_REPAIR_KEY, queue.join(','));
+	return queue;
+}
+
+/** removes a lane from the repair queue and returns what remains */
+export function dequeueLaneRepair(host: PoolHost, lane: number): number[] {
+	const queue = host.laneRepairQueue().filter((n) => n !== lane);
+	host.metaSet(LANE_REPAIR_KEY, queue.join(','));
+	return queue;
+}
+
+/**
+ * Records that a lane finished copying; the key puts `x-cfw-lanes` on responses, so every
+ * provisioning path must call this (one writer).
+ */
+export function noteLaneServing(host: PoolHost, lane: number): void {
+	const provisioned = host.lanesProvisioned();
+	if (lane > provisioned) {
+		const epoch = lanesEpoch(host) + 1;
+		host.metaSet(LANES_PROVISIONED_KEY, String(lane));
+		host.metaSet(LANES_EPOCH_KEY, String(epoch));
+		host.lanesMemo = lane;
+		host.pool.epochMemo = epoch;
+		// once per epoch, so a colo that has never answered for this site still finds the pool
+		const kv = (host.env as { CONFIG_KV?: KVNamespace } | undefined)?.CONFIG_KV;
+		const site = host.ctx.id.name;
+		if (kv && site) {
+			host.lanesPublished = kv
+				.put(lanesKvKey(site), formatLanesPointer(lane, epoch))
+				.catch(() => undefined);
+		}
+	}
+}
+
+/** statements sealed for replication since `sinceMs`, each at least one row on every lane */
+function replicatedRowsSince(host: SiteStore, sinceMs: number): number {
+	try {
+		const row = firstRow(
+			host.sql.exec<Row<{ n: number }>>(
+				'SELECT COALESCE(SUM(json_array_length(statements)), 0) AS n FROM cfw_repl_log WHERE sealed_at >= ?',
+				sinceMs
+			)
+		);
+		return Number(row?.n ?? 0);
+	} catch {
+		// no log yet means nothing has been sealed for a lane to replay
+		return 0;
+	}
+}
+
+/** the pool epoch, bumped whenever the lane count grows */
+function lanesEpoch(host: PoolHost): number {
+	if (host.pool.epochMemo === undefined) {
+		host.pool.epochMemo = Number(host.metaGet(LANES_EPOCH_KEY) ?? 0) || 0;
+	}
+	return host.pool.epochMemo;
+}
+
+/** the pool advertisement every primary response carries, or nothing without a pool */
+export function laneHeaders(host: PoolHost): Record<string, string> {
+	const lanes = host.isPoolLane() ? 0 : host.lanesProvisioned();
+	if (lanes <= 0) return {};
+	return { [LANES_HEADER]: String(lanes), [LANES_EPOCH_HEADER]: String(lanesEpoch(host)) };
+}
+
+/**
+ * How many lanes this primary has built; memoised for the storage fast lane, which must
+ * advertise the pool on cache hits.
+ */
+export function lanesProvisioned(host: PoolHost): number {
+	if (host.lanesMemo === undefined) {
+		host.lanesMemo = Number(host.metaGet(LANES_PROVISIONED_KEY) ?? 0) || 0;
+	}
+	return host.lanesMemo;
 }

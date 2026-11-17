@@ -6,15 +6,17 @@ import { resolveMailTransport } from '../ops/mail';
 import { kvWriteBudget, pageKvEnabled } from '../ops/page-store';
 import { hitAnyLimit } from '../ops/platform-limits';
 import { type DemandWindow, meanWaitMs } from '../ops/replica-demand';
-import { replicaOf } from '../ops/replica-routing';
 import type { SitePhpDurableObject } from '../site-do';
+import { cmsOf } from '../util/cms';
 import { errorMessage } from '../util/errors';
+import { wordpressBootStats } from '../wordpress/boot';
 import { laneTimingSummary } from './helpers';
 import { isolateAboveBytes, shimGlobals, spareMemoryBytes } from './isolate';
 import { DEMAND_WINDOWS_KEY } from './keys';
 import { lazyMountBytes, PACK_INDEX_BYTES } from './lazy-mount';
 import { LANE_TIMING_RING, RECENT_ERROR_STACK_CHARS, RECENT_ERRORS_MAX } from './limits';
 import { updbActive } from './reconcile';
+import { laneOf, roleName } from './role';
 import type { ErrorNote, Payload } from './types';
 
 /**
@@ -109,8 +111,8 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 		limits: { tally: site.limitTally, hitAny: hitAnyLimit(site.limitTally) },
 		// what this object refused as a replica: which work a replica cannot take
 		replica: {
-			role: site.isReplica() ? 'replica' : 'primary',
-			lane: replicaOf(site.ctx.id.name ?? '')?.lane ?? 0,
+			role: roleName(site),
+			lane: laneOf(site)?.lane ?? 0,
 			stage: site.replicaStage(),
 			guarded: site.replicaGuard ? Object.keys(site.replicaGuard.wrapped).length : 0,
 			// the total, not the bounded retained window
@@ -148,6 +150,11 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 		),
 		// what a content save cost; `scoped: false` is the wholesale fallback, not a failure
 		lastScopedPurge: site.lastScopedPurge ?? null,
+		// `floorPurges` is a write the CMS never announced, so the purge was wholesale
+		...(site.wordpressTags === undefined ? {} : { wordpressTags: site.wordpressTags }),
+		...(cmsOf(site.env) === 'wordpress'
+			? { wordpressBoot: wordpressBootStats(site.mountInfo) }
+			: {}),
 		lastAggregation: site.lastAggregation ?? null,
 		warmDecision: site.lastWarmDecision ?? null,
 		warmCeilingMs: site.warmCeiling(),

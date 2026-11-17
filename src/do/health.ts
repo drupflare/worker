@@ -1,3 +1,10 @@
+import { readMigrateCursor } from '../db/migrate-sql';
+import {
+	ADVISORY_STATE_KEY,
+	advisoryFreshness,
+	type AdvisoryVerdict,
+	readAdvisories
+} from '../ops/advisories';
 import { DAILY_DO_QUOTA, DAILY_ROWS_QUOTA } from '../ops/auth-budget';
 import { isFree } from '../ops/plan';
 import { parseState, recordOutcome, serialiseState } from '../ops/repair';
@@ -13,8 +20,11 @@ import { projectImageTransforms } from '../ops/thresholds';
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage } from '../util/errors';
 import { firstRow } from '../util/sql';
+import type { HealthHost } from './host';
 import { shimGlobals } from './isolate';
-import type { Payload, Row } from './types';
+import { RENDER_BYTES_MIN_SAMPLES, RENDER_BYTES_PATHS, RENDER_BYTES_SAMPLES } from './limits';
+import { updbActive } from './reconcile';
+import type { Payload, Row, SiteBinary } from './types';
 
 /**
  * What the object can see about itself at the end of an alarm.
@@ -144,4 +154,81 @@ export function supervise(
 	const serialised = serialiseState(after);
 	if (serialised !== serialiseState(before)) site.metaSet('repair_state', serialised);
 	return findings;
+}
+
+/**
+ * What the last advisory sweep found: one indexed row read, no kernel boot (the module's cron
+ * hook fills it).
+ */
+export function advisoryVerdict(
+	host: HealthHost
+): AdvisoryVerdict & { fresh: boolean; ageS: number } {
+	// a site that never migrated has no `key_value`; that reads as unknown, like an absent row
+	let row: { value: unknown } | undefined;
+	try {
+		row = firstRow(
+			host.sql.exec(
+				`SELECT value FROM key_value WHERE collection = 'state' AND name = ?`,
+				ADVISORY_STATE_KEY
+			)
+		) as { value: unknown } | undefined;
+	} catch {
+		row = undefined;
+	}
+	const verdict = readAdvisories(row?.value);
+	return { ...verdict, ...advisoryFreshness(verdict, Math.floor(host.nowMs() / 1000)) };
+}
+
+/**
+ * What the host knows about itself, in the shape `BootSelfTest` reads.
+ *
+ * Every key is a host fact (bridge, absent capabilities, migration progress, update run, pack
+ * identity), so the PHP health unit needs no kernel. `missing_capabilities` comes from the
+ * installed list, not a hand-kept name list.
+ */
+export function healthObservation(host: HealthHost): Record<string, unknown> {
+	const installed = new Set(Object.keys(host.installCapabilities({} as SiteBinary)));
+	// only capabilities this method installs (probing an empty object cannot see `cfwStats`
+	// or the SQL bridge)
+	const wanted = ['cfwLog', 'cfwHealth', 'cfwFetch', 'cfwMail'];
+	const cursor = readMigrateCursor(host.sql);
+	return {
+		bridge_installed: installed.size > 0 ? 1 : 0,
+		missing_capabilities: wanted.filter((name) => !installed.has(name)),
+		migrate_chunk: cursor?.chunk ?? null,
+		migrate_chunks: cursor?.chunks ?? null,
+		updb_phase: updbActive(host) ? 'running' : null,
+		pack_generation: host.packGeneration(),
+		db_generation: host.metaGet('pack_generation')
+	};
+}
+
+/**
+ * The rolling median body size for one path, over previous renders only.
+ *
+ * Reading `cfw_page` would compare a render against the row it just wrote (ratio 1.00, so
+ * `renderSizeAnomaly` could never fire). In memory and capped, like `pageHits`.
+ */
+export function medianRenderBytes(host: HealthHost, path: string): number | undefined {
+	const seen = host.pageBytes.get(path);
+	if (!seen || seen.length < RENDER_BYTES_MIN_SAMPLES) return undefined;
+	const sorted = [...seen].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	return sorted.length % 2 === 0
+		? ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2
+		: sorted[mid];
+}
+
+/** records one render's size after its median was taken, so a render never sets its baseline */
+export function noteRenderBytes(host: HealthHost, path: string, bytes: number): void {
+	if (!path || !Number.isFinite(bytes) || bytes <= 0) return;
+	const seen = host.pageBytes.get(path) ?? [];
+	seen.push(bytes);
+	if (seen.length > RENDER_BYTES_SAMPLES) seen.splice(0, seen.length - RENDER_BYTES_SAMPLES);
+	host.pageBytes.set(path, seen);
+	// bounded; the busiest paths matter most, so the oldest entry goes
+	if (host.pageBytes.size > RENDER_BYTES_PATHS) {
+		const oldest = host.pageBytes.keys().next();
+		if (!oldest.done) host.pageBytes.delete(oldest.value);
+	}
 }

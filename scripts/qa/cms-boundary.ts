@@ -24,7 +24,9 @@ export const DIRECTORY_SIDES: Readonly<Record<string, Side>> = {
 	'src/drupal/': 'cms',
 	'src/runtime/': 'host',
 	'src/site/shims/': 'host',
-	'src/util/': 'host'
+	'src/util/': 'host',
+	// WordPress's own TypeScript
+	'src/wordpress/': 'cms'
 };
 
 /** one side per module outside `DIRECTORY_SIDES`, or an override for one module inside it */
@@ -39,6 +41,12 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/db/migrate-sql.ts': 'host',
 	'src/db/pg-exec.ts': 'host',
 	'src/db/restore-parts.ts': 'host',
+	'src/db/sql/classes.ts': 'host',
+	'src/db/sql/ddl.ts': 'host',
+	'src/db/sql/exec.ts': 'host',
+	'src/db/sql/lexer.ts': 'host',
+	'src/db/sql/literal.ts': 'host',
+	'src/db/sql/translate.ts': 'host',
 	'src/db/wide-integers.ts': 'host',
 	// reads the router table's statement count
 	'src/db/write-tally.ts': 'mixed',
@@ -71,19 +79,25 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	// restores a Drupal heap and resets its cache collectors, settings and State
 	'src/do/boot-image.ts': 'mixed',
 	'src/do/capabilities.ts': 'mixed',
+	'src/do/fetch.ts': 'mixed',
+	'src/do/file-offload.ts': 'mixed',
 	'src/do/fill.ts': 'mixed',
+	'src/do/fill-queue.ts': 'mixed',
 	// reports the shipped Drupal core version
 	'src/do/fleet.ts': 'mixed',
 	'src/do/git-delivery.ts': 'mixed',
+	'src/do/git-remotes.ts': 'mixed',
 	'src/do/git.ts': 'mixed',
 	'src/do/health.ts': 'mixed',
 	'src/do/heap-image.ts': 'mixed',
 	// passes x-drupal-* headers through and reads cachetags writes
 	'src/do/helpers.ts': 'mixed',
+	'src/do/host.ts': 'host',
+	'src/do/identity.ts': 'host',
 	'src/do/invalidate.ts': 'mixed',
 	'src/do/isolate.ts': 'host',
 	'src/do/keys.ts': 'host',
-	'src/do/lanes.ts': 'mixed',
+	'src/do/lane.ts': 'mixed',
 	'src/do/lazy-mount.ts': 'host',
 	// defaults the drupal-sql chunk prefix
 	'src/do/levers.ts': 'mixed',
@@ -92,14 +106,23 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/do/mail-setup.ts': 'host',
 	'src/do/meters.ts': 'host',
 	'src/do/install-lock.ts': 'mixed',
+	'src/do/migration-state.ts': 'mixed',
 	'src/do/modify.ts': 'mixed',
+	'src/do/mysql-bridge.ts': 'host',
 	'src/do/outbound.ts': 'mixed',
 	'src/do/module-files.ts': 'mixed',
 	'src/do/packages.ts': 'mixed',
+	'src/do/pending-tags.ts': 'mixed',
 	'src/do/php-boot.ts': 'mixed',
+	'src/do/pool.ts': 'mixed',
 	'src/do/provision.ts': 'mixed',
+	'src/do/purge.ts': 'mixed',
 	'src/do/reconcile.ts': 'mixed',
+	'src/do/recycle.ts': 'mixed',
 	'src/do/replication.ts': 'mixed',
+	'src/do/retention.ts': 'mixed',
+	'src/do/role.ts': 'mixed',
+	'src/do/run.ts': 'mixed',
 	'src/do/routes/audit.ts': 'host',
 	'src/do/routes/auth.ts': 'mixed',
 	// imports src/drupal/
@@ -120,13 +143,16 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/do/routes/serve.ts': 'mixed',
 	'src/do/routes/spool.ts': 'host',
 	'src/do/routes/writes.ts': 'mixed',
+	'src/do/secrets.ts': 'mixed',
 	'src/do/serve.ts': 'mixed',
-	// the settings.php override and services.yml
-	'src/do/settings.ts': 'mixed',
 	'src/do/shell.ts': 'mixed',
 	'src/do/stats.ts': 'mixed',
+	'src/do/stepped-jobs.ts': 'mixed',
+	// the one dispatch on the CMS value; it imports each CMS's boot
+	'src/do/tree-boot.ts': 'mixed',
 	// carries Drupal's Set-Cookie lines and x-drupal-* headers
 	'src/do/types.ts': 'mixed',
+	'src/do/warming.ts': 'mixed',
 	// declares DRUPAL_CRON and other Drupal-named vars
 	'src/env.ts': 'mixed',
 	'src/site/admin.ts': 'mixed',
@@ -292,6 +318,8 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	// Drupal's entity and config tables by name
 	'src/ops/state-inventory.ts': 'mixed',
 	'src/ops/statement-census.ts': 'mixed',
+	// the table of each CMS's store rule; it imports WordPress's row
+	'src/ops/store-rule.ts': 'mixed',
 	'src/ops/strata-config.ts': 'cms',
 	'src/ops/supervisor.ts': 'host',
 	// node_field_data, users_field_data and the router as sweep sources

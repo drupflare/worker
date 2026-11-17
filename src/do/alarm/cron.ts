@@ -6,7 +6,10 @@ import {
 	driveCron,
 	drupalCronEnabled
 } from '../../ops/cron-drive';
+import { cmsOf } from '../../util/cms';
 import { errorMessage } from '../../util/errors';
+import { wordpressCronPhase } from '../../wordpress/cron';
+import { phasesFor } from '../tree-boot';
 import type { AlarmContext } from './context';
 
 /**
@@ -15,6 +18,10 @@ import type { AlarmContext } from './context';
  */
 export async function cronPhase(ctx: AlarmContext): Promise<void> {
 	const { site, hold } = ctx;
+	// each CMS has its own drive, and one with none must not run Drupal's on its tree
+	const drive = phasesFor(cmsOf(site.env)).cron;
+	if (drive === 'wordpress') return wordpressCronPhase(ctx);
+	if (drive === 'none') return;
 	const cronLastRun = await site.storage.get<number>('cronLastRunMs');
 	const cronHeld =
 		hold !== undefined &&

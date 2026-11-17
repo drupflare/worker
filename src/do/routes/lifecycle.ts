@@ -41,8 +41,10 @@ import {
 import { gcHealthLedger, LEDGER_MAX_ROWS } from '../../ops/supervisor';
 import { updbStatus } from '../../ops/updb';
 import type { SitePhpDurableObject } from '../../site-do';
+import { cmsOf } from '../../util/cms';
 import { jsonError } from '../../util/reply';
 import { firstRow } from '../../util/sql';
+import { wordpressClaim, type WordpressClaim } from '../../wordpress/claim';
 import { DEPLOYMENT_RECORDED_KEY } from '../keys';
 import { migrateEngine } from '../levers';
 import { OPS_DRIVERS } from '../limits';
@@ -495,6 +497,25 @@ export async function ops(
 }
 
 /**
+ * Creates WordPress's first administrator in a one-shot interpreter.
+ *
+ * The password is in the PHP this builds and nowhere else: the answer is the fragment's JSON, which
+ * carries no password, and a failure reports WordPress's error code, not the input.
+ */
+async function claimWordpress(
+	site: SitePhpDurableObject,
+	url: URL,
+	claim: Omit<WordpressClaim, 'origin'>
+): Promise<Payload | undefined> {
+	const origin = site.canonicalOrigin(url.origin);
+	try {
+		return await site.runJson(wordpressClaim({ ...claim, origin }));
+	} finally {
+		site.resetPhp();
+	}
+}
+
+/**
  * First-run configuration.
  *
  * The admin password comes from a `POST` body only: a `pass` query string is refused because the
@@ -507,6 +528,8 @@ export async function firstrun(
 ): Promise<Response> {
 	const doneAt = site.metaGet(FIRST_RUN_KEY);
 	const force = url.searchParams.get('force') === '1';
+	// WordPress takes the same claim, through its own user API; Drupal's steps below are not run
+	const wordpress = cmsOf(site.env) === 'wordpress';
 
 	if (url.searchParams.has('pass')) {
 		return jsonError(
@@ -526,11 +549,13 @@ export async function firstrun(
 		});
 	}
 
-	if (doneAt !== null && !force) {
+	if (doneAt !== null && (!force || wordpress)) {
 		// idempotent by default: a retried request would otherwise reset the admin password
 		return jsonError('already configured', 409, {
 			firstRunAt: Number(doneAt),
-			how: 'POST /firstrun?force=1 with the owner token to reconfigure anyway'
+			how: wordpress
+				? 'WordPress has no reconfigure step here; reset a password with its own screens'
+				: 'POST /firstrun?force=1 with the owner token to reconfigure anyway'
 		});
 	}
 
@@ -554,6 +579,9 @@ export async function firstrun(
 	const str = (k: string): string | undefined =>
 		typeof body[k] === 'string' && body[k].length > 0 ? body[k] : undefined;
 	const migrated = body.migrated === true;
+	if (wordpress && migrated) {
+		return jsonError('a migrated claim is Drupal only', 400);
+	}
 	if (migrated && (doneAt !== null || str('adminPass') !== undefined)) {
 		return Response.json(
 			{
@@ -596,6 +624,9 @@ export async function firstrun(
 	// the claim's first invocations come from the front worker; the CPU limit is per invocation, so
 	// caches fill and the install runs here
 	const phase = url.searchParams.get('phase');
+	if (wordpress && phase !== null) {
+		return Response.json({ ok: true, skipped: 'WordPress has no preparatory phase' });
+	}
 	if (phase === 'warm' || phase === 'consistency') {
 		// a site on a baked module set claims in 5.5-8.4 s of CPU as one invocation and ~25 s
 		// split, so only a migrated one splits
@@ -616,19 +647,28 @@ export async function firstrun(
 	// password is minted here, returned once and stored nowhere (a lost one means password reset)
 	const minted = str('adminPass') === undefined && !migrated ? randomKeyBase64(18) : undefined;
 
-	const applied = await site.runJson(
-		firstRunConfig({
-			siteName: str('siteName'),
-			siteMail: str('siteMail'),
-			adminName: str('adminName'),
-			adminMail: str('adminMail'),
-			adminPass: str('adminPass') ?? minted,
-			timezone: str('timezone'),
-			// only on a first claim: `force=1` reconfigures an account that has a real birthday
-			claimedAt: doneAt === null && !migrated ? Math.floor(site.nowMs() / 1000) : undefined,
-			migrated
-		})
-	);
+	const applied = wordpress
+		? await claimWordpress(site, url, {
+				adminPass: str('adminPass') ?? (minted as string),
+				adminName: str('adminName'),
+				adminMail: str('adminMail'),
+				siteName: str('siteName'),
+				siteMail: str('siteMail')
+			})
+		: await site.runJson(
+				firstRunConfig({
+					siteName: str('siteName'),
+					siteMail: str('siteMail'),
+					adminName: str('adminName'),
+					adminMail: str('adminMail'),
+					adminPass: str('adminPass') ?? minted,
+					timezone: str('timezone'),
+					// only on a first claim: `force=1` reconfigures an account that has a real birthday
+					claimedAt:
+						doneAt === null && !migrated ? Math.floor(site.nowMs() / 1000) : undefined,
+					migrated
+				})
+			);
 	if (applied?.ok) {
 		// same reason as the drop at the end of `/__migrate`: a claim leaves a heap that puts
 		// the first authenticated render past the isolate limit

@@ -8,10 +8,12 @@ import {
 	shouldReport
 } from '../ops/fleet';
 import { isPaid } from '../ops/plan';
+import { isQuarantined, parseState } from '../ops/repair';
 import { FIRST_RUN_KEY } from '../ops/setup-page';
 import { SHIPPED_CORE_VERSION } from '../ops/shipped-lock';
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage } from '../util/errors';
+import type { HealthHost } from './host';
 import { DEPLOYMENT_RECORDED_KEY } from './keys';
 
 /**
@@ -90,4 +92,21 @@ export function recordInDeployment(site: SitePhpDurableObject): void {
 			}
 		)
 	);
+}
+
+/**
+ * This site's own verdict on itself for the fleet inventory (findings stay on `/health`).
+ *
+ * Quarantine outranks degradation: a quarantined site refuses requests, a degraded one serves
+ * them cheaper.
+ */
+export function fleetHealth(host: HealthHost): FleetRow['health'] {
+	try {
+		if (isQuarantined(parseState(host.metaGet('repair_state')))) return 'quarantined';
+		// read `level`, the one answer `degradation()` decides, not two derived booleans
+		return host.degradation().level === 'normal' ? 'ok' : 'degraded';
+	} catch {
+		// an inventory value must never be the thing that fails the alarm that writes it
+		return 'ok';
+	}
 }

@@ -11,6 +11,7 @@ import {
 } from '../../db/write-mark';
 import type { SitePhpDurableObject } from '../../site-do';
 import { jsonError } from '../../util/reply';
+import { keepsMark, MARK_REFUSAL } from '../role';
 
 const shown = (row: { mark: string; startedAt: number }) => ({
 	mark: row.mark,
@@ -26,7 +27,7 @@ export async function writemark(
 	request: Request,
 	url: URL
 ): Promise<Response> {
-	if (site.isReplica()) return jsonError('a replica lane keeps no mark', 409);
+	if (keepsMark(site)) return jsonError(MARK_REFUSAL.message, MARK_REFUSAL.status);
 	const storage = site.storage as unknown as StorageLike;
 
 	if (request.method === 'POST') {

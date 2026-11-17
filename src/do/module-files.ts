@@ -13,6 +13,7 @@ import {
 import { OWNER_HASH_KEY } from '../ops/site-secrets';
 import type { SitePhpDurableObject } from '../site-do';
 import { firstRow } from '../util/sql';
+import { trustsModuleFiles } from './role';
 
 /** one file a delivery stores */
 export type ModuleFilePut = { path: string; source: string; version: string };
@@ -111,7 +112,7 @@ export function trustedEntries(
 	entries: readonly (readonly [string, string])[]
 ): [string, string][] {
 	const store = site.secretStore().sealed;
-	if (site.isReplica() || !claimed(site) || !isAdopted(store)) {
+	if (trustsModuleFiles(site) || !claimed(site) || !isAdopted(store)) {
 		return entries.map(([path, source]) => [path, source]);
 	}
 	const records = readAllRecords(store);
@@ -138,7 +139,7 @@ export function prepareIntegrity(
 	const stats = (site.moduleIntegrity ??= emptyIntegrityStats());
 	const store = site.secretStore().sealed;
 	stats.adopted = 0;
-	if (site.isReplica()) {
+	if (trustsModuleFiles(site)) {
 		stats.mode = 'replica';
 		return () => true;
 	}

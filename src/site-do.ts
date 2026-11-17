@@ -8,23 +8,9 @@ import {
 	type SqlBindings,
 	type TxnRequest
 } from '@drupflare/durabledb/do-sqlite';
-import {
-	MIRRORABLE_SCHEMES,
-	OFFLOAD_SCHEMES,
-	hydrateFile,
-	privateUriForPath,
-	type FileBucket,
-	type FileBuckets,
-	type MirrorBucket
-} from './db/file-store';
+import type { FileBuckets, MirrorBucket } from './db/file-store';
 import { type HandleIndex } from './db/heap-store';
-import {
-	SqlMigrator,
-	assetChunkLoader,
-	ensureMigrateTable,
-	readMigrateCursor,
-	type MigrateCursor
-} from './db/migrate-sql';
+import { SqlMigrator, readMigrateCursor, type MigrateCursor } from './db/migrate-sql';
 import { repairWideIntegers, type Row as WideRow } from './db/wide-integers';
 import { markSchemaHook, type MarkState } from './db/write-mark';
 import {
@@ -35,76 +21,137 @@ import {
 	type WriteTally
 } from './db/write-tally';
 import { HeapRestoreIncomplete, type AlarmClass, type HeapRestoreCursor } from './do/alarm';
-import { alarmBody } from './do/alarm-body';
+import { alarmEntry } from './do/alarm-body';
 import { installCapabilities } from './do/capabilities';
+import { fetchRequest } from './do/fetch';
+import {
+	chargeR2,
+	fileBuckets,
+	fileSchemes,
+	fileStoreR2,
+	hydrateForRequest,
+	mirrorBucket,
+	publicFilesOrigin,
+	r2Allowance,
+	trustedFileSources
+} from './do/file-offload';
 import { deriveStep, fillOne, strikeFillHead } from './do/fill';
-import { recordInDeployment, reportToFleet } from './do/fleet';
-import { gitPoll, gitSync, handleGit } from './do/git';
-import { observe, supervise } from './do/health';
+import {
+	aggregateIndex,
+	appendDeferred,
+	countOrNull,
+	enqueueRefill,
+	herdKeyFor,
+	isUnstorable,
+	markAttempt,
+	noteStorable,
+	pageStaleness,
+	queueDepth,
+	queueDerivatives,
+	shouldRunGc,
+	unstorablePaths
+} from './do/fill-queue';
+import { fleetHealth, reportToFleet } from './do/fleet';
+import {
+	gitGet,
+	gitPoll,
+	gitPulls,
+	gitRefs,
+	gitSmart,
+	gitSync,
+	gitWriteStatus,
+	handleGit
+} from './do/git';
+import {
+	gitCredential,
+	gitOwners,
+	gitPollStates,
+	gitRemotes,
+	gitSaveRemotes,
+	gitStoredFiles
+} from './do/git-remotes';
+import {
+	advisoryVerdict,
+	healthObservation,
+	medianRenderBytes,
+	noteRenderBytes,
+	observe,
+	supervise
+} from './do/health';
 import {
 	corruptStoredChunk,
+	handleIndex,
+	heapBytes,
 	pinHandles,
 	snapshotHeap,
 	snapshotStep,
 	tryRestoreHeap
 } from './do/heap-image';
-import { cacheTagsIn, pageTagList } from './do/helpers';
+import { cacheTagsIn } from './do/helpers';
+import type {
+	AggregateMemo,
+	FileOffloadState,
+	PoolState,
+	PurgeState,
+	ReconcileMemo,
+	SiteStore,
+	SteppedJobState
+} from './do/host';
+import {
+	canonicalOrigin,
+	cfCredentials,
+	cfCredentialsSync,
+	oidcConfig,
+	oidcProvider,
+	siteName
+} from './do/identity';
 import { bumpGeneration, pathsForTags, purgeForTags } from './do/invalidate';
+import { keepSpareMemory } from './do/isolate';
+import { HEAP_IMAGE_ATTEMPTS_KEY } from './do/keys';
 import {
-	isolateAboveBytes,
-	isolateResidency,
-	keepSpareMemory,
-	recycleAboveBytes,
-	retainInterpreterEnabled,
-	spareMemoryBytes
-} from './do/isolate';
-import {
-	CF_OAUTH_ACCOUNT_KEY,
-	CF_OAUTH_CLIENT_ID_KEY,
-	CF_OAUTH_TOKEN_KEY,
-	COMMIT_SEQ_KEY,
-	HEAP_IMAGE_ATTEMPTS_KEY,
-	LANES_EPOCH_KEY,
-	LANES_PROVISIONED_KEY,
-	LANE_REPAIR_KEY,
-	OIDC_CLIENT_ID_KEY,
-	OIDC_ISSUER_KEY,
-	OPS_JOB_KEY,
-	PENDING_TAGS_KEY,
-	READMIT_ASKS_KEY,
-	RECONCILE_KEY,
-	RENDER_WINDOW_KEY,
-	RESTORE_EXPECT_KEY,
-	RESTORE_GENERATION_KEY,
-	RESTORE_SEEN_KEY,
-	SITE_NAME_KEY,
-	UNSTORABLE_KEY
-} from './do/keys';
-import { autoScaleStep, provisionLane, requestReadmission, sessionReach } from './do/lanes';
-import { PACK_INDEX_BYTES, lazyMountBytes, type SiteMountInfo } from './do/lazy-mount';
-import {
-	argon2Enabled,
-	backgroundPhpHold,
-	fillSettleMs,
-	memoryCacheBins,
-	memoryCacheMaxItems,
-	phpStringList,
-	r2WriteBudget,
-	sleepBudgetMs,
-	sqlChunkPrefix
-} from './do/levers';
-import {
-	CACHETAG_WRITE,
-	CATCH_UP_INTERVAL_MS,
-	FILL_BINS,
-	FILL_QUEUE_MAX,
-	RENDER_BYTES_MIN_SAMPLES,
-	RENDER_BYTES_PATHS,
-	RENDER_BYTES_SAMPLES,
-	SESSION_CATCHUP_MS
-} from './do/limits';
+	applyRestoreChunk,
+	awaitingCopy,
+	catchUpOnce,
+	clearRestore,
+	collectForward,
+	copyBackoffMs,
+	flushForward,
+	laneIsIdle,
+	requestReadmission,
+	sessionReach
+} from './do/lane';
+import { type SiteMountInfo } from './do/lazy-mount';
+import { argon2Enabled, memoryCacheBins, memoryCacheMaxItems, phpStringList } from './do/levers';
+import { CACHETAG_WRITE, FILL_BINS, SESSION_CATCHUP_MS } from './do/limits';
 import { mailEnv, sendMailTest } from './do/mail-setup';
-import { flushMeters } from './do/meters';
+import {
+	activityToday,
+	carriedServeTotal,
+	coldEncounterRate,
+	countActivity,
+	dailyDoRequests,
+	dailyKvWrites,
+	dailyRows,
+	degradation,
+	flushDailyRows,
+	flushEncounters,
+	flushMeters,
+	flushServeRequests,
+	serveRequests,
+	shouldFlushMeters,
+	storedMeters
+} from './do/meters';
+import {
+	hasMigrationManifest,
+	migrateCursorOrNull,
+	migratePartial,
+	migrator,
+	neverMigrated,
+	provisionRequested,
+	requestProvision
+} from './do/migration-state';
+import { modifyBadBody, readModifyBody } from './do/modify';
+import type { MysqlBridge } from './do/mysql-bridge';
 import {
 	drainHttpQueue,
 	ensureHttpTables,
@@ -115,13 +162,33 @@ import {
 	runJsonMaybeParked
 } from './do/outbound';
 import {
+	dropCompiledContainer,
 	handleModify,
 	installPackage,
 	installTree,
 	installableVerdict,
-	packageAutoloads
+	packageAutoloads,
+	registerPackageAutoload
 } from './do/packages';
+import {
+	clearPendingTags,
+	drainPendingTags,
+	flushTagPurge,
+	notePendingTags,
+	pendingTags,
+	settlePendingIfOwed
+} from './do/pending-tags';
 import { bootPhp, type PhpStatic } from './do/php-boot';
+import {
+	autoScaleStep,
+	dequeueLaneRepair,
+	enqueueLaneRepair,
+	laneHeaders,
+	laneRepairQueue,
+	lanesProvisioned,
+	noteLaneServing,
+	provisionLane
+} from './do/pool';
 import {
 	ensureServeTables,
 	migrateChunks,
@@ -129,34 +196,76 @@ import {
 	prefillServingTable
 } from './do/provision';
 import {
+	purgeAfterApply,
+	purgeDynamicPageCache,
+	purgePlansFor,
+	settlePlans,
+	stalePlans
+} from './do/purge';
+import {
 	applyReconcileStep,
 	cronHooksForSite,
 	enabledModulesFingerprint,
+	invalidateOnCoreUpgrade,
+	loadPackedContainer,
+	reconcileHost,
+	reconcileSkipReason,
+	reconcileState,
+	reconcileStatus,
 	reconcileStepOnce,
 	sweepBeat,
-	updbAction,
-	updbActive
+	updbAction
 } from './do/reconcile';
 import {
-	applyRestoreChunk,
-	bufferForReplication,
-	catchUpOnce,
-	collectForward,
-	flushForward,
-	replicationRecords,
-	sealGeneration
-} from './do/replication';
-import { auditOwnerCall } from './do/routes/audit';
-import { ROUTES } from './do/routes/index';
+	containerMissing,
+	dropInterpreter,
+	heapNow,
+	isolateNow,
+	oversized,
+	recycleAfterUpload,
+	recycleForOwner,
+	recycleIfOversized
+} from './do/recycle';
 import {
-	pageResponse,
-	replicaHandoff,
-	route as routeImpl,
-	serveFromStorage,
-	withKvGrant
-} from './do/serve';
+	advanceCommit,
+	bufferForReplication,
+	commitSeq,
+	copyableGeneration,
+	ensureReplicationLog,
+	flushCommitSeq,
+	hasTable,
+	noteAuthoritativeWrite,
+	replicationRecords,
+	sealGeneration,
+	snapshotRows,
+	tableDdl,
+	tableNames
+} from './do/replication';
+import { forgetRetained, resetPhp, retainInterpreter, retire, traceMemory } from './do/retention';
+import {
+	fenceRefusal,
+	idPartition,
+	isPoolLane,
+	isReplica,
+	logStore,
+	mandatoryGap,
+	replicaStage,
+	setReplicaStage
+} from './do/role';
+import { ROUTES } from './do/routes/index';
+import { backgroundHold, run, runJson, settleReply } from './do/run';
+import { adoptOwnerToken, adoptSecrets, readSecret, secretStore, writeSecret } from './do/secrets';
+import { pageResponse, replicaHandoff, serveFromStorage } from './do/serve';
 import { assembleFor, harvestShellFor, seedShellFrom, shellCandidates } from './do/shell';
-import { noteAlarmDemand, noteDemand, noteError, noteRangeError, serveStatsSync } from './do/stats';
+import { noteDemand, noteError, noteRangeError, serveStatsSync } from './do/stats';
+import {
+	opsJobActive,
+	opsJobBeat,
+	opsJobStep,
+	updbBeat,
+	updbDeps,
+	updbStepOnce
+} from './do/stepped-jobs';
 import type {
 	ErrorNote,
 	FillOutcome,
@@ -170,175 +279,87 @@ import type {
 	ShellAssembly,
 	SiteBinary
 } from './do/types';
-import { opsRun, type RenderRequest } from './drupal/site-php';
-import type { SiteEnv } from './env';
 import {
-	ADVISORY_STATE_KEY,
-	advisoryFreshness,
-	readAdvisories,
-	type AdvisoryVerdict
-} from './ops/advisories';
+	estimateRenderMs,
+	flushRenderWindow,
+	inlineBudgetMs,
+	storedRenderWindow,
+	thermalRearmMs,
+	warmCeiling
+} from './do/warming';
+import type { RenderRequest } from './drupal/site-php';
+import type { SiteEnv } from './env';
+import { type AdvisoryVerdict } from './ops/advisories';
 import { type AggregateIndex } from './ops/aggregates';
-import { ATTEMPT_TTL_MS } from './ops/attempt';
-import { DAILY_ROWS_QUOTA, hasSessionCookie, type AuthSpend } from './ops/auth-budget';
+import { type AuthSpend } from './ops/auth-budget';
 import type { CacheTier } from './ops/cache-tiers';
-import { isTokenError, needsRefresh, refresh, type TokenSet } from './ops/cf-oauth';
 import {
 	ZERO_ENCOUNTERS,
-	addEncounters,
 	encounterReport,
-	parseEncounters,
 	recordEncounter,
 	type EncounterCounts
 } from './ops/cold-encounter';
-import {
-	CORE_VERSION_KEY,
-	invalidateVersionPinnedCaches,
-	type InvalidationResult
-} from './ops/core-version';
-import {
-	HIBERNATION_IDLE_MS,
-	idleBounds,
-	idleRearmMs,
-	warmCeilingMs,
-	warmForced,
-	warmIntervalConfigured
-} from './ops/cron';
+import { type InvalidationResult } from './ops/core-version';
 import { type CrossingTally } from './ops/crossings';
-import {
-	DAY_METERS_PREFIX,
-	dayMetersKey,
-	meterFlushBudget,
-	readDayMeters,
-	type DayMeters
-} from './ops/day-meters';
-import { dailyLimit, degradation, degradeHeaders, type Degradation } from './ops/degrade';
+import { type DayMeters } from './ops/day-meters';
+import { type Degradation } from './ops/degrade';
 import { deploymentEnv, deploymentEnvPhp } from './ops/deployment-env';
 import { type RangeReport } from './ops/error-probe';
 import { type FleetRow } from './ops/fleet';
-import { readTagList, tagChecksum } from './ops/fragment-index';
 import {
-	authHeaders,
-	cloneUrl,
-	hasApi,
-	pullsRequest,
-	smartAuth,
-	statusRequest,
 	type BuildState,
 	type Credential,
 	type PullRequest,
 	type Remote
 } from './ops/git-provider';
-import { discoverRefs, requestRefs, type Advertisement, type SmartRemote } from './ops/git-smart';
-import { DEFAULT_POLL_MINUTES, backoffMs, clampInterval, type PollState } from './ops/git-sync';
+import { type Advertisement, type SmartRemote } from './ops/git-smart';
+import { type PollState } from './ops/git-sync';
 import { type HeapIntegrityStats } from './ops/heap-integrity';
-import { EXIT_ERROR, endedInExit, parseJsonReply } from './ops/json-reply';
 import { type MailEnv } from './ops/mail';
 import { type IntegrityStats } from './ops/module-integrity';
-import {
-	DEFAULT_SCOPES,
-	callbackUri,
-	discoveryUrl,
-	endpointUsable,
-	readProvider,
-	type OidcConfig,
-	type OidcProvider
-} from './ops/oidc';
+import type { OidcConfig, OidcProvider } from './ops/oidc';
 import { type OracleResult } from './ops/oracle';
 import { outboundGuardEnabled, refuseOutbound } from './ops/outbound-guard';
 import {
 	autoloadPhp,
-	classmapOf,
 	type AutoloadDeclaration,
 	type PackageAutoload,
 	type Registry
 } from './ops/package-install';
-import { PACKED_CONTAINER_PATH, type PackedContainer } from './ops/packed-container';
+import { type PackedContainer } from './ops/packed-container';
 import { type ParkInstall } from './ops/park';
 import type { SleepBudget } from './ops/park-drive';
 import { ParkSockets } from './ops/park-drive';
-import { KV_OVERRIDABLE, isPaid, resolveSettings, type PlanKv } from './ops/plan';
-import { resolvePlanNumber } from './ops/plan-profile';
-import { noteLimit, type LimitTally } from './ops/platform-limits';
+import { KV_OVERRIDABLE, resolveSettings, type PlanKv } from './ops/plan';
+import { type LimitTally } from './ops/platform-limits';
 import {
-	DRIVER_DIGEST_KEY,
-	PACK_VERSION,
-	parseReconcileState,
-	planReconcile,
 	reconcileReport,
-	reconciled,
 	recordStep,
-	recurringWork,
 	type ReconcileHost,
 	type ReconcileState
 } from './ops/reconcile';
-import { eagerDerivativesEnabled, type DeriveTransport } from './ops/render-lane';
-import { isQuarantined, parseState } from './ops/repair';
+import { type DeriveTransport } from './ops/render-lane';
+import { ReplicaRequiresPrimary, type ReadOnlyGuard } from './ops/replica';
+import { type ReplicaStage } from './ops/replica-admission';
 import {
-	ReplicaRequiresPrimary,
-	fenceAllows,
-	replicaReadOnly,
-	type ReadOnlyGuard
-} from './ops/replica';
-import { canTransition, missingMandatory, type ReplicaStage } from './ops/replica-admission';
-import {
-	planRestore,
 	type ProvisionCursor,
 	type ProvisionOutcome,
 	type RestoreChunk
 } from './ops/replica-restore';
-import {
-	LANES_EPOCH_HEADER,
-	LANES_HEADER,
-	formatLanesPointer,
-	lanesKvKey,
-	replicaLagMs,
-	replicaOf
-} from './ops/replica-routing';
 import { type LogRecord, type LogStore } from './ops/replication-log';
-import { FIRST_RUN_KEY } from './ops/setup-page';
-import { SHIPPED_CORE_VERSION } from './ops/shipped-lock';
-import { ORIGIN_KEY, chooseOrigin, pinnable } from './ops/site-origin';
-import {
-	SEALED_META_KEYS,
-	adoptLegacyOwnerToken,
-	adoptLegacySecrets,
-	readSealed,
-	writeSealed,
-	type SecretStore
-} from './ops/site-secrets';
+import { SEALED_META_KEYS, readSealed, writeSealed, type SecretStore } from './ops/site-secrets';
 import { SpoolStamps } from './ops/spool';
-import { readStateRows } from './ops/state-fingerprint';
-import { classifyState } from './ops/state-inventory';
 import { RingBuffer, type Finding, type Observation } from './ops/supervisor';
 import { type SweepReport } from './ops/sweep';
 import { type TcpResult } from './ops/tcp';
-import {
-	RATE_WINDOW_MS,
-	WARM_INTERVAL_VERIFIED_MS,
-	clampWarmInterval,
-	foldRenderWindow,
-	idleRearm,
-	readRenderWindow,
-	warmDecision,
-	writeRenderWindow,
-	type Arrival,
-	type RenderWindow,
-	type WarmDecision
-} from './ops/thermal';
-import { updbOptions, updbStep, type UpdbDeps } from './ops/updb';
-import {
-	ID_PARTITION_LANES,
-	LANE_HIGH_PREFIX,
-	laneHighWater,
-	writeForwardEnabled,
-	type ForwardStatement
-} from './ops/write-forwarding';
+import { type Arrival, type RenderWindow, type WarmDecision } from './ops/thermal';
+import type { UpdbDeps } from './ops/updb';
+import { type ForwardStatement } from './ops/write-forwarding';
+import type { TagStats } from './wordpress/tag-bridge';
 // the `.js` is load-bearing: wrangler.jsonc aliases the specifier `./runtime/php-binary.js`, and
 // without it esbuild resolves the default seam and bundles an 11 MB probe build over the ceiling
 import { PHPFactory, wasmModule } from './runtime/php-binary.js';
-import { errorMessage, isMissingTable } from './util/errors';
-import { jsonError } from './util/reply';
+import { isMissingTable } from './util/errors';
 import { firstRow } from './util/sql';
 import type { Stamped } from './util/types';
 
@@ -386,25 +407,12 @@ export interface PhpInstance {
 	php: PhpStatic;
 	binary: SiteBinary;
 	out: string[];
+	/**
+	 * The MySQL bridge installed on `binary`, whose request-scoped state each run clears. A
+	 * WordPress site's also ends a run, which judges the writes it made.
+	 */
+	mysql?: MysqlBridge & { endRun?(): void };
 }
-
-/**
- * Interpreters kept across the eviction of the instance that booted them, by object id.
- *
- * Module scope lives with the isolate, so the next instance of the object can adopt the
- * interpreter.
- * Host closures resolve `this` through `owner` so an adoption repoints handles PHP already holds. A
- * `commitSeq` that differs on adoption means the object wrote elsewhere, so the interpreter is
- * dropped.
- */
-type RetainedInterpreter = {
-	php: PhpInstance;
-	owner: { current: SitePhpDurableObject };
-	commitSeq: number;
-	at: number;
-};
-
-const retainedInterpreters = new Map<string, RetainedInterpreter>();
 
 /**
  * One site: the interpreter and the database in the same isolate.
@@ -412,7 +420,7 @@ const retainedInterpreters = new Map<string, RetainedInterpreter>();
  * `ctx.storage.sql` is synchronous only inside the Durable Object and PHP's PDO blocks, so PHP
  * must run here.
  */
-export class SitePhpDurableObject extends SiteDurableObject {
+export class SitePhpDurableObject extends SiteDurableObject implements SiteStore {
 	/** the worker's own vars (narrows the base class's env; emits nothing) */
 	declare env: SiteEnv;
 	/** backing field of {@link php} */
@@ -445,8 +453,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.phpInstance = value;
 		if (value === undefined && was) {
 			keepSpareMemory(was);
-			const id = this.ctx.id.toString();
-			if (retainedInterpreters.get(id)?.php === was) retainedInterpreters.delete(id);
+			forgetRetained(this.ctx.id.toString(), was);
 		}
 	}
 	/** the shared output buffer of the interpreter */
@@ -537,13 +544,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	bumpCoalesced?: boolean;
 	/** every cache tag invalidated this invocation (the bump is coalesced; the tag set is not) */
 	invalidatedTags: Set<string> = new Set();
-	/** whether this invocation has already flagged the plans; cleared by `settlePlans()` */
-	plansStaled?: boolean;
+	/** the plan staleness flag the purge helpers read and write through the instance */
+	purge: PurgeState = {};
 	/** the last scoped plan purge, so an invalidation that removed nothing is still visible */
 	lastPlanPurge?: { purged: number; tags: number };
 
 	/** what the last tag-scoped purge did, reported at `/serve-stats` so the 11x is observable */
 	lastScopedPurge?: { scoped: boolean; tags: number; purged: number; requeued?: number };
+
+	/** what WordPress's tag emitter has asked for, including the purges the host raised itself */
+	wordpressTags?: TagStats;
 
 	/** whether this incarnation has settled a purge a previous one recorded */
 	pendingDrained?: boolean;
@@ -606,10 +616,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		skipped?: 'not-cacheable' | 'no-index' | 'no-match';
 	};
 
-	/** the aggregate manifest, read once per incarnation (undefined once read: there is none) */
-	private aggregates?: AggregateIndex;
-	/** whether {@link aggregateIndex} has read the manifest, so an absent one is asked for once */
-	private aggregatesRead = false;
+	/** the aggregate manifest memo that {@link aggregateIndex} fills once per incarnation */
+	aggregates: AggregateMemo = { read: false };
 
 	/** what that settlement did, so a crash-then-recover is observable rather than assumed */
 	lastPendingDrain?: { tags: number; purged: number };
@@ -822,22 +830,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/** today's renders, alarm firings and drained fetches since the last meter flush */
 	activitySinceFlush?: { renders: number; alarms: number; fetches: number };
 
-	/** adds `n` to today's pending counter for `kind` */
 	countActivity(kind: 'renders' | 'alarms' | 'fetches', n = 1): void {
-		const held = this.activitySinceFlush ?? { renders: 0, alarms: 0, fetches: 0 };
-		held[kind] += n;
-		this.activitySinceFlush = held;
+		return countActivity(this, kind, n);
 	}
 
-	/** today's activity counters, stored plus pending, so a read between flushes is current */
 	activityToday(nowMs = this.nowMs()): { renders: number; alarms: number; fetches: number } {
-		const stored = this.storedMeters(nowMs);
-		const pending = this.activitySinceFlush ?? { renders: 0, alarms: 0, fetches: 0 };
-		return {
-			renders: stored.renders + pending.renders,
-			alarms: stored.alarms + pending.alarms,
-			fetches: stored.fetches + pending.fetches
-		};
+		return activityToday(this, nowMs);
 	}
 	/**
 	 * When the alarm this object last set is due, in memory only.
@@ -913,7 +911,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// the KV half of the same meter: `setAlarm` alone is 360 rows/day on an idle site
 		this.storage = countingStorage(this.ctx.storage, () => this.writeTally, charge);
 		this.limitTally = {};
-		this.ownerAdoption = this.adoptOwnerToken();
+		this.ownerAdoption = adoptOwnerToken(this);
 	}
 
 	/**
@@ -933,18 +931,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// a second cold caller waits for the first (reconciliation runs outside the gate; two
 		// interpreters in one isolate got it reset)
 		if (this.bootInFlight) return this.bootInFlight;
-		this.bootInFlight = this.bootPhp(opts).finally(() => {
+		this.bootInFlight = bootPhp(this, opts, {
+			factory: PHPFactory,
+			module: wasmModule as WebAssembly.Module
+		}).finally(() => {
 			this.bootInFlight = undefined;
 		});
 		return this.bootInFlight;
-	}
-
-	/** the cold half of {@link ensurePhp}; only it and its own reboot call this */
-	private bootPhp(opts: { skipRestore?: boolean }): Promise<PhpInstance> {
-		return bootPhp(this, opts, {
-			factory: PHPFactory,
-			module: wasmModule as WebAssembly.Module
-		});
 	}
 
 	installCapabilities(binary: SiteBinary): SiteBinary {
@@ -970,81 +963,36 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return autoScaleStep(this);
 	}
 
-	/**
-	 * Whether this lane is empty and waiting for the primary's copy (`CREATED` with a readmission
-	 * ask outstanding).
-	 */
 	awaitingCopy(): boolean {
-		return this.replicaStage() === 'CREATED' && (this.metaGet(READMIT_ASKS_KEY) ?? '') !== '';
+		return awaitingCopy(this);
 	}
 
-	/**
-	 * How long a lane waiting on a copy sleeps before asking again: doubling from the catch-up
-	 * interval to 60 s.
-	 */
 	copyBackoffMs(): number {
-		const asks = Number(this.metaGet(READMIT_ASKS_KEY) ?? '0') || 0;
-		return Math.min(CATCH_UP_INTERVAL_MS * 2 ** Math.max(0, asks - 1), 60_000);
+		return copyBackoffMs(this);
 	}
 
-	/**
-	 * What the last advisory sweep found: one indexed row read, no kernel boot (the module's cron
-	 * hook fills it).
-	 */
 	advisoryVerdict(): AdvisoryVerdict & { fresh: boolean; ageS: number } {
-		// a site that never migrated has no `key_value`; that reads as unknown, like an absent row
-		let row: { value: unknown } | undefined;
-		try {
-			row = firstRow(
-				this.sql.exec(
-					`SELECT value FROM key_value WHERE collection = 'state' AND name = ?`,
-					ADVISORY_STATE_KEY
-				)
-			) as { value: unknown } | undefined;
-		} catch {
-			row = undefined;
-		}
-		const verdict = readAdvisories(row?.value);
-		return { ...verdict, ...advisoryFreshness(verdict, Math.floor(this.nowMs() / 1000)) };
+		return advisoryVerdict(this);
 	}
 
-	/** lane numbers waiting to be copied again, lowest first; read on the primary */
 	laneRepairQueue(): number[] {
-		const raw = this.metaGet(LANE_REPAIR_KEY) ?? '';
-		const seen = new Set<number>();
-		for (const part of raw.split(',')) {
-			const lane = Number(part.trim());
-			if (Number.isInteger(lane) && lane >= 1) seen.add(lane);
-		}
-		return [...seen].sort((a, b) => a - b);
+		return laneRepairQueue(this);
 	}
 
-	/** records a lane as needing a fresh copy; idempotent, since a lane re-asks every firing */
 	enqueueLaneRepair(lane: number): number[] {
-		if (!Number.isInteger(lane) || lane < 1) return this.laneRepairQueue();
-		const queue = [...new Set([...this.laneRepairQueue(), lane])].sort((a, b) => a - b);
-		this.metaSet(LANE_REPAIR_KEY, queue.join(','));
-		return queue;
+		return enqueueLaneRepair(this, lane);
 	}
 
-	/** removes a lane from the repair queue and returns what remains */
 	dequeueLaneRepair(lane: number): number[] {
-		const queue = this.laneRepairQueue().filter((n) => n !== lane);
-		this.metaSet(LANE_REPAIR_KEY, queue.join(','));
-		return queue;
+		return dequeueLaneRepair(this, lane);
 	}
 
 	async requestReadmission(): Promise<{ asked: boolean; reason: string; stage: ReplicaStage }> {
 		return requestReadmission(this);
 	}
 
-	/**
-	 * Whether this is a pool lane nothing has routed to lately; a primary is never idle (it takes
-	 * every write and miss).
-	 */
 	laneIsIdle(): boolean {
-		if (!this.isPoolLane()) return false;
-		return (this.doRequestsSinceFlush ?? 0) === 0 && (this.inflightPeak ?? 0) < 1;
+		return laneIsIdle(this);
 	}
 
 	/** the SSRF guard, or undefined when it is off or the URL is allowed */
@@ -1084,25 +1032,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return performOutbound(this, url, method, body, headers);
 	}
 
-	/**
-	 * The aggregate manifest from the `ASSETS` binding, or undefined; memoised per incarnation,
-	 * absence included.
-	 */
 	async aggregateIndex(): Promise<AggregateIndex | undefined> {
-		if (this.aggregatesRead) return this.aggregates;
-		this.aggregatesRead = true;
-		try {
-			const assets = (this.env as { ASSETS?: { fetch: (r: Request) => Promise<Response> } })
-				?.ASSETS;
-			if (!assets) return undefined;
-			const res = await assets.fetch(new Request('https://assets.local/agg/manifest.json'));
-			if (!res.ok) return undefined;
-			const parsed = (await res.json()) as AggregateIndex;
-			if (parsed?.libraries && parsed?.files) this.aggregates = parsed;
-		} catch {
-			// an absent or unreadable manifest is "no aggregation", never a failed render
-		}
-		return this.aggregates;
+		return aggregateIndex(this);
 	}
 
 	async drainHttpQueue(limit?: number) {
@@ -1158,39 +1089,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return Number.isFinite(n) ? n : 3;
 	}
 
-	/**
-	 * The emscripten heap as bytes (`HEAPU8`, else `wasmMemory`; php-wasm types neither);
-	 * undefined if neither exists.
-	 */
 	heapBytes(binary: SiteBinary): Uint8Array | undefined {
-		const b = binary as unknown as {
-			HEAPU8?: unknown;
-			wasmMemory?: { buffer?: ArrayBufferLike };
-		};
-		if (b.HEAPU8 instanceof Uint8Array) return b.HEAPU8;
-		const buf = b.wasmMemory?.buffer;
-		if (buf) return new Uint8Array(buf);
-		return undefined;
+		return heapBytes(binary);
 	}
 
 	pinHandles(binary: SiteBinary): number {
 		return pinHandles(this, binary);
 	}
 
-	/**
-	 * The vrzno handle table (`Module.targets`), shape-checked; undefined when absent, which a
-	 * restore refuses on.
-	 */
 	handleIndex(binary: SiteBinary): HandleIndex | undefined {
-		const t = (binary as unknown as { targets?: unknown }).targets as HandleIndex | undefined;
-		if (!t || typeof t !== 'object') return undefined;
-		const ok =
-			typeof t.id === 'number' &&
-			typeof t.byObject?.set === 'function' &&
-			typeof t.byInteger?.set === 'function' &&
-			typeof (t.byInteger as unknown as { [Symbol.iterator]?: unknown })[Symbol.iterator] ===
-				'function';
-		return ok ? t : undefined;
+		return handleIndex(binary);
 	}
 
 	async snapshotHeap(opts?: { chunkBytes?: number }): Promise<Payload> {
@@ -1201,68 +1109,27 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return snapshotStep(this);
 	}
 
-	/** what a reconciliation step may ask this object beyond plain SQL */
 	reconcileHost(): ReconcileHost {
-		return {
-			claimedAtMs: () => {
-				const raw = this.metaGet(FIRST_RUN_KEY);
-				const at = raw === null ? NaN : Number(raw);
-				return Number.isFinite(at) && at > 0 ? at : undefined;
-			},
-			meta: (key: string) => this.metaGet(key),
-			setMeta: (key: string, value: string) => this.metaSet(key, value),
-			origin: () => this.canonicalOrigin(),
-			packedContainer: () => this.packedContainer,
-			modules: () => this.enabledModulesFingerprint()
-		};
+		return reconcileHost(this);
 	}
 
 	/** the pack's container row, loaded once an instance has reconciliation to do */
 	packedContainer?: PackedContainer;
 
-	/** loads the pack's container row from `ASSETS` once */
 	async loadPackedContainer(): Promise<void> {
-		if (this.packedContainer) return;
-		try {
-			const res = await this.env.ASSETS.fetch(
-				new URL(`https://a.local/${PACKED_CONTAINER_PATH}`)
-			);
-			if (res.ok) this.packedContainer = await res.json<PackedContainer>();
-		} catch {
-			// absent means the step rebuilds, as it always did
-		}
+		return loadPackedContainer(this);
 	}
 
-	/** the stored reconciliation state */
 	reconcileState(): ReconcileState {
-		return parseReconcileState(this.metaGet(RECONCILE_KEY));
+		return reconcileState(this);
 	}
 
-	/** the reconciliation report for this site */
 	reconcileStatus(): ReturnType<typeof reconcileReport> {
-		return reconcileReport(this.reconcileState(), this.sql, this.reconcileHost());
+		return reconcileStatus(this);
 	}
 
-	/**
-	 * Why `reconcileStepOnce()` answered undefined, so a POST that did nothing is not mistaken for
-	 * a silent failure.
-	 */
 	reconcileSkipReason(): string {
-		if (String(this.env?.RECONCILE ?? '1') === '0') return 'RECONCILE is off';
-		if (this.isPoolLane()) return 'a replica lane serves a copy and does not reconcile';
-		const state = this.reconcileState();
-		if (
-			reconciled(state, this.metaGet(DRIVER_DIGEST_KEY)) &&
-			!recurringWork(state, this.sql, this.reconcileHost())
-		) {
-			return 'already at the shipping version';
-		}
-		// a deferred step answers undefined too; without this a site parked at version 0 of 2
-		// reads as shipping
-		const planned = planReconcile(state, this.sql, this.reconcileHost());
-		return planned.action === 'wait'
-			? `waiting on ${planned.step.id}: ${planned.reason}`
-			: `version ${state.version} of ${PACK_VERSION}, with no step left to try`;
+		return reconcileSkipReason(this);
 	}
 
 	async reconcileStepOnce(): Promise<Payload | undefined> {
@@ -1297,112 +1164,41 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 	// #region git remotes
 
-	/** every configured remote; the list is one meta row so an add is one write */
 	gitRemotes(): Remote[] {
-		try {
-			const raw = JSON.parse(this.metaGet('git_remotes') || '[]') as unknown;
-			return Array.isArray(raw) ? (raw as Remote[]) : [];
-		} catch {
-			return [];
-		}
+		return gitRemotes(this);
 	}
 
-	/** stores the remote list as one meta row */
 	gitSaveRemotes(remotes: readonly Remote[]): void {
-		this.metaSet('git_remotes', JSON.stringify(remotes));
+		return gitSaveRemotes(this, remotes);
 	}
 
-	/** the stored token, email and username for a remote (empty strings when unset) */
 	gitCredential(id: string): Credential {
-		return {
-			token: this.readSecret(`git_token_${id}`) ?? '',
-			email: this.metaGet(`git_email_${id}`) ?? '',
-			username: this.metaGet(`git_username_${id}`) ?? ''
-		};
+		return gitCredential(this, id);
 	}
 
-	/** the git transport's view of a remote, which authenticates as Basic, unlike the API */
 	gitSmart(remote: Remote): SmartRemote {
-		const auth = smartAuth(remote, this.gitCredential(remote.id));
-		return { url: cloneUrl(remote), username: auth.username, token: auth.token };
+		return gitSmart(this, remote);
 	}
 
-	/** one authenticated API GET, returning parsed JSON or a refusal */
 	async gitGet(
 		remote: Remote,
 		url: string
 	): Promise<{ ok: boolean; body: unknown; status: number }> {
-		const res = await fetch(url, {
-			headers: authHeaders(remote, this.gitCredential(remote.id))
-		});
-		let body: unknown;
-		try {
-			body = await res.json();
-		} catch {
-			body = undefined;
-		}
-		if (res.status === 429)
-			this.gitBackoff(remote.id, res.headers.get('retry-after') ?? undefined);
-		return { ok: res.ok, body, status: res.status };
+		return gitGet(this, remote, url);
 	}
 
-	/** records a refusal so nothing polls this remote again until the window passes */
-	private gitBackoff(id: string, retryAfter?: string): number {
-		const attempts = Number(this.metaGet(`git_attempts_${id}`, '0') ?? 0) + 1;
-		const seconds = retryAfter === undefined ? undefined : Number(retryAfter);
-		const wait = backoffMs(attempts, Number.isFinite(seconds) ? seconds : undefined);
-		this.metaSet(`git_attempts_${id}`, String(attempts));
-		this.metaSet(`git_backoff_${id}`, String(this.nowMs() + wait));
-		return wait;
-	}
-
-	/** clears a remote's backoff after a good poll */
-	private gitClearBackoff(id: string): void {
-		this.metaSet(`git_attempts_${id}`, '0');
-		this.metaSet(`git_backoff_${id}`, '0');
-	}
-
-	/** every file this remote has installed, so a plan can tell a change from an addition */
 	gitStoredFiles(id: string): Map<string, string> {
-		this.ensureServeTables();
-		const rows = this.sql
-			.exec<{
-				path: string;
-				source: string;
-			}>('SELECT path, source FROM cfw_module_file WHERE package = ?', id)
-			.toArray();
-		return new Map(rows.map((r) => [String(r.path), String(r.source)]));
+		return gitStoredFiles(this, id);
 	}
 
-	/** who owns each installed path, which is what turns an overwrite into a refusal */
 	gitOwners(): Map<string, string> {
-		this.ensureServeTables();
-		const rows = this.sql
-			.exec<{
-				path: string;
-				package: string;
-			}>('SELECT path, package FROM cfw_module_file')
-			.toArray();
-		return new Map(rows.map((r) => [String(r.path), String(r.package)]));
+		return gitOwners(this);
 	}
 
-	/** the ref advertisement, which is the poll and works against any remote that speaks git */
 	async gitRefs(remote: Remote): Promise<Advertisement> {
-		try {
-			const ad = await discoverRefs(this.gitSmart(remote));
-			this.gitClearBackoff(remote.id);
-			return ad;
-		} catch (e) {
-			const message = errorMessage(e);
-			if (/ answered 4(29|03)/.test(message)) this.gitBackoff(remote.id);
-			throw e;
-		}
+		return gitRefs(this, remote);
 	}
 
-	/**
-	 * Writes one commit status, never a check run (a pasted token is refused by the check-run
-	 * endpoints on all three providers).
-	 */
 	async gitWriteStatus(
 		remote: Remote,
 		sha: string,
@@ -1410,17 +1206,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		description: string,
 		targetUrl: string
 	): Promise<boolean> {
-		const post = statusRequest(remote, sha, state, description, targetUrl);
-		if (!post) return false;
-		const res = await fetch(post.url, {
-			method: 'POST',
-			headers: {
-				...authHeaders(remote, this.gitCredential(remote.id)),
-				'content-type': 'application/json'
-			},
-			body: JSON.stringify(post.body)
-		});
-		return res.ok;
+		return gitWriteStatus(this, remote, sha, state, description, targetUrl);
 	}
 
 	async gitSync(
@@ -1435,91 +1221,35 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return handleModify(this, url, request);
 	}
 
-	/** stores the autoload map a build-delivered vendor package asks composer to register */
 	registerPackageAutoload(
 		pkg: AutoloadDeclaration,
 		files: readonly { path: string; source: string }[]
 	): void {
-		this.sql.exec(
-			`INSERT INTO cfw_package_autoload (package, version, mount, autoload, classmap)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(package) DO UPDATE SET version = excluded.version, mount = excluded.mount,
-         autoload = excluded.autoload, classmap = excluded.classmap`,
-			pkg.name,
-			pkg.version,
-			pkg.mount,
-			JSON.stringify(pkg.autoload),
-			JSON.stringify(classmapOf(pkg.mount, pkg.autoload, files))
-		);
-		this.rowsSinceFlush = (this.rowsSinceFlush ?? 0) + 1;
+		return registerPackageAutoload(this, pkg, files);
 	}
 
-	/** a body that is not JSON is a caller error, and a throw here would read as a server fault */
 	async readModifyBody(request: Request): Promise<unknown> {
-		if (request.method !== 'POST') return undefined;
-		try {
-			return (await request.json()) as unknown;
-		} catch {
-			return undefined;
-		}
+		return readModifyBody(request);
 	}
 
-	/** the 400 for a modify action called without a JSON POST */
 	modifyBadBody(): Response {
-		return jsonError('this action needs a POST carrying a JSON body', 400);
+		return modifyBadBody();
 	}
 
-	/**
-	 * Drops the compiled container and plugin discovery so the next boot rebuilds both.
-	 *
-	 * Called when a delivery changes an extension's wiring; a container cached before a module's
-	 * code arrives resolves routes to classes that cannot load.
-	 */
 	dropCompiledContainer(): void {
-		for (const table of ['cache_container', 'cache_discovery']) {
-			try {
-				this.sql.exec(`DELETE FROM ${table}`);
-			} catch {
-				// a table the site has not created has nothing cached to drop
-			}
-		}
+		return dropCompiledContainer(this);
 	}
 
-	/** the poll cadence for every remote, which is what the alarm reads */
 	gitPollStates(remotes: readonly Remote[]): PollState[] {
-		return remotes.map((r) => ({
-			id: r.id,
-			intervalMinutes: clampInterval(
-				Number(this.metaGet(`git_interval_${r.id}`, String(DEFAULT_POLL_MINUTES)) ?? 0)
-			),
-			lastCheckedMs: Number(this.metaGet(`git_checked_${r.id}`, '0') ?? 0),
-			backoffUntilMs: Number(this.metaGet(`git_backoff_${r.id}`, '0') ?? 0)
-		}));
+		return gitPollStates(this, remotes);
 	}
 
 	async gitPoll(limit?: number): Promise<Record<string, unknown>[]> {
 		return gitPoll(this, limit);
 	}
 
-	/** every open request, from the provider API where there is one, else from the refs */
 	async gitPulls(remote: Remote): Promise<PullRequest[]> {
-		if (!hasApi(remote.provider)) {
-			const ad = await this.gitRefs(remote);
-			return requestRefs(ad).map((r) => ({
-				id: r.id,
-				title: `request ${r.id}`,
-				branch: r.ref,
-				target: remote.branch,
-				sha: r.sha,
-				author: '',
-				url: '',
-				draft: false
-			}));
-		}
-		const request = pullsRequest(remote);
-		const got = await this.gitGet(remote, request.url);
-		if (!got.ok) throw new Error(`the provider answered ${got.status}`);
-		return request.pick(got.body);
+		return gitPulls(this, remote);
 	}
 
 	async handleGit(url: URL, deliverBase?: string): Promise<Response> {
@@ -1530,218 +1260,66 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return ensureServeTables(this);
 	}
 
-	/**
-	 * Folds the writes since the last flush into a per-UTC-day total; flushed on the alarm, never
-	 * per write (that would double the count; the flush row is itself counted).
-	 *
-	 * @returns the running total for today
-	 */
 	flushDailyRows(nowMs = this.nowMs()): number {
-		return this.flushMeters(nowMs).rows;
+		return flushDailyRows(this, nowMs);
 	}
 
-	/**
-	 * What the packed day row holds, else the four legacy keys (read-only, so an upgrade mid-day
-	 * keeps the row budget the degrade guard reads).
-	 */
 	storedMeters(nowMs = this.nowMs()): DayMeters {
-		const packed = readDayMeters(this.metaGet(dayMetersKey(nowMs)));
-		if (packed) return packed;
-		const day = new Date(nowMs).toISOString().slice(0, 10);
-		return {
-			rows: Number(this.metaGet(`rows_written_${day}`, '0') ?? 0),
-			doRequests: Number(this.metaGet(`do_requests_${day}`, '0') ?? 0),
-			serveTotal: this.carriedServeTotal(),
-			encounters: parseEncounters(this.metaGet(`encounters_${day}`)),
-			kvWrites: 0,
-			renders: 0,
-			alarms: 0,
-			fetches: 0
-		};
-	}
-
-	/**
-	 * The lifetime serve total from whichever day last recorded one; memoised, since it only moves
-	 * through `flushMeters()`.
-	 */
-	carriedServeTotal(): number {
-		if (this.carriedServe !== undefined) return this.carriedServe;
-		let latest = 0;
-		try {
-			const row = firstRow(
-				this.sql.exec(
-					`SELECT v FROM cfw_meta WHERE k GLOB '${DAY_METERS_PREFIX}*' ORDER BY k DESC LIMIT 1`
-				)
-			) as { v?: string } | undefined;
-			latest = readDayMeters(row?.v)?.serveTotal ?? 0;
-		} catch (e) {
-			// a missing cfw_meta is the zero total; the next flush writes one
-			if (!isMissingTable(e)) this.noteError('carriedServeTotal', e);
-		}
-		this.carriedServe = Math.max(latest, Number(this.metaGet('serve_requests', '0') ?? 0));
-		return this.carriedServe;
+		return storedMeters(this, nowMs);
 	}
 
 	flushMeters(nowMs?: number): DayMeters {
 		return flushMeters(this, nowMs);
 	}
 
-	/** the render window as it survived the last hibernation, or undefined if none is stored */
+	carriedServeTotal(): number {
+		return carriedServeTotal(this);
+	}
+
 	storedRenderWindow(): RenderWindow | undefined {
-		return readRenderWindow(this.metaGet(RENDER_WINDOW_KEY), this.warmCeiling());
+		return storedRenderWindow(this);
 	}
 
-	/** the ceiling the warm solver may climb to; 9,500 unless `WARM_CEILING_MS` raises it */
 	warmCeiling(): number {
-		return warmCeilingMs(this.env, retainInterpreterEnabled(this.env));
+		return warmCeiling(this);
 	}
 
-	/**
-	 * Folds pending renders into the persisted window, at most once per 15-minute window (96
-	 * rows/day against 1,440 at the 60 s meter interval; the rate only separates ~505 renders/day
-	 * from ~8,640).
-	 *
-	 * The roll is also where the warm interval is solved: `lastRenderWindowFlushMs` is in memory,
-	 * so it is set only if this incarnation did the previous roll.
-	 */
 	flushRenderWindow(nowMs = this.nowMs()): RenderWindow | undefined {
-		const pending = this.rendersSinceFlush ?? 0;
-		const stored = this.storedRenderWindow();
-		if (pending === 0) return stored;
-		// held until the bucket rolls, so a busy site pays once per window, not once per flush
-		if (stored && nowMs - stored.startedAt < RATE_WINDOW_MS) {
-			const held = this.lastRenderWindowFlushMs ?? 0;
-			if (nowMs - held < RATE_WINDOW_MS) return stored;
-		}
-		const survived = this.incarnationSpanned(stored, nowMs);
-		const colds = this.coldsSinceFlush ?? 0;
-		this.rendersSinceFlush = 0;
-		this.coldsSinceFlush = 0;
-		this.lastRenderWindowFlushMs = nowMs;
-		// an older build reads only five fields, so the stamp is written only while the fade needs it
-		const { floorMs, ceilingMs } = idleBounds(this.env);
-		const fade = ceilingMs > floorMs;
-		const folded = foldRenderWindow(
-			stored,
-			pending,
-			nowMs,
-			RATE_WINDOW_MS,
-			survived,
-			colds,
-			this.warmCeiling(),
-			fade ? this.lastRenderAtMs : undefined
-		);
-		if (!fade) delete folded.lastAt;
-		this.metaSet(RENDER_WINDOW_KEY, writeRenderWindow(folded));
-		return folded;
+		return flushRenderWindow(this, nowMs);
 	}
 
-	/**
-	 * Whether one incarnation covered the window that is closing.
-	 *
-	 * `lastRenderWindowFlushMs` must be set (this incarnation opened a window) and no later than
-	 * the window's start (it is that window, not one inherited after a re-creation).
-	 */
-	private incarnationSpanned(stored: RenderWindow | undefined, nowMs: number): boolean {
-		if (!stored) return false;
-		const opened = this.lastRenderWindowFlushMs;
-		if (opened === undefined) return false;
-		return opened <= stored.startedAt && nowMs - stored.startedAt >= RATE_WINDOW_MS;
-	}
-
-	/**
-	 * Whether this firing should pay for a daily-meter flush.
-	 *
-	 * Two triggers: pending volume flushes at once, an idle warming tick waits for the interval.
-	 * Both come from `meterFlushBudget()` (the remaining budget), reaching 25 rows and 60 s at the
-	 * ceiling. The accumulator is in memory, so an eviction loses at most one interval of counting.
-	 */
 	shouldFlushMeters(nowMs = this.nowMs()): boolean {
-		const pending = (this.rowsSinceFlush ?? 0) + (this.doRequestsSinceFlush ?? 0);
-		if (pending === 0) return false;
-		const budget = meterFlushBudget(this.dailyRows(nowMs), DAILY_ROWS_QUOTA);
-		if (pending >= budget.rows) return true;
-		return nowMs - (this.lastMeterFlushMs ?? 0) >= budget.intervalMs;
+		return shouldFlushMeters(this, nowMs);
 	}
 
-	/**
-	 * Folds served requests into their durable total, on the meters' own interval.
-	 *
-	 * A row per view would cost ~15,000 of free's 100,000 rows/day. A serve arms the fill alarm at
-	 * +1 ms and that firing flushes, so an eviction loses about a millisecond of counting.
-	 */
 	flushServeRequests(): number {
-		const pending = this.serveRequestsPending ?? 0;
-		if (pending === 0) return 0;
-		this.flushMeters();
-		return pending;
+		return flushServeRequests(this);
 	}
 
-	/** the durable total plus what has not been paid for yet; for a read that must not write */
 	serveRequests(): number {
-		return this.storedMeters().serveTotal + (this.serveRequestsPending ?? 0);
+		return serveRequests(this);
 	}
 
-	/** today's rows written, without flushing (for a read that must not write) */
 	dailyRows(nowMs = this.nowMs()): number {
-		return this.storedMeters(nowMs).rows + (this.rowsSinceFlush ?? 0);
+		return dailyRows(this, nowMs);
 	}
 
-	/**
-	 * Folds this firing's Durable Object invocations into a per-UTC-day total.
-	 *
-	 * Counts only what reached this object (an edge-cache hit never enters the isolate), so it is
-	 * the DO meter and not the Worker-request meter.
-	 */
-	flushDailyDoRequests(nowMs = this.nowMs()): number {
-		return this.flushMeters(nowMs).doRequests;
-	}
-
-	/**
-	 * Folds this incarnation's cold-encounter counts into a per-UTC-day total; called from the
-	 * alarm, where a row is already written.
-	 */
 	flushEncounters(nowMs = this.nowMs()): EncounterCounts {
-		return this.flushMeters(nowMs).encounters;
+		return flushEncounters(this, nowMs);
 	}
 
-	/**
-	 * The share of requests that met an evicted interpreter, today and in this incarnation (score
-	 * a boot proposal against it).
-	 */
 	coldEncounterRate(nowMs = this.nowMs()): {
 		today: ReturnType<typeof encounterReport>;
 		incarnation: ReturnType<typeof encounterReport>;
 	} {
-		return {
-			today: encounterReport(
-				addEncounters(this.storedMeters(nowMs).encounters, this.encounters)
-			),
-			incarnation: encounterReport(this.encounters)
-		};
+		return coldEncounterRate(this, nowMs);
 	}
 
 	/** in memory only: an object evicted mid-upgrade must re-check; the comparison is idempotent */
-	private coreVersionChecked = false;
+	reconcileMemo: ReconcileMemo = { coreVersionChecked: false };
 
-	/**
-	 * Drops the caches that embed the Drupal core version, once per lifetime, when that version
-	 * has moved.
-	 */
 	invalidateOnCoreUpgrade(): InvalidationResult | undefined {
-		if (this.coreVersionChecked) return undefined;
-		this.coreVersionChecked = true;
-		try {
-			return invalidateVersionPinnedCaches(
-				this.sql,
-				this.metaGet(CORE_VERSION_KEY),
-				SHIPPED_CORE_VERSION,
-				(version) => this.metaSet(CORE_VERSION_KEY, version)
-			);
-		} catch {
-			// never take the serving path down over a cache-busting nicety
-			return undefined;
-		}
+		return invalidateOnCoreUpgrade(this);
 	}
 
 	async installableVerdict(
@@ -1837,39 +1415,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return sweepBeat(this, options);
 	}
 
-	/**
-	 * Where this site sits on the quota ladder; both daily meters reset at midnight UTC, so
-	 * nothing is persisted (two warm reads, no await).
-	 */
 	degradation(nowMs = this.nowMs()): Degradation {
-		const rowsLimit = dailyLimit('rows-written', this.env);
-		const doLimit = dailyLimit('do-requests', this.env);
-		return degradation({
-			rowsFraction: rowsLimit > 0 ? this.dailyRows(nowMs) / rowsLimit : 0,
-			doFraction: doLimit > 0 ? this.dailyDoRequests(nowMs) / doLimit : 0
-		});
+		return degradation(this, nowMs);
 	}
 
-	/** today's DO invocations, without flushing */
 	dailyDoRequests(nowMs = this.nowMs()): number {
-		return this.storedMeters(nowMs).doRequests + (this.doRequestsSinceFlush ?? 0);
+		return dailyDoRequests(this, nowMs);
 	}
 
-	/**
-	 * This site's own verdict on itself for the fleet inventory (findings stay on `/health`).
-	 *
-	 * Quarantine outranks degradation: a quarantined site refuses requests, a degraded one serves
-	 * them cheaper.
-	 */
 	fleetHealth(): FleetRow['health'] {
-		try {
-			if (isQuarantined(parseState(this.metaGet('repair_state')))) return 'quarantined';
-			// read `level`, the one answer `degradation()` decides, not two derived booleans
-			return this.degradation().level === 'normal' ? 'ok' : 'degraded';
-		} catch {
-			// an inventory value must never be the thing that fails the alarm that writes it
-			return 'ok';
-		}
+		return fleetHealth(this);
 	}
 
 	async reportToFleet(): Promise<void> {
@@ -1880,139 +1435,36 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return observe(this, outcomes);
 	}
 
-	/**
-	 * What the host knows about itself, in the shape `BootSelfTest` reads.
-	 *
-	 * Every key is a host fact (bridge, absent capabilities, migration progress, update run, pack
-	 * identity), so the PHP health unit needs no kernel. `missing_capabilities` comes from the
-	 * installed list, not a hand-kept name list.
-	 */
 	healthObservation(): Record<string, unknown> {
-		const installed = new Set(Object.keys(this.installCapabilities({} as SiteBinary)));
-		// only capabilities this method installs (probing an empty object cannot see `cfwStats`
-		// or the SQL bridge)
-		const wanted = ['cfwLog', 'cfwHealth', 'cfwFetch', 'cfwMail'];
-		const cursor = readMigrateCursor(this.sql);
-		return {
-			bridge_installed: installed.size > 0 ? 1 : 0,
-			missing_capabilities: wanted.filter((name) => !installed.has(name)),
-			migrate_chunk: cursor?.chunk ?? null,
-			migrate_chunks: cursor?.chunks ?? null,
-			updb_phase: updbActive(this) ? 'running' : null,
-			pack_generation: this.packGeneration(),
-			db_generation: this.metaGet('pack_generation')
-		};
+		return healthObservation(this);
 	}
 
-	/**
-	 * The rolling median body size for one path, over previous renders only.
-	 *
-	 * Reading `cfw_page` would compare a render against the row it just wrote (ratio 1.00, so
-	 * `renderSizeAnomaly` could never fire). In memory and capped, like `pageHits`.
-	 */
 	medianRenderBytes(path: string): number | undefined {
-		const seen = this.pageBytes.get(path);
-		if (!seen || seen.length < RENDER_BYTES_MIN_SAMPLES) return undefined;
-		const sorted = [...seen].sort((a, b) => a - b);
-		const mid = Math.floor(sorted.length / 2);
-		return sorted.length % 2 === 0
-			? ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2
-			: sorted[mid];
+		return medianRenderBytes(this, path);
 	}
 
-	/** records one render's size after its median was taken, so a render never sets its baseline */
 	noteRenderBytes(path: string, bytes: number): void {
-		if (!path || !Number.isFinite(bytes) || bytes <= 0) return;
-		const seen = this.pageBytes.get(path) ?? [];
-		seen.push(bytes);
-		if (seen.length > RENDER_BYTES_SAMPLES) seen.splice(0, seen.length - RENDER_BYTES_SAMPLES);
-		this.pageBytes.set(path, seen);
-		// bounded; the busiest paths matter most, so the oldest entry goes
-		if (this.pageBytes.size > RENDER_BYTES_PATHS) {
-			const oldest = this.pageBytes.keys().next();
-			if (!oldest.done) this.pageBytes.delete(oldest.value);
-		}
+		return noteRenderBytes(this, path, bytes);
 	}
 
 	supervise(outcomes: (Payload | undefined)[]): Finding[] {
 		return supervise(this, outcomes);
 	}
 
-	/**
-	 * The meta table as a {@link SecretStore}, so the mint needs no Durable Object to test, with
-	 * `sealed` on key-value storage: the SQL bridge cannot read or write it.
-	 */
 	secretStore(): SecretStore {
-		const kv = this.storage.kv;
-		return {
-			get: (key: string) => this.metaRowGet(key),
-			set: (key: string, value: string) => this.metaRowSet(key, value),
-			delete: (key: string) => {
-				this.ensureServeTables();
-				this.sql.exec('DELETE FROM cfw_meta WHERE k = ?', key);
-			},
-			sealed: {
-				get: (key: string) => kv.get<string>(key),
-				put: (key: string, value: string) => kv.put(key, value),
-				delete: (key: string) => void kv.delete(key),
-				list: (prefix: string) =>
-					[...kv.list<string>({ prefix })].map(
-						([key, value]) => [key, value] as [string, string]
-					)
-			}
-		};
+		return secretStore(this);
 	}
 
-	/** reads a credential from sealed storage, moving a legacy `cfw_meta` row over on first read */
 	readSecret(key: string): string | null {
-		return readSealed(this.secretStore(), key);
+		return readSecret(this, key);
 	}
 
-	/** stores a credential in sealed storage, where the SQL bridge cannot read or write it */
 	writeSecret(key: string, value: string): void {
-		writeSealed(this.secretStore(), key, value);
+		writeSecret(this, key, value);
 	}
 
-	/** moves credentials found in `cfw_meta` into the sealed store before any request is served */
-	private adoptOwnerToken(): Promise<void> {
-		return this.ctx.blockConcurrencyWhile(() => this.adoptSecrets());
-	}
-
-	/**
-	 * Moves every credential that sits in `cfw_meta` (a site from before sealed storage, or an
-	 * import that carried them) into sealed storage. Runs on wake and at the head of each alarm,
-	 * which is where an import is applied, so a credential is in SQL for one firing at most.
-	 */
 	async adoptSecrets(): Promise<void> {
-		try {
-			if (!this.hasMetaTable()) return;
-			const store = this.secretStore();
-			await adoptLegacyOwnerToken(store);
-			const moved = [...SEALED_META_KEYS];
-			const keys = this.sql
-				.exec<Row<{ k: string }>>(
-					`SELECT k FROM cfw_meta WHERE k IN ('owner_token_hash', 'cf_oauth_token',
-					${moved.map(() => '?').join(', ')})
-					OR substr(k, 1, 10) = 'git_token_' OR substr(k, 1, 15) = 'git_hooksecret_'`,
-					...moved
-				)
-				.toArray()
-				.map((row) => row.k);
-			if (keys.length > 0) adoptLegacySecrets(store, keys);
-		} catch {
-			// a failed adoption retries on the next wake, alarm or credential read
-		}
-	}
-
-	/** whether `cfw_meta` exists, read without creating it (an unprovisioned object has none) */
-	private hasMetaTable(): boolean {
-		return (
-			this.sql
-				.exec<Row<{ name: string }>>(
-					`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cfw_meta'`
-				)
-				.toArray().length > 0
-		);
+		return adoptSecrets(this);
 	}
 
 	async sendMailTest(to: string): Promise<Payload> {
@@ -2023,43 +1475,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return mailEnv(this);
 	}
 
-	/**
-	 * The OIDC provider an operator configured, or why it is not usable.
-	 *
-	 * The secret is an env binding; neither it nor the issuer may join `KV_OVERRIDABLE` (a KV
-	 * writer could point every login at a provider they control).
-	 */
 	oidcConfig(origin: string): { config: OidcConfig } | { refusal: string } {
-		const issuer = this.metaGet(OIDC_ISSUER_KEY) ?? '';
-		const clientId = this.metaGet(OIDC_CLIENT_ID_KEY) ?? '';
-		if (issuer === '' || clientId === '') {
-			return { refusal: 'no OIDC provider is configured for this site' };
-		}
-		if (!endpointUsable(issuer)) return { refusal: 'the OIDC issuer must be https' };
-		const secret = String(this.env?.OIDC_CLIENT_SECRET ?? '');
-		return {
-			config: {
-				issuer,
-				clientId,
-				...(secret ? { clientSecret: secret } : {}),
-				scopes: DEFAULT_SCOPES,
-				redirectUri: callbackUri(this.canonicalOrigin(origin))
-			}
-		};
+		return oidcConfig(this, origin);
 	}
 
-	/** the discovery document, fetched per callback, not cached; a login is not a hot path */
 	async oidcProvider(issuer: string): Promise<{ provider: OidcProvider } | { refusal: string }> {
-		let doc: unknown;
-		try {
-			const res = await fetch(discoveryUrl(issuer));
-			if (!res.ok) return { refusal: `discovery answered ${res.status}` };
-			doc = await res.json();
-		} catch (e) {
-			return { refusal: `discovery failed: ${errorMessage(e).slice(0, 120)}` };
-		}
-		const provider = readProvider(doc, issuer);
-		return 'refusal' in provider ? provider : { provider };
+		return oidcProvider(issuer);
 	}
 
 	/**
@@ -2077,7 +1498,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/** reads the `cfw_meta` row itself, whatever the key */
-	private metaRowGet(key: string, fallback: string | null = null): string | null {
+	metaRowGet(key: string, fallback: string | null = null): string | null {
 		this.ensureServeTables();
 		const row = firstRow(
 			this.sql.exec<Row<{ v: string }>>('SELECT v FROM cfw_meta WHERE k = ?', key)
@@ -2105,7 +1526,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * One read to save one write: free allows 5,000,000 rows read against 100,000 written, and a
 	 * write of the existing value is charged in full. `elidedWrites` counts the skips.
 	 */
-	private metaRowSet(key: string, value: unknown): void {
+	metaRowSet(key: string, value: unknown): void {
 		this.ensureServeTables();
 		const next = String(value);
 		if (this.metaRowGet(key) === next) {
@@ -2119,184 +1540,50 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		);
 	}
 
-	/**
-	 * The Cloudflare API credentials, from the durable grant or from the deployed pair.
-	 *
-	 * Every consumer goes through here: the env overlay dies with the incarnation (about ten
-	 * seconds idle), so the persisted grant is the source. A refreshed set is persisted so the
-	 * next incarnation starts from it; a refresh failure is not an error (the access token may
-	 * still be valid).
-	 */
 	async cfCredentials(): Promise<{ token: string; accountId: string }> {
-		const stored = this.storedGrant();
-		if (stored.set) {
-			const clientId = this.metaGet(CF_OAUTH_CLIENT_ID_KEY) ?? '';
-			if (clientId && stored.set.refreshToken && needsRefresh(stored.set, this.nowMs())) {
-				const next = await refresh({ clientId, refreshToken: stored.set.refreshToken });
-				if (!isTokenError(next)) {
-					this.writeSecret(CF_OAUTH_TOKEN_KEY, JSON.stringify(next));
-					return {
-						token: next.accessToken,
-						accountId: this.cfCredentialsSync().accountId
-					};
-				}
-			}
-		}
-		return this.cfCredentialsSync();
+		return cfCredentials(this);
 	}
 
-	/** the stored grant, parsed; `set` is undefined when there is none or it is unreadable */
-	private storedGrant(): { set?: TokenSet } {
-		const raw = this.readSecret(CF_OAUTH_TOKEN_KEY);
-		if (!raw) return {};
-		try {
-			const set = JSON.parse(raw) as TokenSet;
-			return { set: set?.accessToken ? set : undefined };
-		} catch {
-			return {};
-		}
-	}
-
-	/**
-	 * The same credentials without the refresh, for a caller that cannot await.
-	 *
-	 * One rule for which credential a site uses (durable grant first), shared with `mailEnv()`; the
-	 * drain refreshes before it resolves. An expired token answers 401, which is the better signal.
-	 */
 	cfCredentialsSync(): { token: string; accountId: string } {
-		const env = this.env as unknown as Record<string, string | undefined>;
-		const accountId = env.CF_EMAIL_ACCOUNT_ID ?? this.metaGet(CF_OAUTH_ACCOUNT_KEY) ?? '';
-		const set = this.storedGrant().set;
-		return { token: set?.accessToken ?? env.CF_EMAIL_TOKEN ?? '', accountId };
+		return cfCredentialsSync(this);
 	}
 
-	/**
-	 * Moves this object's replica stage through {@link canTransition}, or refuses the move.
-	 *
-	 * @returns the stage now in force; unchanged when the transition was refused
-	 */
 	setReplicaStage(next: ReplicaStage): { stage: ReplicaStage; moved: boolean; reason: string } {
-		const from = (this.metaGet('replica_stage') ?? 'CREATED') as ReplicaStage;
-		if (from === next) return { stage: from, moved: false, reason: 'already there' };
-		if (!canTransition(from, next)) {
-			return { stage: from, moved: false, reason: `${from} -> ${next} is not a legal move` };
-		}
-		this.metaSet('replica_stage', next);
-		return { stage: next, moved: true, reason: '' };
+		return setReplicaStage(this, next);
 	}
 
-	/** the stored replica stage (`CREATED` when none) */
 	replicaStage(): ReplicaStage {
-		return (this.metaGet('replica_stage') ?? 'CREATED') as ReplicaStage;
+		return replicaStage(this);
 	}
 
 	/** the waiting allowance of the invocation in progress; see `sleepBudgetMs()` */
 	sleepBudget?: SleepBudget;
 
-	/**
-	 * One log line of memory readings when `MEMORY_TRACE=1` (the platform only reports that the
-	 * isolate was reset).
-	 */
 	traceMemory(at: string): void {
-		if (this.env?.MEMORY_TRACE !== '1') return;
-		const resident = isolateResidency();
-		console.log(
-			JSON.stringify({
-				cfw: 'memory',
-				at,
-				linear: this.heapNow(),
-				isolate: this.isolateNow(),
-				residents: resident.interpreters,
-				residentLinear: resident.linearBytes,
-				retained: retainedInterpreters.size,
-				spare: spareMemoryBytes(),
-				booted: this.php?.binary ? 1 : 0
-			})
-		);
+		traceMemory(this, at);
 	}
 
 	/** whether this incarnation has already made sure the deployment document lists it */
 	deploymentChecked = false;
 
-	/**
-	 * Whether this object is a replica, a property of its name (`example.com#r1`).
-	 *
-	 * `REPLICA_READ_ONLY` is deployment-wide and would make a pool's primary read-only, so the
-	 * role is per-object; no client request can change which id the router used. Either source
-	 * suffices (OR, so a misconfiguration lands on read-only).
-	 */
 	isReplica(): boolean {
-		if (replicaReadOnly(this.env)) return true;
-		return this.isPoolLane();
+		return isReplica(this);
 	}
 
-	/**
-	 * Whether this object is a pool lane, narrower than a replica.
-	 *
-	 * A lane has a lifecycle (restore, then `SERVING`) and hands traffic back until then; a
-	 * var-configured replica sits at `CREATED` forever, so the readiness check would refuse
-	 * everything.
-	 */
 	isPoolLane(): boolean {
-		const name = this.ctx.id.name;
-		return name !== undefined && replicaOf(name) !== undefined;
+		return isPoolLane(this);
 	}
 
-	/**
-	 * Whether this object may answer a request that requires generation `g`.
-	 *
-	 * A primary is never fenced. A replica checks the caller's header: absent means any view will
-	 * do, an unparseable one refuses (unreadable is not absent), a number goes to
-	 * {@link fenceAllows}.
-	 */
 	fenceRefusal(request: Request): { refuse: boolean; required: number; applied: number } {
-		const applied = this.commitSeq();
-		if (!this.isReplica()) return { refuse: false, required: applied, applied };
-		const raw = request.headers.get('x-cfw-require-generation');
-		if (raw === null) return { refuse: false, required: applied, applied };
-		// `Number('')` is 0, not NaN, so an empty header would pass every object; it is an
-		// unreadable requirement and refuses
-		if (raw.trim() === '') return { refuse: true, required: Number.NaN, applied };
-		const required = Number(raw);
-		return { refuse: !fenceAllows(applied, required), required, applied };
+		return fenceRefusal(this, request);
 	}
 
-	/**
-	 * The replication log's view of this object.
-	 *
-	 * Uses `cfw_meta`, not `ctx.storage.kv` (a record applies inside synchronous
-	 * `transactionSync`).
-	 * `metaSet('')` clears the in-flight marker: `v` is NOT NULL, so empty means absent.
-	 */
 	logStore(): LogStore {
-		return {
-			read: (key) => this.metaGet(key),
-			write: (key, value) => this.metaSet(key, value),
-			exec: (sql, params) => this.sql.exec(sql, ...params),
-			txn: (fn) => this.storage.transactionSync(fn)
-		};
+		return logStore(this);
 	}
 
-	/**
-	 * Which values this object cannot mint for itself and does not hold.
-	 *
-	 * Asked of a replica (did the copy finish) and of a primary (may it be copied from): a
-	 * provisioned site holds no `system.private_key` yet, and each replica would then mint a key
-	 * the others reject.
-	 */
 	mandatoryGap(): string[] {
-		const read = readStateRows((sql) => this.sql.exec(sql).toArray());
-		return missingMandatory({
-			stage: this.replicaStage(),
-			presentState: read.rows.map((r) => ({ collection: r.collection, name: r.name })),
-			presentCollections: [...new Set(read.rows.map((r) => r.collection))],
-			appliedGeneration: 0,
-			advertisedGeneration: 0,
-			fingerprint: null,
-			primaryFingerprint: null,
-			schemaVersion: null,
-			primarySchemaVersion: null
-		});
+		return mandatoryGap(this);
 	}
 
 	async provisionLane(
@@ -2307,43 +1594,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return provisionLane(this, lane, cursor, budget);
 	}
 
-	/**
-	 * Records that a lane finished copying; the key puts `x-cfw-lanes` on responses, so every
-	 * provisioning path must call this (one writer).
-	 */
 	noteLaneServing(lane: number): void {
-		const provisioned = this.lanesProvisioned();
-		if (lane > provisioned) {
-			const epoch = this.lanesEpoch() + 1;
-			this.metaSet(LANES_PROVISIONED_KEY, String(lane));
-			this.metaSet(LANES_EPOCH_KEY, String(epoch));
-			this.lanesMemo = lane;
-			this.epochMemo = epoch;
-			// once per epoch, so a colo that has never answered for this site still finds the pool
-			const kv = (this.env as { CONFIG_KV?: KVNamespace } | undefined)?.CONFIG_KV;
-			const site = this.ctx.id.name;
-			if (kv && site) {
-				this.lanesPublished = kv
-					.put(lanesKvKey(site), formatLanesPointer(lane, epoch))
-					.catch(() => undefined);
-			}
-		}
-	}
-
-	/** statements sealed for replication since `sinceMs`, each at least one row on every lane */
-	replicatedRowsSince(sinceMs: number): number {
-		try {
-			const row = firstRow(
-				this.sql.exec<Row<{ n: number }>>(
-					'SELECT COALESCE(SUM(json_array_length(statements)), 0) AS n FROM cfw_repl_log WHERE sealed_at >= ?',
-					sinceMs
-				)
-			);
-			return Number(row?.n ?? 0);
-		} catch {
-			// no log yet means nothing has been sealed for a lane to replay
-			return 0;
-		}
+		return noteLaneServing(this, lane);
 	}
 
 	/** set when one more lane would project the day's rows past the reduce fraction */
@@ -2352,114 +1604,46 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/** the last `CONFIG_KV` write of the pool, awaited only by tests */
 	lanesPublished?: Promise<unknown>;
 
-	/** the lanes epoch read once per incarnation */
-	private epochMemo?: number;
-
-	/** the pool epoch, bumped whenever the lane count grows */
-	private lanesEpoch(): number {
-		if (this.epochMemo === undefined) {
-			this.epochMemo = Number(this.metaGet(LANES_EPOCH_KEY) ?? 0) || 0;
-		}
-		return this.epochMemo;
-	}
-
-	/** the pool advertisement every primary response carries, or nothing without a pool */
-	laneHeaders(): Record<string, string> {
-		const lanes = this.isPoolLane() ? 0 : this.lanesProvisioned();
-		if (lanes <= 0) return {};
-		return { [LANES_HEADER]: String(lanes), [LANES_EPOCH_HEADER]: String(this.lanesEpoch()) };
-	}
+	/** the pool epoch memo the pool helpers read and write */
+	pool: PoolState = {};
 
 	/** the pool size read once per incarnation; only `noteLaneServing()` moves it */
-	private lanesMemo?: number;
+	lanesMemo?: number;
 
-	/**
-	 * How many lanes this primary has built; memoised for the storage fast lane, which must
-	 * advertise the pool on cache hits.
-	 */
-	private lanesProvisioned(): number {
-		if (this.lanesMemo === undefined) {
-			this.lanesMemo = Number(this.metaGet(LANES_PROVISIONED_KEY) ?? 0) || 0;
-		}
-		return this.lanesMemo;
+	laneHeaders(): Record<string, string> {
+		return laneHeaders(this);
+	}
+
+	lanesProvisioned(): number {
+		return lanesProvisioned(this);
 	}
 
 	async sessionReach(cookie: string): Promise<'held' | 'absent' | 'unknown'> {
 		return sessionReach(this, cookie);
 	}
 
-	/** whether this object holds a table at all; the restore's own precondition */
 	hasTable(table: string): boolean {
-		return (
-			this.sql
-				.exec(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table)
-				.toArray().length > 0
-		);
+		return hasTable(this, table);
 	}
 
-	/**
-	 * The DDL that recreates one table, its own statement first and its indexes after.
-	 *
-	 * `sql IS NOT NULL` drops sqlite's auto-indexes, which have no statement and are recreated with
-	 * the table anyway.
-	 */
 	tableDdl(table: string): string[] {
-		return this.sql
-			.exec(
-				`SELECT sql FROM sqlite_master WHERE tbl_name = ? AND sql IS NOT NULL
-				 ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END`,
-				table
-			)
-			.toArray()
-			.map((r) => String((r as { sql: unknown }).sql));
+		return tableDdl(this, table);
 	}
 
-	/** every table this object holds, in `sqlite_master` order */
 	tableNames(): string[] {
-		return this.sql
-			.exec(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
-			.toArray()
-			.map((r) => String((r as { name: unknown }).name));
+		return tableNames(this);
 	}
 
-	/**
-	 * One page of one table, as columns plus flat rows.
-	 *
-	 * Uses `OFFSET` (a `WITHOUT ROWID` table has no rowid); unstable under a concurrent write,
-	 * which the receiving generation check refuses.
-	 * ponytail: O(n^2) over a whole table; a keyset cursor if a restore ever spans a large one
-	 */
 	snapshotRows(
 		table: string,
 		offset: number,
 		limit: number
 	): { columns: string[]; rows: unknown[][] } {
-		const verdict = planRestore([table])[0]!;
-		if (!verdict.copy) throw new Error(`${table} is not copyable: ${verdict.reason}`);
-		const raw = this.sql
-			.exec(`SELECT * FROM "${table}" LIMIT ? OFFSET ?`, limit, offset)
-			.toArray() as Record<string, unknown>[];
-		if (raw.length === 0) return { columns: [], rows: [] };
-		const columns = Object.keys(raw[0]!);
-		return { columns, rows: raw.map((r) => columns.map((c) => r[c])) };
+		return snapshotRows(this, table, offset, limit);
 	}
 
-	/**
-	 * Which slice of the rowid space this object's driver mints from.
-	 *
-	 * The count is {@link ID_PARTITION_LANES}, not the pool size (a lane cannot learn it). The
-	 * primary takes slice 0, or unpartitioned ids collide with forwarded rows on `UNIQUE`. Gated
-	 * on the site having a pool, since ids advance by the stride.
-	 */
 	idPartition(): { lane: number; lanes: number } {
-		if (!writeForwardEnabled(this.env)) return { lane: 0, lanes: 0 };
-		if (!this.isPoolLane()) {
-			return this.lanesProvisioned() > 0
-				? { lane: 0, lanes: ID_PARTITION_LANES }
-				: { lane: 0, lanes: 0 };
-		}
-		const lane = replicaOf(this.ctx.id.name ?? '')?.lane ?? 0;
-		return lane < 1 ? { lane: 0, lanes: 0 } : { lane, lanes: ID_PARTITION_LANES };
+		return idPartition(this);
 	}
 
 	collectForward(statements: readonly string[], payload: unknown): void {
@@ -2470,52 +1654,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return flushForward(this);
 	}
 
-	/**
-	 * Records the rowids this lane minted for a batch the primary committed (else a second insert
-	 * between catch-ups mints the id again). Uses `MAX` so the mark never falls.
-	 */
-	markLaneHigh(batch: readonly ForwardStatement[]): void {
-		const marks = laneHighWater(batch);
-		if (marks.size === 0) return;
-		this.ensureServeTables();
-		for (const [table, id] of marks) {
-			this.sql.exec(
-				`INSERT INTO cfw_meta (k, v) VALUES (?, ?)
-				 ON CONFLICT(k) DO UPDATE SET
-				 v = MAX(CAST(cfw_meta.v AS INTEGER), CAST(excluded.v AS INTEGER))`,
-				`${LANE_HIGH_PREFIX}${table}`,
-				// a bound number lands as 5.0 in a TEXT column; the string keeps the row legible
-				String(id)
-			);
-		}
-	}
-
-	/**
-	 * Runs the tag-scoped purge once the invocation's invalidated tags are complete.
-	 *
-	 * Runs at the end, so a death before it leaves a plan alive. The wholesale purge in
-	 * `bumpGeneration()` runs at the write and has no such window.
-	 */
 	flushTagPurge(): string[] {
-		const tags = [...this.invalidatedTags];
-		this.invalidatedTags.clear();
-		if (tags.length > 0) {
-			// here the set is complete (a wholesale purge re-queues ~2,750 fills/day at 50 saves;
-			// a node save depends on 3 to 10 pages)
-			this.lastScopedPurge = this.purgeForTags(tags, 'cachetags', { bump: false });
-			this.clearPendingTags();
-		}
-		return tags;
-	}
-
-	/**
-	 * Sets a stored page's tag list out of band, for a caller that did not write the row.
-	 *
-	 * Tags come from the render's cacheability metadata, never parsed HTML. Replaces rather than
-	 * merges, so a re-render with fewer dependencies is not purged by a dropped tag.
-	 */
-	indexPageTags(path: string, tags: unknown): void {
-		this.sql.exec('UPDATE cfw_page SET tags = ? WHERE path = ?', pageTagList(tags), path);
+		return flushTagPurge(this);
 	}
 
 	/** the stored paths that depend on any of `tags` */
@@ -2523,78 +1663,28 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return pathsForTags(this, tags);
 	}
 
-	/**
-	 * Persists the tags this invocation invalidated, at the write, so a crash before
-	 * `flushTagPurge()` leaves a durable record of what is owed. {@link drainPendingTags} settles
-	 * it at the end of the invocation and again at boot.
-	 */
 	notePendingTags(tags: readonly string[]): void {
-		if (tags.length === 0) return;
-		const held = new Set(this.pendingTags());
-		for (const tag of tags) held.add(tag);
-		// bounded: past this a wholesale purge is correct and cheaper than an unbounded row
-		const kept = [...held].slice(0, 256);
-		this.metaSet(PENDING_TAGS_KEY, JSON.stringify(kept));
+		notePendingTags(this, tags);
 	}
 
-	/** the durably recorded tag set, empty when there is nothing owed */
 	pendingTags(): string[] {
-		try {
-			const raw = JSON.parse(this.metaGet(PENDING_TAGS_KEY) || '[]') as unknown;
-			return Array.isArray(raw) ? raw.map((t) => String(t)) : [];
-		} catch {
-			return [];
-		}
+		return pendingTags(this);
 	}
 
-	/** forgets the recorded set, once the purge it describes has happened */
 	clearPendingTags(): void {
-		if ((this.metaGet(PENDING_TAGS_KEY) ?? '') !== '') this.metaSet(PENDING_TAGS_KEY, '');
+		clearPendingTags(this);
 	}
 
-	/**
-	 * Settles a purge a previous invocation recorded and did not finish; runs at boot too, so a
-	 * dead invocation purges on the next.
-	 */
 	settlePendingIfOwed(): void {
-		if (this.pendingDrained === true) return;
-		this.pendingDrained = true;
-		try {
-			const drained = this.drainPendingTags();
-			if (drained) this.lastPendingDrain = drained;
-		} catch {
-			// a site with no serving tables owes nothing, and this must never fail a request
-		}
+		settlePendingIfOwed(this);
 	}
 
-	/** purges the recorded pending tags and clears the record; undefined when none are owed */
 	drainPendingTags(): { tags: number; purged: number } | undefined {
-		const owed = this.pendingTags();
-		if (owed.length === 0) return undefined;
-		// reason `cachetags`: this is that purge settled late (other reasons take the wholesale
-		// path)
-		const out = this.purgeForTags(owed, 'cachetags', { bump: false });
-		this.clearPendingTags();
-		return out;
+		return drainPendingTags(this);
 	}
 
-	/** a comma-joined restore bookkeeping list, empty when unset */
-	restoreList(key: string): string[] {
-		const raw = this.metaGet(key) ?? '';
-		return raw === '' ? [] : raw.split(',');
-	}
-
-	/**
-	 * Abandons a restore in progress.
-	 *
-	 * Without it `restore_generation` survives and every chunk of a fresh attempt is refused as
-	 * torn. The in-flight marker stays: landed rows remain and the replica is untrusted until a
-	 * copy completes.
-	 */
 	clearRestore(): void {
-		this.metaSet(RESTORE_GENERATION_KEY, '');
-		this.metaSet(RESTORE_EXPECT_KEY, '');
-		this.metaSet(RESTORE_SEEN_KEY, '');
+		clearRestore(this);
 	}
 
 	applyRestoreChunk(chunk: RestoreChunk): {
@@ -2619,39 +1709,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return catchUpOnce(this, limit);
 	}
 
-	/**
-	 * The `scheme://host[:port]` this site renders absolute URLs against; pinned on first use (one
-	 * `cfw_meta` row), and a local origin is never pinned.
-	 *
-	 * @param observed - `url.origin` of the request being served (the visitor's scheme and host in
-	 *   production); harness origins like `do.local` are refused by {@link pinnable}
-	 */
 	canonicalOrigin(observed?: string): string {
-		const chosen = chooseOrigin({
-			configured: this.env?.SITE_ORIGIN,
-			pinned: this.metaGet(ORIGIN_KEY),
-			observed
-		});
-		// a replica inherits the primary's origin with the first restore chunk (the session
-		// cookie name derives from the host)
-		// `isReplica()`, not `isPoolLane()`: a var-configured replica has the same defect
-		if (chosen.from === 'observed' && pinnable(chosen.origin) && !this.isReplica()) {
-			this.metaSet(ORIGIN_KEY, chosen.origin);
-		}
-		return chosen.origin;
+		return canonicalOrigin(this, observed);
 	}
 
-	/**
-	 * Which site this object is, pinned like the origin (a shared bucket needs per-site mirror
-	 * keys, not the literal `'site'`).
-	 */
 	siteName(observed?: string): string {
-		const pinned = this.metaGet(SITE_NAME_KEY);
-		if (pinned !== null && pinned !== '') return pinned;
-		const seen = (observed ?? '').trim();
-		if (seen === '') return 'site';
-		this.metaSet(SITE_NAME_KEY, seen);
-		return seen;
+		return siteName(this, observed);
 	}
 
 	/** the version vector spool syncs from, created on first use at this generation; memory only */
@@ -2673,60 +1736,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return Number.isFinite(n) && n > 0 ? n : 1;
 	}
 
-	/**
-	 * Deletes the plans that depend on any of `tags`, or every plan when none are known.
-	 *
-	 * `LIKE` rather than a join table: a page bubbles 10-40 tags and a row each would spend the
-	 * meter that binds regeneration, so the tags live in one JSON column on the plan row.
-	 */
 	purgePlansFor(tags?: string[]): number {
-		const before = Number(
-			firstRow(this.sql.exec<Row<{ c: number }>>('SELECT COUNT(*) AS c FROM cfw_plan'))?.c ??
-				0
-		);
-		if (!tags || tags.length === 0) {
-			this.sql.exec('DELETE FROM cfw_plan');
-			return before;
-		}
-		for (const tag of tags) {
-			// the pattern stays inside the 50-byte `LIKE` limit (`cacheTagsIn` caps the name at 40)
-			this.sql.exec('DELETE FROM cfw_plan WHERE tags LIKE ?', `%"${tag}"%`);
-		}
-		const after = Number(
-			firstRow(this.sql.exec<Row<{ c: number }>>('SELECT COUNT(*) AS c FROM cfw_plan'))?.c ??
-				0
-		);
-		return before - after;
+		return purgePlansFor(this, tags);
 	}
 
-	/**
-	 * Flags every plan the moment content changes, before the tag set is known.
-	 *
-	 * One wholesale `UPDATE` at the write, so an invocation that dies before
-	 * {@link settlePlans} leaves everything flagged. Not coalesced on `bumpCoalesced`, which only
-	 * `fillOne()` clears (a node save left plans in place on a site serving plans).
-	 */
 	stalePlans(): void {
-		if (this.plansStaled) return;
-		this.plansStaled = true;
-		// runs inside `execSql()`, so a missing table would fail the triggering write
-		this.ensureServeTables();
-		this.sql.exec('UPDATE cfw_plan SET stale = 1 WHERE stale = 0');
+		return stalePlans(this);
 	}
 
-	/**
-	 * Deletes the plans this invocation's tags invalidate and un-flags the rest; runs at the end,
-	 * when the tag set is complete.
-	 */
 	settlePlans(tags: readonly string[]): { purged: number; cleared: boolean } {
-		if (!this.plansStaled) return { purged: 0, cleared: false };
-		this.plansStaled = false;
-		this.ensureServeTables();
-		// no tags with a stale flag set means the write that flagged them named nothing usable, so
-		// the conservative reading stands and every plan goes
-		const purged = this.purgePlansFor(tags.length === 0 ? undefined : [...tags]);
-		this.sql.exec('UPDATE cfw_plan SET stale = 0 WHERE stale = 1');
-		return { purged, cleared: true };
+		return settlePlans(this, tags);
 	}
 
 	purgeForTags(
@@ -2744,66 +1763,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return bumpGeneration(this, reason, options);
 	}
 
-	/**
-	 * Empties Drupal's dynamic page cache, tolerating a site that has never created the table.
-	 *
-	 * @returns rows removed, or -1 when the bin does not exist yet.
-	 */
 	purgeDynamicPageCache(): number {
-		try {
-			const before = Number(
-				firstRow(
-					this.sql.exec<Row<{ c: number }>>(
-						'SELECT COUNT(*) AS c FROM cache_dynamic_page_cache'
-					)
-				)?.c ?? 0
-			);
-			this.sql.exec('DELETE FROM cache_dynamic_page_cache');
-			return before;
-		} catch (e) {
-			if (!isMissingTable(e)) this.noteError('purgeDynamicPageCache', e);
-			return -1;
-		}
+		return purgeDynamicPageCache(this);
 	}
 
-	/**
-	 * Drops the derived caches a lane holds once the primary's log has moved it past a generation.
-	 *
-	 * Only the primary runs `bumpGeneration()`; replayed SQL leaves a lane's path-keyed `cfw_page`
-	 * stale. Wholesale, since the log carries statements, not tags.
-	 *
-	 * @returns what each store gave up, for the pull loop to report
-	 */
 	purgeAfterApply(): { pages: number; shells: number; plans: number; dynamic: number } {
-		const count = (table: string): number =>
-			Number(
-				firstRow(this.sql.exec<Row<{ c: number }>>(`SELECT COUNT(*) AS c FROM ${table}`))
-					?.c ?? 0
-			);
-		const pages = count('cfw_page');
-		if (pages > 0) this.sql.exec('DELETE FROM cfw_page');
-		const shells = count('cfw_shell');
-		if (shells > 0) {
-			this.sql.exec('DELETE FROM cfw_shell');
-			this.sql.exec('DELETE FROM cfw_shell_verified');
-		}
-		const plans = this.purgePlansFor();
-		const dynamic = this.purgeDynamicPageCache();
-		return { pages, shells, plans, dynamic };
+		return purgeAfterApply(this);
 	}
 
-	/**
-	 * Queues a refill for one path and wakes the chain; await-free (the storage lane runs outside
-	 * the gate) and bounded by `FILL_QUEUE_MAX`.
-	 */
 	enqueueRefill(path: string): void {
-		if (this.queueDepth() >= FILL_QUEUE_MAX) return;
-		this.sql.exec(
-			'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING',
-			path,
-			this.nowMs()
-		);
-		this.armFillAlarm();
+		return enqueueRefill(this, path);
 	}
 
 	/**
@@ -2870,7 +1839,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		if (!this.suppressBump) {
 			// not inside a rolled-back replay (it re-executes the buffer, so statements would be
 			// logged twice: 154 logged for 19 real)
-			if (!this.speculating) this.noteAuthoritativeWrite(sql, params);
+			if (!this.speculating) noteAuthoritativeWrite(this, sql, params);
 			if (CACHETAG_WRITE.test(sql)) {
 				// every tag, not the first: a node save writes `node:3:revisions` before
 				// `node_list`
@@ -2897,27 +1866,6 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return result;
 	}
 
-	/**
-	 * Advances the commit sequence when a statement writes authoritative state.
-	 *
-	 * Keyed on the target table, not cache tags (a user create and a `system.private_key` rotation
-	 * write no tag). Every `key_value` write counts, which over-advances safely: too often costs a
-	 * refresh, too rarely serves stale authorization.
-	 */
-	noteAuthoritativeWrite(sql: string, params?: SqlBindings): void {
-		const table = writeTargetTable(sql);
-		if (table === undefined) return;
-		if (table === 'key_value' || table === 'key_value_expire') {
-			this.advanceCommit();
-			this.bufferForReplication(sql, params);
-			return;
-		}
-		if (classifyState(table) === 'AUTHORITATIVE') {
-			this.advanceCommit();
-			this.bufferForReplication(sql, params);
-		}
-	}
-
 	bufferForReplication(sql: string, params?: SqlBindings): void {
 		return bufferForReplication(this, sql, params);
 	}
@@ -2926,34 +1874,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return sealGeneration(this);
 	}
 
-	/** creates the replication log table if absent */
 	ensureReplicationLog(): void {
-		this.sql.exec(
-			`CREATE TABLE IF NOT EXISTS cfw_repl_log (
-        generation INTEGER PRIMARY KEY,
-        parent INTEGER NOT NULL,
-        schema_version TEXT NOT NULL,
-        fingerprint TEXT NOT NULL,
-        overflowed INTEGER NOT NULL DEFAULT 0,
-        statements TEXT NOT NULL,
-        sealed_at INTEGER NOT NULL
-      ) WITHOUT ROWID`
-		);
+		return ensureReplicationLog(this);
 	}
 
-	/**
-	 * The generation a copy may hand a replica: the last sealed record, not `commitSeq()`.
-	 *
-	 * The sequence can sit ahead of the last record (a lane copied at 86 meets a record from 85
-	 * and is withdrawn). The gap holds no statements, so resuming at the last record skips no
-	 * change.
-	 */
 	copyableGeneration(): number {
-		this.ensureReplicationLog();
-		const row = firstRow(this.sql.exec(`SELECT MAX(generation) AS head FROM cfw_repl_log`)) as
-			{ head: number | null } | undefined;
-		const head = Number(row?.head ?? 0);
-		return Number.isFinite(head) && head > 0 ? head : this.commitSeq();
+		return copyableGeneration(this);
 	}
 
 	/** sealed log records after generation `since` */
@@ -2961,33 +1887,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return replicationRecords(this, since, limit);
 	}
 
-	/**
-	 * Advances the monotonic count of authoritative invalidations that a replica fences on.
-	 *
-	 * Separate from `generation`, a coalesced page-purge counter that stops moving once
-	 * `cfw_page` is empty (a permission grant invalidated two tags and left it still).
-	 */
 	advanceCommit(): number {
-		this.pendingCommits = (this.pendingCommits ?? 0) + 1;
-		return this.commitSeq();
+		return advanceCommit(this);
 	}
 
-	/** the stored commit sequence plus advances not yet persisted */
 	commitSeq(): number {
-		return Number(this.metaGet(COMMIT_SEQ_KEY, '0') ?? 0) + (this.pendingCommits ?? 0);
+		return commitSeq(this);
 	}
 
-	/**
-	 * Persists the invocation's commit advances as one row (a write per statement was 15% of a node
-	 * save's row cost). An invocation's writes commit together, so the counter cannot fall behind
-	 * the data it fences; the seal flushes unconditionally, since under-advancing serves stale
-	 * authorization.
-	 */
 	flushCommitSeq(): void {
-		if (!this.pendingCommits) return;
-		const next = this.commitSeq();
-		this.pendingCommits = 0;
-		this.metaSet(COMMIT_SEQ_KEY, next);
+		return flushCommitSeq(this);
 	}
 
 	/**
@@ -3053,34 +1962,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return fillOne(this, targetPath, bins, destruct, request);
 	}
 
-	/**
-	 * Wall-clock budget a miss may spend rendering before the path goes to the alarm chain.
-	 *
-	 * 2 s covers the measured first-render range (195 to 1,636 ms) and excludes the 3,754 ms cold
-	 * boot; it bounds the visitor's patience, not a billed resource. `budget` on the query string
-	 * overrides (0 disables inline rendering). A cold object refuses on `!this.php` before this is
-	 * consulted.
-	 */
 	inlineBudgetMs(url: URL): number {
-		const explicit = url.searchParams.get('budget');
-		const n = Number(explicit);
-		if (explicit !== null && explicit !== '' && Number.isFinite(n) && n >= 0) return n;
-		return resolvePlanNumber(this.env?.RENDER_BUDGET_MS, 'inlineBudgetMs', 60_000, this.env);
+		return inlineBudgetMs(this, url);
 	}
 
-	/**
-	 * What the next render on this instance is expected to cost, in ms.
-	 *
-	 * A prediction, because `php._run()` is one synchronous wasm call that no timer or
-	 * `AbortSignal` can preempt. The last render is the best predictor; pessimistic with no
-	 * evidence (a cold instance is the common case and must not gamble on a multi-second boot).
-	 */
 	estimateRenderMs(): number {
-		if (!this.php) return 4000;
-		// first render pays one-off opcache and container work (195 to 1,636 ms); on the edge
-		// every post-boot render lands here (no clock across sync work), so 1800 = unknown
-		if (this.lastRenderMs === undefined) return 1800;
-		return this.lastRenderMs;
+		return estimateRenderMs(this);
 	}
 
 	pageResponse(
@@ -3092,431 +1979,128 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return pageResponse(this, row, tier, serveMs, extra);
 	}
 
-	/** rows waiting in the fill queue */
 	queueDepth(): number {
-		this.ensureServeTables();
-		return Number(
-			firstRow(this.sql.exec<Row<{ c: number }>>('SELECT COUNT(*) AS c FROM cfw_fill_queue'))
-				?.c ?? 0
-		);
+		return queueDepth(this);
 	}
 
-	/**
-	 * Whether this alarm firing should spend rows on garbage collection.
-	 *
-	 * Fills and GC share the rows-written meter, so a waiting page outranks reclaiming disk; the
-	 * interval gate exists because the measured steady state is 0 rows written.
-	 */
 	shouldRunGc(): boolean {
-		const everyMs = Number(this.env?.GC_INTERVAL_MS ?? 3_600_000);
-		if (!this.serveTablesReady) return false;
-		const queued = firstRow(
-			this.sql.exec<Row<{ n: number }>>('SELECT count(*) AS n FROM cfw_fill_queue')
-		)?.n;
-		if (Number(queued ?? 0) > 0) return false;
-		return !this.lastGcAt || Date.now() - this.lastGcAt >= everyMs;
+		return shouldRunGc(this);
 	}
 
-	/**
-	 * Row count for a table that may not exist yet. null rather than 0: several Drupal tables are
-	 * created lazily on first write, and 0 for a missing one reads as a verified invariant.
-	 */
 	countOrNull(table: string, where?: string): number | null {
-		try {
-			// `where` is a literal from this file only (no bind slot for a predicate)
-			const sql = `SELECT count(*) AS n FROM ${table}${where ? ` WHERE ${where}` : ''}`;
-			return firstRow(this.sql.exec<Row<{ n: number }>>(sql))?.n ?? null;
-		} catch {
-			return null;
-		}
+		return countOrNull(this, table, where);
 	}
 
-	/**
-	 * The JS-side migrator, built lazily (the manifest is an asset fetch) and cached (re-reading
-	 * per chunk costs 15 subrequests of the 50 cap).
-	 */
 	migrator(): SqlMigrator {
-		if (!this._migrator) {
-			this._migrator = new SqlMigrator({
-				sql: this.sql,
-				storage: this.storage,
-				now: () => this.nowMs(),
-				...assetChunkLoader(this.env, sqlChunkPrefix(this.env))
-			});
-		}
-		return this._migrator;
+		return migrator(this);
 	}
 
-	/**
-	 * The cursor when a migration is started but unfinished, else undefined (never started must
-	 * keep serving; deploys predate the chunked engine).
-	 */
 	migratePartial(): MigrateCursor | undefined {
-		const cursor = this.migrateCursorOrNull();
-		if (!cursor || cursor.state === 'done') return undefined;
-		return cursor;
+		return migratePartial(this);
 	}
 
-	/**
-	 * Whether a page request asked this site to provision itself; durable (one `cfw_meta` row),
-	 * since an eviction sits between ask and alarm.
-	 */
 	provisionRequested(): boolean {
-		try {
-			const rows = this.sql
-				.exec(`SELECT v FROM cfw_meta WHERE k = 'provision_requested'`)
-				.toArray();
-			return rows.length > 0;
-		} catch {
-			// the table is created by the write path, so its absence means nobody has asked
-			return false;
-		}
+		return provisionRequested(this);
 	}
 
-	/** records that a visitor wants this site, and wakes the alarm chain to build it */
 	async requestProvision(): Promise<void> {
-		this.sql.exec(`CREATE TABLE IF NOT EXISTS cfw_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`);
-		this.sql.exec(
-			`INSERT INTO cfw_meta (k, v) VALUES ('provision_requested', '1')
-			 ON CONFLICT(k) DO NOTHING`
-		);
-		await this.setAlarmAt(this.nowMs() + 1);
+		return requestProvision(this);
 	}
 
-	/**
-	 * Whether this deployment ships migration chunks; a quiet false, since an alarm that throws
-	 * stops re-arming.
-	 */
 	async hasMigrationManifest(): Promise<boolean> {
-		try {
-			await assetChunkLoader(this.env, sqlChunkPrefix(this.env)).loadManifest();
-			return true;
-		} catch (e) {
-			this.noteError('hasMigrationManifest', e);
-			return false;
-		}
+		return hasMigrationManifest(this);
 	}
 
-	/**
-	 * Whether this site was never provisioned (no cursor at all, unlike a half-finished one);
-	 * `migrateStepIfPending()` needs a cursor, so this starts the chain.
-	 */
 	neverMigrated(): boolean {
-		ensureMigrateTable(this.sql);
-		return this.migrateCursorOrNull() === null && this.migrated !== true;
+		return neverMigrated(this);
 	}
 
-	/**
-	 * Records whether a path can be stored at all; only an anonymous render Drupal itself refused
-	 * counts (a cookie, redirect or 500 is transient).
-	 */
 	noteStorable(path: string, cacheable: boolean, refused: boolean, anonymous: boolean): void {
-		const unstorable = !cacheable && refused && anonymous;
-		const held = new Set(this.unstorablePaths());
-		if (unstorable === held.has(path)) return;
-		if (unstorable) held.add(path);
-		else held.delete(path);
-		// bounded: past this a cold boot per path is not worth it
-		this.metaSet(UNSTORABLE_KEY, [...held].slice(-64).join('\n'));
+		return noteStorable(this, path, cacheable, refused, anonymous);
 	}
 
-	/** the paths a render has proven cannot be stored */
 	unstorablePaths(): string[] {
-		return (this.metaGet(UNSTORABLE_KEY) || '').split('\n').filter((p) => p !== '');
+		return unstorablePaths(this);
 	}
 
-	/** whether the fill chain has already proven it cannot satisfy this path */
 	isUnstorable(path: string): boolean {
-		return this.unstorablePaths().includes(path);
+		return isUnstorable(this, path);
 	}
 
-	/**
-	 * The idle re-arm this site's own traffic justifies.
-	 *
-	 * Falls back to the configured interval when the predictor has nothing to say. The warm branch
-	 * is solved (climbing toward the ceiling on windows the object survived); an explicit
-	 * `WARM_INTERVAL_MS` wins.
-	 */
 	thermalRearmMs(queued = false): number {
-		const headroom = this.degradation().cron;
-		const configured = idleRearmMs(this.env, headroom, isPaid(this.env));
-		if (!headroom) return this.noteRearm(configured, 'degraded');
-		const forced = warmForced(this.env, isPaid(this.env));
-		const stored = this.storedRenderWindow();
-		const decision = warmDecision(this.arrivals ?? [], this.nowMs(), {
-			thresholdMs: HIBERNATION_IDLE_MS,
-			forced,
-			lastAuthenticatedAt: this.lastAuthenticatedAt,
-			stored
-		});
-		this.lastWarmDecision = decision;
-		if (!decision.warm) {
-			const { floorMs, ceilingMs } = idleBounds(this.env);
-			const idleFor = this.idleForMs(stored);
-			// reads are skipped while the re-arm is fixed, so the default path costs nothing new
-			const floored = ceilingMs > floorMs ? this.idleFloorReason(queued) : undefined;
-			const next = idleRearm(idleFor, floorMs, ceilingMs, floored);
-			this.lastRearm = { ms: next.ms, reason: next.reason, idleForMs: idleFor ?? null };
-			return next.ms;
-		}
-		return this.noteRearm(
-			warmIntervalConfigured(this.env) ??
-				clampWarmInterval(
-					stored?.intervalMs ?? WARM_INTERVAL_VERIFIED_MS,
-					this.warmCeiling()
-				),
-			'warm'
-		);
+		return thermalRearmMs(this, queued);
 	}
 
-	/** records the re-arm in force for `/serve-stats` and returns it */
-	private noteRearm(ms: number, reason: string): number {
-		this.lastRearm = { ms, reason, idleForMs: null };
-		return ms;
-	}
-
-	/**
-	 * Ms since this site last rendered, or undefined when nothing says.
-	 *
-	 * The in-memory stamp is exact for this incarnation. Past a hibernation the stored window's
-	 * stamp is at most one window old, so a window is taken off it and the fade starts late rather
-	 * than early; a window with no stamp reads as its start.
-	 */
-	private idleForMs(stored: RenderWindow | undefined): number | undefined {
-		const now = this.nowMs();
-		if (this.lastRenderAtMs !== undefined) return Math.max(0, now - this.lastRenderAtMs);
-		if (stored === undefined || stored.renders <= 0) return undefined;
-		return Math.max(0, now - (stored.lastAt ?? stored.startedAt) - RATE_WINDOW_MS);
-	}
-
-	/**
-	 * Work that holds the idle re-arm at the floor: a queue (fill, mail or HTTP), an active pool, a
-	 * migration, a stepped job or update run, or a site mid-repair. Claim steps run as migration and
-	 * reconcile firings, so they hold it through the migration cursor.
-	 */
-	private idleFloorReason(queued: boolean): string | undefined {
-		if (queued) return 'queue';
-		if (this.isPoolLane() || this.lanesProvisioned() > 0) return 'lanes';
-		if (this.migratePartial() !== undefined) return 'migration';
-		if (this.opsJobActive() || updbActive(this)) return 'job';
-		if (parseState(this.metaGet('repair_state')).rung !== 'observe') return 'repair';
-		return undefined;
-	}
-
-	/** the origin public bytes are served from, or '' when everything goes through the Worker */
 	publicFilesOrigin(): string {
-		return String(this.env?.FILES_PUBLIC_URL ?? '').replace(/\/+$/, '');
+		return publicFilesOrigin(this);
 	}
 
-	/**
-	 * The R2 bucket to offload files to, or undefined when there is none.
-	 *
-	 * An absent bucket is supported (the free-tier default): files live durably in DO SQL and R2
-	 * only buys serving headroom. Typed structurally so the drain runs over a stand-in.
-	 */
 	mirrorBucket(): MirrorBucket | undefined {
-		const bucket = (this.env as { FILES?: MirrorBucket } | undefined)?.FILES;
-		return bucket && typeof bucket.put === 'function' ? bucket : undefined;
+		return mirrorBucket(this);
 	}
 
-	/** the last grant read from `CONFIG_KV`, reused briefly so a run of foreign reads costs one lookup */
-	private fileGrant?: { at: number; sources: ReadonlySet<string> };
+	/** the R2 offload memo the file helpers read and write through the instance */
+	fileOffload: FileOffloadState = {};
 
-	/**
-	 * The sites whose R2 prefix this site may read or copy from: the comma-separated names under
-	 * `file_clone:<this site>` in `CONFIG_KV`. Only the platform writes that key (a tenant's own
-	 * writes land on `plan:` and `settings:` keys), so a restore body cannot name a prefix into it.
-	 * Empty when there is no grant or no KV, and a failed read grants nothing.
-	 */
 	async trustedFileSources(): Promise<ReadonlySet<string>> {
-		const now = Date.now();
-		if (this.fileGrant !== undefined && now - this.fileGrant.at < 30_000)
-			return this.fileGrant.sources;
-		let sources = new Set<string>();
-		try {
-			const kv = (this.env as { CONFIG_KV?: KVNamespace } | undefined)?.CONFIG_KV;
-			const raw = kv ? await kv.get(`file_clone:${this.siteName()}`) : null;
-			sources = new Set(
-				String(raw ?? '')
-					.split(',')
-					.map((n) => n.trim())
-					.filter((n) => n !== '' && n !== this.siteName())
-			);
-		} catch (e) {
-			this.noteError('trustedFileSources', e);
-		}
-		this.fileGrant = { at: now, sources };
-		return sources;
+		return trustedFileSources(this);
 	}
 
-	/** whether R2 is the file store: `FILE_STORE=r2` and `FILES` bound */
 	fileStoreR2(): boolean {
-		return String(this.env?.FILE_STORE ?? '') === 'r2' && this.mirrorBucket() !== undefined;
+		return fileStoreR2(this);
 	}
 
-	/** the readable buckets; `private` is unbound unless the managed config attaches it */
 	fileBuckets(): FileBuckets {
-		const env = this.env as { FILES?: FileBucket; FILES_PRIVATE?: FileBucket } | undefined;
-		const usable = (b?: FileBucket) =>
-			b && typeof b.put === 'function' && typeof b.get === 'function' ? b : undefined;
-		return { public: usable(env?.FILES), private: usable(env?.FILES_PRIVATE) };
+		return fileBuckets(this);
 	}
 
-	/**
-	 * The schemes a write queues for R2. `private://` joins only when R2 is the store and a private
-	 * bucket is bound; otherwise it stays in the object, as it always has.
-	 */
 	fileSchemes(): readonly string[] {
-		return this.fileStoreR2() && this.fileBuckets().private
-			? OFFLOAD_SCHEMES
-			: MIRRORABLE_SCHEMES;
+		return fileSchemes(this);
 	}
 
-	/**
-	 * Restores an evicted private file before PHP serves it. A download reads the file inside a
-	 * synchronous run that cannot wait for R2, so the restore has to happen first; one read of the
-	 * row on every `/system/files/` request, and nothing for any other path.
-	 */
 	async hydrateForRequest(url: URL): Promise<void> {
-		const path = url.pathname === '/__serve' ? url.searchParams.get('path') : null;
-		const uri = path === null ? undefined : privateUriForPath(path);
-		if (uri === undefined) return;
-		try {
-			await hydrateFile(this.sql, this.fileBuckets(), uri, {
-				nowMs: this.nowMs(),
-				site: this.siteName(),
-				schemes: this.fileSchemes(),
-				trust: () => this.trustedFileSources()
-			});
-		} catch (e) {
-			// PHP then answers its own refusal and queues the restore
-			this.noteError('hydrateForRequest', e);
-		}
+		return hydrateForRequest(this, url);
 	}
 
-	/** this month's R2 writes against {@link r2WriteBudget}; the key carries the month */
 	r2Allowance(): { month: string; used: number; budget: number; left: number } {
-		const month = new Date().toISOString().slice(0, 7);
-		const used = Number(this.metaGet(`r2_writes:${month}`, '0')) || 0;
-		const budget = r2WriteBudget(this.env);
-		return { month, used, budget, left: Math.max(0, budget - used) };
+		return r2Allowance(this);
 	}
 
-	/** adds `ops` to this month's R2 write tally (deletes count too, so it reads high) */
 	chargeR2(ops: number): void {
-		if (ops <= 0) return;
-		const { month, used } = this.r2Allowance();
-		this.metaSet(`r2_writes:${month}`, used + ops);
+		return chargeR2(this, ops);
 	}
 
-	/**
-	 * Advances a database-update run by one beat; `updbStep()` owns no transport, alarm or env, so
-	 * the dependency bag is built here.
-	 */
 	async updbStepOnce(): Promise<{ updb: Payload }> {
-		return this.updbBeat(true);
+		return updbStepOnce(this);
 	}
 
-	/** a stepped operation (`cim`, `queue-drain`) the alarm carries to the end; undefined unread */
-	private opsJobCache?: { job?: OpsJob };
+	/** the stepped-job read cache the stepped helpers read and write through the instance */
+	steppedJobs: SteppedJobState = {};
 	/** the last stepped-operation outcome */
 	lastOpsJob?: Payload;
 
-	/** reads the stored stepped job once and caches it, absence included */
-	private readOpsJob(): OpsJob | undefined {
-		if (this.opsJobCache !== undefined) return this.opsJobCache.job;
-		let job: OpsJob | undefined;
-		try {
-			const raw = this.metaGet(OPS_JOB_KEY);
-			const parsed = raw === null ? undefined : (JSON.parse(raw) as OpsJob);
-			job = parsed && typeof parsed.name === 'string' ? parsed : undefined;
-		} catch (e) {
-			this.noteError('readOpsJob', e);
-		}
-		this.opsJobCache = { job };
-		return job;
-	}
-
-	/** whether a stepped operation is in flight */
 	opsJobActive(): boolean {
-		return this.readOpsJob() !== undefined;
+		return opsJobActive(this);
 	}
 
-	/**
-	 * Runs one step of a stepped operation, keeping the job only while it reports more to do.
-	 *
-	 * A failed step also ends it (a retry from the top would replay what already landed). The first
-	 * `cim` step carries the payload; the run holds its own state after that.
-	 */
 	async opsJobStep(name: string, args: string[], options: OpsJob['options']): Promise<Payload> {
-		const ran = (await this.runJson(opsRun(name, args, options))) ?? {
-			ok: false,
-			error: 'no reply'
-		};
-		const more = ran['ok'] !== false && ran['done'] !== true;
-		if (more) {
-			const { payload: _first, ...rest } = options;
-			const job: OpsJob = { name, args, options: rest };
-			this.metaSet(OPS_JOB_KEY, JSON.stringify(job));
-			this.opsJobCache = { job };
-		} else if (this.readOpsJob() !== undefined) {
-			this.sql.exec('DELETE FROM cfw_meta WHERE k = ?', OPS_JOB_KEY);
-			this.opsJobCache = {};
-		}
-		this.lastOpsJob = { name, at: this.nowMs(), more, ...ran };
-		return ran;
+		return opsJobStep(this, name, args, options);
 	}
 
-	/** advances the stepped operation one step; a throw drops the job (a throwing alarm stops) */
 	async opsJobBeat(): Promise<{ opsJob: Payload }> {
-		const job = this.readOpsJob();
-		if (!job) return { opsJob: { ok: true, idle: true } };
-		try {
-			return { opsJob: await this.opsJobStep(job.name, job.args, job.options) };
-		} catch (e) {
-			// recorded rather than rethrown, and the job dropped: a throwing alarm stops re-arming
-			this.sql.exec('DELETE FROM cfw_meta WHERE k = ?', OPS_JOB_KEY);
-			this.opsJobCache = {};
-			const failure = { ok: false, error: errorMessage(e) };
-			this.lastOpsJob = { name: job.name, at: this.nowMs(), more: false, ...failure };
-			return { opsJob: failure };
-		}
+		return opsJobBeat(this);
 	}
 
-	/** the one dependency bag every updb entry point takes; nothing here holds state */
 	updbDeps(): UpdbDeps {
-		return {
-			sql: this.sql,
-			runJson: (code: string) => this.runJson(code),
-			// no `phpReady`: a unit boots a cold interpreter itself (free's 10 ms cap does not fail
-			// a DO invocation)
-			txn: (fn: () => void) => this.storage.transactionSync(fn),
-			nowMs: () => this.nowMs()
-		} satisfies UpdbDeps;
+		return updbDeps(this);
 	}
 
 	async updbAction(action: string, params: URLSearchParams): Promise<Payload> {
 		return updbAction(this, action, params);
 	}
 
-	/**
-	 * One beat, acquiring the gate only when the caller does not already hold it.
-	 *
-	 * The gate is a non-reentrant FIFO chain and `fetch()` already holds it; a second acquire
-	 * inside the router hangs forever. `alarm()` is its own event and needs the explicit acquire.
-	 */
 	async updbBeat(gated: boolean): Promise<{ updb: Payload }> {
-		const beat = () => updbStep(this.updbDeps(), updbOptions(this.env));
-		try {
-			const step = gated ? await this.gate.run(beat, 'alarm-updb') : await beat();
-			this.lastUpdb = { at: Date.now(), value: step };
-			return { updb: step };
-		} catch (e) {
-			// recorded, not rethrown: an alarm that throws stops re-arming
-			const failure = { ok: false, error: errorMessage(e) };
-			this.lastUpdb = { at: Date.now(), value: failure };
-			return { updb: failure };
-		}
+		return updbBeat(this, gated);
 	}
 
 	/**
@@ -3532,14 +2116,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return { id: meta.id, tag: blank(meta.tag), timestamp: blank(meta.timestamp) };
 	}
 
-	/** the migration cursor for diagnostics, or null on a site that never started one */
 	migrateCursorOrNull(): MigrateCursor | null {
-		try {
-			return readMigrateCursor(this.sql) ?? null;
-		} catch {
-			// the table is absent on a pre-existing deploy; that is a state, not an error
-			return null;
-		}
+		return migrateCursorOrNull(this);
 	}
 
 	async migrateChunks(url: URL | undefined): Promise<Payload> {
@@ -3554,124 +2132,31 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return migrateStepIfPending(this);
 	}
 
-	/**
-	 * Fill one page, then re-arm at +1 ms (each link is a fresh invocation with a fresh budget).
-	 *
-	 * The fill runs inside the gate. The return is `any` because the platform discards it and this
-	 * one feeds `/__serve-stats`.
-	 */
 	override async alarm(info?: AlarmInvocationInfo): Promise<any> {
-		if (this.retired) return { retired: true };
-		await this.adoptSecrets();
-		this.adoptRetained();
-		recordInDeployment(this);
-		this.sleepBudget = { remainingMs: sleepBudgetMs(this.env, 'alarm') };
-		this.countActivity('alarms');
-		// an alarm writes authoritative state (cron), so seal in `finally`: an unsealed buffer
-		// would leak into the next request with the wrong parent
-		const linearBefore = this.heapNow();
-		this.resetBridgeBytes();
-		try {
-			const outcome = await alarmBody(this, info);
-			noteAlarmDemand(this, outcome, linearBefore);
-			return outcome;
-		} catch (e) {
-			this.noteRangeError(e, 'alarm');
-			throw e;
-		} finally {
-			// cron saves content, so settle the plan flag here too; after the work, not at the head
-			// of `route()` (DDL on the fast lane would sit next to an open replay)
-			this.settlePendingIfOwed();
-			const invalidated = this.flushTagPurge();
-			if (invalidated.length > 0) this.lastInvalidatedTags = invalidated;
-			const settled = this.settlePlans(invalidated);
-			if (settled.cleared)
-				this.lastPlanPurge = { purged: settled.purged, tags: invalidated.length };
-			await this.sealGeneration();
-			await this.keepLaneReplicating();
-		}
-	}
-
-	/**
-	 * Bounds how stale a serving lane may get by pulling its next firing in (30,000 ms against the
-	 * 240,000 ms idle re-arm; the fence refuses only callers that state a freshness requirement).
-	 * Runs in the `finally` because the body has many returns.
-	 */
-	private async keepLaneReplicating(): Promise<void> {
-		if (!this.isPoolLane() || this.replicaStage() !== 'SERVING') return;
-		const bound = this.nowMs() + replicaLagMs(this.env);
-		const armed = await this.storage.getAlarm();
-		if (armed !== null && armed <= bound) return;
-		await this.setAlarmAt(bound);
+		return alarmEntry(this, info);
 	}
 
 	/** the attempt the next render belongs to; see `src/ops/attempt.ts` */
 	pendingAttempt?: string;
 
-	/** records that an attempt's PHP is about to run, dropping markers past their ttl */
 	markAttempt(key: string): void {
-		const now = this.nowMs();
-		this.ensureServeTables();
-		this.sql.exec(
-			"DELETE FROM cfw_meta WHERE k >= 'attempt:' AND k < 'attempt;' AND CAST(v AS INTEGER) < ?",
-			now - ATTEMPT_TTL_MS
-		);
-		this.metaSet(key, now);
+		return markAttempt(this, key);
 	}
 
-	/** the end of the young-interpreter hold on background PHP, or undefined when there is none */
 	backgroundHold(): number | undefined {
-		if (!this.php?.binary) return undefined;
-		return backgroundPhpHold(this.phpBootedAt, this.nowMs(), fillSettleMs(this.env));
+		return backgroundHold(this);
 	}
 
-	/**
-	 * Runs a PHP fragment and returns everything it wrote.
-	 *
-	 * A wasm trap (`RuntimeError` out of `_run()`) leaves a half-finished Zend state, so the
-	 * interpreter is dropped. The error still propagates; a 503 would read as warming and hide a
-	 * fault.
-	 */
 	async run(code: string): Promise<string> {
-		const inst = await this.ensurePhp();
-		this.out.length = 0;
-		this.lastRet = undefined;
-		try {
-			const ret = await inst.php._run(code);
-			this.lastRet = typeof ret === 'number' ? ret : undefined;
-		} catch (e) {
-			// name rather than instanceof alone: the pool and the worker are different realms
-			if (e instanceof WebAssembly.RuntimeError || (e as Error)?.name === 'RuntimeError') {
-				this.trappedRuns = (this.trappedRuns ?? 0) + 1;
-				this.lastTrap = { at: this.nowMs(), message: errorMessage(e) };
-				this.dropInterpreter();
-			}
-			throw e;
-		}
-		return this.out.join('');
+		return run(this, code);
 	}
 
-	/** runs a fragment and parses the JSON object it printed */
 	async runJson(code: string): Promise<Payload> {
-		return this.settleReply(parseJsonReply(await this.run(code)));
+		return runJson(this, code);
 	}
 
-	/**
-	 * Answers an `exit()` for a reply that carries no JSON, and drops the interpreter it left behind.
-	 *
-	 * `exit()` returns 0 and leaves an instance that runs nothing and prints nothing, so every later
-	 * request would answer empty until something recycled it. Headers, cookies and shutdown functions
-	 * set before the exit are not recoverable from PHP, so the request fails rather than answering
-	 * without them.
-	 */
 	async settleReply(reply: Payload): Promise<Payload> {
-		if (!(await endedInExit(this.lastRet, reply, (code) => this.run(code)))) return reply;
-		const partial = String(reply['raw'] ?? '').slice(0, 200);
-		this.exitedRuns = (this.exitedRuns ?? 0) + 1;
-		this.lastExit = { at: this.nowMs(), partial };
-		this.dropInterpreter();
-		// the render path logs `raw` and answers with `error` alone
-		return { error: EXIT_ERROR, exited: true, ...(partial ? { raw: partial } : {}) };
+		return settleReply(this, reply);
 	}
 
 	/** the 421 sending the caller to the primary; `neverRan` marks an uncommitted forward */
@@ -3679,155 +2164,32 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return replicaHandoff(this, refusal, neverRan);
 	}
 
-	/** serves one request: routes it, hands refusals to the primary, classifies platform limits */
 	override async fetch(request: Request): Promise<Response> {
-		if (this.retired) return jsonError('this site was retired', 410);
-		this.adoptRetained();
-		recordInDeployment(this);
-		// one allowance per invocation; an alarm overlapping this request shares it until either
-		// ends
-		this.sleepBudget = { remainingMs: sleepBudgetMs(this.env, 'request') };
-		// in-flight requests are the queue (one request at a time); peak, since the alarm reads
-		// and resets it per window
-		this.inflight = (this.inflight ?? 0) + 1;
-		if (this.inflight > (this.inflightPeak ?? 0)) this.inflightPeak = this.inflight;
-		// the monotonic total, not the ring's length (capped at 20, so the comparison below
-		// saturates and the handoff stops after 20 refusals)
-		const refusalsBefore = this.replicaRefusalsTotal;
-		const forwardBefore = this.lastForward;
-		try {
-			const linearBefore = this.heapNow();
-			const reusedBefore = this.heapsReused ?? 0;
-			this.resetBridgeBytes();
-			const res = await routeImpl(this, request);
-			// the wipe is done; anything below would write into the emptied storage
-			if (this.retired) return res;
-			this.noteDemand(request, linearBefore, reusedBefore);
-			// a refusal PHP caught is still a refusal (Drupal's session handler turns it into a
-			// 500 the catch below never sees)
-			// only when nothing was forwarded: a forwarded batch already committed on the primary,
-			// and a retry would apply it twice
-			const refusal = this.replicaRefusals.at(-1);
-			if (
-				res.status >= 500 &&
-				this.replicaRefusalsTotal > refusalsBefore &&
-				this.lastForward === forwardBefore &&
-				refusal !== undefined
-			) {
-				return this.replicaHandoff(refusal);
-			}
-			await auditOwnerCall(this, request, res.status);
-			return withKvGrant(this, request, this.withDegradeHeaders(res));
-		} catch (e) {
-			// a replica meeting work it may not do is the guard working; send the caller to the
-			// primary
-			// an uncommitted forward is retry-safe (the lane rolled back and the primary refused
-			// the batch whole)
-			if (e instanceof ReplicaRequiresPrimary) {
-				return this.replicaHandoff(e, e.capability === 'forward');
-			}
-			// classified and rethrown, around both lanes (the fast lane reads storage outside the
-			// gate)
-			noteLimit(this.limitTally, e);
-			this.noteRangeError(e, 'fetch', request);
-			await auditOwnerCall(this, request, 500);
-			throw e;
-		} finally {
-			this.inflight = Math.max(0, (this.inflight ?? 1) - 1);
-		}
+		return fetchRequest(this, request);
 	}
 
-	/**
-	 * Marks every response with the degradation band (so `reduced` is visible before the final
-	 * 503); at `normal` the response passes untouched.
-	 */
-	private withDegradeHeaders(res: Response): Response {
-		let extra: Record<string, string>;
-		try {
-			extra = degradeHeaders(this.degradation());
-		} catch {
-			// meters are unreadable before the tables exist; an unmarked response is honest
-			return res;
-		}
-		if (Object.keys(extra).length === 0) return res;
-		// a 101 carries no headers a client can read and rewriting one drops the socket
-		if (res.status === 101 || res.webSocket) return res;
-		const headers = new Headers(res.headers);
-		for (const [name, value] of Object.entries(extra)) headers.set(name, value);
-		return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
-	}
-
-	/**
-	 * Appends the disposable rows a forwarded batch carried, outside its transaction; a failure
-	 * drops only that row, and nothing is buffered for replication.
-	 */
 	appendDeferred(statements: readonly ForwardStatement[]): number {
-		let appended = 0;
-		for (const s of statements) {
-			try {
-				this.sql.exec(s.sql, ...(s.params ?? []));
-				appended++;
-			} catch {
-				// a lost log row is the whole cost
-			}
-		}
-		return appended;
+		return appendDeferred(this, statements);
 	}
 
-	/**
-	 * Queues a public image for its styles to be rendered ahead of the first view (derivatives and
-	 * Drupal's styles directory are not sources).
-	 */
 	queueDerivatives(uri: string): void {
-		if (!eagerDerivativesEnabled(this.env as never)) return;
-		if (!/^public:\/\/.+\.(jpe?g|png|gif|webp|avif)$/i.test(uri)) return;
-		if (uri.startsWith('public://styles/') || uri.startsWith('public://cfw-derivatives/'))
-			return;
-		this.sql.exec(
-			'CREATE TABLE IF NOT EXISTS cfw_derive_queue (uri TEXT PRIMARY KEY, queued_at INTEGER NOT NULL)'
-		);
-		this.sql.exec(
-			'INSERT OR REPLACE INTO cfw_derive_queue (uri, queued_at) VALUES (?, ?)',
-			uri,
-			this.nowMs()
-		);
-		void this.armFillAlarm(1000);
+		return queueDerivatives(this, uri);
 	}
 
 	async deriveStep(transport?: DeriveTransport): Promise<void> {
 		return deriveStep(this, transport);
 	}
 
-	/** today's granted `PAGE_KV` page writes, without flushing */
 	dailyKvWrites(nowMs = this.nowMs()): number {
-		return this.storedMeters(nowMs).kvWrites + (this.kvGrantsSinceFlush ?? 0);
+		return dailyKvWrites(this, nowMs);
 	}
 
-	/**
-	 * The key N concurrent identical requests share, or undefined when they may not be coalesced.
-	 *
-	 * The cookie is in the key, so one visitor's page is never handed to another. Serving GETs
-	 * only.
-	 */
 	herdKeyFor(request: Request, url: URL): string | undefined {
-		if (request.method !== 'GET') return undefined;
-		if (url.pathname !== '/__serve') return undefined;
-		if (url.searchParams.get('lane') === 'gate') return undefined;
-		const path = url.searchParams.get('path') ?? '/';
-		// an anonymous request is already answered by the fast lane above without entering the gate
-		const cookie = request.headers.get('cookie') ?? '';
-		if (!hasSessionCookie(cookie)) return undefined;
-		return `${this.generation()} ${path} ${cookie}`;
+		return herdKeyFor(this, request, url);
 	}
 
-	/**
-	 * Linear memory right now, or 0 where there is nothing to read (`this.php` can be a
-	 * `stubRender()` stub with no `binary`).
-	 */
 	heapNow(): number {
-		const binary = this.php?.binary;
-		if (!binary) return 0;
-		return this.heapBytes(binary)?.byteLength ?? 0;
+		return heapNow(this);
 	}
 
 	/** the last requests' effect on linear memory */
@@ -3845,7 +2207,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	lastRenderBytes = 0;
 
 	/** zeroes the per-render size and bridge byte counters */
-	private resetBridgeBytes(): void {
+	resetBridgeBytes(): void {
 		this.lastRenderBytes = 0;
 		const b = this.crossings?.bytes;
 		if (b) {
@@ -3877,222 +2239,51 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return noteError(this, where, e);
 	}
 
-	/**
-	 * The whole isolate's demand: wasm linear memory plus the JS-side bytes the mount holds (the
-	 * pack blob and in-memory fs arrays share the 128 MiB budget).
-	 */
 	isolateNow(): number {
-		const linear = this.heapNow();
-		if (linear === 0) return 0;
-		const lazy = lazyMountBytes(this.mountInfo);
-		return linear + lazy.blob + lazy.resident + (lazy.blob > 0 ? PACK_INDEX_BYTES : 0);
+		return isolateNow(this);
 	}
 
-	/**
-	 * Whether this object should drop its interpreter at the next safe point; either threshold
-	 * fires.
-	 *
-	 * Only once the heap has grown since the boot (a reused memory starts large and a drop cannot
-	 * shrink it, else it would drop every invocation). The batch guard reads this too.
-	 */
 	oversized(): boolean {
-		const linear = this.heapNow();
-		if (linear <= this.bootLinear) return false;
-		return (
-			linear >= recycleAboveBytes(this.env) ||
-			this.isolateNow() >= isolateAboveBytes(this.env)
-		);
+		return oversized(this);
 	}
 
-	/**
-	 * Drops the interpreter, but only one with a `binary` (a `stubRender()` stub holds no heap and
-	 * would be lost).
-	 */
 	dropInterpreter(): void {
-		if (!this.php?.binary) return;
-		this.php = undefined;
+		dropInterpreter(this);
 	}
 
-	/**
-	 * Drops the interpreter and the copy an earlier instance left in module scope, so the next boot
-	 * reads the database again (a retained one is adopted when the commit sequence matches).
-	 */
 	resetPhp(): void {
-		this.dropInterpreter();
-		const id = this.ctx.id.toString();
-		const kept = retainedInterpreters.get(id);
-		if (!kept) return;
-		retainedInterpreters.delete(id);
-		keepSpareMemory(kept.php);
+		resetPhp(this);
 	}
 
-	/**
-	 * Wipes this object: its alarm, its storage, its interpreter and any retained one. The flag
-	 * goes first so nothing in flight can arm an alarm between the two deletes.
-	 */
 	async retire(): Promise<void> {
-		this.retired = true;
-		this.dropInterpreter();
-		retainedInterpreters.delete(this.ctx.id.toString());
-		await this.storage.deleteAlarm();
-		await this.storage.deleteAll();
+		return retire(this);
 	}
 
-	/** keeps this object's interpreter in module scope, stamped with the commit it has seen */
 	retainInterpreter(): void {
-		const id = this.ctx.id.toString();
-		if (!this.phpInstance?.binary || !this.phpOwner || !retainInterpreterEnabled(this.env)) {
-			retainedInterpreters.delete(id);
-			return;
-		}
-		retainedInterpreters.set(id, {
-			php: this.phpInstance,
-			owner: this.phpOwner,
-			commitSeq: this.commitSeq(),
-			at: this.nowMs()
-		});
+		retainInterpreter(this);
 	}
 
-	/**
-	 * Takes over the interpreter a previous instance left in module scope.
-	 *
-	 * Refused when the commit sequence moved (the object wrote elsewhere) or the previous instance
-	 * held park sockets (they belong to its own I/O context).
-	 */
-	private adoptRetained(): void {
-		if (this.phpInstance || !retainInterpreterEnabled(this.env)) return;
-		const id = this.ctx.id.toString();
-		// another object's entry is either gone or still held by its own live instance
-		for (const key of retainedInterpreters.keys())
-			if (key !== id) retainedInterpreters.delete(key);
-		const kept = retainedInterpreters.get(id);
-		if (!kept || kept.owner.current === this) return;
-		const prev = kept.owner.current;
-		const at = this.nowMs();
-		let reason: string | undefined;
-		try {
-			// plain read, not `commitSeq()`: its `metaGet()` runs `ensureServeTables()`, which must
-			// not run before the gate
-			const row = firstRow(
-				this.sql.exec<Row<{ v: string }>>(
-					'SELECT v FROM cfw_meta WHERE k = ?',
-					COMMIT_SEQ_KEY
-				)
-			);
-			if (kept.commitSeq !== Number(row?.v ?? 0)) reason = 'stale';
-		} catch {
-			reason = 'unreadable';
-		}
-		if (!reason && (prev.parkSockets?.size ?? 0) > 0) reason = 'sockets';
-		if (reason) {
-			retainedInterpreters.delete(id);
-			// its instance is gone, so its heap is garbage; the boot that follows takes it instead
-			keepSpareMemory(kept.php);
-			this.lastRetention = { at, adopted: false, reason };
-			return;
-		}
-		this.out = prev.out;
-		this.bootDiag = prev.bootDiag;
-		this.bootMs = prev.bootMs;
-		this.phpBootedAt = prev.phpBootedAt;
-		this.bootLinear = prev.bootLinear;
-		this.mountInfo = prev.mountInfo;
-		this.heapRestore = prev.heapRestore;
-		this.crossings = prev.crossings;
-		this.crossingNames = prev.crossingNames;
-		this.replicaGuard = prev.replicaGuard;
-		this.pinnedHandles = prev.pinnedHandles;
-		this.installedModuleFiles = prev.installedModuleFiles;
-		this.moduleIntegrity = prev.moduleIntegrity;
-		this.heapIntegrity = prev.heapIntegrity;
-		// data about traps already armed in this interpreter; arming again could read as failed
-		this.parkInstall = prev.parkInstall;
-		this.phpOwner = kept.owner;
-		kept.owner.current = this;
-		this.phpInstance = kept.php;
-		this.retentionAdoptions += 1;
-		this.lastRetention = { at, adopted: true, idleMs: at - kept.at };
-	}
-
-	/**
-	 * Drops the interpreter when linear memory has climbed too close to the isolate limit.
-	 *
-	 * PHP returns nothing under `USE_ZEND_ALLOC=0`, so demand is cumulative; past 128 MiB the edge
-	 * resets the isolate and every in-flight request. Called between invocations only (a
-	 * mid-request drop holds both heaps until collection). A ceiling check; a trend misses a
-	 * workload arriving high.
-	 */
 	recycleIfOversized(reason: 'request' | 'alarm'): boolean {
-		if (!this.php) return false;
-		const bytes = this.heapNow();
-		const rebuild = this.rebuildBoot;
-		// both thresholds, as oversized() reads them (linear memory alone left the isolate past
-		// its own)
-		if (!this.oversized() && !rebuild) return false;
-		this.dropInterpreter();
-		this.rebuildBoot = false;
-		this.lastRecycle = { at: this.nowMs(), bytes, reason, ...(rebuild ? { rebuild } : {}) };
-		this.recycles = (this.recycles ?? 0) + 1;
-		return true;
+		return recycleIfOversized(this, reason);
 	}
 
-	/** drops the interpreter on an owner's call; false when none is resident to drop */
 	recycleForOwner(): boolean {
-		if (!this.php?.binary) return false;
-		this.lastRecycle = { at: this.nowMs(), bytes: this.heapNow(), reason: 'owner' };
-		this.dropInterpreter();
-		this.recycles = (this.recycles ?? 0) + 1;
-		return true;
+		return recycleForOwner(this);
 	}
 
-	/** whether the next kernel boot has to rebuild the container; unreadable reads as no */
 	containerMissing(): boolean {
-		try {
-			const row = firstRow(
-				this.sql.exec<Row<{ n: number }>>('SELECT COUNT(*) AS n FROM cache_container')
-			);
-			return Number(row?.n ?? 0) === 0;
-		} catch (e) {
-			if (!isMissingTable(e)) this.noteError('containerMissing', e);
-			return false;
-		}
+		return containerMissing(this);
 	}
 
-	/** drops the interpreter after a request that carried a file; see `carriesUpload()` */
 	recycleAfterUpload(): void {
-		if (!this.uploadSeen) return;
-		this.uploadSeen = false;
-		if (!this.php) return;
-		this.lastRecycle = { at: this.nowMs(), bytes: this.heapNow(), reason: 'upload' };
-		this.php = undefined;
-		this.recycles = (this.recycles ?? 0) + 1;
+		recycleAfterUpload(this);
 	}
 
-	/**
-	 * When this page became superseded, derived from tag state rather than written per save.
-	 *
-	 * A marked row answers at once; an unmarked one is checked against its tags' invalidation sum
-	 * and marked if it moved (2 rows instead of 34 per save). Undefined with no usable checksum,
-	 * which `bumpGeneration()` marks eagerly.
-	 */
 	pageStaleness(
 		path: string,
 		row: { stale_at?: number | null; tags?: unknown; tag_checksum?: number | null }
 	): number | undefined {
-		if (typeof row.stale_at === 'number') return row.stale_at;
-		const stored = typeof row.tag_checksum === 'number' ? row.tag_checksum : undefined;
-		if (stored === undefined) return undefined;
-		const tags = readTagList(row.tags);
-		if (!tags || tags.length === 0) return undefined;
-		if (tagChecksum(this.sql, tags) === stored) return undefined;
-		const now = this.nowMs();
-		// the one write, taken at the transition rather than at the save
-		this.sql.exec(
-			'UPDATE cfw_page SET stale_at = ? WHERE path = ? AND stale_at IS NULL',
-			now,
-			path
-		);
-		return now;
+		return pageStaleness(this, path, row);
 	}
 
 	serveFromStorage(url: URL): Response | undefined {

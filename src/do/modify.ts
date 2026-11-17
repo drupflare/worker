@@ -312,3 +312,18 @@ export async function applyRevision(
 		rowsWritten: plan.rowsWritten
 	};
 }
+
+/** a body that is not JSON is a caller error, and a throw here would read as a server fault */
+export async function readModifyBody(request: Request): Promise<unknown> {
+	if (request.method !== 'POST') return undefined;
+	try {
+		return (await request.json()) as unknown;
+	} catch {
+		return undefined;
+	}
+}
+
+/** the 400 for a modify action called without a JSON POST */
+export function modifyBadBody(): Response {
+	return jsonError('this action needs a POST carrying a JSON body', 400);
+}

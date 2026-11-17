@@ -1,357 +1,14 @@
 import { type SqlBindings, toPositional } from '@drupflare/durabledb/do-sqlite';
 import { writeTargetTable } from '../db/write-tally';
-import { statementAllowedOnReplica } from '../ops/replica';
-import { admissionVerdict, type ReplicaStage } from '../ops/replica-admission';
-import { chunkRefusal, type RestoreChunk, restoreStatements } from '../ops/replica-restore';
-import { replicaOf } from '../ops/replica-routing';
-import {
-	applyRecord,
-	landPosition,
-	type LogRecord,
-	markInflight,
-	positionTrust,
-	readPosition
-} from '../ops/replication-log';
-import { ORIGIN_KEY, pinnable } from '../ops/site-origin';
-import { assertSalt, HASH_SALT_KEY } from '../ops/site-secrets';
+import { planRestore } from '../ops/replica-restore';
+import { type LogRecord } from '../ops/replication-log';
 import { fingerprintState, readStateRows } from '../ops/state-fingerprint';
-import { partitionedTables } from '../ops/write-forwarding';
+import { classifyState } from '../ops/state-inventory';
 import type { SitePhpDurableObject } from '../site-do';
-import {
-	COMMIT_SEQ_KEY,
-	READMIT_ASKS_KEY,
-	RESTORE_EXPECT_KEY,
-	RESTORE_GENERATION_KEY,
-	RESTORE_SEEN_KEY
-} from './keys';
+import { firstRow } from '../util/sql';
+import type { ReplicationLogHost } from './host';
+import { COMMIT_SEQ_KEY } from './keys';
 import { REPLICATION_RECORD_MAX_STATEMENTS } from './limits';
-import type { ForwardOutcome } from './types';
-
-/**
- * Keeps a forwarded statement, with the table the tally attributes it to.
- *
- * The parent generation is pinned on the first statement of an invocation (the generation this
- * lane read at); the primary refuses a batch built on one it has moved past.
- */
-export function collectForward(
-	site: SitePhpDurableObject,
-	statements: readonly string[],
-	payload: unknown
-): void {
-	const body = (() => {
-		try {
-			return JSON.parse(String(payload)) as {
-				statements?: { sql?: string; params?: unknown[]; minted?: string }[];
-			};
-		} catch (e) {
-			site.noteError('collectForward', e);
-			return undefined;
-		}
-	})();
-	if (site.forwardParent === undefined) site.forwardParent = site.commitSeq();
-	site.forwardBuffer ??= [];
-	for (const statement of body?.statements ?? []) {
-		if (typeof statement?.sql !== 'string') continue;
-		if (statementAllowedOnReplica(statement.sql)) continue;
-		site.forwardBuffer.push({
-			sql: statement.sql,
-			params: (statement.params ?? []) as unknown[],
-			table: writeTargetTable(statement.sql) ?? '',
-			// the driver's own report of an id minted from this lane's residue class (see
-			// `partitionedTables()`)
-			...(typeof statement.minted === 'string' && statement.minted !== ''
-				? { minted: statement.minted }
-				: {})
-		});
-	}
-	void statements;
-}
-
-/**
- * Sends this invocation's collected writes to the primary, once.
- *
- * A conflict is retried once after re-reading the generation (usually another lane committed in
- * between); a second conflict is a contended row, and retrying again would spin.
- */
-export async function flushForward(
-	site: SitePhpDurableObject
-): Promise<ForwardOutcome | undefined> {
-	const batch = site.forwardBuffer;
-	const parent = site.forwardParent;
-	site.forwardBuffer = undefined;
-	site.forwardParent = undefined;
-	if (batch === undefined || batch.length === 0 || parent === undefined) return undefined;
-
-	const lane = replicaOf(site.ctx.id.name ?? '');
-	const ns = site.env?.SITE;
-	if (lane === undefined || !ns) {
-		return { action: 'refuse', reason: 'no primary to forward to' };
-	}
-	const primary = ns.get(ns.idFromName(lane.site));
-
-	type Answer = {
-		action: string;
-		reason: string;
-		generation?: number;
-		primaryGeneration?: number;
-	};
-	// what the driver minted, not what the statements look like (`laneHighWater()` would admit a
-	// table this lane never originated an id for)
-	const partitioned = partitionedTables(batch);
-	const send = async (at: number): Promise<Answer> => {
-		const res = await primary.fetch(
-			new Request('https://do.local/__replica?action=forward', {
-				method: 'POST',
-				body: JSON.stringify({ statements: batch, parent: at, partitioned }),
-				headers: { 'content-type': 'application/json' }
-			})
-		);
-		return (await res.json()) as Answer;
-	};
-
-	const first = await send(parent);
-	// the retry re-sends the same statements, rowids included; safe because every writer mints
-	// from its own residue class (`idPartition()`), so no concurrent commit took one of these ids
-	const answer =
-		first.action === 'conflict' && Number.isFinite(first.primaryGeneration)
-			? await send(first.primaryGeneration!)
-			: first;
-	if (answer.action === 'commit') site.markLaneHigh(batch);
-	return answer;
-}
-
-/**
- * Lands one chunk of a bulk copy on this replica.
- *
- * The first chunk marks the position in-flight; it clears only when the whole copy and the
- * mandatory set have landed, so an interrupted restore reads as untrusted, not as a low generation.
- * `VERIFIED` is reached only from {@link missingMandatory} being empty.
- */
-export function applyRestoreChunk(
-	site: SitePhpDurableObject,
-	chunk: RestoreChunk
-): {
-	ok: boolean;
-	reason: string;
-	stage: ReplicaStage;
-	statements: number;
-	missing: string[];
-} {
-	const stage = site.replicaStage();
-	const begunRaw = site.metaGet(RESTORE_GENERATION_KEY);
-	const begunAt = begunRaw === null || begunRaw === '' ? null : Number(begunRaw);
-	const refusal = chunkRefusal(chunk, site.packGeneration() ?? null, begunAt);
-	if (refusal !== null) {
-		return { ok: false, reason: refusal, stage, statements: 0, missing: [] };
-	}
-
-	if (begunAt === null) {
-		site.metaSet(RESTORE_GENERATION_KEY, chunk.generation);
-		site.metaSet(RESTORE_EXPECT_KEY, (chunk.expect ?? []).join(','));
-		// inherited, never observed (see `RestoreChunk.origin`); else the session cookie name
-		// differs from the primary's and every visitor is uid 0
-		if (pinnable(chunk.origin)) site.metaSet(ORIGIN_KEY, chunk.origin!);
-		// inherited likewise; the running interpreter baked the old salt into settings.php
-		if (typeof chunk.hashSalt === 'string' && chunk.hashSalt !== '') {
-			assertSalt(chunk.hashSalt);
-			if (site.metaGet(HASH_SALT_KEY) !== chunk.hashSalt) {
-				site.metaSet(HASH_SALT_KEY, chunk.hashSalt);
-				site.php = undefined;
-			}
-		}
-		site.metaSet(RESTORE_SEEN_KEY, '');
-		markInflight(site.logStore(), site.commitSeq(), chunk.generation);
-		if (stage === 'CREATED') site.setReplicaStage('RESTORING');
-		// the ask was answered; clear its backoff so a second withdrawal asks promptly
-		site.metaSet(READMIT_ASKS_KEY, '');
-	}
-
-	// before the statements: the first is a DELETE and a missing table fails it
-	if (chunk.first === true && !site.hasTable(chunk.table)) {
-		for (const sql of chunk.ddl ?? []) site.sql.exec(sql);
-	}
-
-	const statements = restoreStatements(chunk);
-	site.storage.transactionSync(() => {
-		for (const s of statements) site.sql.exec(s.sql, ...s.params);
-	});
-	const seen = site.restoreList(RESTORE_SEEN_KEY);
-	if (!seen.includes(chunk.table)) {
-		site.metaSet(RESTORE_SEEN_KEY, [...seen, chunk.table].join(','));
-	}
-
-	if (chunk.done !== true) {
-		return {
-			ok: true,
-			reason: '',
-			stage: site.replicaStage(),
-			statements: statements.length,
-			missing: []
-		};
-	}
-
-	// a `done` on the wrong chunk must not verify a partial copy (the mandatory set only catches a
-	// missing identity, so a copy that stopped after `config` would read as a working site)
-	const landed = site.restoreList(RESTORE_SEEN_KEY);
-	const uncopied = site.restoreList(RESTORE_EXPECT_KEY).filter((t) => !landed.includes(t));
-	const missing = [...site.mandatoryGap(), ...uncopied.map((t) => `table:${t}`)];
-	if (missing.length > 0) {
-		// the marker stays; a copy missing values a replica cannot mint is not finished
-		return {
-			ok: false,
-			reason: `restore incomplete: ${missing.join(', ')}`,
-			stage: site.replicaStage(),
-			statements: statements.length,
-			missing
-		};
-	}
-
-	landPosition(site.logStore(), chunk.generation);
-	site.metaSet(COMMIT_SEQ_KEY, chunk.generation);
-	site.clearRestore();
-	site.setReplicaStage('VERIFIED');
-	return {
-		ok: true,
-		reason: '',
-		stage: site.replicaStage(),
-		statements: statements.length,
-		missing: []
-	};
-}
-
-/**
- * Pulls one batch of the primary's log and applies it, then re-decides admission.
- *
- * The replica pulls because a push would make the primary own delivery state for every lane and
- * spend invocations on lanes that are down. Two hops per round: `/__replica` for what the primary
- * advertises, then `action=log`. Promotion goes through {@link admissionVerdict}, which resolves
- * every unknown toward the primary, so a null fingerprint on either side refuses.
- */
-export async function catchUpOnce(
-	site: SitePhpDurableObject,
-	limit = 25
-): Promise<{
-	ran: boolean;
-	reason: string;
-	applied: number;
-	advertised: number;
-	records: number;
-	stage: ReplicaStage;
-	admitted: boolean;
-}> {
-	const stage = site.replicaStage();
-	const idle = {
-		ran: false,
-		applied: site.commitSeq(),
-		advertised: 0,
-		records: 0,
-		stage,
-		admitted: false
-	};
-
-	const lane = replicaOf(site.ctx.id.name ?? '');
-	if (lane === undefined) return { ...idle, reason: 'not a pool lane' };
-	const ns = site.env?.SITE;
-	if (!ns) return { ...idle, reason: 'the namespace is not bound' };
-	// a log cannot repair CREATED, RESTORING or WITHDRAWN
-	if (stage === 'CREATED' || stage === 'RESTORING' || stage === 'WITHDRAWN') {
-		return { ...idle, reason: `stage ${stage} needs a restore, not a log` };
-	}
-
-	const position = readPosition(site.logStore());
-	const trust = positionTrust(position);
-	if (!trust.trusted) {
-		// an untrusted position is not resumable (the marker names the generation, not which chunks
-		// committed), so withdraw and wait for a restore
-		site.setReplicaStage('WITHDRAWN');
-		return { ...idle, reason: trust.reason, stage: site.replicaStage() };
-	}
-
-	const primary = ns.get(ns.idFromName(lane.site));
-	const head = (await (
-		await primary.fetch(new Request('https://do.local/__replica'))
-	).json()) as {
-		generation: number;
-		fingerprint: string | null;
-		schemaVersion: string | null;
-	};
-
-	let applied = position.applied;
-	let records = 0;
-	if (applied < head.generation) {
-		if (site.replicaStage() === 'VERIFIED') site.setReplicaStage('CATCHING_UP');
-		const batch = (await (
-			await primary.fetch(
-				new Request(`https://do.local/__replica?action=log&since=${applied}&limit=${limit}`)
-			)
-		).json()) as { records: LogRecord[] };
-		for (const record of batch.records) {
-			const outcome = applyRecord(site.logStore(), record, {
-				localSchema: site.packGeneration()
-			});
-			if (outcome.action === 'refuse') {
-				// a refusal ends the batch but does not undo the records ahead of it, which still
-				// owe the loop's normal bookkeeping
-				if (applied > position.applied) {
-					site.metaSet(COMMIT_SEQ_KEY, applied);
-					site.purgeAfterApply();
-				}
-				// separate from `lastCatchUp`, which readmission overwrites on the next firing
-				site.lastWithdrawal = {
-					reason: outcome.reason,
-					generation: record.generation,
-					applied,
-					at: site.nowMs()
-				};
-				site.setReplicaStage('WITHDRAWN');
-				return {
-					ran: true,
-					reason: `refused generation ${record.generation}: ${outcome.reason}`,
-					applied,
-					advertised: head.generation,
-					records,
-					stage: site.replicaStage(),
-					admitted: false
-				};
-			}
-			if (outcome.action === 'apply') records++;
-			applied = outcome.applied;
-		}
-		site.metaSet(COMMIT_SEQ_KEY, applied);
-		// the lane holds its own copies of the derived caches the primary purged on write
-		if (applied > position.applied) site.purgeAfterApply();
-	}
-
-	const read = readStateRows((sql) => site.sql.exec(sql).toArray());
-	const verdict = admissionVerdict({
-		stage: site.replicaStage(),
-		presentState: read.rows.map((r) => ({ collection: r.collection, name: r.name })),
-		presentCollections: [...new Set(read.rows.map((r) => r.collection))],
-		appliedGeneration: applied,
-		advertisedGeneration: head.generation,
-		fingerprint: await fingerprintState(read.rows),
-		primaryFingerprint: head.fingerprint,
-		schemaVersion: site.packGeneration() ?? null,
-		primarySchemaVersion: head.schemaVersion
-	});
-
-	if (verdict.admitted) {
-		// each move is one legal step; a lane that arrives here from VERIFIED walks all three
-		for (const to of ['CATCHING_UP', 'ELIGIBLE', 'SERVING'] as const) {
-			site.setReplicaStage(to);
-		}
-	}
-
-	return {
-		ran: true,
-		reason: verdict.admitted ? '' : verdict.refusals.join('; '),
-		applied,
-		advertised: head.generation,
-		records,
-		stage: site.replicaStage(),
-		admitted: verdict.admitted
-	};
-}
 
 /**
  * Collects the statements a replica would have to apply to reach this generation.
@@ -463,4 +120,145 @@ export function replicationRecords(
 		overflowed: Number(r.overflowed) === 1,
 		statements: JSON.parse(r.statements) as LogRecord['statements']
 	}));
+}
+
+/** creates the replication log table if absent */
+export function ensureReplicationLog(host: ReplicationLogHost): void {
+	host.sql.exec(
+		`CREATE TABLE IF NOT EXISTS cfw_repl_log (
+        generation INTEGER PRIMARY KEY,
+        parent INTEGER NOT NULL,
+        schema_version TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        overflowed INTEGER NOT NULL DEFAULT 0,
+        statements TEXT NOT NULL,
+        sealed_at INTEGER NOT NULL
+      ) WITHOUT ROWID`
+	);
+}
+
+/**
+ * The generation a copy may hand a replica: the last sealed record, not `commitSeq()`.
+ *
+ * The sequence can sit ahead of the last record (a lane copied at 86 meets a record from 85
+ * and is withdrawn). The gap holds no statements, so resuming at the last record skips no
+ * change.
+ */
+export function copyableGeneration(host: ReplicationLogHost): number {
+	ensureReplicationLog(host);
+	const row = firstRow(host.sql.exec(`SELECT MAX(generation) AS head FROM cfw_repl_log`)) as
+		{ head: number | null } | undefined;
+	const head = Number(row?.head ?? 0);
+	return Number.isFinite(head) && head > 0 ? head : commitSeq(host);
+}
+
+/**
+ * Advances the monotonic count of authoritative invalidations that a replica fences on.
+ *
+ * Separate from `generation`, a coalesced page-purge counter that stops moving once
+ * `cfw_page` is empty (a permission grant invalidated two tags and left it still).
+ */
+export function advanceCommit(host: ReplicationLogHost): number {
+	host.pendingCommits = (host.pendingCommits ?? 0) + 1;
+	return commitSeq(host);
+}
+
+/** the stored commit sequence plus advances not yet persisted */
+export function commitSeq(host: ReplicationLogHost): number {
+	return Number(host.metaGet(COMMIT_SEQ_KEY, '0') ?? 0) + (host.pendingCommits ?? 0);
+}
+
+/**
+ * Persists the invocation's commit advances as one row (a write per statement was 15% of a node
+ * save's row cost). An invocation's writes commit together, so the counter cannot fall behind
+ * the data it fences; the seal flushes unconditionally, since under-advancing serves stale
+ * authorization.
+ */
+export function flushCommitSeq(host: ReplicationLogHost): void {
+	if (!host.pendingCommits) return;
+	const next = commitSeq(host);
+	host.pendingCommits = 0;
+	host.metaSet(COMMIT_SEQ_KEY, next);
+}
+
+/** whether this object holds a table at all; the restore's own precondition */
+export function hasTable(host: ReplicationLogHost, table: string): boolean {
+	return (
+		host.sql
+			.exec(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table)
+			.toArray().length > 0
+	);
+}
+
+/**
+ * The DDL that recreates one table, its own statement first and its indexes after.
+ *
+ * `sql IS NOT NULL` drops sqlite's auto-indexes, which have no statement and are recreated with
+ * the table anyway.
+ */
+export function tableDdl(host: ReplicationLogHost, table: string): string[] {
+	return host.sql
+		.exec(
+			`SELECT sql FROM sqlite_master WHERE tbl_name = ? AND sql IS NOT NULL
+				 ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END`,
+			table
+		)
+		.toArray()
+		.map((r) => String((r as { sql: unknown }).sql));
+}
+
+/** every table this object holds, in `sqlite_master` order */
+export function tableNames(host: ReplicationLogHost): string[] {
+	return host.sql
+		.exec(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
+		.toArray()
+		.map((r) => String((r as { name: unknown }).name));
+}
+
+/**
+ * One page of one table, as columns plus flat rows.
+ *
+ * Uses `OFFSET` (a `WITHOUT ROWID` table has no rowid); unstable under a concurrent write,
+ * which the receiving generation check refuses.
+ * ponytail: O(n^2) over a whole table; a keyset cursor if a restore ever spans a large one
+ */
+export function snapshotRows(
+	host: ReplicationLogHost,
+	table: string,
+	offset: number,
+	limit: number
+): { columns: string[]; rows: unknown[][] } {
+	const verdict = planRestore([table])[0]!;
+	if (!verdict.copy) throw new Error(`${table} is not copyable: ${verdict.reason}`);
+	const raw = host.sql
+		.exec(`SELECT * FROM "${table}" LIMIT ? OFFSET ?`, limit, offset)
+		.toArray() as Record<string, unknown>[];
+	if (raw.length === 0) return { columns: [], rows: [] };
+	const columns = Object.keys(raw[0]!);
+	return { columns, rows: raw.map((r) => columns.map((c) => r[c])) };
+}
+
+/**
+ * Advances the commit sequence when a statement writes authoritative state.
+ *
+ * Keyed on the target table, not cache tags (a user create and a `system.private_key` rotation
+ * write no tag). Every `key_value` write counts, which over-advances safely: too often costs a
+ * refresh, too rarely serves stale authorization.
+ */
+export function noteAuthoritativeWrite(
+	host: ReplicationLogHost,
+	sql: string,
+	params?: SqlBindings
+): void {
+	const table = writeTargetTable(sql);
+	if (table === undefined) return;
+	if (table === 'key_value' || table === 'key_value_expire') {
+		advanceCommit(host);
+		host.bufferForReplication(sql, params);
+		return;
+	}
+	if (classifyState(table) === 'AUTHORITATIVE') {
+		advanceCommit(host);
+		host.bufferForReplication(sql, params);
+	}
 }

@@ -2,12 +2,18 @@ import { normaliseUri } from '../db/file-store';
 import { defaultCache } from '../ops/cache-api';
 import { parseTransformPath, runImageTransform } from '../ops/image-runtime';
 import { resolveSite, siteStubOptions } from '../ops/site-id';
+import type { Cms } from '../util/cms';
 import { errorMessage } from '../util/errors';
 import type { SiteWorkerEnv } from './types';
 
 // image derivatives are produced in the front worker, not the object: the decoder is a second wasm
 // module (1 MiB initial, 4 MiB after 56 transforms) and would share an isolate with PHP's memory
-const PUBLIC_FILES = '/sites/default/files/';
+const PUBLIC_FILES: Record<Cms, { root: string; reserved?: string }> = {
+	// `styles/` stays Drupal's, because its image style controller owns that prefix
+	drupal: { root: '/sites/default/files/', reserved: 'styles/' },
+	wordpress: { root: '/wp-content/uploads/' },
+	joomla: { root: '/images/' }
+};
 const INLINE_FILE_TYPES = new Set([
 	'image/png',
 	'image/jpeg',
@@ -20,17 +26,24 @@ const INLINE_FILE_TYPES = new Set([
  * The `public://` uri a GET for a public file names, or undefined.
  *
  * Drupal expects the web server to answer these from disk and has no route for them, so without
- * this every public original is a 404 (unless the optional R2 mirror is configured). `styles/`
- * stays Drupal's, because its image style controller owns that prefix.
+ * this every public original is a 404 (unless the optional R2 mirror is configured). Drupal when no
+ * CMS is given, because the worker has no runtime CMS value yet; a name the table lacks answers
+ * undefined.
  */
-export function publicFileUri(method: string, pathname: string): string | undefined {
+export function publicFileUri(
+	method: string,
+	pathname: string,
+	cms: Cms = 'drupal'
+): string | undefined {
 	if (method !== 'GET' && method !== 'HEAD') return undefined;
-	if (!pathname.startsWith(PUBLIC_FILES) || pathname.startsWith(`${PUBLIC_FILES}styles/`)) {
+	const files = PUBLIC_FILES[cms];
+	if (files === undefined || !pathname.startsWith(files.root)) return undefined;
+	if (files.reserved !== undefined && pathname.startsWith(`${files.root}${files.reserved}`)) {
 		return undefined;
 	}
 	let rest: string;
 	try {
-		rest = decodeURIComponent(pathname.slice(PUBLIC_FILES.length));
+		rest = decodeURIComponent(pathname.slice(files.root.length));
 	} catch {
 		return undefined;
 	}

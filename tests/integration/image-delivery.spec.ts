@@ -1,5 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { normaliseUri } from '../../src/db/file-store';
 import { transformPath, type Transform } from '../../src/ops/image-transform';
 import worker, { moduleAssetPath, publicFileUri } from '../../src/site';
 import { druplicon } from '../fixtures/png';
@@ -210,6 +211,85 @@ describe('a public file is served by the front worker', () => {
 		expect(fileReads(spy.seen)).toEqual([]);
 		expect(publicFileUri('POST', '/sites/default/files/a.png')).toBeUndefined();
 		expect(publicFileUri('GET', '/sites/default/files/a.png')).toBe('public://a.png');
+	});
+});
+
+describe('the public file root is a table per CMS and Drupal is the default', () => {
+	// the function as it stood before the root became a table
+	const legacy = (method: string, pathname: string): string | undefined => {
+		const root = '/sites/default/files/';
+		if (method !== 'GET' && method !== 'HEAD') return undefined;
+		if (!pathname.startsWith(root) || pathname.startsWith(`${root}styles/`)) return undefined;
+		try {
+			return normaliseUri(`public://${decodeURIComponent(pathname.slice(root.length))}`);
+		} catch {
+			return undefined;
+		}
+	};
+	const CORPUS: [string, string][] = [
+		['GET', '/sites/default/files/a.png'],
+		['HEAD', '/sites/default/files/a.png'],
+		['POST', '/sites/default/files/a.png'],
+		['PUT', '/sites/default/files/a.png'],
+		['GET', '/sites/default/files/2026-09/report%20one.pdf'],
+		['GET', '/sites/default/files/styles/thumbnail/public/a.png'],
+		['GET', '/sites/default/files/styles/'],
+		['GET', '/sites/default/files/'],
+		['GET', '/sites/default/files/%E0%A4%A'],
+		['GET', '/sites/default/files/a/b/c.txt'],
+		['GET', '/sites/default/files/..%2Fsettings.php'],
+		['GET', '/sites/default/files'],
+		['GET', '/sites/default/filesx/a.png'],
+		['GET', '/sites/default/private/a.png'],
+		['GET', '/wp-content/uploads/a.png'],
+		['GET', '/images/a.png'],
+		['GET', '/'],
+		['GET', '/modules/x/y.css'],
+		['GET', '/SITES/default/files/a.png'],
+		['GET', '/sites/default/files/a.png?x=1'],
+		['GET', '/sites/default/files/sub%20dir/b.jpg'],
+		['GET', '/node/1'],
+		['GET', '/user/login'],
+		['GET', '/sites/default/files//a.png'],
+		['GET', '/sites/default/files/styles']
+	];
+
+	it('gives Drupal the same answer as the old function on every request in the corpus', () => {
+		expect(CORPUS.length).toBeGreaterThanOrEqual(25);
+		for (const [method, path] of CORPUS) {
+			expect(publicFileUri(method, path, 'drupal'), `${method} ${path}`).toBe(
+				legacy(method, path)
+			);
+			expect(publicFileUri(method, path), `${method} ${path}`).toBe(legacy(method, path));
+		}
+	});
+
+	it('roots WordPress at wp-content/uploads and leaves Drupal paths alone', () => {
+		expect(publicFileUri('GET', '/wp-content/uploads/2026/a.png', 'wordpress')).toBe(
+			'public://2026/a.png'
+		);
+		expect(publicFileUri('GET', '/wp-content/uploads/styles/a.png', 'wordpress')).toBe(
+			'public://styles/a.png'
+		);
+		expect(publicFileUri('POST', '/wp-content/uploads/a.png', 'wordpress')).toBeUndefined();
+		expect(publicFileUri('GET', '/sites/default/files/a.png', 'wordpress')).toBeUndefined();
+		expect(publicFileUri('GET', '/images/a.png', 'wordpress')).toBeUndefined();
+	});
+
+	it('roots Joomla at images and leaves Drupal paths alone', () => {
+		expect(publicFileUri('GET', '/images/headers/a.png', 'joomla')).toBe(
+			'public://headers/a.png'
+		);
+		expect(publicFileUri('HEAD', '/images/a.png', 'joomla')).toBe('public://a.png');
+		expect(publicFileUri('PUT', '/images/a.png', 'joomla')).toBeUndefined();
+		expect(publicFileUri('GET', '/sites/default/files/a.png', 'joomla')).toBeUndefined();
+		expect(publicFileUri('GET', '/wp-content/uploads/a.png', 'joomla')).toBeUndefined();
+	});
+
+	it('answers nothing for a CMS name the table does not hold', () => {
+		expect(
+			publicFileUri('GET', '/sites/default/files/a.png', 'plone' as never)
+		).toBeUndefined();
 	});
 });
 

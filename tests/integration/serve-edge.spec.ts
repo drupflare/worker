@@ -1,5 +1,6 @@
 import { createExecutionContext, env, SELF, waitOnExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { CMS_VALUES } from '../../scripts/cms';
 import { ATTEMPT_HEADER, ATTEMPT_TTL_MS } from '../../src/ops/attempt';
 import { DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_UPLOAD_BYTES } from '../../src/ops/body-limit';
 import { isCacheTier } from '../../src/ops/cache-tiers';
@@ -585,6 +586,157 @@ describe('a scanner probe is refused before the object is reached', () => {
 		['/node/1?destination=/admin', false]
 	])('isNeverDrupal(%s) ignores the query string and is %s', (path, expected) => {
 		expect(isNeverDrupal(path)).toBe(expected);
+	});
+});
+
+describe('the deny list is a table per CMS and Drupal is the default', () => {
+	// the list as it stood before it was split, kept here so the split is compared against it
+	const LEGACY = [
+		/\.(?:env|git|sql|bak|old|swp|ini|log|sh|yml~|zip|tar|gz|tgz|rar|7z)$/i,
+		/(?:^|\/)\.(?:git|env|aws|ssh|svn|hg|DS_Store)(?:\/|$)/i,
+		/(?:^|\/)wp-(?:admin|login|content|includes|config)/i,
+		/\.php$/i,
+		/(?:^|\/)(?:phpmyadmin|pma|adminer|vendor\/phpunit|\.well-known\/security\.txt\.bak)/i,
+		/(?:^|\/)(?:config|backup|dump|db)\.(?:json|xml|txt)$/i
+	];
+	const legacy = (path: string) => {
+		const bare = path.split(/[?#]/, 1)[0] ?? path;
+		return LEGACY.some((re) => re.test(bare));
+	};
+
+	const CORPUS = [
+		'/',
+		'/node/1',
+		'/user/login',
+		'/admin/config',
+		'/about-us',
+		'/about-us?page=2',
+		'/index.php',
+		'/index.php/node/1',
+		'/update.php',
+		'/core/install.php',
+		'/wp-login.php',
+		'/wp-admin/setup-config.php',
+		'/wp-admin/',
+		'/wp-content/uploads/a.png',
+		'/wp-includes/js/x.js',
+		'/wp-config.php',
+		'/wp-config.php.bak',
+		'/xmlrpc.php',
+		'/wp-json/wp/v2/posts',
+		'/administrator/index.php',
+		'/api/index.php',
+		'/configuration.php',
+		'/shell.php',
+		'/shell.PHP',
+		'/a/b/c.php?x=1',
+		'/.env',
+		'/.env?x=1',
+		'/.git/config',
+		'/.aws/credentials',
+		'/.DS_Store',
+		'/x.sql',
+		'/backup/db.sql',
+		'/dump.zip',
+		'/phpmyadmin/',
+		'/pma/index.php',
+		'/vendor/phpunit/x',
+		'/config.json',
+		'/sites/default/files/image.png',
+		'/sites/default/settings.php',
+		'/.well-known/security.txt',
+		'/a\nb.php'
+	];
+
+	it('gives Drupal the same answer as the old list on every path in the corpus', () => {
+		expect(CORPUS.length).toBeGreaterThanOrEqual(25);
+		for (const path of CORPUS) {
+			expect(isNeverDrupal(path, 'drupal'), path).toBe(legacy(path));
+			expect(isNeverDrupal(path), path).toBe(legacy(path));
+		}
+	});
+
+	it('lets Joomla reach its three entry points and denies every other php file', () => {
+		for (const path of ['/index.php', '/administrator/index.php', '/api/index.php']) {
+			expect(isNeverDrupal(path, 'joomla'), path).toBe(false);
+		}
+		for (const path of [
+			'/configuration.php',
+			'/shell.php',
+			'/administrator/x.php',
+			'/api/x.php',
+			'/administrator/index.php.php',
+			'/a/index.php',
+			'/INDEX.PHP/../x.php',
+			'/a\nb.php',
+			'/xmlrpc.php'
+		]) {
+			expect(isNeverDrupal(path, 'joomla'), path).toBe(true);
+		}
+	});
+
+	it('keeps the common secrets and dotfiles denied for Joomla', () => {
+		for (const path of ['/.env', '/.git/config', '/x.sql', '/phpmyadmin/', '/config.json']) {
+			expect(isNeverDrupal(path, 'joomla'), path).toBe(true);
+		}
+		for (const path of ['/', '/index.php/about', '/images/a.png', '/wp-login.php/x']) {
+			expect(isNeverDrupal(path, 'joomla'), path).toBe(false);
+		}
+	});
+
+	it('lets WordPress reach its paths and its allowed entry points', () => {
+		for (const path of [
+			'/wp-admin/',
+			'/wp-admin/admin-ajax.php',
+			'/wp-admin/post.php',
+			'/wp-login.php',
+			'/wp-cron.php',
+			'/index.php',
+			'/wp-comments-post.php',
+			'/wp-content/uploads/2026/a.png',
+			'/wp-content/themes/x/style.css',
+			'/wp-includes/js/jquery/jquery.js',
+			'/wp-json/wp/v2/posts',
+			'/index.php/2026/post',
+			'/wp-login.php?redirect_to=%2F'
+		]) {
+			expect(isNeverDrupal(path, 'wordpress'), path).toBe(false);
+		}
+	});
+
+	it('denies wp-config, xmlrpc and every other php file for WordPress', () => {
+		for (const path of [
+			'/wp-config.php',
+			'/wp-config.php.bak',
+			'/xmlrpc.php',
+			'/xmlrpc.php?rsd',
+			'/xmlrpc.php/x',
+			'/shell.php',
+			'/wp-content/uploads/x.php',
+			'/wp-content/plugins/p/p.php',
+			'/wp-includes/version.php',
+			'/wp-admin/includes/file.php',
+			'/wp-admin/../shell.php',
+			'/wp-admin/..%2fshell.php',
+			'/wp-admin/x.php.php',
+			'/a/index.php',
+			'/a\nb.php',
+			'/.env',
+			'/wp-content/debug.log'
+		]) {
+			expect(isNeverDrupal(path, 'wordpress'), path).toBe(true);
+		}
+	});
+
+	it('holds an entry for every CMS the build can pack', () => {
+		for (const cms of CMS_VALUES) {
+			expect(isNeverDrupal('/.env', cms), cms).toBe(true);
+			expect(isNeverDrupal('/', cms), cms).toBe(false);
+		}
+	});
+
+	it('refuses everything for a CMS name the table does not hold', () => {
+		expect(isNeverDrupal('/', 'plone' as never)).toBe(true);
 	});
 });
 

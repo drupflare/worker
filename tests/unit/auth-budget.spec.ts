@@ -14,11 +14,14 @@ import {
 	SESSION_COOKIE_RE,
 	authAllowance,
 	authSpendHeaders,
+	cookieKind,
 	decideAuthMode,
 	hasSessionCookie,
 	isAuthenticatedRequest,
+	mayUseSharedCopy,
 	parseAuthSpend,
 	secondsUntilUtcReset,
+	sessionCookieValue,
 	spendForToday,
 	utcDayKey
 } from '../../src/ops/auth-budget';
@@ -116,6 +119,154 @@ describe('session detection', () => {
 		for (const name of [`SSSESS${id}`, `XSESS${id}`, `SES${id}`, `SESS${id.toUpperCase()}`]) {
 			expect(hasSessionCookie(`${name}=x`), name).toBe(false);
 		}
+	});
+});
+
+describe('the session classifier is a table per CMS and Drupal is the default', () => {
+	// the pair of functions as they stood before the classifier became a table
+	const LEGACY_SKIP = new Set(['NO_CACHE', 'Drupal.visitor.name', 'Drupal.toolbar.collapsed']);
+	const legacyValue = (header: string | null | undefined): string | undefined => {
+		if (!header) return undefined;
+		for (const pair of header.split(';')) {
+			const eq = pair.indexOf('=');
+			const name = (eq < 0 ? pair : pair.slice(0, eq)).trim();
+			if (!name || LEGACY_SKIP.has(name)) continue;
+			if (/^S?SESS[0-9a-f]{32}$/.test(name)) return eq < 0 ? '' : pair.slice(eq + 1).trim();
+		}
+		return undefined;
+	};
+	const h = 'a'.repeat(32);
+	const CORPUS: (string | null | undefined)[] = [
+		null,
+		undefined,
+		'',
+		';',
+		'foo=1; bar=2',
+		'NO_CACHE=1',
+		'Drupal.visitor.name=bob',
+		'Drupal.toolbar.collapsed=1; foo=1',
+		'SESSION=x',
+		`SESS${h}=x`,
+		`SSESS${h}=abc`,
+		`foo=1; SSESS${h}=x; bar=2`,
+		` SSESS${h}=x `,
+		`SSESS${h}`,
+		`SESS${h}=; foo=1`,
+		`XSESS${h}=x`,
+		`SESS${h.toUpperCase()}=x`,
+		`SESS${h}ff=x`,
+		`NO_CACHE=1; SESS${h}=x`,
+		`wordpress_logged_in_${h}=x`,
+		`${h}=x`,
+		`joomla_user_state=logged_in`,
+		`SESS${h}=one; SSESS${'b'.repeat(32)}=two`,
+		'a=b=c; SESSshort=x'
+	];
+
+	it('gives Drupal the same session answer as the old pair on every header in the corpus', () => {
+		expect(CORPUS.length).toBeGreaterThanOrEqual(15);
+		for (const header of CORPUS) {
+			const want = legacyValue(header);
+			expect(sessionCookieValue(header), String(header)).toBe(want);
+			expect(sessionCookieValue(header, 'drupal'), String(header)).toBe(want);
+			expect(hasSessionCookie(header), String(header)).toBe(want !== undefined);
+			expect(hasSessionCookie(header, 'drupal'), String(header)).toBe(want !== undefined);
+		}
+	});
+
+	it('keeps an unknown cookie on Drupal anonymous, as before', () => {
+		for (const header of ['foo=1', 'NO_CACHE=1', 'a=b; c=d', null, '']) {
+			expect(mayUseSharedCopy(header), String(header)).toBe(true);
+		}
+		expect(mayUseSharedCopy(`SESS${h}=x`)).toBe(false);
+	});
+
+	// session: logs a user in and keys the replica; personal: tied to a visitor, never shared;
+	// neutral: set on anonymous traffic, changes nothing
+	it('treats the WordPress login cookies as a session', () => {
+		for (const name of [
+			`wordpress_logged_in_${h}`,
+			`wordpress_sec_${h}`,
+			`wordpress_rec_${h}`
+		]) {
+			expect(cookieKind(name, 'wordpress'), name).toBe('session');
+			expect(hasSessionCookie(`${name}=v`, 'wordpress'), name).toBe(true);
+			expect(sessionCookieValue(`a=1; ${name}=v`, 'wordpress'), name).toBe('v');
+			expect(mayUseSharedCopy(`${name}=v`, 'wordpress'), name).toBe(false);
+		}
+	});
+
+	it('treats the WordPress visitor cookies as personal, not a session', () => {
+		for (const name of [
+			'wp-settings-1',
+			'wp-settings-time-1',
+			`comment_author_${h}`,
+			`comment_author_email_${h}`,
+			`comment_author_url_${h}`,
+			`wp-postpass_${h}`
+		]) {
+			expect(cookieKind(name, 'wordpress'), name).toBe('personal');
+			expect(hasSessionCookie(`${name}=v`, 'wordpress'), name).toBe(false);
+			expect(mayUseSharedCopy(`${name}=v`, 'wordpress'), name).toBe(false);
+		}
+	});
+
+	it('treats wordpress_test_cookie as neither a session nor a reason to skip the shared copy', () => {
+		expect(cookieKind('wordpress_test_cookie', 'wordpress')).toBe('neutral');
+		expect(hasSessionCookie('wordpress_test_cookie=WP%20Cookie%20check', 'wordpress')).toBe(
+			false
+		);
+		expect(mayUseSharedCopy('wordpress_test_cookie=WP%20Cookie%20check', 'wordpress')).toBe(
+			true
+		);
+		expect(mayUseSharedCopy(null, 'wordpress')).toBe(true);
+		expect(mayUseSharedCopy('', 'wordpress')).toBe(true);
+	});
+
+	it('skips the shared copy for a WordPress cookie nobody has classified', () => {
+		for (const header of [
+			'foo=1',
+			`wordpress_logged_in_short=x`,
+			`SESS${h}=x`,
+			'wordpress_test_cookie=1; foo=1',
+			'wp-settings-=x',
+			'wp-settings-1x=x',
+			`wordpress_sec_${h.toUpperCase()}=x`
+		]) {
+			expect(mayUseSharedCopy(header, 'wordpress'), header).toBe(false);
+		}
+		expect(hasSessionCookie('foo=1', 'wordpress')).toBe(false);
+	});
+
+	it('treats a Joomla cookie named by 32 lowercase hex as a session', () => {
+		expect(cookieKind(h, 'joomla')).toBe('session');
+		expect(hasSessionCookie(`x=1; ${h}=v`, 'joomla')).toBe(true);
+		expect(sessionCookieValue(`${h}=v`, 'joomla')).toBe('v');
+		expect(mayUseSharedCopy(`${h}=v`, 'joomla')).toBe(false);
+		expect(hasSessionCookie(`${'a'.repeat(31)}=v`, 'joomla')).toBe(false);
+		expect(hasSessionCookie(`${'A'.repeat(32)}=v`, 'joomla')).toBe(false);
+		expect(hasSessionCookie(`${'a'.repeat(33)}=v`, 'joomla')).toBe(false);
+	});
+
+	it('treats joomla_user_state as a login marker, not a session', () => {
+		expect(cookieKind('joomla_user_state', 'joomla')).toBe('personal');
+		expect(hasSessionCookie('joomla_user_state=logged_in', 'joomla')).toBe(false);
+		expect(mayUseSharedCopy('joomla_user_state=logged_in', 'joomla')).toBe(false);
+	});
+
+	it('skips the shared copy for any other Joomla cookie, and serves a request with none', () => {
+		for (const header of ['foo=1', 'NO_CACHE=1', `SESS${h}=x`, 'a=1; b=2']) {
+			expect(mayUseSharedCopy(header, 'joomla'), header).toBe(false);
+		}
+		expect(mayUseSharedCopy(null, 'joomla')).toBe(true);
+		expect(mayUseSharedCopy('', 'joomla')).toBe(true);
+		expect(mayUseSharedCopy(' ; ', 'joomla')).toBe(true);
+	});
+
+	it('treats every cookie as a session for a CMS name the table does not hold', () => {
+		expect(hasSessionCookie('foo=1', 'plone' as never)).toBe(true);
+		expect(mayUseSharedCopy('foo=1', 'plone' as never)).toBe(false);
+		expect(hasSessionCookie(null, 'plone' as never)).toBe(false);
 	});
 });
 

@@ -7,6 +7,7 @@
  *
  * @module
  */
+import type { Cms } from '../util/cms';
 import { isPaid, type PlanEnv } from './plan';
 
 /**
@@ -30,32 +31,121 @@ export const DAILY_DO_QUOTA = 100_000;
  */
 export const SESSION_COOKIE_RE = /^S?SESS[0-9a-f]{32}$/;
 
-// cookies Drupal sets with no user (`NO_CACHE` bypasses the page cache), never a login
-const NOT_A_SESSION = new Set(['NO_CACHE', 'Drupal.visitor.name', 'Drupal.toolbar.collapsed']);
+/**
+ * What a cookie name says about its visitor: `session` logs a user in and keys the replica,
+ * `personal` ties the page to one visitor without being a login, `neutral` is set on anonymous
+ * traffic and changes nothing, `unknown` is a name nobody has classified.
+ */
+export type CookieKind = 'session' | 'personal' | 'neutral' | 'unknown';
+
+type CookieRule = { re: RegExp; kind: Exclude<CookieKind, 'unknown'>; why: string };
+
+const MD5 = '[0-9a-f]{32}';
 
 /**
- * Whether a `Cookie` header carries a Drupal session.
+ * The cookie names each CMS sets. Drupal's neutral names are cookies it sets with no user
+ * (`NO_CACHE` bypasses the page cache), never a login.
+ */
+const COOKIE_RULES: Record<Cms, readonly CookieRule[]> = {
+	drupal: [
+		{ re: SESSION_COOKIE_RE, kind: 'session', why: 'SESS or SSESS plus 32 hex' },
+		{
+			re: /^(?:NO_CACHE|Drupal\.visitor\.name|Drupal\.toolbar\.collapsed)$/,
+			kind: 'neutral',
+			why: 'no user'
+		}
+	],
+	wordpress: [
+		{
+			re: new RegExp(`^wordpress_logged_in_${MD5}$`),
+			kind: 'session',
+			why: 'the login cookie'
+		},
+		{
+			re: new RegExp(`^wordpress_sec_${MD5}$`),
+			kind: 'session',
+			why: 'the secure login cookie'
+		},
+		{ re: new RegExp(`^wordpress_rec_${MD5}$`), kind: 'session', why: 'recovery mode' },
+		{ re: /^wp-settings-(?:time-)?\d+$/, kind: 'personal', why: 'set for a logged in user' },
+		{
+			re: new RegExp(`^comment_author_(?:email_|url_)?${MD5}$`),
+			kind: 'personal',
+			why: 'a commenter prefill'
+		},
+		{
+			re: new RegExp(`^wp-postpass_${MD5}$`),
+			kind: 'personal',
+			why: 'a password protected post'
+		},
+		{ re: /^wordpress_test_cookie$/, kind: 'neutral', why: 'set on the login page for anyone' }
+	],
+	joomla: [
+		{ re: new RegExp(`^${MD5}$`), kind: 'session', why: 'md5 of the app name' },
+		{ re: /^joomla_user_state$/, kind: 'personal', why: 'login marker with no per user value' }
+	]
+};
+
+/**
+ * What a cookie name means on a CMS. A name the CMS table does not hold is `session`, so an unknown
+ * CMS never reads as anonymous.
+ */
+export function cookieKind(name: string, cms: Cms = 'drupal'): CookieKind {
+	const rules = COOKIE_RULES[cms];
+	if (rules === undefined) return 'session';
+	return rules.find(({ re }) => re.test(name))?.kind ?? 'unknown';
+}
+
+function cookiePairs(cookieHeader: string | null | undefined): [string, string][] {
+	if (!cookieHeader) return [];
+	const out: [string, string][] = [];
+	for (const pair of cookieHeader.split(';')) {
+		const eq = pair.indexOf('=');
+		const name = (eq < 0 ? pair : pair.slice(0, eq)).trim();
+		if (name) out.push([name, eq < 0 ? '' : pair.slice(eq + 1).trim()]);
+	}
+	return out;
+}
+
+/**
+ * Whether a `Cookie` header carries a session.
  *
  * @param cookieHeader the raw header value, or null when absent
+ * @param cms Drupal unless given, because the worker has no runtime CMS value yet
  * @returns true when at least one cookie name is session-shaped
  */
-export function hasSessionCookie(cookieHeader: string | null | undefined): boolean {
-	return sessionCookieValue(cookieHeader) !== undefined;
+export function hasSessionCookie(
+	cookieHeader: string | null | undefined,
+	cms: Cms = 'drupal'
+): boolean {
+	return sessionCookieValue(cookieHeader, cms) !== undefined;
 }
 
 /**
  * The value of the first session-shaped cookie, or undefined; a replica routing key, hashed and
  * never compared.
  */
-export function sessionCookieValue(cookieHeader: string | null | undefined): string | undefined {
-	if (!cookieHeader) return undefined;
-	for (const pair of cookieHeader.split(';')) {
-		const eq = pair.indexOf('=');
-		const name = (eq < 0 ? pair : pair.slice(0, eq)).trim();
-		if (!name || NOT_A_SESSION.has(name)) continue;
-		if (SESSION_COOKIE_RE.test(name)) return eq < 0 ? '' : pair.slice(eq + 1).trim();
-	}
-	return undefined;
+export function sessionCookieValue(
+	cookieHeader: string | null | undefined,
+	cms: Cms = 'drupal'
+): string | undefined {
+	return cookiePairs(cookieHeader).find(([name]) => cookieKind(name, cms) === 'session')?.[1];
+}
+
+/**
+ * Whether the shared copy may answer a request with this `Cookie` header.
+ *
+ * Drupal ignores every cookie that is not a session, as before. Any other CMS skips the shared copy
+ * for a cookie it has not classified, until someone has: a personal cookie is a person's page.
+ */
+export function mayUseSharedCopy(
+	cookieHeader: string | null | undefined,
+	cms: Cms = 'drupal'
+): boolean {
+	return cookiePairs(cookieHeader).every(([name]) => {
+		const kind = cookieKind(name, cms);
+		return kind === 'neutral' || (kind === 'unknown' && cms === 'drupal');
+	});
 }
 
 /**

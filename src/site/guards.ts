@@ -4,24 +4,63 @@ import {
 	DEFAULT_MAX_UPLOAD_BYTES,
 	RESTORE_PART_MAX_BYTES
 } from '../ops/body-limit';
+import type { Cms } from '../util/cms';
 import { renderTemplate } from '../util/template';
 import { GUARDS_OBJECT_RESET_HTML, GUARDS_OBJECT_RESET_UNSAVED_HTML } from './generated/assets';
 
+/** one deny pattern and why the path can never be a route */
+type Deny = { re: RegExp; why: string };
+
+/** what one CMS refuses beyond the common list, and the only php urls it serves */
+type CmsGuards = { deny: readonly Deny[]; php: readonly RegExp[] };
+
+const NEVER_COMMON: readonly Deny[] = [
+	{
+		re: /\.(?:env|git|sql|bak|old|swp|ini|log|sh|yml~|zip|tar|gz|tgz|rar|7z)$/i,
+		why: 'secrets, dumps and archives'
+	},
+	{ re: /(?:^|\/)\.(?:git|env|aws|ssh|svn|hg|DS_Store)(?:\/|$)/i, why: 'dotfiles and vcs state' },
+	{
+		re: /(?:^|\/)(?:phpmyadmin|pma|adminer|vendor\/phpunit|\.well-known\/security\.txt\.bak)/i,
+		why: 'database tools and test harnesses'
+	},
+	{
+		re: /(?:^|\/)(?:config|backup|dump|db)\.(?:json|xml|txt)$/i,
+		why: 'exported settings and dumps'
+	}
+];
+
 /**
- * Paths Drupal can never serve, refused in JS before any DO hop.
+ * Paths each CMS can never serve, refused in JS before any DO hop.
  *
  * `PageCache` writes one permanent `cache_data` row (~215 B) per distinct URL, so scanner probes
  * would grow storage without bound. A deny list, not the router's table: aliases are created at
- * runtime, so only patterns with no route under any configuration are safe to refuse here.
+ * runtime, so only patterns with no route under any configuration are safe to refuse here. Every
+ * `.php` url is refused except those in `php`, which is empty for Drupal because its entry point is
+ * `/index.php`, which never reaches here as a route.
  */
-const NEVER_DRUPAL = [
-	/\.(?:env|git|sql|bak|old|swp|ini|log|sh|yml~|zip|tar|gz|tgz|rar|7z)$/i,
-	/(?:^|\/)\.(?:git|env|aws|ssh|svn|hg|DS_Store)(?:\/|$)/i,
-	/(?:^|\/)wp-(?:admin|login|content|includes|config)/i,
-	/\.php$/i, // Drupal's own entry point is /index.php, which never reaches here as a route
-	/(?:^|\/)(?:phpmyadmin|pma|adminer|vendor\/phpunit|\.well-known\/security\.txt\.bak)/i,
-	/(?:^|\/)(?:config|backup|dump|db)\.(?:json|xml|txt)$/i
-];
+const NEVER_BY_CMS: Record<Cms, CmsGuards> = {
+	drupal: {
+		deny: [
+			{ re: /(?:^|\/)wp-(?:admin|login|content|includes|config)/i, why: 'wordpress paths' }
+		],
+		php: []
+	},
+	wordpress: {
+		deny: [
+			{ re: /(?:^|\/)wp-config/i, why: 'holds the database credentials and salts' },
+			{ re: /(?:^|\/)xmlrpc\.php/i, why: 'pingback and brute force amplifier; not served' }
+		],
+		php: [
+			/^\/(?:index|wp-login|wp-cron|wp-comments-post)\.php$/i,
+			// one level only, so wp-admin/includes/*.php stays refused
+			/^\/wp-admin\/[\w-]+\.php$/i
+		]
+	},
+	joomla: { deny: [], php: [/^\/(?:administrator\/|api\/)?index\.php$/i] }
+};
+
+const PHP_URL = /\.php$/i;
 
 /** what the body guard decided, when the request may not proceed */
 export interface BodyTooLarge {
@@ -180,12 +219,17 @@ export function phpEntryRedirect(pathname: string): string | undefined {
 }
 
 /**
- * True when the path cannot be a Drupal route under any configuration.
+ * True when the path cannot be a route of the CMS under any configuration.
  *
  * The query string is stripped first: four patterns are `$`-anchored and the caller passes
- * `pathname + search`, so `/.env?x=1` would otherwise slip through to the object.
+ * `pathname + search`, so `/.env?x=1` would otherwise slip through to the object. Drupal when no CMS
+ * is given, because the worker has no runtime CMS value yet; a name the table lacks refuses all.
  */
-export function isNeverDrupal(pathname: string): boolean {
+export function isNeverDrupal(pathname: string, cms: Cms = 'drupal'): boolean {
+	const guards = NEVER_BY_CMS[cms];
+	if (guards === undefined) return true;
 	const bare = pathname.split(/[?#]/, 1)[0] ?? pathname;
-	return NEVER_DRUPAL.some((re) => re.test(bare));
+	if (NEVER_COMMON.some(({ re }) => re.test(bare))) return true;
+	if (guards.deny.some(({ re }) => re.test(bare))) return true;
+	return PHP_URL.test(bare) && !guards.php.some((re) => re.test(bare));
 }

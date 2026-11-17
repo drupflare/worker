@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { SERVICES_YAML, settingsOverride } from '../../../src/do/settings';
+import { SERVICES_YAML, settingsOverride } from '../../../src/drupal/settings';
+import golden from '../../fixtures/boot-golden.json';
 
 const values = {
 	origin: JSON.stringify('https://x.dev'),
@@ -58,5 +59,26 @@ describe('SERVICES_YAML', () => {
 			'class: Drupal\\drupflare\\StreamWrapper\\CfwFileStreamWrapper'
 		);
 		expect(SERVICES_YAML.startsWith('services:\n')).toBe(true);
+	});
+});
+
+describe('output captured before the Drupal boot moved to src/drupal', () => {
+	for (const c of golden.cases) {
+		it(`reproduces the settings text byte for byte: ${c.name}`, () => {
+			expect(settingsOverride(c.values)).toBe(c.text);
+		});
+	}
+
+	it('reproduces services.yml byte for byte', () => {
+		expect(SERVICES_YAML).toBe(golden.servicesYaml);
+	});
+
+	it('covers a second site, the diagnostics variants and the overlays', () => {
+		const names = golden.cases.map((c) => c.name);
+		expect(names).toContain('second site, lane 3 of 8');
+		expect(names).toContain('PW_DIAGNOSTICS unprefixed is not read');
+		expect(names).toContain('PW_DIAGNOSTICS prefixed is a var');
+		expect(names).toContain('config and settings overlays');
+		expect(new Set(golden.cases.map((c) => c.text)).size).toBe(golden.cases.length);
 	});
 });

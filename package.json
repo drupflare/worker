@@ -82,6 +82,7 @@
 		"measure:vps": "bun scripts/measure/vps-compare.ts",
 		"measure:host": "bun scripts/measure/host-verdict.ts",
 		"measure:bench-site": "bun scripts/measure/bench-site.ts",
+		"measure:headlines": "bun scripts/measure/headlines.ts",
 		"vps:up": "docker compose -f docker/vps.yml up -d --build",
 		"vps:down": "docker compose -f docker/vps.yml down -v",
 		"vps:plan": "bun scripts/measure/vps-container.ts plan",

@@ -11,13 +11,13 @@
  *
  * {@link renderMsFor} is the constraint that replaces the comment. It refuses a cold-path figure
  * where an invalidation-path figure belongs.
- *
- * THE PRODUCTION RENDER. Durable Object cpuTime on a deployed paid worker, 35 renders on novel
- * keys with a warm `render` bin, every one confirmed `x-cfw-cache: RENDER` and
- * `x-cfw-php-booted: 1`, GraphQL filtered to the worker's own namespace. 2026-09-21.
- *
- * This is the workload a content change produces: `bumpGeneration()` leaves `dynamic_page_cache`
- * alone on the `cachetags` reason, so an invalidated page re-renders against warm bins.
+ */
+/**
+ * Invalidated page re-rendered with the render bin warm: deployed paid Durable Object cpuTime, 35
+ * renders on novel keys, every one confirmed `x-cfw-cache: RENDER` and `x-cfw-php-booted: 1`,
+ * GraphQL filtered to the worker's own namespace, 2026-09-21. A content change produces this
+ * workload: `bumpGeneration()` leaves `dynamic_page_cache` alone on the `cachetags` reason, so an
+ * invalidated page re-renders against warm bins. Re-measured by `measure:headlines`.
  */
 export const RENDER_WARM_BIN_MS = 60.2;
 
@@ -25,6 +25,7 @@ export const RENDER_WARM_BIN_MS = 60.2;
  * A COLD PATH, and 35x the warm-bin render ON THE SAME INSTRUMENT. Edge cpuTime, both bins
  * emptied, n=10, 1,982-2,579. Reachable on a first fill, a cold boot or a container rebuild, not
  * on the invalidation path. Never multiply this by an invalidation frequency.
+ * Re-measured by `measure:headlines`.
  */
 export const RENDER_COLD_BINS_MS = 2127.0;
 
@@ -36,7 +37,10 @@ export const RENDER_COLD_BINS_LOCAL_MS = 45.0;
 
 // --- serve -----------------------------------------------------------------------------------
 
-/** Durable Object cpuTime, 60 cached serves, namespace-filtered, deployed paid. 2026-09-21. */
+/**
+ * Durable Object cpuTime, 60 cached serves, namespace-filtered, deployed paid. 2026-09-21.
+ * Re-measured by `measure:headlines`.
+ */
 export const CACHED_SERVE_DO_MS = 0.42;
 /** front worker plus object, the figure the models charge a cached view */
 export const CACHED_SERVE_TOTAL_MS = 1.8;
@@ -48,7 +52,10 @@ export const SITE_GB = 4.726784 / 1000.0;
 
 // --- what a site that stays resident, or wakes cold, costs --------------------------------------
 
-/** cpuTime of a cold interpreter boot, median of four fresh objects on a deployed paid worker, 2026-09-09 */
+/**
+ * cpuTime of a cold interpreter boot, median of four fresh objects on a deployed paid worker,
+ * 2026-09-09.
+ */
 export const COLD_BOOT_MS = 1264.0;
 
 /** billed wall time of one warming firing, n=116 across two deployed objects; CPU time was not read */

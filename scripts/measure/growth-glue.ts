@@ -45,10 +45,10 @@ export type Abi =
 	| 'vmtailcall'
 	| 'spimport'
 	| 'shipping'
-	| 's12base'
-	| 's12ssp'
-	| 's12so2'
-	| 's12so1';
+	| 'baseline'
+	| 'stackprot'
+	| 'stackcheck2'
+	| 'stackcheck1';
 
 /** the pristine glue for an ABI, as `phasm` publishes it */
 export function glueFor(abi: Abi): string {

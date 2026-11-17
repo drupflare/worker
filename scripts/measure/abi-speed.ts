@@ -145,12 +145,12 @@ const ABI_WASM: Record<string, string> = {
 	spimport: '.interp/php8.5-spimport.wasm',
 	// copy of the shipping .interp/php8.5.wasm (PHP 8.5.12); `long64` above is a stale 8.5.2 build
 	shipping: '.interp/php8.5-shipping.wasm',
-	// S12 rebuilds of long64 at the pinned phasm and php-wasm commits: the baseline, then
-	// -fstack-protector-strong, then -sSTACK_OVERFLOW_CHECK=2 and =1. Score each against s12base
-	s12base: '.interp/php8.5-s12base.wasm',
-	s12ssp: '.interp/php8.5-s12ssp.wasm',
-	s12so2: '.interp/php8.5-s12so2.wasm',
-	s12so1: '.interp/php8.5-s12so1.wasm'
+	// rebuilds of long64 at the pinned phasm and php-wasm commits: the baseline, then
+	// -fstack-protector-strong, then -sSTACK_OVERFLOW_CHECK=2 and =1. Score each against baseline
+	baseline: '.interp/php8.5-baseline.wasm',
+	stackprot: '.interp/php8.5-stackprot.wasm',
+	stackcheck2: '.interp/php8.5-stackcheck2.wasm',
+	stackcheck1: '.interp/php8.5-stackcheck1.wasm'
 };
 
 export type Arm = {

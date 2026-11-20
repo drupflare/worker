@@ -1,4 +1,4 @@
-FROM php:8.5-cli
+FROM php:8.6-cli
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 ADD https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions /usr/local/bin/
 RUN chmod +x /usr/local/bin/install-php-extensions \

@@ -11,7 +11,7 @@
 #   - NOTHING IS MOUNTED. `drupal-src` and the site database are copied in, and the site is claimed
 #     at BUILD time. A container that seeded itself on first request would charge that work to the
 #     first measurement.
-FROM php:8.5-fpm-alpine
+FROM php:8.6-fpm-alpine
 
 # mbstring, pdo_sqlite, sqlite3 and opcache are already in the base image; installing one that is
 # built in emits no shared module and fails the whole layer with "cp: can't stat 'modules/*'"

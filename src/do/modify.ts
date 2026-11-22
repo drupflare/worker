@@ -3,10 +3,12 @@ import { digestSource } from '../ops/module-integrity';
 import {
 	activeRevision,
 	type Blob,
+	commitManifest,
 	type DeclaredFile,
 	dropRevision,
 	hashManifest,
 	isRevHash,
+	type KeepOptions,
 	listRevisions,
 	manifestOf,
 	materialise,
@@ -90,12 +92,14 @@ export async function handleModify(
 
 		case 'plan': {
 			const body = (await site.readModifyBody(request)) as
-				{ files?: DeclaredFile[] } | undefined;
+				({ files?: DeclaredFile[] } & Record<string, unknown>) | undefined;
 			if (!body) return site.modifyBadBody();
+			const options = readKeepOptions(body);
+			if (options === undefined) return jsonError(KEEP_REFUSAL, 400);
 			const declared = Array.isArray(body.files) ? body.files : [];
 			const blobs = planBlobs(site.sql, declared);
 			// not `planSync`: a declared file with no blob has no source and would read as removed
-			const change = planDeclared(site.sql, site.gitStoredFiles(pkg), declared);
+			const change = planDeclared(site.sql, site.gitStoredFiles(pkg), declared, options);
 			return Response.json({
 				ok: true,
 				package: pkg,
@@ -104,7 +108,8 @@ export async function handleModify(
 				wantBytes: blobs.wantBytes,
 				counts: change.counts,
 				rowsWritten: change.rowsWritten,
-				removed: change.removed.slice(0, 200)
+				removed: change.removed.slice(0, 200),
+				kept: change.kept
 			});
 		}
 
@@ -124,21 +129,44 @@ export async function handleModify(
 
 		case 'commit': {
 			const body = (await site.readModifyBody(request)) as
-				{ files?: { path: string; hash: string }[] } | undefined;
+				| ({ files?: { path: string; hash: string }[] } & Record<string, unknown>)
+				| undefined;
 			if (!body) return site.modifyBadBody();
+			const options = readKeepOptions(body);
+			if (options === undefined) return jsonError(KEEP_REFUSAL, 400);
 			const entries = Array.isArray(body.files) ? body.files : [];
-			if (entries.length === 0) {
+			if (entries.length === 0 && options.keep !== true) {
 				return jsonError('a revision with no files would unmount the package', 400);
 			}
-			const manifest: Record<string, string> = {};
+			const named: Record<string, string> = {};
 			for (const file of entries) {
 				if (typeof file?.path === 'string' && isRevHash(file?.hash)) {
-					manifest[file.path] = file.hash;
+					named[file.path] = file.hash;
 				}
 			}
-			if (Object.keys(manifest).length !== entries.length) {
+			if (Object.keys(named).length !== entries.length) {
 				return jsonError('every file needs a path and a sha256 hash', 400);
 			}
+			const prior = activeRevision(site.sql, pkg);
+			// checked before anything is written, so a commit built on a revision that has moved lands nowhere
+			const base = (body as { base?: unknown }).base;
+			if (base !== undefined && !isRevHash(base)) {
+				return jsonError('base must be a revision hash', 400);
+			}
+			if (base !== undefined && base !== prior?.rev) {
+				return jsonError('stale_base', 409, {
+					code: 'stale_base',
+					base,
+					active: prior?.rev ?? null
+				});
+			}
+			const resolved = commitManifest(
+				named,
+				prior ? manifestOf(site.sql, prior.id) : {},
+				options
+			);
+			if (!resolved.ok) return jsonError(resolved.error, 400);
+			const manifest = resolved.manifest;
 			const sentAutoload = (body as { autoload?: unknown }).autoload;
 			const declaredAutoload = (
 				Array.isArray(sentAutoload) ? sentAutoload : [sentAutoload]
@@ -147,7 +175,6 @@ export async function handleModify(
 				return jsonError('autoload must name a vendor package and a mount', 400);
 			}
 			const rev = await hashManifest(manifest);
-			const prior = activeRevision(site.sql, pkg);
 			// registered before the boot check (a hook extending a vendor class needs it to build
 			// the container); rolled back with the revision on refusal
 			const autoloads = declaredAutoload.filter(
@@ -208,7 +235,8 @@ export async function handleModify(
 				rev,
 				reused: recorded.reused,
 				...applied,
-				pruned
+				pruned,
+				...(options.keep === true ? { kept: resolved.kept, removed: resolved.removed } : {})
 			});
 		}
 
@@ -248,6 +276,19 @@ export async function handleModify(
 		default:
 			return jsonError(`unknown action: ${action}`, 400);
 	}
+}
+
+const KEEP_REFUSAL = 'keep must be true or false and remove a list of paths';
+
+/** `keep` and `remove` from a commit or plan body, or undefined when either is malformed */
+function readKeepOptions(body: Record<string, unknown>): KeepOptions | undefined {
+	const { keep, remove } = body;
+	if (keep !== undefined && typeof keep !== 'boolean') return undefined;
+	if (remove === undefined) return { keep: keep === true };
+	if (!Array.isArray(remove) || remove.some((one) => typeof one !== 'string' || one === '')) {
+		return undefined;
+	}
+	return { keep: keep === true, remove: remove as string[] };
 }
 
 /**

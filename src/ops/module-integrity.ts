@@ -13,6 +13,7 @@
  * @module
  */
 import { createHash } from 'node:crypto';
+import { sourceBytes } from './module-bytes';
 import { type SealedStore, tokenMatches } from './site-secrets';
 
 /** sealed key that says the rows already on the site were adopted once */
@@ -86,7 +87,7 @@ export function digestBytes(bytes: Uint8Array): string {
 
 /** sha256 hex of a stored source string, as the mount will read it back */
 export function digestSource(source: string): string {
-	return digestBytes(new TextEncoder().encode(source));
+	return digestBytes(sourceBytes(source));
 }
 
 /** whether a record holds this digest, compared in constant time; a malformed record never does */

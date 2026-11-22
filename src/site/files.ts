@@ -56,14 +56,26 @@ const MODULE_ASSET_TYPES: Record<string, string> = {
 	css: 'text/css; charset=utf-8',
 	js: 'text/javascript; charset=utf-8',
 	mjs: 'text/javascript; charset=utf-8',
-	svg: 'image/svg+xml'
+	svg: 'image/svg+xml',
+	png: 'image/png',
+	jpg: 'image/jpeg',
+	jpeg: 'image/jpeg',
+	gif: 'image/gif',
+	webp: 'image/webp',
+	avif: 'image/avif',
+	ico: 'image/x-icon',
+	woff: 'font/woff',
+	woff2: 'font/woff2',
+	ttf: 'font/ttf',
+	otf: 'font/otf'
 };
 
 /**
  * The stored-source path a GET for a module, theme, profile or library asset names, or undefined.
  *
  * The pack's own files are published by the asset layer and never reach the Worker, so a request
- * that does is a site-delivered asset or a 404. Text types only: `cfw_module_file.source` is TEXT.
+ * that does is a site-delivered asset or a 404. The object answers the file's bytes, which a
+ * binary asset holds as base64 in its TEXT row.
  */
 export function moduleAssetPath(method: string, pathname: string): string | undefined {
 	if (method !== 'GET' && method !== 'HEAD') return undefined;

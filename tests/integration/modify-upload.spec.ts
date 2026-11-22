@@ -94,6 +94,20 @@ function modify(site: ServeDo, token: string) {
 	};
 }
 
+/** a PNG signature, a NUL and a byte that is not UTF-8: what a TEXT round trip would damage */
+const LOGO = new Uint8Array([
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0xfe, 0x00
+]);
+
+async function sha256Bytes(bytes: Uint8Array): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', bytes);
+	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function toBase64(bytes: Uint8Array): string {
+	return btoa(String.fromCharCode(...bytes));
+}
+
 /** declare, send the bytes it does not have, commit; the shape the CLI drives */
 async function upload(
 	call: ReturnType<typeof modify>,
@@ -287,6 +301,267 @@ describe('an uploaded revision lands the way a git pull does', () => {
 		expect(seen.live.join('')).toContain('// v1');
 		expect(seen.unknown.status).toBe(404);
 		expect(seen.unknown.body['error']).toBe('no such revision');
+	}, 900_000);
+});
+
+describe('a revision may carry binary files and keep the ones it does not name', () => {
+	const LOGO_PATH = 'themes/custom/cfw_probe_theme/logo.png';
+	const THEME_INFO = 'themes/custom/cfw_probe_theme/cfw_probe_theme.info.yml';
+	const info =
+		'name: Probe theme\ntype: theme\nbase theme: false\ncore_version_requirement: ^11\n';
+
+	async function sendLogo(call: ReturnType<typeof modify>, package_: string) {
+		const hash = await sha256Bytes(LOGO);
+		const blobs = await call(
+			'blobs',
+			{ package: package_ },
+			{ blobs: [{ hash, source: toBase64(LOGO), encoding: 'base64' }] }
+		);
+		return { hash, blobs };
+	}
+
+	it('delivers the exact bytes to PHP and to the front worker, and the integrity check accepts them', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const { hash, blobs } = await sendLogo(call, 'cfw_probe_theme');
+			const infoHash = await sha256(info);
+			await call(
+				'blobs',
+				{ package: 'cfw_probe_theme' },
+				{ blobs: [{ hash: infoHash, source: info }] }
+			);
+			const commit = await call(
+				'commit',
+				{ package: 'cfw_probe_theme', label: 'logo' },
+				{
+					files: [
+						{ path: THEME_INFO, hash: infoHash },
+						{ path: LOGO_PATH, hash }
+					]
+				}
+			);
+			site.php = undefined;
+			const stat = (await site.runJson(
+				`<?php echo json_encode(['size' => filesize('/drupal/${LOGO_PATH}')]);`
+			)) as { size: number };
+			const read = (await site.runJson(
+				`<?php echo json_encode(['b64' => base64_encode(file_get_contents('/drupal/${LOGO_PATH}'))]);`
+			)) as { b64: string };
+			const asset = await site.fetch(
+				new Request(`${ORIGIN}/__moduleasset?path=${encodeURIComponent(LOGO_PATH)}`)
+			);
+			return {
+				blobs,
+				commit,
+				stat,
+				read,
+				served: new Uint8Array(await asset.arrayBuffer()),
+				stats: integrityReport((site as unknown as SitePhpDurableObject).moduleIntegrity),
+				bytes: site.execSql('SELECT bytes FROM cfw_module_blob WHERE hash = ?', [hash])
+					.rows[0]
+			};
+		});
+		expect(seen.blobs.body).toMatchObject({ stored: 1, rejected: [] });
+		expect(seen.commit.body).toMatchObject({ ok: true, applied: true });
+		expect(seen.stat.size).toBe(LOGO.length);
+		expect(seen.read.b64).toBe(toBase64(LOGO));
+		expect([...seen.served]).toEqual([...LOGO]);
+		// a claimed site holds every file to its record, so a wrong digest would read as empty here
+		expect(seen.stats).toMatchObject({ mode: 'enforcing', refused: 0 });
+		expect(seen.bytes).toEqual({ bytes: LOGO.length });
+	}, 900_000);
+
+	it('refuses base64 whose bytes do not match the hash over the wire', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const hash = await sha256Bytes(LOGO);
+			const forged = await call(
+				'blobs',
+				{ package: 'cfw_probe_theme' },
+				{
+					blobs: [
+						{ hash, source: toBase64(new Uint8Array([1, 2, 3])), encoding: 'base64' }
+					]
+				}
+			);
+			const unknown = await call(
+				'blobs',
+				{ package: 'cfw_probe_theme' },
+				{ blobs: [{ hash, source: toBase64(LOGO), encoding: 'hex' }] }
+			);
+			return { forged, unknown };
+		});
+		expect(seen.forged.status).toBe(422);
+		expect(seen.forged.body).toMatchObject({ ok: false, stored: 0 });
+		expect(seen.unknown.status).toBe(422);
+	}, 900_000);
+
+	it('keeps files the commit does not name, replaces a named one and removes a listed one', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const dir = `modules/custom/${PACKAGE}`;
+			const first = await upload(
+				call,
+				{
+					...moduleTree('<?php\n// v1\n'),
+					[`${dir}/src/Keep.php`]: '<?php\n// keep\n',
+					[`${dir}/src/Gone.php`]: '<?php\n// gone\n'
+				},
+				'first'
+			);
+			const edited = '<?php\n// v2\n';
+			const hash = await sha256(edited);
+			await call('blobs', { package: PACKAGE }, { blobs: [{ hash, source: edited }] });
+			const plan = await call(
+				'plan',
+				{ package: PACKAGE },
+				{
+					files: [{ path: `${dir}/${PACKAGE}.module`, hash, bytes: edited.length }],
+					keep: true,
+					remove: [`${dir}/src/Gone.php`]
+				}
+			);
+			const commit = await call(
+				'commit',
+				{ package: PACKAGE, label: 'one file' },
+				{
+					files: [{ path: `${dir}/${PACKAGE}.module`, hash }],
+					keep: true,
+					remove: [`${dir}/src/Gone.php`]
+				}
+			);
+			const rows = site
+				.execSql('SELECT path FROM cfw_module_file WHERE package = ? ORDER BY path', [
+					PACKAGE
+				])
+				.rows.map((row) => String(row['path']));
+			const manifest = await call('manifest', { package: PACKAGE });
+			const bare = await call(
+				'commit',
+				{ package: PACKAGE },
+				{
+					files: [{ path: `${dir}/${PACKAGE}.module`, hash }],
+					remove: [`${dir}/src/Keep.php`]
+				}
+			);
+			const wiped = await call(
+				'commit',
+				{ package: PACKAGE },
+				{ files: [], keep: true, remove: Object.keys(manifest.body['manifest'] as never) }
+			);
+			const whole = await call(
+				'commit',
+				{ package: PACKAGE, label: 'whole' },
+				{ files: [{ path: `${dir}/${PACKAGE}.module`, hash }] }
+			);
+			const afterWhole = site.execSql('SELECT path FROM cfw_module_file WHERE package = ?', [
+				PACKAGE
+			]).rows.length;
+			return { first, plan, commit, rows, bare, wiped, whole, afterWhole, dir };
+		});
+		expect(seen.plan.body).toMatchObject({
+			counts: { added: 0, modified: 1, removed: 1, unchanged: 0 },
+			removed: [`${seen.dir}/src/Gone.php`],
+			kept: 2
+		});
+		expect(seen.commit.body).toMatchObject({
+			ok: true,
+			applied: true,
+			kept: 2,
+			removed: [`${seen.dir}/src/Gone.php`]
+		});
+		expect(seen.rows).toEqual([
+			`${seen.dir}/${PACKAGE}.info.yml`,
+			`${seen.dir}/${PACKAGE}.module`,
+			`${seen.dir}/src/Keep.php`
+		]);
+		// remove without keep, and a commit that would leave nothing, are refused
+		expect(seen.bare.status).toBe(400);
+		expect(seen.wiped.status).toBe(400);
+		// without keep a commit is still the whole package
+		expect(seen.whole.body).toMatchObject({ ok: true, applied: true });
+		expect(seen.afterWhole).toBe(1);
+	}, 900_000);
+});
+
+describe('a commit built on a base revision', () => {
+	const dir = `modules/custom/${PACKAGE}`;
+	const edit = async (call: ReturnType<typeof modify>, source: string) => {
+		const hash = await sha256(source);
+		await call('blobs', { package: PACKAGE }, { blobs: [{ hash, source }] });
+		return { path: `${dir}/${PACKAGE}.module`, hash };
+	};
+
+	it('lands when the base is still active, and refuses with the active revision when it moved', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const first = await upload(call, moduleTree('<?php\n// v1\n'), 'first');
+			const base = String(first.commit.body['rev']);
+			const a = await edit(call, '<?php\n// writer a\n');
+			const b = await edit(call, '<?php\n// writer b\n');
+			const winner = await call(
+				'commit',
+				{ package: PACKAGE },
+				{ files: [a], keep: true, base }
+			);
+			const rowsAfterWinner = site
+				.execSql('SELECT source FROM cfw_module_file WHERE path LIKE ?', ['%.module'])
+				.rows.map((row) => String(row['source']));
+			const revisionsAfterWinner = (await call('revisions', { package: PACKAGE })).body;
+			const loser = await call(
+				'commit',
+				{ package: PACKAGE },
+				{ files: [b], keep: true, base }
+			);
+			const rowsAfterLoser = site
+				.execSql('SELECT source FROM cfw_module_file WHERE path LIKE ?', ['%.module'])
+				.rows.map((row) => String(row['source']));
+			const revisionsAfterLoser = (await call('revisions', { package: PACKAGE })).body;
+			const retry = await call(
+				'commit',
+				{ package: PACKAGE },
+				{ files: [b], keep: true, base: String(winner.body['rev']) }
+			);
+			const malformed = await call(
+				'commit',
+				{ package: PACKAGE },
+				{ files: [b], keep: true, base: 'not-a-hash' }
+			);
+			const noRevision = await call(
+				'commit',
+				{ package: 'cfw_other_pkg' },
+				{ files: [b], base }
+			);
+			return {
+				base,
+				winner,
+				rowsAfterWinner,
+				revisionsAfterWinner,
+				loser,
+				rowsAfterLoser,
+				revisionsAfterLoser,
+				retry,
+				malformed,
+				noRevision
+			};
+		});
+		expect(seen.winner.body).toMatchObject({ ok: true, applied: true });
+		expect(seen.rowsAfterWinner).toEqual(['<?php\n// writer a\n']);
+		// the control: the second commit would have changed the file and added a revision
+		expect(seen.loser.status).toBe(409);
+		expect(seen.loser.body).toMatchObject({
+			code: 'stale_base',
+			base: seen.base,
+			active: seen.winner.body['rev']
+		});
+		expect(seen.rowsAfterLoser).toEqual(seen.rowsAfterWinner);
+		expect(seen.revisionsAfterLoser).toEqual(seen.revisionsAfterWinner);
+		expect(seen.retry.body).toMatchObject({ ok: true, applied: true });
+		expect(seen.malformed.status).toBe(400);
+		expect(seen.noRevision).toMatchObject({
+			status: 409,
+			body: { code: 'stale_base', active: null }
+		});
 	}, 900_000);
 });
 

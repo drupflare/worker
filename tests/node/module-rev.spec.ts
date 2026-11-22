@@ -1,10 +1,13 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
+import { bytesToBase64, isBinarySource, sourceBytes } from '../../src/ops/module-bytes';
 import {
 	REVISION_RETENTION,
 	activeRevision,
+	commitManifest,
 	dropRevision,
 	ensureRevTables,
+	hashBytes,
 	hashManifest,
 	hashSource,
 	isRevHash,
@@ -394,6 +397,168 @@ describe('status reports what is live', () => {
 				revisions: 0
 			}
 		]);
+		sql.close();
+	});
+});
+
+describe('a blob may carry bytes as base64', () => {
+	const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff]);
+
+	it('hashes the decoded bytes, stores a binary file as marked base64 and sizes it in bytes', async () => {
+		const sql = open();
+		ensureRevTables(sql);
+		const hash = await hashBytes(PNG);
+		const result = await storeBlobs(
+			sql,
+			[{ hash, source: bytesToBase64(PNG), encoding: 'base64' }],
+			run
+		);
+		expect(result).toMatchObject({ stored: 1, skipped: 0, bytes: PNG.length, rejected: [] });
+		const seen = materialise(sql, { 'themes/t/logo.png': hash });
+		expect(seen.missing).toEqual([]);
+		expect(isBinarySource(seen.files[0]?.source ?? '')).toBe(true);
+		expect(seen.files[0]?.bytes).toBe(PNG.length);
+		expect(sourceBytes(seen.files[0]?.source ?? '')).toEqual(PNG);
+		sql.close();
+	});
+
+	it('holds text sent as base64 under the same hash as the same text sent plain', async () => {
+		const sql = open();
+		ensureRevTables(sql);
+		const text = '.a { color: red }\n';
+		const hash = await hashSource(text);
+		const asBase64 = bytesToBase64(new TextEncoder().encode(text));
+		const first = await storeBlobs(sql, [{ hash, source: asBase64, encoding: 'base64' }], run);
+		const second = await storeBlobs(sql, [{ hash, source: text }], run);
+		expect(first.stored).toBe(1);
+		expect(second).toMatchObject({ stored: 0, skipped: 1 });
+		expect(materialise(sql, { 'a.css': hash }).files[0]?.source).toBe(text);
+		sql.close();
+	});
+
+	it('refuses base64 whose bytes do not hash to the name, and an encoding it does not read', async () => {
+		const sql = open();
+		ensureRevTables(sql);
+		const hash = await hashBytes(PNG);
+		const other = bytesToBase64(new Uint8Array([1, 2, 3]));
+		const result = await storeBlobs(
+			sql,
+			[
+				{ hash, source: other, encoding: 'base64' },
+				{ hash, source: '%%%', encoding: 'base64' },
+				{ hash, source: other, encoding: 'hex' as never },
+				{ hash: 'nonsense', source: other, encoding: 'base64' }
+			],
+			run
+		);
+		expect(result.stored).toBe(0);
+		expect(result.rejected).toEqual([hash, hash, hash, 'nonsense']);
+		expect(materialise(sql, { 'logo.png': hash }).missing).toEqual(['logo.png']);
+		sql.close();
+	});
+
+	it('plans a binary file as unchanged when the mounted row holds the same bytes', async () => {
+		const sql = open();
+		ensureRevTables(sql);
+		const hash = await hashBytes(PNG);
+		await storeBlobs(sql, [{ hash, source: bytesToBase64(PNG), encoding: 'base64' }], run);
+		const mounted = materialise(sql, { 'logo.png': hash }).files[0]?.source ?? '';
+		const plan = planDeclared(sql, new Map([['logo.png', mounted]]), [
+			{ path: 'logo.png', hash, bytes: PNG.length }
+		]);
+		expect(plan.counts).toMatchObject({ unchanged: 1, modified: 0 });
+		sql.close();
+	});
+});
+
+describe('a commit may keep the files it does not name', () => {
+	const a = 'a'.repeat(64);
+	const b = 'b'.repeat(64);
+	const c = 'c'.repeat(64);
+
+	it('treats the named files as the whole package without keep, as before', () => {
+		expect(commitManifest({ 'x.php': a }, { 'x.php': b, 'y.php': c }, {})).toEqual({
+			ok: true,
+			manifest: { 'x.php': a },
+			kept: 0,
+			removed: []
+		});
+	});
+
+	it('replaces a named path and carries every other path from the prior manifest', () => {
+		expect(commitManifest({ 'x.php': a }, { 'x.php': b, 'y.php': c }, { keep: true })).toEqual({
+			ok: true,
+			manifest: { 'x.php': a, 'y.php': c },
+			kept: 1,
+			removed: []
+		});
+	});
+
+	it('drops the paths in remove, ignores one the package does not hold, and counts what it removed', () => {
+		const out = commitManifest(
+			{ 'x.php': a },
+			{ 'x.php': b, 'y.php': c, 'z.php': c },
+			{ keep: true, remove: ['y.php', 'never.php'] }
+		);
+		expect(out).toEqual({
+			ok: true,
+			manifest: { 'x.php': a, 'z.php': c },
+			kept: 1,
+			removed: ['y.php']
+		});
+	});
+
+	it('refuses remove without keep, a path both named and removed, and a result with no files', () => {
+		expect(commitManifest({ 'x.php': a }, {}, { remove: ['y.php'] })).toMatchObject({
+			ok: false
+		});
+		expect(
+			commitManifest({ 'x.php': a }, { 'x.php': b }, { keep: true, remove: ['x.php'] })
+		).toMatchObject({ ok: false, error: 'x.php is both named and removed' });
+		expect(commitManifest({}, { 'x.php': b }, { keep: true, remove: ['x.php'] })).toEqual({
+			ok: false,
+			error: 'a revision with no files would unmount the package'
+		});
+		expect(commitManifest({}, {}, { keep: true })).toMatchObject({ ok: false });
+	});
+
+	it('does not read a path named like an object property as present', () => {
+		expect(commitManifest({ 'x.php': a }, {}, { keep: true, remove: ['constructor'] })).toEqual(
+			{
+				ok: true,
+				manifest: { 'x.php': a },
+				kept: 0,
+				removed: []
+			}
+		);
+	});
+
+	it('plans a kept package with no removals and counts what stays', async () => {
+		const sql = open();
+		ensureRevTables(sql);
+		const stored = new Map([
+			['a.php', 'v1'],
+			['b.php', 'v1'],
+			['c.php', 'v1']
+		]);
+		const plan = planDeclared(
+			sql,
+			stored,
+			[{ path: 'a.php', hash: await hashSource('v2'), bytes: 2 }],
+			{ keep: true, remove: ['c.php'] }
+		);
+		expect(plan.counts).toEqual({ added: 0, modified: 1, removed: 1, unchanged: 0 });
+		expect(plan.removed).toEqual(['c.php']);
+		expect(plan.kept).toBe(1);
+		expect(plan.rowsWritten).toBe(2);
+		sql.close();
+	});
+
+	it('plans without keep as it did, with nothing kept', async () => {
+		const sql = open();
+		ensureRevTables(sql);
+		const plan = planDeclared(sql, new Map([['gone.php', 'old']]), []);
+		expect(plan).toMatchObject({ removed: ['gone.php'], kept: 0 });
 		sql.close();
 	});
 });

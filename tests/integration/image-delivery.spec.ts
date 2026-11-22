@@ -339,15 +339,25 @@ describe('a delivered module asset is served by the front worker', () => {
 		expect(reads(spy.seen), 'the second read reached the object').toHaveLength(1);
 	});
 
-	it('serves js and svg, and leaves binaries and other roots alone', async () => {
+	it('serves js, svg, images and fonts with their own types, and leaves other roots and types alone', async () => {
 		const spy = fileSpy(200, 'x', css);
 		const js = await get('/themes/custom/t/app.js', spy.namespace);
 		expect(js.contentType).toBe('text/javascript; charset=utf-8');
 		const svg = await get('/libraries/l/i.svg', spy.namespace);
 		expect(svg.contentType).toBe('image/svg+xml');
-		await get('/modules/custom/probe/img/logo.png', spy.namespace);
+		const png = await get('/modules/custom/probe/img/logo.png', spy.namespace);
+		expect(png.contentType).toBe('image/png');
+		expect(png.nosniff).toBe('nosniff');
+		const font = await get('/themes/custom/t/fonts/a.woff2', spy.namespace);
+		expect(font.contentType).toBe('font/woff2');
 		await get('/sites/default/notes.css', spy.namespace);
-		expect(reads(spy.seen)).toEqual(['themes/custom/t/app.js', 'libraries/l/i.svg']);
+		await get('/modules/custom/probe/README.txt', spy.namespace);
+		expect(reads(spy.seen)).toEqual([
+			'themes/custom/t/app.js',
+			'libraries/l/i.svg',
+			'modules/custom/probe/img/logo.png',
+			'themes/custom/t/fonts/a.woff2'
+		]);
 	});
 
 	it('falls through to Drupal for an asset the site does not hold', async () => {

@@ -75,10 +75,9 @@ either limit the answer is still `204` and nothing is logged. Static files the a
 (`/core`, `/modules`, `/themes`, `/agg`) carry the cache rules in `assets/_headers` and none of
 these.
 
-`/enable` is not needed for a text asset a migrated module ships: a `.css`, `.js` or `.svg` file
+`/enable` is not needed for an asset a migrated module ships: a stylesheet, script, image or font
 stored in `cfw_module_file` is served from `/modules`, `/themes`, `/profiles` and `/libraries` when
-the pack does not hold the path. Binary assets are not served this way, because the table stores
-source as text.
+the pack does not hold the path. `docs/architecture/modules.md` lists the extensions.
 
 A migrated site claims with `POST /firstrun` and a body of `{"migrated": true}`. That mints the owner
 token and marks the site claimed without changing uid 1, the site name or any mail setting. It takes no

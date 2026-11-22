@@ -437,8 +437,8 @@ export function parseOptions(argv: readonly string[]): Options {
 	}
 	if (opts.eventsOut === '') throw new Error('--events-out needs a path');
 	if (opts.mode === 'deployed') {
-		if (opts.account !== 'student') {
-			throw new Error('--deployed needs --account=student; no other account is accepted');
+		if (opts.account !== 'student' && opts.account !== 'paid') {
+			throw new Error('--deployed needs --account=student or --account=paid');
 		}
 		if (!NAME_RE.test(opts.name)) {
 			throw new Error(
@@ -461,6 +461,23 @@ export function studentCredentials(env: Record<string, string | undefined>): {
 	for (const other of ['FREE_CLOUDFLARE_ACCOUNT_ID', 'PAID_CLOUDFLARE_ACCOUNT_ID']) {
 		if (env[other] !== undefined && env[other] === id) {
 			throw new Error(`${STUDENT_ID_ENV} equals ${other}; refusing a non-student account`);
+		}
+	}
+	return { id, token };
+}
+
+/** the default account's id and token for a paid run the owner authorized in writing, refusing the student and free accounts' ids */
+export function paidCredentials(env: Record<string, string | undefined>): {
+	id: string;
+	token: string;
+} {
+	const id = env['CLOUDFLARE_ACCOUNT_ID'];
+	const token = env['CLOUDFLARE_API_TOKEN'];
+	if (!id) throw new Error('CLOUDFLARE_ACCOUNT_ID is not set');
+	if (!token) throw new Error('CLOUDFLARE_API_TOKEN is not set');
+	for (const other of ['STUDENT_CLOUDFLARE_ACCOUNT_ID', 'FREE_CLOUDFLARE_ACCOUNT_ID']) {
+		if (env[other] !== undefined && env[other] === id) {
+			throw new Error(`CLOUDFLARE_ACCOUNT_ID equals ${other}; this is not the paid account`);
 		}
 	}
 	return { id, token };
@@ -668,13 +685,18 @@ export async function runDeployed(
 	root: string,
 	buildConfig: (name: string, root: string) => Record<string, unknown> = throwawayConfig
 ): Promise<number> {
-	const creds = studentCredentials(env);
+	const paid = opts.account === 'paid';
+	if (paid && !(Number(env['PAID_RUN_MAX_USD']) > 0)) {
+		deps.log('refusing: a paid run needs PAID_RUN_MAX_USD set to the written price cap');
+		return 2;
+	}
+	const creds = paid ? paidCredentials(env) : studentCredentials(env);
 	const secrets = [creds.id, creds.token];
 	const cenv = childEnv(env, creds);
 	const log = (s: string) => deps.log(redact(s, secrets));
 
 	const before = await readInventory(creds, deps.fetch);
-	const problems = baselineProblems(before);
+	const problems = paid ? [] : baselineProblems(before);
 	if (problems.length > 0) {
 		log(`refusing: the account holds more than the known gmux pair: ${problems.join('; ')}`);
 		return 2;

@@ -54,7 +54,7 @@ import {
 // #region plan
 
 /** the throwaway's name: a `cfw-wp-` prefix and eight hex digits */
-export const NAME_RE = /^cfw-wp-[0-9a-f]{8}$/;
+export const NAME_RE = /^cfw-wp(?:shim)?-[0-9a-f]{8}$/;
 
 /** requests the whole run may send; the spec's ceiling */
 export const REQUEST_CEILING = 600;
@@ -375,11 +375,11 @@ export function parseWpOptions(argv: readonly string[]): WpOptions {
 	const wantsAccount = modes.has('deployed') || modes.has('dry');
 	if (o.account !== undefined && !wantsAccount)
 		throw new Error('--account belongs to --deployed');
-	if (modes.has('deployed') && o.account !== 'student') {
-		throw new Error('--deployed needs --account=student; no other account is accepted');
+	if (modes.has('deployed') && o.account !== 'student' && o.account !== 'paid') {
+		throw new Error('--deployed needs --account=student or --account=paid');
 	}
-	if (o.account !== undefined && o.account !== 'student') {
-		throw new Error('--account=student is the only account accepted');
+	if (o.account !== undefined && o.account !== 'student' && o.account !== 'paid') {
+		throw new Error('--account takes student or paid');
 	}
 	if (!Number.isInteger(o.port) || o.port < 1024 || o.port > 65000)
 		throw new Error('--port is out of range');
@@ -530,6 +530,11 @@ export type ProbeResult =
 			blockExternal: unknown;
 			remoteGet: unknown;
 			curlExec: unknown;
+			refusals?: unknown;
+			remotePost?: unknown;
+			selfFetch?: unknown;
+			imageEditor?: unknown;
+			outbound?: unknown;
 	  }
 	| { ok: false; reason: string };
 
@@ -552,7 +557,12 @@ export function parseProbeBody(text: string): ProbeResult {
 		curlInit: v.curlInit === true,
 		blockExternal: v.blockExternal,
 		remoteGet: v.remoteGet,
-		curlExec: v.curlExec
+		curlExec: v.curlExec,
+		...(v.refusals === undefined ? {} : { refusals: v.refusals }),
+		...(v.remotePost === undefined ? {} : { remotePost: v.remotePost }),
+		...(v.selfFetch === undefined ? {} : { selfFetch: v.selfFetch }),
+		...(v.imageEditor === undefined ? {} : { imageEditor: v.imageEditor }),
+		...(v.outbound === undefined ? {} : { outbound: v.outbound })
 	};
 }
 
@@ -563,11 +573,18 @@ export function describeProbe(p: ProbeResult): string[] {
 		p.gdInfo !== null && typeof p.gdInfo === 'object'
 			? `gd_info() answered an array of ${Object.keys(p.gdInfo as object).length} keys`
 			: `gd_info() answered ${JSON.stringify(p.gdInfo)}`;
+	const more = (label: string, value: unknown): string[] =>
+		value === undefined ? [] : [`${label} = ${JSON.stringify(value)}`];
 	return [
 		gd,
 		`function_exists('imagecreatefromstring') = ${p.imagecreatefromstring}`,
 		`wp_remote_get = ${JSON.stringify(p.remoteGet)} (WP_HTTP_BLOCK_EXTERNAL = ${JSON.stringify(p.blockExternal)})`,
-		`curl shim: curl_init exists = ${p.curlInit}; curl_exec = ${JSON.stringify(p.curlExec)}`
+		`curl shim: curl_init exists = ${p.curlInit}; curl_exec = ${JSON.stringify(p.curlExec)}`,
+		...more('refusals', p.refusals),
+		...more('wp_remote_post', p.remotePost),
+		...more('fetch of the site itself', p.selfFetch),
+		...more('image editor', p.imageEditor),
+		...more('outbound tally', p.outbound)
 	];
 }
 
@@ -945,12 +962,20 @@ export async function driveWordpress(
 
 	// ready: the first requests start the migration chain and answer 503 until it is done
 	let ready = false;
+	let lastStatus = 0;
+	let lastHead = '';
 	for (let i = 0; i < READY_POLLS_MAX && !ready; i++) {
 		const r = await send('ready', i, null, 'GET', '/wp-login.php', { keep: false });
 		ready = r.status === 200;
+		lastStatus = r.status;
+		lastHead = r.text.slice(0, 160).replace(/\s+/g, ' ');
 		if (!ready) await sleep(2000);
 	}
-	if (!ready) throw new Error('the site never answered 200 on /wp-login.php');
+	if (!ready) {
+		throw new Error(
+			`the site never answered 200 on /wp-login.php; the last answer was ${lastStatus}: ${lastHead}`
+		);
+	}
 
 	const origin = base;
 	const claimBody = JSON.stringify({
@@ -1245,7 +1270,7 @@ if (import.meta.main) {
 					mode: 'deployed',
 					name: opts.name,
 					dry: false,
-					account: 'student',
+					account: opts.account,
 					eventsOut: opts.eventsOut
 				},
 				process.env,

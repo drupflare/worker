@@ -7,6 +7,7 @@ Settings for maintenance, owner access, audit, runtime overrides, database updat
 - [Owner Access and Audit](owner-access.md): owner token recovery and the audit log.
 - [Updates and Reconciliation](updates.md): database updates, pack reconciliation and the addressable sweep.
 - [Runtime Overrides](overrides.md): reading and writing overrides, and the three permissions.
+- [WordPress Packages](wordpress-packages.md): installing, updating, rolling back and deleting plugins and themes, archive limits, core updates and the Multisite refusal.
 
 ## Site Maintenance
 

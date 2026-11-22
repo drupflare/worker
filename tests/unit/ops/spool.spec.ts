@@ -18,22 +18,28 @@ import {
 	SPOOL_WINDOW_MS,
 	spoolAllowed,
 	spoolCursorFloor,
-	SpoolStamps
+	spoolExcludedBy,
+	spoolExcludedPrefixes,
+	spoolRefusesPath,
+	spoolRefusesResponse,
+	SpoolStamps,
+	type SpoolResponseView
 } from '../../../src/ops/spool';
 import { intrinsicWidth, withoutUpscale } from '../../../src/site/spool';
 import { druplicon } from '../../fixtures/png';
 
 describe('whether spool runs', () => {
-	it('is on for a paid site and off for a free one, with no lever set', () => {
+	it('is on for a paid site and for a free one, with no lever set', () => {
 		expect(spoolEnabled({ PLAN: 'paid' })).toBe(true);
-		expect(spoolEnabled({ PLAN: 'free' })).toBe(false);
-		expect(spoolEnabled({})).toBe(false);
+		expect(spoolEnabled({ PLAN: 'free' })).toBe(true);
+		expect(spoolEnabled({})).toBe(true);
 	});
 
-	it('takes SPOOL over the plan in both directions', () => {
+	it('turns off with SPOOL=0 on either plan, and treats an empty value as unset', () => {
 		expect(spoolEnabled({ PLAN: 'paid', SPOOL: '0' })).toBe(false);
+		expect(spoolEnabled({ PLAN: 'free', SPOOL: '0' })).toBe(false);
 		expect(spoolEnabled({ PLAN: 'free', SPOOL: '1' })).toBe(true);
-		expect(spoolEnabled({ PLAN: 'paid', SPOOL: '' })).toBe(true);
+		expect(spoolEnabled({ PLAN: 'free', SPOOL: '' })).toBe(true);
 	});
 
 	it('leaves each feature on until its own lever is 0, and never without spool', () => {
@@ -42,7 +48,8 @@ describe('whether spool runs', () => {
 			expect(spoolFeature({ PLAN: 'paid', [name]: '1' }, name)).toBe(true);
 			expect(spoolFeature({ PLAN: 'paid', [name]: '0' }, name)).toBe(false);
 			expect(spoolFeature({ PLAN: 'paid', SPOOL: '0' }, name)).toBe(false);
-			expect(spoolFeature({ PLAN: 'free' }, name)).toBe(false);
+			expect(spoolFeature({ PLAN: 'free' }, name)).toBe(true);
+			expect(spoolFeature({ PLAN: 'free', SPOOL: '0' }, name)).toBe(false);
 		}
 	});
 
@@ -54,6 +61,64 @@ describe('whether spool runs', () => {
 			expect(leverRefusal(name, '')).toBeUndefined();
 			expect(leverRefusal(name, 'maybe')).toMatch(/0|1/);
 		}
+	});
+});
+
+describe('the paths a site keeps out of spool', () => {
+	it('changes nothing while the lever is empty or unset', () => {
+		for (const env of [{}, { SPOOL_EXCLUDE: '' }, { SPOOL_EXCLUDE: ' , ,' }]) {
+			expect(spoolExcludedPrefixes(env)).toEqual([]);
+			expect(spoolExcludedBy(env, '/news/today')).toBeUndefined();
+			expect(spoolRefusesPath('drupal', env, '/news/today', '')).toBeUndefined();
+			expect(
+				spoolRefusesPath('wordpress', { WORDPRESS_PAGE_CACHE: '1', ...env }, '/news/', '')
+			).toBeUndefined();
+		}
+		expect(spoolExcludedBy(undefined, '/news')).toBeUndefined();
+	});
+
+	it('refuses the listed prefix and what sits under it, and takes a path outside it', () => {
+		const env = { SPOOL_EXCLUDE: ' /news/ , /events' };
+		expect(spoolExcludedPrefixes(env)).toEqual(['/news', '/events']);
+		for (const path of ['/news', '/news/', '/news/today', '/events/2026/spring']) {
+			expect(spoolRefusesPath('drupal', env, path, ''), path).toMatch(/^site-path:/);
+		}
+		for (const path of ['/', '/newsletter', '/about/news', '/event', '/eventsite']) {
+			expect(spoolRefusesPath('drupal', env, path, ''), path).toBeUndefined();
+		}
+		expect(spoolExcludedBy(env, '/news/today')).toBe('/news');
+	});
+
+	it('applies to a CMS the same way, and a file under the prefix is out too', () => {
+		const env = { SPOOL_EXCLUDE: '/members', WORDPRESS_PAGE_CACHE: '1' };
+		expect(spoolRefusesPath('wordpress', env, '/members/list/', '')).toBe('site-path:/members');
+		expect(spoolRefusesPath('wordpress', env, '/members/logo.png', '')).toBe(
+			'site-path:/members'
+		);
+		expect(spoolRefusesPath('wordpress', env, '/about/', '')).toBeUndefined();
+	});
+
+	it('is a path-list lever the owner writes and Drupal does not', () => {
+		expect(LEVER_DOMAINS.SPOOL_EXCLUDE).toEqual({ kind: 'paths' });
+		expect(OWNER_ONLY_LEVERS.has('SPOOL_EXCLUDE')).toBe(true);
+		expect(leverRefusal('SPOOL_EXCLUDE', '')).toBeUndefined();
+		expect(leverRefusal('SPOOL_EXCLUDE', '/news,/events/archive/')).toBeUndefined();
+	});
+
+	it('refuses a value that is not a path prefix, the root and spool paths', () => {
+		for (const value of [
+			'news',
+			'/news?x=1',
+			'/a b',
+			'/',
+			',/,',
+			'/spool-sw.js',
+			'/.spool',
+			'/.spool/sync'
+		]) {
+			expect(leverRefusal('SPOOL_EXCLUDE', value), value).toBeDefined();
+		}
+		expect(leverRefusal('SPOOL_EXCLUDE', '/')).toMatch(/SPOOL=0/);
 	});
 });
 
@@ -78,6 +143,104 @@ describe('the paths spool owns', () => {
 		for (const path of ['/', '/node/1', '/a b', '/news/2026']) {
 			expect(pathTagFor(path)).toBe(pathTag(path));
 		}
+	});
+});
+
+describe('what each CMS keeps out of spool', () => {
+	const WP = { WORDPRESS_PAGE_CACHE: '1' };
+	const refuses = (cms: string, path: string, env: unknown = WP) => {
+		const at = path.indexOf('?');
+		return spoolRefusesPath(
+			cms,
+			env,
+			at < 0 ? path : path.slice(0, at),
+			at < 0 ? '' : path.slice(at)
+		);
+	};
+
+	it('keeps every WordPress admin, login, API, cron and feed path out, and takes a plain page', () => {
+		expect(refuses('wordpress', '/2026/01/01/hello-world/')).toBeUndefined();
+		expect(refuses('wordpress', '/')).toBeUndefined();
+		for (const path of [
+			'/wp-admin',
+			'/wp-admin/',
+			'/wp-admin/admin-ajax.php',
+			'/wp-login.php',
+			'/wp-json/wp/v2/posts',
+			'/wp-cron.php',
+			'/xmlrpc.php',
+			'/wp-comments-post.php',
+			'/feed/',
+			'/category/news/feed/atom/',
+			'/?feed=rss2',
+			'/hello/?preview=true',
+			'/?p=5&preview_id=5',
+			'/search/term/'
+		]) {
+			expect(refuses('wordpress', path), path).toBeDefined();
+		}
+	});
+
+	it('leaves a file to the media features, which need no page store', () => {
+		expect(refuses('wordpress', '/wp-content/uploads/2026/photo.jpg', {})).toBeUndefined();
+		expect(refuses('wordpress', '/wp-content/uploads/2026/photo.jpg')).toBeUndefined();
+		expect(refuses('wordpress', '/hello/', {})).toBe('store-off');
+	});
+
+	it('keeps Joomla administrator and API out, and holds every Joomla page while its store is off', () => {
+		expect(refuses('joomla', '/administrator/index.php')).toBe('cms-path:/administrator');
+		expect(refuses('joomla', '/api/index.php/v1/content')).toBe('cms-path:/api');
+		expect(refuses('joomla', '/about-us', {})).toBe('store-off');
+		expect(refuses('joomla', '/administrator', {})).toBe('cms-path:/administrator');
+	});
+
+	it('takes any Drupal path, and refuses every path of a CMS it does not know', () => {
+		expect(refuses('drupal', '/node/1', {})).toBeUndefined();
+		expect(refuses('drupal', '/wp-admin/', {})).toBeUndefined();
+		expect(refuses('typo3', '/node/1', {})).toBe('unknown-cms');
+	});
+
+	const view = (html: string, over: Partial<SpoolResponseView> = {}): SpoolResponseView => ({
+		status: 200,
+		setsCookie: false,
+		cacheControl: null,
+		contentType: 'text/html; charset=UTF-8',
+		vary: null,
+		html,
+		path: '/hello/',
+		...over
+	});
+	const PAGE = '<html><body>hi</body></html>';
+
+	it('judges a WordPress response by its store rule as if the page cache were on', () => {
+		expect(spoolRefusesResponse('wordpress', view(PAGE))).toBeUndefined();
+		expect(
+			spoolRefusesResponse('wordpress', view(PAGE.replace('hi', '<input name="_wpnonce">')))
+		).toBe('nonce');
+		expect(spoolRefusesResponse('wordpress', view(PAGE, { setsCookie: true }))).toBe(
+			'set-cookie'
+		);
+		expect(spoolRefusesResponse('wordpress', view(PAGE, { cacheControl: 'private' }))).toBe(
+			'cache-control'
+		);
+		expect(spoolRefusesResponse('wordpress', view('<html><body>cut off'))).toBe('incomplete');
+		expect(
+			spoolRefusesResponse(
+				'wordpress',
+				view('<html><body class="search search-results">x</body></html>')
+			)
+		).toBe('search-body');
+	});
+
+	it('refuses the password form, which the store rule does not name', () => {
+		const form = '<html><body><form class="post-password-form"></form></body></html>';
+		expect(spoolRefusesResponse('wordpress', view(form))).toBe('password-protected');
+	});
+
+	it('leaves a Drupal response to the library', () => {
+		expect(
+			spoolRefusesResponse('drupal', view(PAGE.replace('hi', '<input name="_wpnonce">')))
+		).toBe(undefined);
 	});
 });
 

@@ -6,7 +6,17 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { tinyimgBinding } from '../ops/image-runtime';
 import { spoolEnabled, spoolFeature } from '../ops/plan';
 import { siteStubOptions } from '../ops/site-id';
-import { isSpoolPath, SPOOL_OBJECT_PATH, spoolAllowed, spoolCursorFloor } from '../ops/spool';
+import {
+	isSpoolPath,
+	SPOOL_OBJECT_PATH,
+	SPOOL_SW_PATH,
+	spoolAllowed,
+	spoolCursorFloor,
+	spoolExcludedBy,
+	spoolRefusesPath,
+	spoolRefusesResponse
+} from '../ops/spool';
+import { cmsOf } from '../util/cms';
 import { ROUTES } from './routes';
 import type { SiteWorkerEnv } from './types';
 
@@ -20,6 +30,10 @@ type Call = {
 	site: string;
 	/** the generation the pipeline's response carried, which bounds the cursor from below */
 	generation?: number;
+	/** a cursor to answer with and never ask the object for, for the worker script, which holds no pack */
+	pinned?: number;
+	/** the `Cache-Control` of a page held back from replication, put back on what the visitor gets */
+	held?: { path: string; value: string | null };
 	/** a failure of the pipeline, kept so the front worker's own error handling still sees it */
 	failure?: unknown;
 };
@@ -74,7 +88,8 @@ function objectVersionStore(): VersionStore {
 		return (await res.json()) as Record<string, unknown>;
 	};
 	const cursor = async (): Promise<number> => {
-		const { generation } = current();
+		const { generation, pinned } = current();
+		if (pinned !== undefined) return pinned;
 		return generation !== undefined
 			? spoolCursorFloor(generation)
 			: Number((await ask('op=cursor'))['cursor']);
@@ -147,6 +162,40 @@ export function withoutUpscale<T extends { width?: number }>(input: Uint8Array, 
 const clip = (value: string | undefined, max = 256): string =>
 	(value ?? '').replace(/[\r\n\0]/g, ' ').slice(0, max);
 
+/**
+ * Judges a page by its CMS's own rule and, when the rule refuses it, answers the proxy with the
+ * page marked `private`, which the library never keeps, decorates or builds an artifact from. The
+ * visitor's copy gets its own `Cache-Control` back in {@link throughSpool}.
+ */
+async function judged(active: Call, request: Request, res: Response): Promise<Response> {
+	const cms = cmsOf(active.env);
+	const type = res.headers.get('content-type') ?? '';
+	if (
+		cms !== 'wordpress' ||
+		request.method !== 'GET' ||
+		res.status !== 200 ||
+		!/^text\/html\b/i.test(type)
+	) {
+		return res;
+	}
+	const url = new URL(request.url);
+	const html = await res.clone().text();
+	const why = spoolRefusesResponse(cms, {
+		status: res.status,
+		setsCookie: res.headers.has('set-cookie'),
+		cacheControl: res.headers.get('cache-control'),
+		contentType: type,
+		vary: res.headers.get('vary'),
+		html,
+		path: `${url.pathname}${url.search}`
+	});
+	if (why === undefined) return res;
+	const headers = new Headers(res.headers);
+	active.held = { path: url.pathname, value: res.headers.get('cache-control') };
+	headers.set('cache-control', 'private, no-store');
+	return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 const MAX_LOGGED_EVENTS = 50;
 
 function proxyFor(call: Call, origin: string): SpoolProxy {
@@ -166,7 +215,7 @@ function proxyFor(call: Call, origin: string): SpoolProxy {
 				const generation = Number(res.headers.get(GENERATION_HEADER));
 				if (Number.isSafeInteger(generation) && generation > 0)
 					active.generation = generation;
-				return res;
+				return await judged(active, request, res);
 			} catch (e) {
 				active.failure = e;
 				throw e;
@@ -174,6 +223,8 @@ function proxyFor(call: Call, origin: string): SpoolProxy {
 		},
 		spool: {
 			store: objectVersionStore(),
+			// no per-view event, so a device sends no beacon to the Worker for a page view
+			views: false,
 			sink: {
 				write: (events) => {
 					// the body is the visitor's, so what reaches a log line is bounded and has no breaks
@@ -213,13 +264,17 @@ function proxyFor(call: Call, origin: string): SpoolProxy {
 /**
  * Whether a request goes through spool at all. Owner and diagnostic routes, the object's own `__`
  * paths and every request that carries a credential skip it: spool keeps public pages and rewrites
- * public responses, and a signed-in visitor gets the site as it was.
+ * public responses, and a signed-in visitor gets the site as it was. Any cookie counts as a
+ * credential, a comment author's and WordPress's test cookie included. What else a CMS keeps out is
+ * `SPOOL_CMS_RULES`, and the response side of that rule runs in `judged`.
  */
-function eligible(request: Request, url: URL): boolean {
+export function eligible(request: Request, url: URL, env: SiteWorkerEnv): boolean {
+	if (spoolExcludedBy(env, url.pathname) !== undefined) return false;
 	if (isSpoolPath(url.pathname)) return true;
 	if (request.method !== 'GET' && request.method !== 'HEAD') return false;
 	if (url.pathname.startsWith('/__') || ROUTES.has(url.pathname)) return false;
-	return !request.headers.has('cookie') && !request.headers.has('authorization');
+	if (request.headers.has('cookie') || request.headers.has('authorization')) return false;
+	return spoolRefusesPath(cmsOf(env), env, url.pathname, url.search) === undefined;
 }
 
 /**
@@ -237,7 +292,7 @@ export async function throughSpool(
 	next: Next
 ): Promise<Response> {
 	const url = new URL(request.url);
-	if (!spoolEnabled(env) || !eligible(request, url)) return next(request);
+	if (!spoolEnabled(env) || !eligible(request, url, env)) return next(request);
 	// public and unauthenticated, and each call is a Worker request, so a budget comes first
 	if (
 		isSpoolPath(url.pathname) &&
@@ -248,8 +303,18 @@ export async function throughSpool(
 			headers: { 'retry-after': '60', 'cache-control': 'no-store' }
 		});
 	}
-	const call: Call = { next, env, site };
+	// the worker script holds no pack, so its text never depends on the vector
+	const call: Call = {
+		next,
+		env,
+		site,
+		...(url.pathname === SPOOL_SW_PATH ? { pinned: 0 } : {})
+	};
 	const res = await calls.run(call, () => proxyFor(call, url.origin)(request)); // the proxy turns a pipeline failure into a 502; the front worker reports the real one
 	if (call.failure !== undefined) throw call.failure;
-	return res;
+	if (call.held?.path !== url.pathname || isSpoolPath(url.pathname)) return res;
+	const headers = new Headers(res.headers);
+	if (call.held.value === null) headers.delete('cache-control');
+	else headers.set('cache-control', call.held.value);
+	return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }

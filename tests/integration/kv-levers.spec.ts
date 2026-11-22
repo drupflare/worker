@@ -64,7 +64,8 @@ const PROBE: Record<KvOverridable, string> = {
 	SPOOL: '1',
 	SPOOL_IMAGES: '0',
 	SPOOL_VIDEO: '0',
-	SPOOL_EMBEDS: '0'
+	SPOOL_EMBEDS: '0',
+	SPOOL_EXCLUDE: '/members,/account'
 };
 
 async function writeSettings(doc: Record<string, string>): Promise<void> {

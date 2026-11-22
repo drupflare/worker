@@ -1,5 +1,13 @@
+import { decode, encode } from '@drupflare/durabledb/codec';
+import spoolPackage from '@drupflare/spool/package.json';
+import { staticHeaders } from '@drupflare/spool/server';
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import ignoreFile from '../../assets/.assetsignore?raw';
+import headersFile from '../../assets/_headers?raw';
+import stubFile from '../../assets/spool-sw.js?raw';
+import type { MysqlBridge } from '../../src/do/mysql-bridge';
+import type { SiteBinary } from '../../src/do/types';
 import { resetPlanMemo, resetSettingsMemo } from '../../src/ops/plan';
 import {
 	pathTagFor,
@@ -11,14 +19,24 @@ import {
 } from '../../src/ops/spool';
 import worker from '../../src/site';
 import { resetSpoolMemo } from '../../src/site/spool';
+import { installTagBridge } from '../../src/wordpress/tag-bridge';
+import wranglerConfig from '../../wrangler.jsonc?raw';
 import { druplicon } from '../fixtures/png';
 import {
 	freshSite,
 	inObject,
 	invalidateTag,
 	markProvisioned,
-	seedTaggedPage
+	seedPage,
+	seedTaggedPage,
+	type ServeDo
 } from '../helpers/serve-do';
+
+const pageScripts = import.meta.glob('../../assets/.spool/*/*.js', {
+	query: '?raw',
+	import: 'default',
+	eager: true
+}) as Record<string, string>;
 
 /**
  * Spool, from the version vector in the object to what the front worker sends a device.
@@ -29,11 +47,39 @@ import {
  */
 
 const PAGE = '<html><head><title>t</title></head><body>rendered</body></html>';
+
+/** the attribute of the inline tag spool puts in a page it decorates */
+const GATE = 'data-spool-gate';
 const MEDIA_PAGE =
 	'<html><head><title>m</title></head><body>' +
 	'<video src="/files/clip.mp4" controls></video>' +
 	'<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ" width="560" height="315"></iframe>' +
 	'</body></html>';
+
+const withBody = (body: string) => `<html><head><title>t</title></head><body>${body}</body></html>`;
+
+/** a WordPress page with a nonce in a form, which the store rule never keeps */
+const NONCE_PAGE = withBody(
+	'<form method="post"><input type="hidden" name="_wpnonce" value="0a1b2c3d4e"></form>'
+);
+
+/** WordPress's form for a password-protected post */
+const PROTECTED_PAGE = withBody(
+	'<form action="/wp-login.php?action=postpass" class="post-password-form" method="post"></form>'
+);
+
+/** a search results page, which the store rule refuses by its body class */
+const SEARCH_PAGE =
+	'<html><head><title>s</title></head><body class="search search-results">found</body></html>';
+
+/** what the object answers for a path; the prefix picks the page */
+function bodyFor(path: string): string {
+	if (path.startsWith('/media')) return MEDIA_PAGE;
+	if (path.startsWith('/nonce')) return NONCE_PAGE;
+	if (path.startsWith('/protected')) return PROTECTED_PAGE;
+	if (path.startsWith('/results')) return SEARCH_PAGE;
+	return PAGE;
+}
 
 const crcTable = Array.from({ length: 256 }, (_, n) => {
 	let c = n;
@@ -90,12 +136,15 @@ function objectSpy(vector: Vector) {
 						});
 					}
 					if (path.startsWith('/boom')) throw new Error('the object is down');
-					return new Response(path.startsWith('/media') ? MEDIA_PAGE : PAGE, {
+					return new Response(bodyFor(path), {
 						status: 200,
 						headers: {
 							'content-type': 'text/html; charset=UTF-8',
 							'x-cfw-cache': 'RENDER',
-							'x-cfw-generation': '7'
+							'x-cfw-generation': '7',
+							...(/^\/(nonce|protected|results)/.test(path)
+								? { 'cache-control': 'public, max-age=300' }
+								: {})
 						}
 					});
 				}
@@ -226,7 +275,7 @@ describe('spool at the front worker', () => {
 	it('decorates an anonymous page on a paid site with no lever set, and serves from devices', async () => {
 		const { res, body, asked } = await through('/page-paid', PAID);
 		expect(res.status).toBe(200);
-		expect(body).toContain('data-spool-client');
+		expect(body).toContain(GATE);
 		expect(body).toContain('rendered');
 		expect(res.headers.get('x-spool-mode')).toBe('serve');
 		expect(res.headers.get('spool-vector')).toBe(String(spoolCursorFloor(7)));
@@ -234,27 +283,51 @@ describe('spool at the front worker', () => {
 		expect(asked.filter((entry) => entry.startsWith('/__spool'))).toEqual([]);
 	});
 
-	it('is off on a free site until SPOOL turns it on, and off on a paid one when SPOOL is 0', async () => {
-		const free = await through('/page-free', {});
-		expect(free.body).not.toContain('data-spool-client');
+	it('is on for a free site and a paid one, and off on either when SPOOL is 0', async () => {
+		const free = await through('/page-free', { PLAN: 'free' });
+		expect(free.body).toContain(GATE);
 		resetPlanMemo();
-		const forced = await through('/page-free-on', { SPOOL: '1' });
-		expect(forced.body).toContain('data-spool-client');
+		const freeOff = await through('/page-free-off', { PLAN: 'free', SPOOL: '0' });
+		expect(freeOff.body).not.toContain(GATE);
 		resetPlanMemo();
 		const off = await through('/page-paid-off', { ...PAID, SPOOL: '0' });
-		expect(off.body).not.toContain('data-spool-client');
+		expect(off.body).not.toContain(GATE);
+	});
+
+	it('keeps a listed path prefix out of spool and decorates every other page', async () => {
+		const control = await afresh('/members/open-control', PAID);
+		expect(control.body).toContain(GATE);
+		const empty = await afresh('/members/open-empty', { ...PAID, SPOOL_EXCLUDE: '' });
+		expect(empty.body).toContain(GATE);
+		const listed = { ...PAID, SPOOL_EXCLUDE: '/members, /account/' };
+		for (const path of ['/members', '/members/open-listed', '/account/settings']) {
+			const out = await afresh(path, listed);
+			expect(out.res.status, path).toBe(200);
+			expect(out.body, path).toContain('rendered');
+			expect(out.body, path).not.toContain(GATE);
+			expect(out.res.headers.get('spool-vector'), path).toBeNull();
+		}
+		for (const path of ['/memberships', '/about/members']) {
+			const out = await afresh(path, listed);
+			expect(out.body, path).toContain(GATE);
+		}
+	});
+
+	it('answers the worker script whatever the exclusion names', async () => {
+		const sw = await afresh('/spool-sw.js', { ...PAID, SPOOL_EXCLUDE: '/members' });
+		expect(sw.res.headers.get('content-type')).toMatch(/javascript/);
 	});
 
 	it('leaves a request with a cookie, a write and an owner route alone', async () => {
 		const cookie = await through('/page-cookie', PAID, { headers: { cookie: 'SESS0123=abc' } });
-		expect(cookie.body).not.toContain('data-spool-client');
+		expect(cookie.body).not.toContain(GATE);
 		resetPlanMemo();
 		const post = await through('/page-post', PAID, {
 			method: 'POST',
 			body: 'a=1',
 			headers: { 'content-type': 'application/x-www-form-urlencoded' }
 		});
-		expect(post.body).not.toContain('data-spool-client');
+		expect(post.body).not.toContain(GATE);
 	});
 
 	it('answers the worker script itself, with no object request, and only while spool runs', async () => {
@@ -446,5 +519,352 @@ describe('the media features', () => {
 		resetPlanMemo();
 		const image = await through('/pictures/photo.png', { ...PAID, SPOOL: '0' }, webp);
 		expect(image.res.headers.get('content-type')).toBe('image/png');
+	});
+});
+
+const WP = { PLAN: 'paid', CMS: 'wordpress', WORDPRESS_PAGE_CACHE: '1' };
+
+/** runs a request with the plan memo cleared, so each call reads the overrides it was given */
+async function afresh(...args: Parameters<typeof through>) {
+	resetPlanMemo();
+	return through(...args);
+}
+
+describe('what spool replicates, by CMS', () => {
+	beforeEach(() => {
+		resetPlanMemo();
+		resetSettingsMemo();
+		resetSpoolBudget();
+		resetSpoolMemo();
+	});
+
+	const credentials: Record<string, [string, RequestInit][]> = {
+		drupal: [
+			[
+				'a session cookie',
+				{ headers: { cookie: 'SESS0123456789abcdef0123456789abcdef=abc' } }
+			],
+			['a bearer token', { headers: { authorization: 'Bearer abc' } }]
+		],
+		wordpress: [
+			['a login cookie', { headers: { cookie: 'wordpress_logged_in_0a1b=ada%7C1%7Cx' } }],
+			[
+				'the test cookie',
+				{ headers: { cookie: 'wordpress_test_cookie=WP%20Cookie%20check' } }
+			],
+			['a comment author cookie', { headers: { cookie: 'comment_author_0a1b=Ada' } }],
+			['a post password cookie', { headers: { cookie: 'wp-postpass_0a1b=x' } }],
+			['basic credentials', { headers: { authorization: 'Basic YWRhOnB3' } }]
+		]
+	};
+
+	for (const [cms, overrides] of [
+		['drupal', PAID],
+		['wordpress', WP]
+	] as const) {
+		it(`decorates an anonymous ${cms} page and leaves every credentialed request to the CMS`, async () => {
+			const control = await afresh(`/hello-${cms}/`, overrides);
+			expect(control.res.status).toBe(200);
+			expect(control.body).toContain(GATE);
+			for (const [what, init] of credentials[cms]!) {
+				const out = await afresh(
+					`/hello-${cms}-${what.replaceAll(' ', '-')}/`,
+					overrides,
+					init
+				);
+				expect(out.res.status, what).toBe(200);
+				expect(out.body, what).toContain('rendered');
+				expect(out.body, what).not.toContain(GATE);
+				expect(out.res.headers.get('spool-vector'), what).toBeNull();
+			}
+		});
+	}
+
+	it('keeps WordPress admin, login, API, cron, feeds and previews out, and Drupal does not inherit the list', async () => {
+		const control = await afresh('/hello-world/', WP);
+		expect(control.body).toContain(GATE);
+		for (const path of [
+			'/wp-admin/',
+			'/wp-admin/admin-ajax.php',
+			'/wp-login.php',
+			'/wp-json/wp/v2/posts',
+			'/wp-cron.php',
+			'/xmlrpc.php',
+			'/feed/',
+			'/category/news/feed/',
+			'/?feed=rss2',
+			'/?p=5&preview=true',
+			'/hello-world/?preview_id=5',
+			'/search/term/'
+		]) {
+			const out = await afresh(path, WP);
+			expect(out.body, path).not.toContain(GATE);
+			expect(out.res.headers.get('spool-vector'), path).toBeNull();
+		}
+		const drupal = await afresh('/feed/', PAID);
+		expect(drupal.body).toContain(GATE);
+	});
+
+	it('refuses a WordPress page the store rule refuses, and hands the visitor the page the CMS sent', async () => {
+		const control = await afresh('/hello-world/', WP);
+		expect(control.body).toContain(GATE);
+		for (const path of ['/nonce-form/', '/protected-post/', '/results-page/']) {
+			const held = await afresh(path, WP);
+			// another path of the same prefix, because the edge cache keeps the first answer by path
+			const bare = await afresh(`${path}bare/`, { ...WP, SPOOL: '0' });
+			expect(held.body, path).not.toContain(GATE);
+			expect(held.body, path).toBe(bare.body);
+			expect(bare.res.headers.get('cache-control'), path).toBe('public, max-age=300');
+			expect(held.res.headers.get('cache-control'), path).toBe('public, max-age=300');
+			expect(held.res.headers.get('spool-vector'), path).toBeNull();
+		}
+		const drupal = await afresh('/nonce-form/', PAID);
+		expect(drupal.body).toContain(GATE);
+	});
+
+	it('replicates no WordPress page while the page store is off, and still answers its own paths', async () => {
+		const off = await afresh('/hello-world/', { ...WP, WORDPRESS_PAGE_CACHE: '0' });
+		expect(off.body).not.toContain(GATE);
+		const sw = await afresh('/spool-sw.js', { ...WP, WORDPRESS_PAGE_CACHE: '0' });
+		expect(sw.res.status).toBe(200);
+		expect(sw.res.headers.get('content-type')).toMatch(/javascript/);
+	});
+});
+
+describe('the static tier', () => {
+	beforeEach(() => {
+		resetPlanMemo();
+		resetSettingsMemo();
+		resetSpoolBudget();
+		resetSpoolMemo();
+	});
+
+	const version = spoolPackage.version;
+
+	it('holds the files of the installed library and no other version', () => {
+		expect(Object.keys(pageScripts).sort()).toEqual([
+			`../../assets/.spool/${version}/client.js`,
+			`../../assets/.spool/${version}/navigate.js`
+		]);
+	});
+
+	it('is byte for byte what the worker answers for the same paths', async () => {
+		const sw = await through('/spool-sw.js', PAID);
+		expect(sw.body).toBe(stubFile);
+		for (const name of ['client', 'navigate']) {
+			const served = await afresh(`/.spool/${version}/${name}.js`, PAID);
+			expect(served.body, name).toBe(
+				pageScripts[`../../assets/.spool/${version}/${name}.js`]
+			);
+		}
+	});
+
+	it('names the library version and a runtime the device compares, and never asks the object', async () => {
+		const ahead = { cursor: spoolCursorFloor(7) + 9, changed: {}, reset: false };
+		const first = await through('/spool-sw.js', PAID);
+		const second = await afresh('/spool-sw.js', PAID, {}, ahead);
+		expect(first.asked).toEqual([]);
+		expect(second.asked).toEqual([]);
+		expect(second.body).toBe(first.body);
+		const config = JSON.parse(/^self\.__SPOOL_CONFIG__=(.*);\n/.exec(stubFile)?.[1] ?? 'null');
+		expect(config.version).toBe(version);
+		expect(typeof config.runtime).toBe('string');
+		expect(config.lease).toBe(86_400);
+		expect(config.views).toBe(false);
+	});
+
+	it('carries the library headers for both files and the lease its own stub names', async () => {
+		for (const block of staticHeaders(86_400).trim().split('\n\n')) {
+			expect(headersFile).toContain(block);
+		}
+		const sw = await afresh('/spool-sw.js', PAID);
+		expect(sw.res.headers.get('cache-control')).toBe('max-age=86400');
+		expect(sw.res.headers.get('service-worker-allowed')).toBe('/');
+		const script = await afresh(`/.spool/${version}/client.js`, PAID);
+		expect(script.res.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+	});
+
+	it('publishes the files and nothing else of spool, and leaves the asset tier first', () => {
+		const lines = ignoreFile.split('\n').map((line) => line.trim());
+		expect(lines).toContain('!/spool-sw.js');
+		expect(lines).toContain('!/.spool/');
+		for (const line of lines.filter((l) => l.includes('spool'))) {
+			expect(line).toMatch(/^!\/(spool-sw\.js|\.spool\/)$|^#/);
+		}
+		expect(wranglerConfig).not.toContain('run_worker_first');
+	});
+
+	it('leaves the data paths to the worker', async () => {
+		const sync = await afresh('/.spool/sync?from=0', PAID);
+		expect(sync.res.status).toBe(200);
+		expect(sync.asked).toEqual(['/__spool?op=diff&from=0']);
+	});
+});
+
+describe('a device that holds an earlier library version', () => {
+	beforeEach(() => {
+		resetPlanMemo();
+		resetSettingsMemo();
+		resetSpoolBudget();
+		resetSpoolMemo();
+	});
+
+	/** what the 0.3.0 worker script named: a version and no runtime hash */
+	const EARLIER = { version: '0.3.0', runtime: undefined as string | undefined };
+
+	it('is told to wipe by a script that names another code version', () => {
+		const config = JSON.parse(/^self\.__SPOOL_CONFIG__=(.*);\n/.exec(stubFile)?.[1] ?? 'null');
+		const now = config.runtime ?? config.version;
+		expect(now).not.toBe(EARLIER.runtime ?? EARLIER.version);
+		expect(now).not.toBe(config.version);
+	});
+
+	it('finds no page script at the old version, so an old page loads as a plain document', async () => {
+		const gone = await afresh(`/.spool/${EARLIER.version}/client.js`, PAID);
+		expect(gone.res.status).toBe(404);
+		expect(gone.body).not.toContain('data-spool');
+	});
+
+	it('reinstalls from a script that is not the old one, over the same path', async () => {
+		const sw = await afresh('/spool-sw.js', PAID);
+		expect(sw.body).not.toContain(`"version":"${EARLIER.version}"`);
+		expect(sw.body).toContain(`"version":"${spoolPackage.version}"`);
+	});
+});
+
+describe('a change reaching a device', () => {
+	type Run = { tags: string[]; ops?: Record<string, unknown>[]; write?: string };
+
+	/** the host's own entry points on a real object: the emitter's op, the statement wrapper and the end of a run */
+	function wordpress(site: ServeDo) {
+		Object.assign(site.env, { CMS: 'wordpress', WORDPRESS_PAGE_CACHE: '1' });
+		type Host = {
+			cfwMysqlExec: (json: string) => string;
+			cfwWpTags: (json: string) => string;
+		};
+		const host = {
+			cfwMysqlExec: () => JSON.stringify(encode({ ok: true, kind: 'write', affected: 1 }))
+		} as unknown as Host;
+		const binary = host as unknown as SiteBinary;
+		const mysql = { beginRun() {}, session: () => undefined } as unknown as MysqlBridge;
+		const bridge = installTagBridge(site as never, binary, mysql);
+		const send = (body: Record<string, unknown>) =>
+			decode(JSON.parse(host.cfwWpTags(JSON.stringify(encode(body)))));
+		return {
+			run({ tags, ops = [], write }: Run) {
+				bridge.beginRun();
+				if (write !== undefined) {
+					host.cfwMysqlExec(JSON.stringify(encode({ sql: write })));
+				}
+				if (tags.length > 0) send({ op: 'announce', tags });
+				for (const op of ops) send(op);
+				send({ op: 'settle' });
+			}
+		};
+	}
+
+	const HELLO = '/2026/01/01/hello-world/';
+	const OTHER = '/2026/01/02/other/';
+
+	/** pages the way the store holds them: by path, with the tags their render read */
+	function seed(site: ServeDo) {
+		markProvisioned(site);
+		seedTaggedPage(site, HELLO, PAGE, ['post:5', 'posts', 'option:blogname']);
+		seedTaggedPage(site, OTHER, PAGE, ['post:9']);
+		seedTaggedPage(site, '/', PAGE, ['posts']);
+		seedTaggedPage(site, '/category/news/', PAGE, ['term:3', 'terms:category']);
+	}
+
+	/** the diff a device that synced before `before` is told next, as the paths it names */
+	function told(site: ServeDo, before: number) {
+		const diff = site.spoolVector().diff(before, site.generation());
+		const paths = Object.keys(diff.changed)
+			.filter((tag) => tag.startsWith('proxy:path:'))
+			.map((tag) => tag.slice('proxy:path:'.length))
+			.sort();
+		return { reset: diff.reset, paths };
+	}
+
+	const edits: [string, Run, string[]][] = [
+		['edits a post', { tags: ['post:5'] }, [HELLO]],
+		['publishes a post', { tags: ['post:6', 'posts'] }, ['/', HELLO]],
+		['changes an option', { tags: ['option:blogname'] }, [HELLO]],
+		['deletes a term', { tags: ['term:3', 'terms:category', 'terms'] }, ['/category/news/']]
+	];
+
+	for (const [name, run, paths] of edits) {
+		it(`names the pages a WordPress site that ${name} changed, and no other`, async () => {
+			const out = await inObject(freshSite(), (site) => {
+				seed(site);
+				const room = wordpress(site);
+				const before = site.spoolVector().cursor(site.generation());
+				room.run(run);
+				return told(site, before);
+			});
+			expect(out.reset).toBe(false);
+			expect(out.paths).toEqual([...paths].sort());
+		});
+	}
+
+	it('resets every device behind a wholesale purge the emitter asks for', async () => {
+		const out = await inObject(freshSite(), (site) => {
+			seed(site);
+			const room = wordpress(site);
+			const before = site.spoolVector().cursor(site.generation());
+			room.run({ tags: [], ops: [{ op: 'wholesale', reason: 'menu' }] });
+			return told(site, before);
+		});
+		expect(out.reset).toBe(true);
+	});
+
+	it('resets every device behind the floor purge for a write nobody announced', async () => {
+		const out = await inObject(freshSite(), (site) => {
+			seed(site);
+			const room = wordpress(site);
+			const before = site.spoolVector().cursor(site.generation());
+			room.run({
+				tags: [],
+				write: "UPDATE wp_options SET option_value = 'x' WHERE option_id = 1"
+			});
+			return {
+				...told(site, before),
+				floor: (site as unknown as { wordpressTags?: { floorPurges: number } })
+					.wordpressTags?.floorPurges
+			};
+		});
+		expect(out.floor).toBe(1);
+		expect(out.reset).toBe(true);
+	});
+
+	it('names a Drupal page by the tag purge, and resets on a purge that cannot tell which pages', async () => {
+		const out = await inObject(freshSite(), (site) => {
+			markProvisioned(site);
+			seedTaggedPage(site, '/node/1', PAGE, ['node:1']);
+			seedTaggedPage(site, '/node/2', PAGE, ['node:2']);
+			const before = site.spoolVector().cursor(site.generation());
+			invalidateTag(site, 'node:1');
+			site.purgeForTags(['node:1'], 'cachetags');
+			const scoped = told(site, before);
+			// a stored page with no recorded tags makes the index unable to answer
+			seedPage(site, '/untagged', PAGE);
+			const mark = site.spoolVector().cursor(site.generation());
+			invalidateTag(site, 'node:2');
+			site.purgeForTags(['node:2'], 'cachetags');
+			return { scoped, wide: told(site, mark) };
+		});
+		expect(out.scoped).toEqual({ reset: false, paths: ['/node/1'] });
+		expect(out.wide.reset).toBe(true);
+	});
+
+	it('cannot name a page the store does not hold, which is the limit the docs state', async () => {
+		const out = await inObject(freshSite(), (site) => {
+			markProvisioned(site);
+			seedTaggedPage(site, '/node/1', PAGE, ['node:1']);
+			const before = site.spoolVector().cursor(site.generation());
+			invalidateTag(site, 'node:7');
+			site.purgeForTags(['node:7'], 'cachetags');
+			return told(site, before);
+		});
+		expect(out).toEqual({ reset: false, paths: [] });
 	});
 });

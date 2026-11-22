@@ -1,6 +1,7 @@
 import { OPCACHE_MODES } from '../runtime/opcache';
 import { CSP_MODES, type CspMode } from './csp';
 import { ruleDocumentRefusal } from './edge-rules';
+import { spoolExcludeRefusal } from './spool';
 
 /** the subset of the environment a plan decision reads */
 export type PlanEnv = { PLAN?: string };
@@ -36,16 +37,17 @@ export type SpoolEnv = PlanEnv & {
 	SPOOL_IMAGES?: unknown;
 	SPOOL_VIDEO?: unknown;
 	SPOOL_EMBEDS?: unknown;
+	SPOOL_EXCLUDE?: unknown;
 };
 
 /**
- * Whether spool runs: on for a paid site and off for a free one, and `SPOOL` overrides either way
- * (`0` off, anything else on). A free site starts off because a first visit adds the client
- * script, the worker script and a beacon to a page view, and Worker requests are the limit that
- * binds a free site; a return visit is where the saving is.
+ * Whether spool runs: on for every plan, and `SPOOL` turns it off with `0`. A first visit adds only
+ * requests the static tier and the stub's lease answer without a Worker invocation, so the plan
+ * with the least headroom starts on like the other.
  */
 export function spoolEnabled(env?: SpoolEnv): boolean {
-	return planFlag(undefined, env?.SPOOL === undefined ? undefined : String(env.SPOOL), true, env);
+	const value = env?.SPOOL === undefined ? '' : String(env.SPOOL);
+	return value === '' ? true : value !== '0';
 }
 
 /** whether one spool feature runs once spool does; each is on until its lever is `0` */
@@ -242,7 +244,9 @@ export const KV_OVERRIDABLE = [
 	'SPOOL',
 	'SPOOL_IMAGES',
 	'SPOOL_VIDEO',
-	'SPOOL_EMBEDS'
+	'SPOOL_EMBEDS',
+	// path prefixes a site keeps out of spool, for a public route its editors change often
+	'SPOOL_EXCLUDE'
 ] as const;
 
 /** one name on {@link KV_OVERRIDABLE} */
@@ -269,7 +273,8 @@ export type LeverDomain =
 	| { kind: 'flag' }
 	| { kind: 'enum'; values: readonly string[] }
 	| { kind: 'bins' }
-	| { kind: 'rules' };
+	| { kind: 'rules' }
+	| { kind: 'paths' };
 
 /** the accepted domain of every overridable lever */
 export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
@@ -380,7 +385,8 @@ export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
 	SPOOL: { kind: 'flag' },
 	SPOOL_IMAGES: { kind: 'flag' },
 	SPOOL_VIDEO: { kind: 'flag' },
-	SPOOL_EMBEDS: { kind: 'flag' }
+	SPOOL_EMBEDS: { kind: 'flag' },
+	SPOOL_EXCLUDE: { kind: 'paths' }
 };
 
 /**
@@ -393,7 +399,8 @@ export const OWNER_ONLY_LEVERS: ReadonlySet<string> = new Set<KvOverridable>([
 	'SPOOL',
 	'SPOOL_IMAGES',
 	'SPOOL_VIDEO',
-	'SPOOL_EMBEDS'
+	'SPOOL_EMBEDS',
+	'SPOOL_EXCLUDE'
 ]);
 
 /**
@@ -425,6 +432,8 @@ export function leverRefusal(name: KvOverridable, value: unknown): string | unde
 				: `${name} must be none or comma-separated bin names; got ${text}`;
 		case 'rules':
 			return ruleDocumentRefusal(name as 'RESPONSE_HEADERS' | 'REDIRECTS', text);
+		case 'paths':
+			return spoolExcludeRefusal(text);
 	}
 }
 

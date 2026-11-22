@@ -219,7 +219,8 @@ describe('the fixture covers the allow-list', () => {
 			'SPOOL',
 			'SPOOL_IMAGES',
 			'SPOOL_VIDEO',
-			'SPOOL_EMBEDS'
+			'SPOOL_EMBEDS',
+			'SPOOL_EXCLUDE'
 		];
 		// read by a consumer this lane cannot reach; see the block comment above
 		const elsewhere = [

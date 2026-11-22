@@ -4,6 +4,7 @@ Topic files moved out of the project CLAUDE.md. Each section is verbatim. This t
 
 | section                                                                                          | file                   |
 | ------------------------------------------------------------------------------------------------ | ---------------------- |
+| `ALARM_SHAPE` moves the alarm away from the retirement boundary, and one A/B measured it         | alarm-shape.md         |
 | The interpreter has no fiber backend, and the executor is persistent                             | park.md                |
 | The Zend park ships, and every instrument that measured it was wrong once                        | park.md                |
 | THE COST OF LOADING EXTENSIONS IS AN EXPORTED GLOBAL, NOT A GROWABLE TABLE                       | memory-and-isolates.md |

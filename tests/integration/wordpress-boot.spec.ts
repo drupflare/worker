@@ -107,6 +107,34 @@ describe('wordpress in a durable object', () => {
 		expect(out.login?.html).toContain('id="loginform"');
 	}, 120_000);
 
+	it('records the heap a render reached before it drops the interpreter', async () => {
+		const out = await inObject(freshSite(), async (site: ServeDo) => {
+			const wp = configure(site);
+			await wp.migrator().runAll();
+			await wp.fillOne('/', undefined, undefined, { origin: ORIGIN });
+			await wp.fillOne('/wp-login.php', undefined, undefined, { origin: ORIGIN });
+			const stats = (await (
+				await site.fetch(new Request('https://do.local/__serve-stats'))
+			).json()) as {
+				demand: { path: string; method: string; before: number; after: number }[];
+				isolateBytes?: { linear: number };
+			};
+			const bootLinear = (wp as unknown as { bootLinear: number }).bootLinear;
+			return { demand: stats.demand, bootLinear, resident: wp.php !== undefined };
+		});
+		expect(out.resident).toBe(false);
+		const paths = out.demand.map((d) => d.path);
+		expect(paths).toEqual(expect.arrayContaining(['/', '/wp-login.php']));
+		for (const entry of out.demand.filter(
+			(d) => d.path === '/' || d.path === '/wp-login.php'
+		)) {
+			expect(entry.before).toBe(0);
+			expect(entry.after).toBeGreaterThanOrEqual(out.bootLinear);
+			expect(entry.after % 65_536).toBe(0);
+		}
+		expect(out.bootLinear).toBeGreaterThan(0);
+	}, 120_000);
+
 	it('turns the canonical redirect into a 301 with its Location instead of an exit', async () => {
 		const out = await inObject(freshSite(), async (site: ServeDo) => {
 			const wp = configure(site);

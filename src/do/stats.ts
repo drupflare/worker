@@ -2,7 +2,7 @@ import { storedBytes } from '../db/file-store';
 import { attributeSpend } from '../ops/cost-attribution';
 import { deploymentEnv } from '../ops/deployment-env';
 import { chunkStack, flatFields, isLengthError, type RangeReport } from '../ops/error-probe';
-import { resolveMailTransport } from '../ops/mail';
+import { parseFailureLedger, resolveMailTransport } from '../ops/mail';
 import { kvWriteBudget, pageKvEnabled } from '../ops/page-store';
 import { hitAnyLimit } from '../ops/platform-limits';
 import { type DemandWindow, meanWaitMs } from '../ops/replica-demand';
@@ -10,9 +10,10 @@ import type { SitePhpDurableObject } from '../site-do';
 import { cmsOf } from '../util/cms';
 import { errorMessage } from '../util/errors';
 import { wordpressBootStats } from '../wordpress/boot';
+import { unclassifiedCookieStats } from '../wordpress/cookies';
 import { laneTimingSummary } from './helpers';
 import { isolateAboveBytes, shimGlobals, spareMemoryBytes } from './isolate';
-import { DEMAND_WINDOWS_KEY } from './keys';
+import { DEMAND_WINDOWS_KEY, MAIL_FAILURES_KEY } from './keys';
 import { lazyMountBytes, PACK_INDEX_BYTES } from './lazy-mount';
 import { LANE_TIMING_RING, RECENT_ERROR_STACK_CHARS, RECENT_ERRORS_MAX } from './limits';
 import { updbActive } from './reconcile';
@@ -153,7 +154,10 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 		// `floorPurges` is a write the CMS never announced, so the purge was wholesale
 		...(site.wordpressTags === undefined ? {} : { wordpressTags: site.wordpressTags }),
 		...(cmsOf(site.env) === 'wordpress'
-			? { wordpressBoot: wordpressBootStats(site.mountInfo) }
+			? {
+					wordpressBoot: wordpressBootStats(site.mountInfo),
+					unclassifiedCookies: unclassifiedCookieStats()
+				}
 			: {}),
 		lastAggregation: site.lastAggregation ?? null,
 		warmDecision: site.lastWarmDecision ?? null,
@@ -191,6 +195,8 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 		lastHttpDrainAt: site.lastHttpDrain?.at ?? null,
 		// a send that failed at the relay is only visible here (`cfwMail` had already returned)
 		mailQueue: site.countOrNull('cfw_mail_queue'),
+		// accepted, then lost at the relay or after its last retry; durable, unlike `lastMailDrain`
+		mailFailed: parseFailureLedger(site.metaGet(MAIL_FAILURES_KEY)) ?? null,
 		// the relay a send resolves to, or null; tells a broken transport from none
 		mailTransport: (() => {
 			const plan = resolveMailTransport(site.mailEnv());
@@ -301,22 +307,33 @@ export function noteDemand(
 	before: number,
 	reusedBefore: number
 ): void {
-	const after = site.heapNow();
-	if (after === 0) return;
+	if (site.heapNow() === 0) return;
 	const u = new URL(request.url);
 	const path = (u.searchParams.get('path') ?? u.pathname).split('?')[0] as string;
+	noteOneShotDemand(site, path, request.method, before, reusedBefore);
+}
+
+/**
+ * Records the heap one render reached, for an interpreter about to be dropped.
+ *
+ * WordPress runs one request per interpreter and drops it inside the render, so by the time
+ * {@link noteDemand} reads the heap it is 0. Call this before the drop; it records nothing with no
+ * resident interpreter.
+ */
+export function noteOneShotDemand(
+	site: SitePhpDurableObject,
+	path: string,
+	method: string,
+	before: number,
+	reusedBefore: number
+): void {
+	const after = site.heapNow();
+	if (after === 0) return;
 	const reused = (site.heapsReused ?? 0) > reusedBefore;
 	const bridge = site.crossings?.bytes ? { ...site.crossings.bytes } : undefined;
-	recordDemand(site, { path, method: request.method, before, after, reused, bridge });
+	recordDemand(site, { path, method, before, after, reused, bridge });
 	if (after > before) {
-		console.info('cfw-demand', {
-			path,
-			method: request.method,
-			before,
-			after,
-			reused,
-			...bridge
-		});
+		console.info('cfw-demand', { path, method, before, after, reused, ...bridge });
 	}
 }
 

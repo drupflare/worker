@@ -24,6 +24,7 @@ import { wordpressRender } from '../wordpress/site-php';
 import { pageTagList, passThroughHeaders, variesByRequest } from './helpers';
 import { httpDrainEnabled } from './levers';
 import { FILL_BINS } from './limits';
+import { noteOneShotDemand } from './stats';
 import type { FillOutcome, Payload, Row } from './types';
 
 /**
@@ -120,8 +121,13 @@ export async function fillOne(
 		oneShot
 			? wordpressRender(path, { ...request, origin })
 			: renderPage(path, bins, destruct, { ...request, origin });
+	const heapBefore = site.heapNow();
+	const reusedBefore = site.heapsReused ?? 0;
 	let result = await site.runJsonMaybeParked(fragment());
-	if (oneShot) site.resetPhp();
+	if (oneShot) {
+		noteOneShotDemand(site, path, request.method ?? 'GET', heapBefore, reusedBefore);
+		site.resetPhp();
+	}
 	// the render met a URL the fetch cache lacked; drain and render once more (idempotent requests
 	// only, a replayed POST changes the outcome)
 	const deferred = site.deferredInRender ?? 0;

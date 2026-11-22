@@ -37,7 +37,14 @@ const OWNER_ONLY = [
 	'/recycle',
 	'/ledger-gc',
 	'/strata-config',
-	'/strata-store'
+	'/strata-store',
+	'/uninstall',
+	'/theme-default',
+	'/rotate-token',
+	'/db-console',
+	'/admin-password',
+	'/file',
+	'/extensions'
 ] as const;
 
 describe('site maintenance is reachable with an owner token', () => {
@@ -87,7 +94,8 @@ const WORKER_ANSWERED = new Set([
 	'/deployment',
 	'/retire',
 	'/recover-token',
-	'/csp-report'
+	'/csp-report',
+	'/.well-known/drupflare'
 ]);
 
 describe('the route table forwards everything it claims to own', () => {

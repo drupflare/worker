@@ -249,6 +249,8 @@ const ALWAYS = new Set([
 	'/__modify',
 	'/__restore',
 	'/__export',
+	'/__db-console',
+	'/__admin-password',
 	'/__recover-token',
 	'/__migrate',
 	'/__bump',
@@ -279,7 +281,12 @@ export function auditedRoute(
 		case '/__ledger-gc':
 		case '/__strata-config':
 		case '/__strata-store':
+		case '/__theme-default':
 			audited = method === 'POST';
+			break;
+		// a dry run reads only
+		case '/__uninstall':
+			audited = method === 'POST' && params.get('dry') !== '1';
 			break;
 		case '/__firstrun':
 			audited = params.get('force') === '1';
@@ -297,6 +304,7 @@ export function auditedRoute(
 			break;
 		case '/__writemark':
 		case '/__wp-packages':
+		case '/__file':
 			audited = write;
 			break;
 		// the manifest reads counts; the body is the data leaving

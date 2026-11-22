@@ -1,5 +1,13 @@
 import { importStatus, latestImport } from '../../db/import-sql';
 import {
+	adminPasswordPhp,
+	extensionsListPhp,
+	MODULE_NAME,
+	themeDefaultPhp,
+	type ThemeDefaultRequest,
+	uninstallModulePhp
+} from '../../drupal/extension-php';
+import {
 	claimWarmRun,
 	firstRunConfig,
 	MIGRATE_DB,
@@ -9,9 +17,12 @@ import {
 } from '../../drupal/site-php';
 import { strataConfigPhp, strataStorePhp } from '../../drupal/strata-php';
 import { CRON_CLAIM_GRACE_MS, cronIntervalMs } from '../../ops/cron-drive';
+import { cellOf, type ConsoleCell, readConsole } from '../../ops/db-console';
 import { type DeploymentKv, recordClaimed } from '../../ops/deployment-site';
+import { extensionRows } from '../../ops/extensions';
 import { healthTree, reconcileNode, repairNode, supervisorNode } from '../../ops/health-tree';
 import { noteAuditDetail } from '../../ops/owner-audit';
+import { enabledModules } from '../../ops/reconcile';
 import {
 	isQuarantined,
 	maySafelyRepair,
@@ -42,6 +53,7 @@ import { gcHealthLedger, LEDGER_MAX_ROWS } from '../../ops/supervisor';
 import { updbStatus } from '../../ops/updb';
 import type { SitePhpDurableObject } from '../../site-do';
 import { cmsOf } from '../../util/cms';
+import { errorMessage } from '../../util/errors';
 import { jsonError } from '../../util/reply';
 import { firstRow } from '../../util/sql';
 import { wordpressClaim, type WordpressClaim } from '../../wordpress/claim';
@@ -301,6 +313,172 @@ export async function stratastore(
 	site.dropInterpreter();
 	dropHeapImages(site);
 	return answer(reply.keyCreated === true);
+}
+
+/**
+ * Uninstalls one enabled module through Drupal's installer. `POST ?module=NAME`, owner token only.
+ * It lists the enabled modules that require NAME first and refuses while any is enabled (409
+ * `module_has_dependents`), then refuses what the installer's own validators refuse (409
+ * `uninstall_blocked`, with `reasons`). `?dry=1` answers the same facts and changes nothing, and
+ * answers 200 whether or not the uninstall would be allowed. The module's files stay where they are.
+ * 404 `module_not_enabled` for a module that is not in `core.extension`; 409 while a transaction is
+ * open.
+ */
+export async function uninstall(
+	site: SitePhpDurableObject,
+	request: Request,
+	url: URL
+): Promise<Response> {
+	if (request.method !== 'POST') return jsonError('use POST', 405, { allow: 'POST' });
+	const name = (url.searchParams.get('module') ?? '').trim();
+	if (!MODULE_NAME.test(name)) return jsonError('name the module to uninstall', 400);
+	const dry = url.searchParams.get('dry') === '1';
+	const facts = {
+		transactionDepth: site.speculating ? 1 : 0,
+		gateHeld: site.gate.stats().active > 1
+	};
+	if (!dry && !maySafelyRepair(facts)) return jsonError('a transaction is open', 409);
+	const enabled = enabledModules(site.sql);
+	if (enabled === undefined) return jsonError('module_list_unreadable', 409);
+	if (!enabled.includes(name)) {
+		return jsonError('module_not_enabled', 404, { module: name });
+	}
+	const reply = await site.runJson(
+		uninstallModulePhp(name, dry, site.canonicalOrigin(url.origin))
+	);
+	if (reply?.absent === true) return jsonError('module_not_enabled', 404, { module: name });
+	if (reply?.ok !== true) {
+		const phpClass = typeof reply?.error === 'string' ? reply.error : '';
+		return jsonError('uninstall_failed', 500, {
+			...(/^[A-Za-z0-9_\\]{1,120}$/.test(phpClass) ? { phpClass } : {}),
+			...(typeof reply?.message === 'string'
+				? { phpMessage: reply.message.slice(0, 300) }
+				: {})
+		});
+	}
+	const dependents = Array.isArray(reply.dependents) ? (reply.dependents as string[]) : [];
+	const reasons = Array.isArray(reply.reasons) ? (reply.reasons as string[]) : [];
+	const wouldDelete = site.sql
+		.exec<{ path: string }>(
+			'SELECT path FROM cfw_module_file WHERE package IN (?, ?) ORDER BY path LIMIT 500',
+			`drupal/${name}`,
+			name
+		)
+		.toArray()
+		.map((row) => String(row.path));
+	if (dry) {
+		return Response.json({
+			ok: true,
+			module: name,
+			dryRun: true,
+			enabledModules: reply.enabledModules ?? enabled,
+			dependents,
+			reasons,
+			wouldDelete
+		});
+	}
+	if (dependents.length > 0) {
+		return jsonError('module_has_dependents', 409, { module: name, dependents });
+	}
+	if (reasons.length > 0) return jsonError('uninstall_blocked', 409, { module: name, reasons });
+	// the success condition is the stored row, as in a reconcile step
+	if (enabledModules(site.sql)?.includes(name) !== false) {
+		return jsonError('uninstall_failed', 500, { module: name });
+	}
+	site.dropInterpreter();
+	dropHeapImages(site);
+	site.bumpGeneration('uninstall');
+	return Response.json({ ok: true, module: name, uninstalled: true, dependents: [] });
+}
+
+/**
+ * Lists the modules, themes and install profiles Drupal discovers as
+ * `[{name, kind, version, enabled}]`, from each info file and `core.extension`. `GET` only, owner
+ * token only, and it changes nothing, so it runs on a replica as the other reads do. `version` is
+ * null when the info file states none. Answers 501 `drupal_only` on WordPress and 500
+ * `extensions_unreadable` when the kernel cannot list them.
+ */
+export async function extensions(
+	site: SitePhpDurableObject,
+	request: Request,
+	url: URL
+): Promise<Response> {
+	if (request.method !== 'GET') return jsonError('use GET', 405, { allow: 'GET' });
+	if (cmsOf(site.env) === 'wordpress') return jsonError('drupal_only', 501);
+	const reply = await site.runJson(extensionsListPhp(site.canonicalOrigin(url.origin)));
+	const rows = reply?.ok === true ? extensionRows(reply) : undefined;
+	if (rows === undefined) {
+		const phpClass = typeof reply?.error === 'string' ? reply.error : '';
+		return jsonError('extensions_unreadable', 500, {
+			...(/^[A-Za-z0-9_\\]{1,120}$/.test(phpClass) ? { phpClass } : {})
+		});
+	}
+	return Response.json(rows, { headers: { 'cache-control': 'no-store' } });
+}
+
+/**
+ * Reads, and with a body sets, Drupal's default or admin theme. `GET` and `POST` with `?dry=1`
+ * answer `{default, admin, installed}` and change nothing. `POST` takes
+ * `{"project": "<theme>", "target": "default" | "admin"}` and answers
+ * `{default, admin, installed, previous, applied: true}`; naming the theme a key already holds
+ * writes nothing. 404 `theme_not_installed` for a theme that is not installed (install and enable it
+ * first), 400 for a body that is not that shape, 409 while a transaction is open. A write drops the
+ * interpreter and heap images and advances the page generation.
+ */
+export async function themedefault(
+	site: SitePhpDurableObject,
+	request: Request,
+	url: URL
+): Promise<Response> {
+	if (request.method !== 'GET' && request.method !== 'POST') {
+		return jsonError('use GET or POST', 405, { allow: 'GET, POST' });
+	}
+	let want: ThemeDefaultRequest | undefined;
+	if (request.method === 'POST' && url.searchParams.get('dry') !== '1') {
+		const body = (await request.json().catch(() => null)) as {
+			project?: unknown;
+			target?: unknown;
+		} | null;
+		if (
+			typeof body?.project !== 'string' ||
+			(body.target !== 'default' && body.target !== 'admin') ||
+			// an empty admin theme means "the same as the default theme"
+			!(MODULE_NAME.test(body.project) || (body.project === '' && body.target === 'admin'))
+		) {
+			return jsonError(
+				'body must be {"project": "<theme>", "target": "default" | "admin"}, and only admin takes an empty project',
+				400
+			);
+		}
+		want = { project: body.project, target: body.target };
+		const facts = {
+			transactionDepth: site.speculating ? 1 : 0,
+			gateHeld: site.gate.stats().active > 1
+		};
+		if (!maySafelyRepair(facts)) return jsonError('a transaction is open', 409);
+	}
+	const reply = await site.runJson(themeDefaultPhp(want, site.canonicalOrigin(url.origin)));
+	if (reply?.notInstalled === true) return jsonError('theme_not_installed', 404);
+	if (reply?.ok !== true) {
+		const phpClass = typeof reply?.error === 'string' ? reply.error : '';
+		return jsonError('theme_write_failed', 500, {
+			...(/^[A-Za-z0-9_\\]{1,120}$/.test(phpClass) ? { phpClass } : {})
+		});
+	}
+	const previous = (reply.previous ?? {}) as { default?: string; admin?: string };
+	const now = {
+		default: String(reply.default ?? previous.default ?? ''),
+		admin: String(reply.admin ?? previous.admin ?? '')
+	};
+	if (want === undefined) {
+		return Response.json({ ...now, installed: reply.installed ?? [] });
+	}
+	if (reply.unchanged !== true) {
+		site.dropInterpreter();
+		dropHeapImages(site);
+		site.bumpGeneration('theme');
+	}
+	return Response.json({ ...now, installed: reply.installed ?? [], previous, applied: true });
 }
 
 /**
@@ -796,4 +974,110 @@ export async function migrate(
 		queryCount: site.queryCount,
 		databaseSize: Number(site.sql.databaseSize)
 	});
+}
+
+/**
+ * Sets a new password for user 1 and returns it once. `POST` only, owner token only. The password
+ * is generated here, never accepted, so the caller cannot weaken it; the reply carries it with
+ * `cache-control: no-store` and nothing records it. Answers 409 while a transaction is open.
+ */
+export async function adminpassword(
+	site: SitePhpDurableObject,
+	request: Request,
+	url: URL
+): Promise<Response> {
+	if (request.method !== 'POST') return jsonError('use POST', 405, { allow: 'POST' });
+	if (cmsOf(site.env) === 'wordpress') return jsonError('drupal_only', 501);
+	const facts = {
+		transactionDepth: site.speculating ? 1 : 0,
+		gateHeld: site.gate.stats().active > 1
+	};
+	if (!maySafelyRepair(facts)) return jsonError('a transaction is open', 409);
+	if (site.isReplica()) return jsonError('a replica cannot write a password', 409);
+	const password = newAdminPassword();
+	const reply = await site.runJson(adminPasswordPhp(password, site.canonicalOrigin(url.origin)));
+	if (reply?.absent === true) return jsonError('admin_not_found', 404);
+	if (reply?.ok !== true) {
+		const phpClass = typeof reply?.error === 'string' ? reply.error : '';
+		return jsonError('admin_password_failed', 500, {
+			...(/^[A-Za-z0-9_\\]{1,120}$/.test(phpClass) ? { phpClass } : {})
+		});
+	}
+	dropHeapImages(site);
+	return Response.json(
+		{
+			ok: true,
+			uid: 1,
+			name: String(reply.name ?? ''),
+			blocked: reply.blocked === true,
+			password,
+			applied: true
+		},
+		{ headers: { 'cache-control': 'no-store' } }
+	);
+}
+
+/** 24 random bytes as 32 characters of base64url */
+function newAdminPassword(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(24));
+	return btoa(String.fromCharCode(...bytes))
+		.replace(/\+/g, '-')
+		.replace(/\//g, '_');
+}
+
+/** thrown inside the transaction when a statement wrote, so the write is rolled back */
+class ConsoleWrote extends Error {}
+
+/**
+ * A read-only SQL console over the site database. `POST` only, with `{v, sql, params, limit,
+ * timeoutMs}`; answers `{columns, rows, truncated, elapsedMs}`, or `{code, message}` with a status.
+ *
+ * A statement must be one SELECT or WITH with no write or schema keyword. Whatever the check lets
+ * through still runs in a transaction that is rolled back when it wrote a row, so a bypass cannot
+ * change the database. Durable Object SQL cannot be interrupted, so `timeoutMs` is advisory: it is
+ * read and bounded but never enforced, and `elapsedMs` reports what the statement took. The row
+ * limit stops the copy, not the scan, and a cut result answers `truncated: true`.
+ */
+export async function dbconsole(
+	site: SitePhpDurableObject,
+	request: Request,
+	url: URL
+): Promise<Response> {
+	if (request.method !== 'POST') return jsonError('use POST', 405, { allow: 'POST' });
+	const refusal = (status: number, code: string, message: string) =>
+		Response.json({ code, message }, { status });
+	let body: unknown;
+	try {
+		body = await request.json();
+	} catch {
+		return refusal(400, 'unavailable', 'the body is not JSON');
+	}
+	const call = readConsole(body);
+	if (!call.ok) return refusal(call.status, call.code, call.message);
+	if (site.speculating) return refusal(503, 'unavailable', 'a transaction is open');
+	site.ensureServeTables();
+	const started = Date.now();
+	try {
+		const out = site.storage.transactionSync(() => {
+			const cursor = site.sql.exec(call.sql, ...call.params);
+			const columns = [...cursor.columnNames];
+			const rows: ConsoleCell[][] = [];
+			let truncated = false;
+			for (const row of cursor.raw()) {
+				if (rows.length >= call.limit) {
+					truncated = true;
+					break;
+				}
+				rows.push((row as unknown[]).map(cellOf));
+			}
+			if (cursor.rowsWritten > 0) throw new ConsoleWrote();
+			return { columns, rows, truncated };
+		});
+		return Response.json({ ...out, elapsedMs: Date.now() - started });
+	} catch (e) {
+		if (e instanceof ConsoleWrote) {
+			return refusal(422, 'not_read_only', 'the statement wrote a row and was rolled back');
+		}
+		return refusal(400, 'statement_failed', errorMessage(e));
+	}
 }

@@ -200,6 +200,11 @@ describe('which calls are recorded', () => {
 		['/__ledger-gc', 'POST', '', '/__ledger-gc'],
 		['/__strata-config', 'POST', '', '/__strata-config'],
 		['/__strata-store', 'POST', '', '/__strata-store'],
+		['/__uninstall', 'POST', 'module=x', '/__uninstall'],
+		['/__theme-default', 'POST', '', '/__theme-default'],
+		['/__db-console', 'POST', '', '/__db-console'],
+		['/__admin-password', 'POST', '', '/__admin-password'],
+		['/__file', 'PUT', 'uri=public://a.png', '/__file'],
 		['/__queue', 'GET', 'action=drop', '/__queue?action=drop'],
 		['/__ops', 'POST', 'op=cim', '/__ops?op=cim'],
 		['/__bump', 'GET', 'reason=x', '/__bump'],
@@ -236,7 +241,11 @@ describe('which calls are recorded', () => {
 		['/__ledger-gc', 'GET', ''],
 		['/__strata-config', 'GET', ''],
 		['/__strata-store', 'GET', ''],
+		['/__uninstall', 'POST', 'module=x&dry=1'],
+		['/__theme-default', 'GET', ''],
+		['/__extensions', 'GET', ''],
 		['/__writemark', 'GET', ''],
+		['/__file', 'GET', ''],
 		['/__writechanges', 'GET', '']
 	])('leaves %s %s ?%s alone', (path, method, query) => {
 		expect(route(path, method, query)).toBeUndefined();

@@ -1,6 +1,6 @@
 import type { SitePhpDurableObject } from '../../site-do';
 import { audit } from './audit';
-import { oidc, oidcsetup, ownercheck, recoverToken } from './auth';
+import { oidc, oidcsetup, ownercheck, recoverToken, rotatetoken } from './auth';
 import {
 	ai,
 	backend,
@@ -15,10 +15,14 @@ import {
 	sql,
 	tcp
 } from './diagnostics';
+import { file } from './file';
 import { armfill, assembleRoute, bump, fill, invalidate, plan, shell, sweep } from './fill';
 import { bootphase, heap, opcache } from './heap';
 import {
+	adminpassword,
+	dbconsole,
 	deployment,
+	extensions,
 	firstrun,
 	health,
 	ledgergc,
@@ -29,6 +33,8 @@ import {
 	recycle,
 	strataconfig,
 	stratastore,
+	themedefault,
+	uninstall,
 	updb
 } from './lifecycle';
 import { cfoauth, mailonboard } from './mail';
@@ -85,6 +91,7 @@ export const ROUTES: Record<string, Route> = {
 	'/__restore': restore,
 	'/__restore-parts': restoreParts,
 	'/__offloaded': offloaded,
+	'/__file': file,
 	'/__export': exportRoute,
 	'/__installable': installable,
 	'/__install': install,
@@ -125,6 +132,12 @@ export const ROUTES: Record<string, Route> = {
 	'/__ledger-gc': ledgergc,
 	'/__strata-config': strataconfig,
 	'/__strata-store': stratastore,
+	'/__uninstall': uninstall,
+	'/__theme-default': themedefault,
+	'/__rotate-token': rotatetoken,
+	'/__db-console': dbconsole,
+	'/__admin-password': adminpassword,
+	'/__extensions': extensions,
 	'/__txnprobe': txnprobe,
 	'/__sql': sql,
 	'/__driver': driver,

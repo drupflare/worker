@@ -10,11 +10,12 @@ import {
 	readOidcSetup,
 	type PendingLogin
 } from '../../ops/oidc';
-import { noteFailedAttempt } from '../../ops/owner-audit';
+import { appendAudit, noteFailedAttempt } from '../../ops/owner-audit';
 import {
 	isNonce,
 	judgeProof,
 	recoverKey,
+	sha256Hex,
 	spendProof,
 	type RecoverKv
 } from '../../ops/owner-recovery';
@@ -236,6 +237,40 @@ export async function recoverToken(
 	// old one stops working. `rotated` is how a client tells this worker from one that returns the
 	// old token
 	const token = await rotateOwnerToken(store);
+	return Response.json(
+		{ ok: true, ownerToken: token, rotated: true },
+		{ headers: { 'cache-control': 'no-store' } }
+	);
+}
+
+/**
+ * Issues a new owner token for a caller that presents the current one, and refuses the old one from
+ * then on. `POST` only. The new token is in the answer once and is never stored in the clear.
+ *
+ * The audit entry is written here, before the token changes hands: the generic recorder checks the
+ * presented token against the stored hash after the route answers, and by then it no longer matches.
+ */
+export async function rotatetoken(
+	site: SitePhpDurableObject,
+	request: Request,
+	url: URL
+): Promise<Response> {
+	if (request.method !== 'POST') return jsonError('use POST', 405, { allow: 'POST' });
+	const store = site.secretStore();
+	const presented = bearerToken(request.headers.get('authorization'));
+	if (!(await ownerTokenMatches(store, presented))) {
+		return jsonError('owner token required', 401);
+	}
+	if (site.isReplica()) return jsonError('a replica holds no owner token to rotate', 409);
+	const actor = (await sha256Hex(presented ?? '')).slice(0, 8);
+	const token = await rotateOwnerToken(store);
+	await appendAudit(auditStore(site), {
+		at: site.nowMs(),
+		route: '/rotate-token',
+		method: 'POST',
+		status: 200,
+		actor
+	});
 	return Response.json(
 		{ ok: true, ownerToken: token, rotated: true },
 		{ headers: { 'cache-control': 'no-store' } }

@@ -130,6 +130,22 @@ export const OWNER_ROUTES = new Set([
 	'/strata-config',
 	// Strata's S3 endpoint, bucket and credentials; the one route that writes a secret into config
 	'/strata-store',
+	// removes a module through Drupal's installer, after naming what still needs it
+	'/uninstall',
+	// the default and admin theme, the one Drupal setting an owner route picks besides Strata's
+	'/theme-default',
+	// issues a new owner token and refuses the old one
+	'/rotate-token',
+	// one read-only statement against the site database; whatever it writes is rolled back
+	'/db-console',
+	// sets a new password for user 1 and answers it once
+	'/admin-password',
+	// registers a file held only in R2: a streamed body written to the site's own bucket prefix
+	'/file',
+	// every module, theme and profile Drupal discovers, with its version and whether it is enabled
+	'/extensions',
+	// the settings, callable routes and limits, answered in the Worker like `/settings`
+	'/.well-known/drupflare',
 	// the update chain the alarm already runs; `site-do.ts` names "/updb" as its driver
 	'/updb',
 	// the file offload: queue, restore of offloaded files (`?rehydrate=1`) before leaving `FILES`
@@ -263,7 +279,14 @@ export const DO_ROUTE: Record<string, string> = {
 	'/recycle': '/__recycle',
 	'/ledger-gc': '/__ledger-gc',
 	'/strata-config': '/__strata-config',
-	'/strata-store': '/__strata-store'
+	'/strata-store': '/__strata-store',
+	'/uninstall': '/__uninstall',
+	'/theme-default': '/__theme-default',
+	'/rotate-token': '/__rotate-token',
+	'/db-console': '/__db-console',
+	'/admin-password': '/__admin-password',
+	'/file': '/__file',
+	'/extensions': '/__extensions'
 };
 
 /** paths a redirect must never capture (worker and object routes, the surface, derivatives) */

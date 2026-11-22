@@ -1,11 +1,12 @@
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { recoverToken } from '../../src/do/routes/auth';
+import { recoverToken, rotatetoken } from '../../src/do/routes/auth';
 import {
 	OWNER_FAIL_LIMIT,
 	ownerRefusedForNow,
 	resetOwnerFailures
 } from '../../src/ops/admin-session';
+import { readAudit } from '../../src/ops/owner-audit';
 import {
 	isNonce,
 	judgeProof,
@@ -332,6 +333,9 @@ describe('the public route', () => {
 		const body = (await res.json()) as { ownerToken: string; rotated: boolean };
 		expect(body.rotated).toBe(true);
 		expect(body.ownerToken).not.toBe(TOKEN);
+		// the dashboard reseals the token from this reply and relies on it never being cached
+		expect(typeof body.ownerToken).toBe('string');
+		expect(res.headers.get('cache-control')).toBe('no-store');
 		const check = (token: string) =>
 			inObject(stub, (site) =>
 				site.fetch(
@@ -615,5 +619,61 @@ describe('secrets held where the SQL bridge cannot reach them', () => {
 			};
 		});
 		expect(woke).toEqual({ row: null, matches: true });
+	});
+});
+
+describe('rotating the token with the current one', () => {
+	const rotateSite = () => Object.assign(fakeSite(), { isReplica: () => false });
+	const rotate = (
+		site: ReturnType<typeof rotateSite>,
+		headers: Record<string, string> = {},
+		method = 'POST'
+	) =>
+		rotatetoken(
+			site,
+			new Request('https://rotate.example/__rotate-token', { method, headers }),
+			new URL('https://rotate.example/__rotate-token')
+		);
+	const entries = (site: ReturnType<typeof rotateSite>) =>
+		readAudit(site.secretStore().sealed).entries;
+
+	it('issues a new token once, refuses the old one, and records who asked', async () => {
+		const site = rotateSite();
+		const res = await rotate(site, { authorization: `Bearer ${TOKEN}` });
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { ok: boolean; ownerToken: string; rotated: boolean };
+		expect(body).toMatchObject({ ok: true, rotated: true });
+		expect(body.ownerToken).not.toBe(TOKEN);
+		expect(res.headers.get('cache-control')).toBe('no-store');
+		expect(await ownerTokenMatches(site.store, TOKEN)).toBe(false);
+		expect(await ownerTokenMatches(site.store, body.ownerToken)).toBe(true);
+		expect([...site.meta.values()].join('|')).not.toContain(body.ownerToken);
+		const [entry] = entries(site);
+		expect(entries(site)).toHaveLength(1);
+		expect(entry).toMatchObject({
+			route: '/rotate-token',
+			method: 'POST',
+			status: 200,
+			actor: (await sha256Hex(TOKEN)).slice(0, 8)
+		});
+	});
+
+	it('changes nothing for no token, a wrong token, a GET or a replica', async () => {
+		const site = rotateSite();
+		// the first check adopts the legacy row, so the hash exists to compare against
+		expect(await ownerTokenMatches(site.store, TOKEN)).toBe(true);
+		const before = site.store.sealed.get(OWNER_HASH_KEY);
+		const none = await rotate(site);
+		const wrong = await rotate(site, { authorization: 'Bearer not-the-token' });
+		const get = await rotate(site, { authorization: `Bearer ${TOKEN}` }, 'GET');
+		const replica = Object.assign(rotateSite(), { isReplica: () => true });
+		const onReplica = await rotate(replica, { authorization: `Bearer ${TOKEN}` });
+		expect([none.status, wrong.status, get.status, onReplica.status]).toEqual([
+			401, 401, 405, 409
+		]);
+		expect(site.store.sealed.get(OWNER_HASH_KEY)).toBe(before);
+		expect(await ownerTokenMatches(site.store, TOKEN)).toBe(true);
+		expect(entries(site)).toHaveLength(0);
+		expect(await ownerTokenMatches(replica.store, TOKEN)).toBe(true);
 	});
 });

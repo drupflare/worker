@@ -135,6 +135,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/do/routes/mail.ts': 'host',
 	'src/do/routes/mark.ts': 'host',
 	'src/do/routes/offloaded.ts': 'host',
+	'src/do/routes/file.ts': 'host',
 	'src/do/routes/owner.ts': 'mixed',
 	'src/do/routes/packages.ts': 'mixed',
 	'src/do/routes/replica.ts': 'mixed',
@@ -231,9 +232,13 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/deployment-env.ts': 'mixed',
 	// one deployment is one site: the primary and the sites it lists
 	'src/ops/deployment-site.ts': 'host',
+	// the settings, routes and limits document, built in the front Worker
+	'src/ops/discovery.ts': 'host',
 	// generated: the Drupal pack's routes and permissions
 	'src/ops/driver-digest.ts': 'cms',
 	'src/ops/edge-plan.ts': 'host',
+	// the rows of Drupal's extension list
+	'src/ops/extensions.ts': 'cms',
 	// header and redirect rules the front worker applies
 	'src/ops/edge-rules.ts': 'host',
 	'src/ops/error-probe.ts': 'host',
@@ -260,6 +265,9 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	// the CfwMail bridge and Drupal's recipient format
 	'src/ops/mail.ts': 'mixed',
 	'src/ops/heap-integrity.ts': 'host',
+	'src/ops/module-bytes.ts': 'host',
+	'src/ops/db-console.ts': 'host',
+	'src/ops/warm-window.ts': 'host',
 	'src/ops/module-headers.ts': 'host',
 	'src/ops/module-integrity.ts': 'host',
 	'src/ops/owner-audit.ts': 'host',
@@ -378,6 +386,12 @@ export const ROUTE_SIDES: Readonly<Record<string, Side>> = {
 	'/ledger-gc': 'host',
 	'/strata-config': 'mixed',
 	'/strata-store': 'mixed',
+	'/uninstall': 'cms',
+	'/theme-default': 'cms',
+	'/rotate-token': 'host',
+	'/db-console': 'host',
+	'/admin-password': 'cms',
+	'/extensions': 'cms',
 	'/audit': 'host',
 	'/keepwarm': 'host',
 	'/serve': 'mixed',
@@ -395,6 +409,7 @@ export const ROUTE_SIDES: Readonly<Record<string, Side>> = {
 	'/restore': 'mixed',
 	'/restore-parts': 'host',
 	'/offloaded': 'host',
+	'/file': 'host',
 	'/pitr': 'host',
 	'/writemark': 'host',
 	'/writechanges': 'mixed',

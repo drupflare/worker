@@ -2,7 +2,11 @@ import { createExecutionContext, env, SELF, waitOnExecutionContext } from 'cloud
 import { beforeEach, describe, expect, it } from 'vitest';
 import { CMS_VALUES } from '../../scripts/cms';
 import { ATTEMPT_HEADER, ATTEMPT_TTL_MS } from '../../src/ops/attempt';
-import { DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_UPLOAD_BYTES } from '../../src/ops/body-limit';
+import {
+	DEFAULT_MAX_BODY_BYTES,
+	DEFAULT_MAX_FILE_PUT_BYTES,
+	DEFAULT_MAX_UPLOAD_BYTES
+} from '../../src/ops/body-limit';
 import { isCacheTier } from '../../src/ops/cache-tiers';
 import { resetEdgePlans, SAMPLES_PER_COMPILE } from '../../src/ops/edge-plan';
 import {
@@ -119,6 +123,28 @@ describe('an oversized request body never reaches the interpreter', () => {
 		expect(over?.limit).toBe(DEFAULT_MAX_UPLOAD_BYTES);
 		expect(bodyTooLarge(upload(10_000), { MAX_UPLOAD_BYTES: 4096 })?.limit).toBe(4096);
 		expect(bodyTooLarge(upload(10_000), { MAX_UPLOAD_BYTES: 0 })).toBeUndefined();
+	});
+
+	it('gives a registered file its own ceiling, which MAX_FILE_PUT_BYTES moves', () => {
+		const put = (length: number) =>
+			new Request('https://cfw.local/file?uri=public://a.png', {
+				method: 'PUT',
+				body: 'a',
+				headers: { 'content-length': String(length) }
+			});
+		expect(bodyTooLarge(put(DEFAULT_MAX_FILE_PUT_BYTES))).toBeUndefined();
+		expect(bodyTooLarge(put(DEFAULT_MAX_FILE_PUT_BYTES + 1))?.limit).toBe(
+			DEFAULT_MAX_FILE_PUT_BYTES
+		);
+		expect(bodyTooLarge(put(10_000), { MAX_FILE_PUT_BYTES: 4096 })?.limit).toBe(4096);
+		expect(bodyTooLarge(put(10_000), { MAX_FILE_PUT_BYTES: 0 })).toBeUndefined();
+		// control: the same length to any other path is still held to the form-body ceiling
+		const other = new Request('https://cfw.local/x', {
+			method: 'PUT',
+			body: 'a',
+			headers: { 'content-length': String(DEFAULT_MAX_BODY_BYTES + 1) }
+		});
+		expect(bodyTooLarge(other)?.limit).toBe(DEFAULT_MAX_BODY_BYTES);
 	});
 
 	it('never refuses a GET, which carries no body to parse', () => {
@@ -865,6 +891,14 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		'/ledger-gc',
 		'/strata-config',
 		'/strata-store',
+		'/uninstall',
+		'/theme-default',
+		'/rotate-token',
+		'/db-console',
+		'/admin-password',
+		'/file',
+		'/extensions',
+		'/.well-known/drupflare',
 		'/install-lock',
 		'/wp-packages'
 	])('refuses %s without a credential, with diagnostics off', async (route) => {

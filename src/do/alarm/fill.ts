@@ -1,5 +1,7 @@
+import { cmsOf } from '../../util/cms';
 import { errorMessage } from '../../util/errors';
 import { HeapRestoreIncomplete } from '../alarm';
+import { visitorHoldUntil, visitorQuietMs } from '../levers';
 import type { Payload } from '../types';
 import type { AlarmContext } from './context';
 
@@ -29,12 +31,57 @@ export function fillPhase(ctx: AlarmContext): Promise<void> | undefined {
 		recordFill(ctx);
 		return undefined;
 	}
+	const aside = visitorWaitUntil(ctx);
+	if (aside !== undefined) {
+		ctx.pauseUntil = aside;
+		recordFill(ctx);
+		return undefined;
+	}
 	return fillBatch(ctx);
+}
+
+/**
+ * When the batch may resume after a visitor, or undefined when it may run now.
+ *
+ * A page a visitor is waiting on is not background work: the chain fills it at once.
+ */
+function visitorWaitUntil({ site }: AlarmContext): number | undefined {
+	// WordPress renders take half a second each; Drupal's batch is left as it was
+	if (cmsOf(site.env) !== 'wordpress') return undefined;
+	const until = visitorHoldUntil(
+		site.lastVisitorAt,
+		site.lastAlarmFillAt,
+		site.nowMs(),
+		visitorQuietMs(site.env)
+	);
+	if (until === undefined || site.queueDepth() === 0) return undefined;
+	const waiting = site.sql
+		.exec('SELECT 1 FROM cfw_fill_queue WHERE priority = 0 LIMIT 1')
+		.toArray();
+	return waiting.length > 0 ? undefined : until;
+}
+
+/**
+ * Gives a request that reached the object during a render its turn on the event loop.
+ *
+ * The timer is created and awaited inside a running alarm handler, so it has fired before the
+ * firing ends and nothing pends when the object goes idle.
+ */
+function yieldToRequests(): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, 25));
 }
 
 async function fillBatch(ctx: AlarmContext): Promise<void> {
 	const { site, outcomes } = ctx;
 	for (let i = 0; i < ctx.maxPages; i++) {
+		if (i > 0 && cmsOf(site.env) === 'wordpress') {
+			await yieldToRequests();
+			const aside = visitorWaitUntil(ctx);
+			if (aside !== undefined) {
+				ctx.pauseUntil = aside;
+				break;
+			}
+		}
 		let outcome: Payload | undefined;
 		try {
 			outcome = await site.gate.run(() => site.fillOne(), 'alarm');
@@ -49,6 +96,7 @@ async function fillBatch(ctx: AlarmContext): Promise<void> {
 			}
 		}
 		outcomes.push(outcome);
+		site.lastAlarmFillAt = site.nowMs();
 		console.info('cfw-fill', {
 			page: outcome?.filled ?? null,
 			remaining: outcome?.remaining ?? null,

@@ -17,6 +17,8 @@ export type AlarmContext = {
 	held: boolean;
 	/** whether reconciliation deferred a step for the hold instead of finishing it */
 	reconcileHeld: boolean;
+	/** when a batch that stood aside for a visitor may resume; the re-arm waits at least that long */
+	pauseUntil?: number;
 };
 
 /** what a phase returns when it owns the rest of the firing */

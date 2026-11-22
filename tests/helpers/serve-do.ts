@@ -195,6 +195,10 @@ export type ServeDo = {
 	enqueueRefill: (path: string) => void;
 	/** when the alarm this object last set is due; `armFillAlarm()`'s guard reads it */
 	alarmDueMs?: number;
+	/** when a visitor's request last reached the gated lane or left it */
+	lastVisitorAt?: number;
+	/** when the alarm chain last finished a fill */
+	lastAlarmFillAt?: number;
 	ensureServeTables: () => void;
 	ensureHttpTables: () => void;
 	queueDepth: () => number;
@@ -322,6 +326,8 @@ export type ServeDo = {
 	shellVerified: (path: string, hash: string, uid: string, harvestedAt: number) => boolean;
 	/** the git tier: the remote list, the API, the sync engine and the alarm's poll */
 	handleGit: (url: URL, deliverBase?: string) => Promise<Response>;
+	/** the provider token the current `/git` call carried in its header; never stored */
+	gitCallToken?: string | undefined;
 	gitRemotes: () => { id: string; provider: string; repo: string; branch: string }[];
 	gitSync: (
 		remote: { id: string; provider: string; repo: string; branch: string; host?: string },

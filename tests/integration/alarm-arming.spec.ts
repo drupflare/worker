@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { ensureUpdbTables } from '../../src/ops/updb';
-import { inObject, markProvisioned, provisionedSite, type ServeDo } from '../helpers/serve-do';
+import {
+	inObject,
+	markProvisioned,
+	pageFor,
+	provisionedSite,
+	queuePath,
+	type ServeDo,
+	stubRender
+} from '../helpers/serve-do';
 
 const REQUEST_TIMEOUT = 300_000;
 
@@ -363,6 +371,127 @@ describe('a firing that ends at a gate', () => {
 
 			expect(seen.alarm).not.toBeNull();
 			expect(seen.alarm as number).toBeLessThan(seen.before + 1_000);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+/**
+ * A fill batch holds the object for as many renders as it runs, and a request that reached the
+ * object meanwhile is delivered only when the chain awaits something. After a publish that left a
+ * dozen pages queued, a visitor's reads waited out the whole queue (11 to 39 s for six routes in the
+ * WordPress page cache soak); with the batch yielding between fills and standing aside for a visitor
+ * the same six reads took 3.4 to 5.3 s.
+ */
+describe('the fill batch and a visitor', () => {
+	const PATHS = ['/a/', '/b/', '/c/', '/d/'];
+
+	/** queues four pages, stubs the render to log its path, fires one alarm, reports what ran */
+	async function batch(arrange: (site: ServeDo, log: string[]) => void, cms = 'wordpress') {
+		return inObject(await provisionedSite(), async (site: ServeDo) => {
+			markProvisioned(site);
+			await clearAlarm(site);
+			(site.env as Record<string, unknown>).CMS = cms;
+			const log: string[] = [];
+			// the WordPress fragment names no path the stub can read, so the fill reports it
+			stubRender(site, () => pageFor('/stub/'));
+			const fill = site.fillOne.bind(site);
+			site.fillOne = async (...args: Parameters<typeof fill>) => {
+				const outcome = await fill(...args);
+				log.push(String(outcome.filled ?? outcome.failed));
+				return outcome;
+			};
+			for (const p of PATHS) queuePath(site, p, { arm: false });
+			arrange(site, log);
+			const before = site.nowMs();
+			await site.alarm();
+			const alarm = await site.ctx.storage.getAlarm();
+			const queued = site.queueDepth();
+			await clearAlarm(site);
+			return { log, alarm, before, queued };
+		});
+	}
+
+	it(
+		'lets a request that arrived during a render run before the next fill',
+		async () => {
+			const seen = await batch((_site, log) => {
+				setTimeout(() => log.push('visitor'), 0);
+			});
+			expect(seen.log.slice(0, 3)).toEqual([PATHS[0], 'visitor', PATHS[1]]);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'fills nothing and wakes after the window when a visitor was just served',
+		async () => {
+			const seen = await batch((site) => {
+				site.lastVisitorAt = site.nowMs();
+			});
+			expect(seen.log).toEqual([]);
+			expect(seen.queued).toBe(PATHS.length);
+			expect(seen.alarm).not.toBeNull();
+			expect((seen.alarm as number) - seen.before).toBeGreaterThan(300);
+			expect((seen.alarm as number) - seen.before).toBeLessThanOrEqual(600);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'stops the batch when a visitor arrives during a render, and keeps the rest queued',
+		async () => {
+			const seen = await batch((site) => {
+				const render = site.runJson;
+				site.runJson = async (code) => {
+					site.lastVisitorAt = site.nowMs();
+					return render(code);
+				};
+			});
+			expect(seen.log).toEqual([PATHS[0]]);
+			expect(seen.queued).toBe(PATHS.length - 1);
+			expect((seen.alarm as number) - seen.before).toBeGreaterThan(300);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'does not wait for a visitor whose own page is the one queued',
+		async () => {
+			const seen = await batch((site) => {
+				site.lastVisitorAt = site.nowMs();
+				site.sql.exec('UPDATE cfw_fill_queue SET priority = 0 WHERE path = ?', PATHS[2]);
+			});
+			expect(seen.log[0]).toBe(PATHS[2]);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'leaves a Drupal batch alone: no pause for a visitor, every page in one firing',
+		async () => {
+			const seen = await batch((site) => {
+				site.lastVisitorAt = site.nowMs();
+			}, 'drupal');
+			expect(seen.log).toEqual(PATHS);
+			expect(seen.queued).toBe(0);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'fills anyway once none has run for ten windows, and with the lever at 0',
+		async () => {
+			const starved = await batch((site) => {
+				site.lastVisitorAt = site.nowMs();
+				site.lastAlarmFillAt = site.nowMs() - 6_000;
+			});
+			expect(starved.log.length).toBeGreaterThan(0);
+			const off = await batch((site) => {
+				(site.env as unknown as Record<string, string>).VISITOR_QUIET_MS = '0';
+				site.lastVisitorAt = site.nowMs();
+			});
+			expect(off.log.length).toBeGreaterThan(0);
 		},
 		REQUEST_TIMEOUT
 	);

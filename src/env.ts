@@ -22,6 +22,8 @@ export interface SiteEnv extends BaseSiteEnv {
 	RECYCLE_ABOVE_BYTES?: string | number;
 	/** ms a fresh interpreter runs no background PHP (fill, cron); default 60,000, 0 is off */
 	FILL_SETTLE_MS?: string | number;
+	/** how long background fills stand aside after a visitor's request, in ms; 0 is off */
+	VISITOR_QUIET_MS?: string | number;
 	/**
 	 * Whole-isolate drop threshold: linear memory plus the JS-side mount bytes.
 	 * `RECYCLE_ABOVE_BYTES` reads linear memory alone, but the 128 MiB ceiling covers both.
@@ -154,6 +156,8 @@ export interface SiteEnv extends BaseSiteEnv {
 	MAX_RESTORE_PAGED_BYTES?: string | number;
 	/** largest `multipart/form-data` body the edge forwards, in bytes; default 100 MiB, `0` disables */
 	MAX_UPLOAD_BYTES?: string | number;
+	/** largest body `PUT /file` forwards, in bytes; default 100 MiB, `0` disables */
+	MAX_FILE_PUT_BYTES?: string | number;
 	/**
 	 * PHP log level mirrored to `console.log`: `off | error | warn | log | info | debug`.
 	 * Defaults to `info`; on 8.5 `debug` is mostly deprecation notices with stack traces.

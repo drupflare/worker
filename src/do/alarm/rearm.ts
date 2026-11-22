@@ -22,7 +22,13 @@ function nextMailRetryMs(site: AlarmContext['site']): number | undefined {
  * Decides the next firing and arms it, last of all. The delay comes from what the batch achieved;
  * a non-empty queue can speed up a chain that is progressing but never rescue a failing one.
  */
-export async function rearmPhase({ site, outcomes, held, hold }: AlarmContext): Promise<any> {
+export async function rearmPhase({
+	site,
+	outcomes,
+	held,
+	hold,
+	pauseUntil
+}: AlarmContext): Promise<any> {
 	// one re-arm per batch, not per page
 	site.alarmRearms = (site.alarmRearms ?? 0) + 1;
 
@@ -52,7 +58,12 @@ export async function rearmPhase({ site, outcomes, held, hold }: AlarmContext): 
 				// multiplies it; otherwise the predictor decides, never overriding SITE_WARM
 				idleMs: site.laneIsIdle()
 					? Math.max(
-							idleRearmMs(site.env, site.degradation().cron, isPaid(site.env)),
+							idleRearmMs(
+								site.env,
+								site.degradation().cron,
+								isPaid(site.env),
+								site.nowMs()
+							),
 							240_000
 						)
 					: site.thermalRearmMs(queued)
@@ -70,6 +81,9 @@ export async function rearmPhase({ site, outcomes, held, hold }: AlarmContext): 
 	site.retainInterpreter();
 	// the firing's own delay replaces any sooner arm the held events asked for along the way
 	site.armHeldAtMs = undefined;
-	await site.setAlarmAt(site.nowMs() + Math.min(delayMs, heldDelayMs));
+	const pauseMs = pauseUntil === undefined ? 0 : Math.max(0, pauseUntil - site.nowMs());
+	// a firing that stood aside for a visitor wakes when the quiet window ends, not on the idle rung
+	const wakeMs = pauseUntil === undefined ? delayMs : pauseMs;
+	await site.setAlarmAt(site.nowMs() + Math.min(wakeMs, heldDelayMs));
 	return site.lastAlarmOutcome;
 }

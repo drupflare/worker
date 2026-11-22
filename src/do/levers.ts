@@ -88,6 +88,34 @@ export function backgroundPhpHold(
 }
 
 /**
+ * How long background fills stand aside after a visitor's request reached the gated lane, in ms.
+ *
+ * A render holds the object, so a fill that starts between two requests of one visitor delays the
+ * second by a whole render. `0` turns the wait off.
+ */
+export function visitorQuietMs(env?: SiteEnv): number {
+	return leverInt(env?.VISITOR_QUIET_MS) ?? 500;
+}
+
+/**
+ * When a background fill may run after a visitor, or undefined when it may run now.
+ *
+ * A fill goes through anyway once none has run for ten quiet windows, so a stream of requests that
+ * all reach the gate cannot hold the queue back for good.
+ */
+export function visitorHoldUntil(
+	lastVisitorAt: number | undefined,
+	lastFillAt: number | undefined,
+	nowMs: number,
+	quietMs: number
+): number | undefined {
+	if (lastVisitorAt === undefined || quietMs <= 0) return undefined;
+	if (lastFillAt !== undefined && nowMs - lastFillAt >= quietMs * 10) return undefined;
+	const until = lastVisitorAt + quietMs;
+	return nowMs < until ? until : undefined;
+}
+
+/**
  * How many files one alarm firing may push to R2.
  *
  * Same budget as the HTTP drain (a put is one of the 50 subrequests), kept lower than its default

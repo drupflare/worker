@@ -470,6 +470,10 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 	lastFillHold?: { at: number; until: number; queued: number };
 	/** firings whose background PHP waited for a young interpreter */
 	fillHolds = 0;
+	/** `nowMs()` when a visitor's request last reached the gated lane or left it */
+	lastVisitorAt?: number;
+	/** `nowMs()` when the alarm chain last finished a fill */
+	lastAlarmFillAt?: number;
 	/** what the lazy mount reported for this site */
 	mountInfo?: SiteMountInfo;
 	/** wall time of the last fill that also booted; diagnostics only, never an estimate */
@@ -534,6 +538,8 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 
 	/** files written from `cfw_module_file` at boot; 0 on a site that has installed nothing */
 	installedModuleFiles?: number;
+	/** the provider token the current `/git` call carried in its header; never stored */
+	gitCallToken?: string | undefined;
 	/** what the installed-file integrity check has seen; shown by `/serve-stats` */
 	moduleIntegrity?: IntegrityStats;
 	/** what the heap image integrity check has seen; shown by `/__serve-stats` */

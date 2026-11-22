@@ -212,12 +212,14 @@ export async function route(site: SitePhpDurableObject, request: Request): Promi
 	// no await from the herd check to `gate.run()` (waiters would all miss `renderFlights` and read
 	// `ahead` as 0), so `adoptSettings()` stays inside the gate
 	const arrivedAt = site.nowMs();
+	if (url.pathname === '/__serve') site.lastVisitorAt = arrivedAt;
 	const ahead = site.gate.stats().active + site.gate.stats().queued;
 	// one gate entry for the whole request; handle() must never re-enter it
 	const entered = site.gate.run(async () => {
 		const enteredAt = site.nowMs();
 		await site.hydrateForRequest(url);
 		const response = await site.handle(request, url);
+		if (url.pathname === '/__serve') site.lastVisitorAt = site.nowMs();
 		// a lane's writes ran speculatively and rolled back; this is the only place they land
 		// (before the seal: a lane seals nothing and a primary's buffer is empty)
 		const forwarded = await site.flushForward();

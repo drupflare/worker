@@ -39,6 +39,10 @@ function timersOutsidePhp(source: string): string[] {
 	return found;
 }
 
+/** the pause between fills in the alarm batch, the only timer the object arms */
+const ALARM_YIELD =
+	/^src\/do\/alarm\/fill\.ts:\d+: return new Promise\(\(resolve\) => setTimeout\(resolve, \d+\)\);$/;
+
 describe('what the object leaves open when it goes idle', () => {
 	/**
 	 * A pending timer is the first disqualifier and the easiest to introduce by accident.
@@ -50,7 +54,22 @@ describe('what the object leaves open when it goes idle', () => {
 		const found = siteDoFiles().flatMap(({ file, text }) =>
 			timersOutsidePhp(text).map((hit) => `${file}:${hit}`)
 		);
-		expect(found).toEqual([]);
+		expect(found.filter((hit) => !ALARM_YIELD.test(hit))).toEqual([]);
+	});
+
+	/**
+	 * The one timer allowed: the pause between two fills of an alarm batch.
+	 *
+	 * It is created and awaited inside the running alarm handler, so it has fired before the
+	 * handler returns and nothing is pending when the object goes idle. The check pins the file and
+	 * the shape, so a timer anywhere else, or one not awaited by the batch, still fails above.
+	 */
+	it('allows a timer only as the awaited pause between fills in the alarm batch', () => {
+		const fill = siteDoFiles().find((f) => f.file === 'src/do/alarm/fill.ts');
+		expect(fill).toBeDefined();
+		expect(timersOutsidePhp(fill!.text)).toHaveLength(1);
+		expect(fill!.text).toMatch(/await yieldToRequests\(\)/);
+		expect(fill!.text.match(/yieldToRequests\(\)/g)).toHaveLength(2);
 	});
 
 	/**

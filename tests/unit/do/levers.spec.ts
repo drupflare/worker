@@ -9,7 +9,9 @@ import {
 	memoryCacheMaxItems,
 	migrateEngine,
 	phpStringList,
-	prefillDefault
+	prefillDefault,
+	visitorHoldUntil,
+	visitorQuietMs
 } from '../../../src/do/levers';
 import type { SiteEnv } from '../../../src/env';
 
@@ -24,6 +26,30 @@ describe('the background PHP hold', () => {
 	it('does not hold without a boot time or with the hold turned off', () => {
 		expect(backgroundPhpHold(undefined, 5, 60_000)).toBeUndefined();
 		expect(backgroundPhpHold(1_000, 1_001, 0)).toBeUndefined();
+	});
+});
+
+describe('the visitor quiet window', () => {
+	it('holds background fills until the window after the last visitor ends', () => {
+		expect(visitorHoldUntil(1_000, 900, 1_200, 500)).toBe(1_500);
+		expect(visitorHoldUntil(1_000, 900, 1_500, 500)).toBeUndefined();
+	});
+
+	it('holds nothing without a visitor or with the window turned off', () => {
+		expect(visitorHoldUntil(undefined, 0, 10, 500)).toBeUndefined();
+		expect(visitorHoldUntil(1_000, 0, 1_001, 0)).toBeUndefined();
+	});
+
+	it('lets a fill through once none has run for ten windows', () => {
+		expect(visitorHoldUntil(5_000, 1, 5_001, 500)).toBeUndefined();
+		expect(visitorHoldUntil(5_000, 4_600, 5_001, 500)).toBe(5_500);
+	});
+
+	it('reads the window from VISITOR_QUIET_MS and defaults to half a second', () => {
+		expect(visitorQuietMs(env({}))).toBe(500);
+		expect(visitorQuietMs(env({ VISITOR_QUIET_MS: '1200' }))).toBe(1_200);
+		expect(visitorQuietMs(env({ VISITOR_QUIET_MS: '0' }))).toBe(0);
+		expect(visitorQuietMs(env({ VISITOR_QUIET_MS: 'soon' }))).toBe(500);
 	});
 });
 

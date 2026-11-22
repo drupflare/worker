@@ -74,3 +74,9 @@
 !/wordpress/pf/core.pf.json
 !/wordpress/pf/core.pf.bin
 !/wordpress/sql/
+
+# spool's worker script and the page scripts of the installed library, which a device fetches with
+# no Worker invocation. The paths under /.spool/ that are not files stay with the Worker.
+# scripts/pack-spool.ts writes them
+!/spool-sw.js
+!/.spool/

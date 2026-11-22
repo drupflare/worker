@@ -75,7 +75,9 @@ const SHIPPED = [
 	'assets/drupal-pf/core.pf.json',
 	'assets/drupal-pf/core.pf.bin',
 	'assets/drupal-sql/manifest.json',
-	'assets/drupal-sql/0001.json'
+	'assets/drupal-sql/0001.json',
+	'assets/spool-sw.js',
+	'assets/.spool/1.0.0/client.js'
 ];
 
 /** what the plan withholds from the edge, which a box has no use for either, and the boot image */

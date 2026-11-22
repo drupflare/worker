@@ -213,7 +213,11 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/capability-contract.ts': 'mixed',
 	'src/ops/catalog.ts': 'cms',
 	'src/ops/cf-oauth.ts': 'host',
+	// the claim's warm steps are Drupal's entity, typed-data, plugin and router caches
+	'src/ops/claim-warm.ts': 'cms',
 	'src/ops/cold-encounter.ts': 'host',
+	// serves the Drupal core pack from the object's own storage; refuses any other prefix
+	'src/ops/cold-pack.ts': 'cms',
 	'src/ops/composer-constraint.ts': 'host',
 	'src/ops/container-digest.ts': 'host',
 	// the Drupal core version embedded in cache rows
@@ -247,6 +251,8 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/forwarded-headers.ts': 'host',
 	// cachetags is Drupal's table
 	'src/ops/fragment-index.ts': 'mixed',
+	// generated: the digest and length of the Drupal core pack
+	'src/ops/generated/core-pack.ts': 'cms',
 	'src/ops/generated/modules.ts': 'cms',
 	'src/ops/git-provider.ts': 'host',
 	'src/ops/git-smart.ts': 'host',
@@ -261,6 +267,8 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/lock-install.ts': 'mixed',
 	'src/ops/lock-map.ts': 'mixed',
 	'src/ops/log-level.ts': 'host',
+	// memoizes lookups under the /drupal mount
+	'src/ops/lookup-memo.ts': 'mixed',
 	'src/ops/mail-onboard.ts': 'host',
 	// the CfwMail bridge and Drupal's recipient format
 	'src/ops/mail.ts': 'mixed',
@@ -274,6 +282,8 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/module-rev.ts': 'host',
 	'src/ops/module-table.ts': 'cms',
 	'src/ops/module-tiers.ts': 'cms',
+	// stamps cfw_module_file and the settings.php inputs
+	'src/ops/mount-watch.ts': 'mixed',
 	// Drupal's key_value security state
 	'src/ops/mutation-oracle.ts': 'mixed',
 	// index names on Drupal's node_field_data
@@ -290,6 +300,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/packagist.ts': 'mixed',
 	// Drupal's compiled container row and its core.extension fingerprint
 	'src/ops/packed-container.ts': 'mixed',
+	'src/ops/packed-output.ts': 'host',
 	'src/ops/page-memo.ts': 'host',
 	'src/ops/page-mirror.ts': 'host',
 	'src/ops/page-store.ts': 'host',
@@ -302,6 +313,10 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/prefetch.ts': 'cms',
 	// the engine is generic and the steps are Drupal's
 	'src/ops/reconcile.ts': 'mixed',
+	// the refresh and remount are written for Drupal's /drupal tree only
+	'src/ops/refresh-instance.ts': 'mixed',
+	// drops the host side of the /drupal mount
+	'src/ops/release-host.ts': 'mixed',
 	'src/ops/render-lane.ts': 'host',
 	// where Drupal prints a view dom id and the CSRF token
 	'src/ops/render-plan.ts': 'mixed',

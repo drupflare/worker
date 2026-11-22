@@ -16,6 +16,7 @@ import {
 	packConsistencyRun
 } from '../../drupal/site-php';
 import { strataConfigPhp, strataStorePhp } from '../../drupal/strata-php';
+import { claimWarmStep } from '../../ops/claim-warm';
 import { CRON_CLAIM_GRACE_MS, cronIntervalMs } from '../../ops/cron-drive';
 import { cellOf, type ConsoleCell, readConsole } from '../../ops/db-console';
 import { type DeploymentKv, recordClaimed } from '../../ops/deployment-site';
@@ -62,6 +63,8 @@ import { migrateEngine } from '../levers';
 import { OPS_DRIVERS } from '../limits';
 import { dropHeapImages } from '../reconcile';
 import type { Payload, Row } from '../types';
+
+const CLAIM_WARM_KEY = 'claim_warm';
 
 /**
  * The origin this site renders against, for the front worker re-addressing an alias.
@@ -812,6 +815,15 @@ export async function firstrun(
 		const modules = site.enabledModulesFingerprint();
 		if (site.packedContainer?.variants.some((v) => v.modules === modules)) {
 			return Response.json({ ok: true, skipped: 'pack module set' });
+		}
+		if (phase === 'warm' && site.env.CLAIM_WARM_STEPS === '1') {
+			const progress = await claimWarmStep({
+				context: `${site.packGeneration() ?? ''}/${modules}`,
+				read: () => site.metaGet(CLAIM_WARM_KEY),
+				write: (text) => site.metaSet(CLAIM_WARM_KEY, text),
+				run: (step, plugins) => site.runJson(claimWarmRun(step, plugins))
+			});
+			return Response.json(progress, { status: progress.ok === true ? 200 : 500 });
 		}
 		const prepared = await site.runJson(
 			phase === 'warm' ? claimWarmRun() : packConsistencyRun()

@@ -1,5 +1,6 @@
 import { evictDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { alarmDelayMs } from '../../src/do/levers';
 import {
 	type ServeDo,
 	driveAlarms,
@@ -95,14 +96,14 @@ describe('a site that has never migrated asks to be built', () => {
 		expect(after).toBe(true);
 	});
 
-	it('pulls the alarm in to the next tick rather than the keep-warm interval', async () => {
+	it('pulls the alarm in to the alarm floor rather than the keep-warm interval', async () => {
 		const stub = freshSite();
 		const out = await inObject(stub, async (site) => {
 			await serveDirect(site, '/');
 			return { alarmAt: await site.ctx.storage.getAlarm(), now: Date.now() };
 		});
 		expect(out.alarmAt).not.toBeNull();
-		expect(Number(out.alarmAt) - out.now).toBeLessThan(1000);
+		expect(Number(out.alarmAt) - out.now).toBeLessThan(alarmDelayMs() + 1000);
 	});
 
 	it('asks once, however many visitors arrive', async () => {

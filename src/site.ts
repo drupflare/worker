@@ -262,7 +262,8 @@ async function frontFetch(
 	if (kv !== undefined) return kv;
 	const health = await healthRoute(f);
 	if (health !== undefined) return health;
-	await claimPhases(f);
+	const preparing = await claimPhases(f);
+	if (preparing !== undefined) return preparing;
 
 	const hop = await sendHop(f, await buildHop(f, auth));
 	if (hop instanceof Response) return hop;

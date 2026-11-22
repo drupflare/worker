@@ -31,7 +31,7 @@ import { jsonError } from '../../util/reply';
 import { firstRow } from '../../util/sql';
 import { noteUnclassifiedCookies } from '../../wordpress/cookies';
 import { isolateResidency, retainInterpreterEnabled } from '../isolate';
-import { fillSettleMs, shellAssemblyEnabled } from '../levers';
+import { alarmDelayMs, alarmShape, fillSettleMs, shellAssemblyEnabled } from '../levers';
 import { CFW_HEADER_VERSION, FILL_QUEUE_MAX, SERVE_REQUESTS_FLUSH } from '../limits';
 import { handsBackSession } from '../role';
 import type { PageRow } from '../types';
@@ -186,8 +186,9 @@ export async function serve(
 	// it in whenever it is further away than the next tick
 	// a WordPress request that queued nothing leaves the alarm no fill to drain, and the firing
 	// still costs a row, a billed invocation and a wait on the gate for the whole render
-	if (cms !== 'wordpress' || queueable || site.queueDepth() > 0) {
-		const soon = site.nowMs() + 1;
+	const shape = alarmShape(site.env);
+	if (shape !== 'end-sync' && (cms !== 'wordpress' || queueable || site.queueDepth() > 0)) {
+		const soon = site.nowMs() + (shape === 'delay' ? alarmDelayMs(site.env) : 1);
 		const existing = await site.storage.getAlarm();
 		if (existing === null || existing > soon + 50) {
 			await site.setAlarmAt(soon);

@@ -58,6 +58,8 @@
 		"gen:sodium-manifest": "bun scripts/gen-sodium-manifest.ts",
 		"gen:assets": "bun scripts/gen-assets.ts",
 		"gen:assets:check": "bun scripts/gen-assets.ts --check",
+		"gen:core-pack": "bun scripts/gen-core-pack.ts",
+		"gen:core-pack:check": "bun scripts/gen-core-pack.ts --check",
 		"assets:scrub": "bun scripts/scrub-pack-secrets.ts",
 		"assets:scrub:check": "bun scripts/scrub-pack-secrets.ts --check",
 		"pack:decoder": "bash scripts/build-zstd-decoder.sh",

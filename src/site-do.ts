@@ -121,7 +121,14 @@ import {
 	sessionReach
 } from './do/lane';
 import { type SiteMountInfo } from './do/lazy-mount';
-import { argon2Enabled, memoryCacheBins, memoryCacheMaxItems, phpStringList } from './do/levers';
+import {
+	alarmDelayMs,
+	alarmShape,
+	argon2Enabled,
+	memoryCacheBins,
+	memoryCacheMaxItems,
+	phpStringList
+} from './do/levers';
 import { CACHETAG_WRITE, FILL_BINS, SESSION_CATCHUP_MS } from './do/limits';
 import { mailEnv, sendMailTest } from './do/mail-setup';
 import {
@@ -317,6 +324,7 @@ import { type PollState } from './ops/git-sync';
 import { type HeapIntegrityStats } from './ops/heap-integrity';
 import { type MailEnv } from './ops/mail';
 import { type IntegrityStats } from './ops/module-integrity';
+import { type MountVerdict } from './ops/mount-watch';
 import type { OidcConfig, OidcProvider } from './ops/oidc';
 import { type OracleResult } from './ops/oracle';
 import { outboundGuardEnabled, refuseOutbound } from './ops/outbound-guard';
@@ -338,6 +346,8 @@ import {
 	type ReconcileHost,
 	type ReconcileState
 } from './ops/reconcile';
+import { parkForRefresh, type RefreshRecord } from './ops/refresh-instance';
+import { releaseRetired } from './ops/release-host';
 import { type DeriveTransport } from './ops/render-lane';
 import { ReplicaRequiresPrimary, type ReadOnlyGuard } from './ops/replica';
 import { type ReplicaStage } from './ops/replica-admission';
@@ -439,6 +449,16 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 	bootLinear = 0;
 	/** the cold boot under way, which a concurrent {@link ensurePhp} caller shares */
 	private bootInFlight?: Promise<PhpInstance>;
+	/** a dropped interpreter held for the next boot to restart in place; see REFRESH_INSTANCE */
+	pendingRefresh?: PhpInstance;
+	/** set by a fault, so the drop that follows is not parked */
+	restartBlocked = false;
+	/** boots that restarted a parked interpreter instead of building one */
+	instancesRefreshed?: number;
+	/** the last restart attempt, for `/serve-stats` */
+	lastRefresh?: RefreshRecord;
+	/** whether the last restart kept its mount, and why */
+	lastMountReuse?: { at: number } & MountVerdict;
 	/** the last boot that started while another interpreter was still resident in this isolate */
 	bootBesideResident?: { at: number; id: string; interpreters: number; linearBytes: number };
 	/**
@@ -451,8 +471,14 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 	set php(value: PhpInstance | undefined) {
 		const was = this.phpInstance;
 		this.phpInstance = value;
+		if (value !== undefined) this.restartBlocked = false;
 		if (value === undefined && was) {
-			keepSpareMemory(was);
+			if (!parkForRefresh(this, was)) {
+				keepSpareMemory(was);
+				// an object that adopted this instance runs it still, and keeps its filesystem
+				if (this.phpOwner?.current === this)
+					releaseRetired(this.env, was, this.parkSockets);
+			}
 			forgetRetained(this.ctx.id.toString(), was);
 		}
 	}
@@ -856,6 +882,15 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 
 	/** the soonest alarm an arm asked for while an event held arming */
 	armHeldAtMs?: number;
+
+	/** firings running now; a move inside one is not a request's move */
+	alarmDepth = 0;
+
+	/** alarm moves made outside a firing, reported by `/serve-stats` */
+	alarmMoves = 0;
+
+	/** how far ahead of now the last of those moves was set, in ms */
+	alarmLastDistanceMs?: number;
 
 	/** set by `retire()`; this incarnation then answers 410 and arms nothing */
 	retired?: boolean;
@@ -1793,8 +1828,51 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 	 */
 	async setAlarmAt(atMs: number): Promise<void> {
 		if (this.retired) return;
+		if (this.alarmDepth === 0) {
+			const shape = alarmShape(this.env);
+			if (shape === 'end-sync') return;
+			if (shape === 'delay') {
+				const now = this.nowMs();
+				const floored = Math.max(atMs, now + alarmDelayMs(this.env));
+				// a standing alarm inside the floor stays, or steady requests would keep pushing it out
+				if (
+					this.alarmDueMs !== undefined &&
+					this.alarmDueMs > now &&
+					this.alarmDueMs <= floored
+				)
+					return;
+				atMs = floored;
+			}
+		}
+		this.noteAlarmMove(atMs);
 		this.alarmDueMs = atMs;
 		await this.storage.setAlarm(atMs);
+	}
+
+	private noteAlarmMove(atMs: number): void {
+		if (this.alarmDepth > 0) return;
+		this.alarmMoves += 1;
+		this.alarmLastDistanceMs = Math.round(atMs - this.nowMs());
+	}
+
+	/**
+	 * The `end-sync` move: read the alarm, commit the request's writes, then set an alarm one tick
+	 * out without awaiting it unless the one stored is already within 50 ms.
+	 */
+	async settleAlarmEnd(): Promise<void> {
+		// a firing's own alarm can read as none here
+		if (this.retired || this.alarmDepth > 0) return;
+		const now = this.nowMs();
+		const existing = await this.storage.getAlarm();
+		await this.syncStorage();
+		if (this.retired) return;
+		if (existing !== null && existing <= now + 50) return;
+		this.setAlarmQuiet(this.nowMs() + 1);
+	}
+
+	/** the one place the end move commits the object's writes; a spec reads and stubs it */
+	async syncStorage(): Promise<void> {
+		await this.ctx.storage.sync();
 	}
 
 	/**
@@ -1806,6 +1884,11 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 	 */
 	armFillAlarm(delayMs = 1): void {
 		if (this.retired) return;
+		if (this.alarmDepth === 0) {
+			const shape = alarmShape(this.env);
+			if (shape === 'end-sync') return;
+			if (shape === 'delay') delayMs = Math.max(delayMs, alarmDelayMs(this.env));
+		}
 		const at = this.nowMs() + Math.max(1, delayMs);
 		if (this.alarmDueMs !== undefined && this.alarmDueMs <= at) return;
 		if (this.armHolds > 0) {
@@ -1817,6 +1900,7 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 
 	private setAlarmQuiet(at: number): void {
 		try {
+			this.noteAlarmMove(at);
 			this.alarmDueMs = at;
 			const armed = this.storage.setAlarm(at);
 			if (armed && typeof armed.catch === 'function') armed.catch(() => {});

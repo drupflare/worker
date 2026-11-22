@@ -29,6 +29,7 @@ import {
 	type UnpackResult,
 	unpackZip
 } from '../ops/package-install';
+import { releaseEvicted } from '../ops/release-host';
 import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS, SHIPPED_PROVIDES } from '../ops/shipped-lock';
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage, isMissingTable } from '../util/errors';
@@ -407,6 +408,7 @@ export function mountInstalledModules(site: SitePhpDurableObject, binary: SiteBi
 				if (residentBytes <= INSTALLED_FS_BUDGET_BYTES) break;
 				if (other === node || other.cfwDirty) continue;
 				resident.delete(other);
+				releaseEvicted(site.env, other.contents);
 				other.contents = null;
 				other.cfwLoaded = false;
 				residentBytes -= bytes;

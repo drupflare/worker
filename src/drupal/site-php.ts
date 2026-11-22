@@ -483,8 +483,13 @@ export function packConsistencyRun(): string {
  * On Thunder the consistency install alone took 32.5 s of CPU cold and 7.1 s with these caches
  * filled; they persist in the site's tables whatever happens to the interpreter.
  */
-export function claimWarmRun(): string {
-	return phpRender(CLAIM_WARM_RUN_PHP, { FIBER_SHIM, HOST_HELPERS, CLAIM_BOOT });
+export function claimWarmRun(step = 'all', plugins: string[] = []): string {
+	return phpRender(CLAIM_WARM_RUN_PHP, {
+		FIBER_SHIM,
+		HOST_HELPERS,
+		CLAIM_BOOT,
+		WARM_PAYLOAD: JSON.stringify(JSON.stringify({ step, plugins }))
+	});
 }
 
 /** the site identity and uid-1 account a first run establishes */

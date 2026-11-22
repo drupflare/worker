@@ -15,6 +15,7 @@ import { laneTimingSummary } from './helpers';
 import { isolateAboveBytes, shimGlobals, spareMemoryBytes } from './isolate';
 import { DEMAND_WINDOWS_KEY, MAIL_FAILURES_KEY } from './keys';
 import { lazyMountBytes, PACK_INDEX_BYTES } from './lazy-mount';
+import { alarmShape } from './levers';
 import { LANE_TIMING_RING, RECENT_ERROR_STACK_CHARS, RECENT_ERRORS_MAX } from './limits';
 import { updbActive } from './reconcile';
 import { laneOf, roleName } from './role';
@@ -56,12 +57,19 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 			.toArray(),
 		alarmFirings: site.alarmFirings ?? 0,
 		lastAlarmAt: site.lastAlarmAt ?? null,
+		alarmShape: alarmShape(site.env),
+		alarmMoves: site.alarmMoves,
+		alarmLastDistanceMs: site.alarmLastDistanceMs ?? null,
 		// an object recycling on every request pays a boot per page; a fresh site takes one drop
 		recycles: site.recycles ?? 0,
 		lastRecycle: site.lastRecycle ?? null,
 		// boots that instantiated into the memory a drop left, rather than beside it
 		heapsReused: site.heapsReused ?? 0,
 		lastReuse: site.lastReuse ?? null,
+		// boots that restarted a parked interpreter, and the last attempt
+		instancesRefreshed: site.instancesRefreshed ?? 0,
+		lastRefresh: site.lastRefresh ?? null,
+		lastMountReuse: site.lastMountReuse ?? null,
 		spareMemoryBytes: spareMemoryBytes(),
 		// what the last cold boot decided about the published boot image, and why
 		bootImage: site.bootImage ?? null,

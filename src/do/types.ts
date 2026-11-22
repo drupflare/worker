@@ -1,4 +1,7 @@
 import type { LazyBinary, LazyFS } from '@drupflare/cartridge/fs';
+import type { LookupMemo } from '../ops/lookup-memo';
+import type { MountStamp, MountWatch } from '../ops/mount-watch';
+import type { ReleasableFS } from '../ops/release-host';
 import type { RowBudget } from '../ops/replica-demand';
 
 /** a sliced operation request: the op name, positional args and paging options */
@@ -51,7 +54,13 @@ export type PageRow = Row<{
  * members are installed here, so the shape is named once and cast where `php.binary` resolves.
  */
 export interface SiteBinary extends LazyBinary {
-	FS: LazyFS & { readFile(path: string): Uint8Array };
+	FS: LazyFS & ReleasableFS & { readFile(path: string): Uint8Array; chdir(path: string): void };
+	/** the memory the binary imports; present when the host built it */
+	wasmMemory?: WebAssembly.Memory;
+	lookupMemo?: LookupMemo;
+	/** what the mount was built from and the changes made to it since; set when REUSE_MOUNT is 1 */
+	mountStamp?: MountStamp;
+	mountWatch?: MountWatch;
 	[key: string]: unknown;
 }
 

@@ -1,4 +1,5 @@
 import { EXIT_ERROR, endedInExit, parseJsonReply } from '../ops/json-reply';
+import { blockRefresh } from '../ops/refresh-instance';
 import { errorMessage } from '../util/errors';
 import type { RunHost } from './host';
 import { backgroundPhpHold, fillSettleMs } from './levers';
@@ -19,6 +20,8 @@ export function backgroundHold(host: RunHost): number | undefined {
  */
 export async function run(host: RunHost, code: string): Promise<string> {
 	const inst = await host.ensurePhp();
+	const memo = inst.binary.lookupMemo;
+	memo?.clear();
 	host.out.length = 0;
 	host.lastRet = undefined;
 	inst.mysql?.beginRun();
@@ -30,9 +33,12 @@ export async function run(host: RunHost, code: string): Promise<string> {
 		if (e instanceof WebAssembly.RuntimeError || (e as Error)?.name === 'RuntimeError') {
 			host.trappedRuns = (host.trappedRuns ?? 0) + 1;
 			host.lastTrap = { at: host.nowMs(), message: errorMessage(e) };
+			blockRefresh(host);
 			host.dropInterpreter();
 		}
 		throw e;
+	} finally {
+		memo?.clear();
 	}
 	return host.out.join('');
 }

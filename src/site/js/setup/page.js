@@ -1,3 +1,29 @@
+async function claimSite(body, onProgress) {
+	const encoded = JSON.stringify(body);
+	let previous = -1;
+	for (;;) {
+		const res = await fetch('/firstrun', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: encoded
+		});
+		const data = await res.json();
+		if (res.status !== 503 || data.preparing !== true) return { data };
+		if (
+			!Number.isSafeInteger(data.completed) ||
+			!Number.isSafeInteger(data.total) ||
+			data.completed <= previous ||
+			data.completed < 0 ||
+			data.completed >= data.total
+		) {
+			throw new Error('Site preparation did not advance. Try again.');
+		}
+		previous = data.completed;
+		onProgress(data.completed, data.total);
+		await new Promise((resolve) => setTimeout(resolve, 2000));
+	}
+}
+
 document.getElementById('f').addEventListener('submit', async (e) => {
 	e.preventDefault();
 	const form = e.target;
@@ -8,12 +34,9 @@ document.getElementById('f').addEventListener('submit', async (e) => {
 	button.disabled = true;
 	out.textContent = 'Claiming...';
 	try {
-		const res = await fetch('/firstrun', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify(body)
+		const { data } = await claimSite(body, (completed, total) => {
+			out.textContent = `Preparing site (${completed} of ${total})...`;
 		});
-		const data = await res.json();
 		if (!data.ok) throw new Error(data.error || 'refused');
 		// a password the visitor typed is one they already have, so it is not shown back
 		const chose = Boolean(body.adminPass);

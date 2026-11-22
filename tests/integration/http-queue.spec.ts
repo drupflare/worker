@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { alarmDelayMs } from '../../src/do/levers';
 import {
 	driveAlarms,
 	freshSite,
@@ -103,7 +104,7 @@ describe('the deferred queue is durable and its depth is reported', () => {
 		// draining in alarm() alone is half a fix: on an idle site the alarm re-arms 240 s out, so a
 		// queued request waited up to four minutes
 		expect(out.alarmAt).not.toBeNull();
-		expect(Number(out.alarmAt) - out.now).toBeLessThan(1000);
+		expect(Number(out.alarmAt) - out.now).toBeLessThan(alarmDelayMs() + 1000);
 	});
 });
 

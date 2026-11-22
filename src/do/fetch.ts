@@ -4,7 +4,7 @@ import { ReplicaRequiresPrimary } from '../ops/replica';
 import type { SitePhpDurableObject } from '../site-do';
 import { jsonError } from '../util/reply';
 import { recordInDeployment } from './fleet';
-import { sleepBudgetMs } from './levers';
+import { alarmShape, sleepBudgetMs } from './levers';
 import { adoptRetained } from './retention';
 import { auditOwnerCall } from './routes/audit';
 import { route as routeImpl, withKvGrant } from './serve';
@@ -34,6 +34,7 @@ export async function fetchRequest(
 		const reusedBefore = site.heapsReused ?? 0;
 		site.resetBridgeBytes();
 		const res = await routeImpl(site, request);
+		if (site.env.COMMIT_SYNC === '1') await site.storage.sync();
 		// the wipe is done; anything below would write into the emptied storage
 		if (site.retired) return res;
 		site.noteDemand(request, linearBefore, reusedBefore);
@@ -69,6 +70,8 @@ export async function fetchRequest(
 	} finally {
 		site.inflight = Math.max(0, (site.inflight ?? 1) - 1);
 		site.releaseArming();
+		// a failed move must not fail the request
+		if (alarmShape(site.env) === 'end-sync') await site.settleAlarmEnd().catch(() => {});
 	}
 }
 

@@ -110,6 +110,7 @@ export async function alarmEntry(
 	const linearBefore = site.heapNow();
 	site.resetBridgeBytes();
 	site.holdArming();
+	site.alarmDepth += 1;
 	try {
 		const outcome = await alarmBody(site, info);
 		noteAlarmDemand(site, outcome, linearBefore);
@@ -131,6 +132,7 @@ export async function alarmEntry(
 			await keepLaneReplicating(site);
 		} finally {
 			site.releaseArming();
+			site.alarmDepth = Math.max(0, site.alarmDepth - 1);
 		}
 	}
 }

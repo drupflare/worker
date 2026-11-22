@@ -1,6 +1,7 @@
 import { SELF } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { emptyTally } from '../../src/db/write-tally';
+import { alarmDelayMs } from '../../src/do/levers';
 import { saveDebounceMs } from '../../src/site-do';
 import {
 	driveAlarms,
@@ -275,7 +276,12 @@ describe('the automatic seam: a cachetags WRITE bumps, a cachetags READ does not
 	it('arms the refill a bounded window after a save, and a later save does not push it', async () => {
 		const arm = async (debounce?: string) =>
 			inObject(freshSite(), async (site) => {
-				if (debounce !== undefined) site.env = { ...site.env, SAVE_DEBOUNCE_MS: debounce };
+				// head keeps the alarm floor out of a test of the debounce window
+				site.env = {
+					...site.env,
+					ALARM_SHAPE: 'head',
+					...(debounce !== undefined ? { SAVE_DEBOUNCE_MS: debounce } : {})
+				};
 				stubRender(site, ({ path }) => pageFor(path));
 				await site.fillOne('/');
 				// start from no pending alarm, so the reading below is the save's own arm
@@ -534,8 +540,10 @@ describe('a save must not hand the next visitor a 202', () => {
 			site.bumpGeneration('wake');
 			return { alarmAt: await site.ctx.storage.getAlarm(), now: Date.now() };
 		});
-		// inside the save debounce, and far before the keep-warm alarm it would otherwise wait for
-		expect(Number(out.alarmAt) - out.now).toBeLessThan(saveDebounceMs({} as never) + 1000);
+		// inside the larger of the save debounce and the alarm floor, far before the keep-warm alarm
+		expect(Number(out.alarmAt) - out.now).toBeLessThan(
+			Math.max(saveDebounceMs({} as never), alarmDelayMs()) + 1000
+		);
 	});
 });
 

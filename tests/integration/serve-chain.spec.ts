@@ -1,6 +1,7 @@
 import { evictDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { variesByRequest } from '../../src/do/helpers';
+import { alarmDelayMs } from '../../src/do/levers';
 import { OWNER_TOKEN_KEY } from '../../src/ops/site-secrets';
 import { HeapRestoreIncomplete } from '../../src/site-do';
 import {
@@ -93,8 +94,8 @@ describe('a cold MISS costs no interpreter and no render', () => {
 		// `pageHits` already counts for nothing
 		expect(out.after).toBe(1);
 		expect(out.alarmAt).not.toBeNull();
-		// armed for the next tick, not for the 240 s keep-warm interval
-		expect(Number(out.alarmAt) - out.now).toBeLessThan(1000);
+		// armed inside the alarm floor, not for the 240 s keep-warm interval
+		expect(Number(out.alarmAt) - out.now).toBeLessThan(alarmDelayMs() + 1000);
 	});
 
 	it('keeps the counter across an eviction, so an edge-tier assertion can rely on it', async () => {

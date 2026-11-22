@@ -328,6 +328,7 @@ export interface RunHost
 			| 'exitedRuns'
 			| 'lastExit'
 			| 'phpBootedAt'
+			| 'restartBlocked'
 			| 'ensurePhp'
 			| 'dropInterpreter'
 			| 'run'

@@ -31,8 +31,8 @@ export async function healthRoute(f: FrontContext): Promise<Response | undefined
 }
 
 /** Runs the claim's two preparatory object invocations before the claim itself. */
-export async function claimPhases(f: FrontContext): Promise<void> {
-	const { request, url, site, stubOf } = f;
+export async function claimPhases(f: FrontContext): Promise<Response | undefined> {
+	const { request, url, site, stubOf, env } = f;
 	// a claim is three invocations (a reset rolls one back whole): caches, install, claim; the
 	// first two answers go unread since the claim repeats their idempotent repairs
 	if (
@@ -47,10 +47,42 @@ export async function claimPhases(f: FrontContext): Promise<void> {
 			prepare.search = '';
 			prepare.searchParams.set('site', site);
 			prepare.searchParams.set('phase', phase);
+			if (env.CLAIM_WARM_STEPS === '1') {
+				const response = await stubOf().fetch(
+					new Request(prepare, { method: 'POST', body: '{}' })
+				);
+				if (response.status === 409) {
+					await response.body?.cancel();
+					return undefined;
+				}
+				if (!response.ok) return response;
+				const progress = (await response.json()) as {
+					complete?: boolean;
+					completed?: number;
+					total?: number;
+				};
+				if (phase === 'warm' && progress.complete === false) {
+					return Response.json(
+						{
+							ok: false,
+							preparing: true,
+							error: 'Site preparation is in progress. Retry shortly.',
+							completed: progress.completed,
+							total: progress.total
+						},
+						{
+							status: 503,
+							headers: { 'retry-after': '2', 'cache-control': 'no-store' }
+						}
+					);
+				}
+				continue;
+			}
 			await stubOf()
 				.fetch(new Request(prepare, { method: 'POST', body: '{}' }))
 				.then((res) => res.body?.cancel())
 				.catch(() => undefined);
 		}
 	}
+	return undefined;
 }

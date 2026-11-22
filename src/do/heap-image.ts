@@ -30,20 +30,37 @@ import { heapRestoreChunkBudget, heapSnapshotEnabled } from './alarm';
 import { HEAP_IMAGE_ATTEMPTS_KEY, HEAP_IMAGE_KEY } from './keys';
 import type { HandleTableOps, Payload, SiteBinary } from './types';
 
+const PIN_STATE = Symbol('resident handle pinning');
+
+interface PinState {
+	table: HandleIndex;
+	wrapper: unknown;
+	pinned: Set<object>;
+}
+
+type PinnedBinary = SiteBinary & { [PIN_STATE]?: PinState };
+
 /**
  * Keeps every vrzno handle alive for the interpreter's whole life.
  *
  * `Module.targets.byInteger` is a `WeakerMap` whose iterator deletes collected entries, so a handle
  * the heap still names can be gone by snapshot time; the pin runs before any PHP does.
+ *
+ * A second pin on the same binary replaces the first set instead of wrapping the first wrapper.
  */
 export function pinHandles(site: SitePhpDurableObject, binary: SiteBinary): number {
-	const table = site.handleIndex(binary);
+	const state = (binary as PinnedBinary)[PIN_STATE];
+	const current = site.handleIndex(binary);
+	const table = state && current === state.wrapper ? state.table : current;
 	if (!table) return 0;
+	state?.pinned.clear();
 	const pinned = new Set<object>();
 	site.pinnedHandles = pinned;
-	(binary as unknown as { targets: unknown }).targets = delegatingHandleTable(table, {
+	const wrapper = delegatingHandleTable(table, {
 		onAdd: (o) => pinned.add(o)
 	});
+	(binary as unknown as { targets: unknown }).targets = wrapper;
+	(binary as PinnedBinary)[PIN_STATE] = { table, wrapper, pinned };
 	return pinned.size;
 }
 

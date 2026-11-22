@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { delegatingHandleTable } from '../../../src/do/heap-image';
 import {
 	FAILURE_BACKOFF_FLOOR_MS,
 	HeapRestoreIncomplete,
@@ -203,6 +204,49 @@ describe('the vrzno handle table is read off the binary by shape, not by hope', 
 		expect(out.pinned).toBe(2);
 		// and the counter still tracks, so a later add cannot alias a restored handle
 		expect(out.id).toBe(2);
+	});
+
+	it('a second pin on the same binary replaces the first set instead of nesting a wrapper', async () => {
+		const stub = freshSite();
+		const out = await inObject(stub, (site) => {
+			const binary = { targets: fakeTargets() } as never;
+			site.pinHandles(binary);
+			const first = site.pinnedHandles;
+			site.handleIndex(binary)?.add?.({ a: 1 });
+			const afterFirst = first?.size ?? -1;
+			site.pinHandles(binary);
+			const second = site.pinnedHandles;
+			const id = site.handleIndex(binary)?.add?.({ b: 2 });
+			return {
+				afterFirst,
+				distinct: first !== second,
+				first: first?.size ?? -1,
+				second: second?.size ?? -1,
+				id
+			};
+		});
+		expect(out.afterFirst).toBe(1);
+		expect(out.distinct).toBe(true);
+		// the old wrapper is out of the chain, so it neither keeps its set nor feeds it again
+		expect(out.first).toBe(0);
+		expect(out.second).toBe(1);
+		expect(out.id).toBe(2);
+	});
+
+	it('pins through a wrapper something else put on the binary, rather than refusing', async () => {
+		const stub = freshSite();
+		const out = await inObject(stub, (site) => {
+			const binary = { targets: fakeTargets() } as { targets: never };
+			site.pinHandles(binary as never);
+			const inner = site.handleIndex(binary as never);
+			if (!inner) return { pinned: -1, id: undefined };
+			binary.targets = delegatingHandleTable(inner as never) as never;
+			site.pinHandles(binary as never);
+			const id = site.handleIndex(binary as never)?.add?.({ c: 3 });
+			return { pinned: site.pinnedHandles?.size ?? -1, id };
+		});
+		expect(out.pinned).toBe(1);
+		expect(out.id).toBe(1);
 	});
 
 	it('is a no-op on a binary with no table, rather than a throw at boot', async () => {

@@ -46,6 +46,27 @@ export function saveDebounceMs(env?: SiteEnv): number {
 	return Number.isFinite(n) && n >= 0 ? n : 2000;
 }
 
+export type AlarmShape = 'head' | 'delay' | 'end-sync';
+
+/**
+ * How a request moves the fill alarm; a missing or unknown value is `delay`.
+ *
+ * `delay` floors every request-path move at `alarmDelayMs()` ahead. `head` moves the alarm one
+ * tick out, which the deployed A/B tied to storage resets. `end-sync` makes no move during the
+ * request, then commits its writes and moves the alarm once at the end. An alarm firing keeps
+ * `head` in every shape.
+ */
+export function alarmShape(env?: SiteEnv): AlarmShape {
+	const raw = env?.ALARM_SHAPE;
+	return raw === 'head' || raw === 'end-sync' ? raw : 'delay';
+}
+
+/** the floor `delay` keeps ahead of now, in ms: a whole number from 1,000 to 60,000, else 5,000 */
+export function alarmDelayMs(env?: SiteEnv): number {
+	const n = Number(env?.ALARM_DELAY_MS);
+	return Number.isInteger(n) && n >= 1_000 && n <= 60_000 ? n : 5_000;
+}
+
 /**
  * How long PHP may wait through the park in one invocation, in total.
  *

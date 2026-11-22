@@ -291,16 +291,23 @@ function readKeepOptions(body: Record<string, unknown>): KeepOptions | undefined
 	return { keep: keep === true, remove: remove as string[] };
 }
 
-/**
- * Mounts one revision, verifies the kernel boots against it, and restores the old files if not;
- * a broken module fails when the container is built, not when its files are written.
- */
-export async function applyRevision(
+type PreparedRevision =
+	| {
+			ok: true;
+			before: ReturnType<typeof trustedEntries>;
+			rewired: boolean;
+			counts: ReturnType<typeof planSync>['counts'];
+			rowsWritten: number;
+	  }
+	| { ok: false; [key: string]: unknown };
+
+// lets the incoming source payloads go before the new kernel boots
+function prepareRevision(
 	site: SitePhpDurableObject,
 	pkg: string,
 	manifest: Record<string, string>,
 	rev: string
-): Promise<Record<string, unknown>> {
+): PreparedRevision {
 	const { files, missing } = materialise(site.sql, manifest);
 	if (missing.length > 0) {
 		return {
@@ -333,24 +340,39 @@ export async function applyRevision(
 	const before = trustedEntries(site, [...stored.entries()]);
 	const plan = planSync(stored, files);
 	const rewired = gitApply(site, pkg, plan, rev);
+	return { ok: true, before, rewired, counts: plan.counts, rowsWritten: plan.rowsWritten };
+}
+
+/**
+ * Mounts one revision, verifies the kernel boots against it, and restores the old files if not;
+ * a broken module fails when the container is built, not when its files are written.
+ */
+export async function applyRevision(
+	site: SitePhpDurableObject,
+	pkg: string,
+	manifest: Record<string, string>,
+	rev: string
+): Promise<Record<string, unknown>> {
+	const prepared = prepareRevision(site, pkg, manifest, rev);
+	if (!prepared.ok) return prepared;
 	const verdict = await gitVerifyBoot(site);
 	if (!verdict.ok) {
-		gitRestore(site, pkg, before, rev);
+		gitRestore(site, pkg, prepared.before, rev);
 		return {
 			ok: false,
 			applied: false,
 			rolledBack: true,
-			counts: plan.counts,
+			counts: prepared.counts,
 			error: `rolled back: ${verdict.error ?? 'the kernel refused to boot'}`
 		};
 	}
-	if (rewired) site.dropCompiledContainer();
+	if (prepared.rewired) site.dropCompiledContainer();
 	return {
 		ok: true,
 		applied: true,
 		rolledBack: false,
-		counts: plan.counts,
-		rowsWritten: plan.rowsWritten
+		counts: prepared.counts,
+		rowsWritten: prepared.rowsWritten
 	};
 }
 

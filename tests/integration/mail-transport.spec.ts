@@ -1,5 +1,6 @@
 import { decode, encode } from '@drupflare/durabledb/codec';
 import { afterEach, describe, expect, it } from 'vitest';
+import { alarmDelayMs } from '../../src/do/levers';
 import { driveAlarms, freshSite, inObject, statsOf, type ServeDo } from '../helpers/serve-do';
 import { stubFetch } from '../helpers/stub-fetch';
 
@@ -394,7 +395,7 @@ describe('the queue is durable and the chain wakes for it', () => {
 			return armed;
 		});
 		expect(out.alarmAt).not.toBeNull();
-		expect(Number(out.alarmAt) - out.now).toBeLessThan(1000);
+		expect(Number(out.alarmAt) - out.now).toBeLessThan(alarmDelayMs() + 1000);
 	});
 
 	it('does not drain when the switch is off, so a depth assertion is stable', async () => {

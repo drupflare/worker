@@ -1,3 +1,4 @@
+import { releaseRetired } from '../ops/release-host';
 import type { PhpInstance, SitePhpDurableObject } from '../site-do';
 import { firstRow } from '../util/sql';
 import type { RetentionHost } from './host';
@@ -99,6 +100,7 @@ export function adoptRetained(host: RetentionHost): void {
 		retainedInterpreters.delete(id);
 		// its instance is gone, so its heap is garbage; the boot that follows takes it instead
 		keepSpareMemory(kept.php);
+		releaseRetired(host.env, kept.php, prev.parkSockets);
 		host.lastRetention = { at, adopted: false, reason };
 		return;
 	}
@@ -121,6 +123,7 @@ export function resetPhp(host: RetentionHost): void {
 	if (!kept) return;
 	retainedInterpreters.delete(id);
 	keepSpareMemory(kept.php);
+	releaseRetired(host.env, kept.php, kept.owner.current.parkSockets);
 }
 
 /**
@@ -130,7 +133,10 @@ export function resetPhp(host: RetentionHost): void {
 export async function retire(host: RetentionHost): Promise<void> {
 	host.retired = true;
 	host.dropInterpreter();
-	retainedInterpreters.delete(host.ctx.id.toString());
+	const id = host.ctx.id.toString();
+	const kept = retainedInterpreters.get(id);
+	retainedInterpreters.delete(id);
+	if (kept) releaseRetired(host.env, kept.php, kept.owner.current.parkSockets);
 	await host.storage.deleteAlarm();
 	await host.storage.deleteAll();
 }

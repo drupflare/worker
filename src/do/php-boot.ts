@@ -7,7 +7,11 @@ import { DISABLED, STANDIN_FIX } from '../drupal/standin-fix';
 import { SHIPPED_CAPABILITIES } from '../ops/catalog';
 import { recordEncounter } from '../ops/cold-encounter';
 import { emptyCrossings, wrapCrossings } from '../ops/crossings';
+import { checkMount, mountReuseArmed, stampMount, trimTwigCache } from '../ops/mount-watch';
+import { packOutput, type PhpOutputBuffer } from '../ops/packed-output';
 import { parkEnabled } from '../ops/park';
+import { blockRefresh, refreshParked } from '../ops/refresh-instance';
+import { releaseHostGraph } from '../ops/release-host';
 import { enforceReadOnly } from '../ops/replica';
 import { writeForwardEnabled } from '../ops/write-forwarding';
 import {
@@ -139,17 +143,37 @@ export async function bootPhp(
 	const bootTree = treeBootFor((site.env as { CMS?: string } | undefined)?.CMS);
 	site.encounters = recordEncounter(site.encounters, 'cold');
 	site.coldsSinceFlush = (site.coldsSinceFlush ?? 0) + 1;
+	// a parked interpreter restarts in place; one that fails to is only good for its memory
+	const parked = site.pendingRefresh;
+	site.pendingRefresh = undefined;
+	const reuse = parked && (await refreshParked(site, parked)) ? parked : undefined;
+	// a mount built from the same inputs, and untouched since, is kept; any other is rebuilt below
+	const verdict =
+		reuse && mountReuseArmed(site.env) && site.mountInfo
+			? checkMount(site, reuse.binary)
+			: undefined;
+	if (verdict) site.lastMountReuse = { at: site.nowMs(), ...verdict };
+	const keepMount = verdict?.kept === true;
+	if (reuse && keepMount) trimTwigCache(reuse.binary);
+	else if (reuse) releaseHostGraph(reuse.binary);
 	// the heap a drop left behind, if any, so this boot never holds a second one beside it
-	const spare = takeSpareMemory();
+	const spare = reuse ? undefined : takeSpareMemory();
 	if (spare) {
 		site.heapsReused = (site.heapsReused ?? 0) + 1;
 		site.lastReuse = { at: site.nowMs(), bytes: spare.buffer.byteLength };
 	}
 	let plan: BootImagePlan = opts.skipRestore ? { reason: 'skipped' } : await planBootImage(site);
-	const memory = spare ?? newInterpreterMemory(seam, planPages(plan));
+	const memory = reuse
+		? reuse.binary.wasmMemory
+		: (spare ?? newInterpreterMemory(seam, planPages(plan)));
 	if (plan.index && !memory) plan = { reason: 'the binary defines its own memory' };
 	// the image's heap is larger than the boot memory once the bake's render has grown it
-	const missing = memory ? planPages(plan) - memory.buffer.byteLength / 65_536 : 0;
+	let missing = memory ? planPages(plan) - memory.buffer.byteLength / 65_536 : 0;
+	// the glue's heap views follow its own growth only, so a live instance cannot be grown from here
+	if (reuse && missing > 0) {
+		plan = { reason: 'the restarted memory is smaller than the image' };
+		missing = 0;
+	}
 	if (memory && missing > 0) memory.grow(missing);
 	// an uncollected interpreter still counts toward the isolate's 128 MiB while this one grows
 	const resident = isolateResidency();
@@ -162,23 +186,35 @@ export async function bootPhp(
 	const t0 = Date.now();
 	// every closure installed below goes through `self`, so an adopting instance can take them
 	// over
-	const owner = { current: site as SitePhpDurableObject };
+	// a restarted interpreter keeps its owner, since its output listeners already forward through it
+	const owner = (reuse && site.phpOwner) || { current: site as SitePhpDurableObject };
+	owner.current = site;
 	site.phpOwner = owner;
 	const self = forwardTo(owner);
-	const php = new PhpStatic(seam, {}, site.bootDiag, opcacheMode(site.env?.OPCACHE_MODE), memory);
-	// braced on purpose: a brace-less arrow returns `push`'s length and workerd warns on every
-	// event
-	php.addEventListener('output', (e) => {
-		self.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []));
-	});
-	php.addEventListener('error', (e) => {
-		self.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []));
-	});
+	const php =
+		reuse?.php ??
+		new PhpStatic(seam, {}, site.bootDiag, opcacheMode(site.env?.OPCACHE_MODE), memory);
+	// the buffers and listeners outlive a restart, so installing them again would double both
+	if (!reuse) {
+		// php-wasm does not type its output buffers, and packing needs them
+		const { buffers } = php as unknown as {
+			buffers: { stdout: PhpOutputBuffer; stderr: PhpOutputBuffer };
+		};
+		packOutput(site.env, buffers);
+		// braced on purpose: a brace-less arrow returns `push`'s length and workerd warns on every
+		// event
+		php.addEventListener('output', (e) => {
+			self.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []));
+		});
+		php.addEventListener('error', (e) => {
+			self.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []));
+		});
+	}
 	// the one cast: php-wasm resolves site as a loosely-typed Module, and SiteBinary names
 	// both the FS surface the mounts drive and the cfw* members installed just below
 	const binary = (await php.binary) as unknown as SiteBinary;
 	// what a drop hands to the next boot; see `keepSpareMemory()`
-	if (memory) (binary as unknown as { wasmMemory: WebAssembly.Memory }).wasmMemory = memory;
+	if (memory) binary.wasmMemory = memory;
 
 	// the bridge the driver reaches through vrzno_env(); inherited from
 	// SiteDurableObject so exec/txn semantics are the verified ones
@@ -256,7 +292,10 @@ export async function bootPhp(
 	// before any PHP runs: a handle minted before the pin cannot be pinned retroactively
 	site.pinHandles(binary);
 
-	await bootTree(site, binary);
+	if (!keepMount) {
+		await bootTree(site, binary);
+		if (mountReuseArmed(site.env)) stampMount(site, binary);
+	}
 
 	site.php = { php, binary, out: site.out, mysql };
 	site.phpBootedAt = site.nowMs();
@@ -281,6 +320,7 @@ export async function bootPhp(
 		if (restored.dirty === true) {
 			// bytes landed: the heap has the right length and wrong contents, so boot again plain
 			const refused = site.bootImage;
+			blockRefresh(site);
 			site.php = undefined;
 			const fresh = await bootPhp(site, { skipRestore: true }, seam);
 			site.bootImage = { ...refused, used: false, rebooted: true };
@@ -309,6 +349,7 @@ export async function bootPhp(
 			if (dirty) {
 				// drop the poisoned instance and boot from the pack (`skipRestore` stops a
 				// retry refusing the same chunk)
+				blockRefresh(site);
 				site.php = undefined;
 				// directly: through `ensurePhp()` this would wait on the boot it is part of
 				const fresh = await bootPhp(site, { skipRestore: true }, seam);

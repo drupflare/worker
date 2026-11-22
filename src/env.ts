@@ -124,10 +124,34 @@ export interface SiteEnv extends BaseSiteEnv {
 	RECONCILE?: string;
 	/** `1` logs memory readings at each boot and invocation end; for diagnosing a reset */
 	MEMORY_TRACE?: string;
+	/** `1` awaits a storage sync before each reply */
+	COMMIT_SYNC?: string;
+	/** `1` detaches the bytes of an evicted installed file, not only its reference */
+	RELEASE_EVICTED?: string;
+	/** `1` restarts PHP in a dropped interpreter for the next boot instead of building a new one */
+	REFRESH_INSTANCE?: string;
+	/** `1` releases the filesystem graph of an interpreter dropped for good, not only its memory */
+	RELEASE_HOST_GRAPH?: string;
+	/** `1` keeps a restarted interpreter's mount when nothing it was built from has changed */
+	REUSE_MOUNT?: string;
+	/** `1` packs stdout and stderr into chunks instead of one push per byte */
+	PACKED_OUTPUT?: string;
+	/** `1` answers absolute `/drupal/` path lookups from a per-interpreter cache */
+	LOOKUP_MEMO?: string;
+	/** `1` runs the claim's warm phase one unit per invocation, reported as progress */
+	CLAIM_WARM_STEPS?: string;
+	/** `1` keeps the Drupal pack in the object's storage and reads it from there, not from ASSETS */
+	COLD_PACK?: string;
+	/** how many 64 KiB chunks of that pack stay in memory; 8 unless set, at most 64 */
+	COLD_PACK_CACHE_CHUNKS?: string;
 	/** see `sleepBudgetMs()` */
 	SLEEP_BUDGET_MS?: string;
 	/** the object's own namespace, so a replica lane can reach its primary to pull the log */
 	SITE?: DurableObjectNamespace;
+	/** how a request moves the fill alarm: `delay` (default), `head` or `end-sync` */
+	ALARM_SHAPE?: string;
+	/** the floor `delay` keeps ahead of now, 1,000 to 60,000 ms; 5,000 otherwise */
+	ALARM_DELAY_MS?: string;
 	/** the opcache arm: `file` (shipping), `shm` or `off`; see `src/runtime/opcache.ts` */
 	OPCACHE_MODE?: string;
 	/** argon2id password hashing; off unless `1`, because it rehashes every login */

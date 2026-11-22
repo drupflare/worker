@@ -8,7 +8,9 @@ import { packCachedEnv } from '../do/lazy-mount';
 import { migrateEngine } from '../do/levers';
 import { mountInstalledModules } from '../do/packages';
 import type { SiteBinary } from '../do/types';
+import { coldPackEnv } from '../ops/cold-pack';
 import { DRIVER_DIGEST } from '../ops/driver-digest';
+import { lookupMemoFor } from '../ops/lookup-memo';
 import { OPCACHE_PACK } from '../ops/opcache-pack';
 import { SHIPPED_LOCK_VERSIONS } from '../ops/shipped-lock';
 import {
@@ -43,7 +45,7 @@ export async function bootDrupalTree(
 		opcacheSourceKey(DRIVER_DIGEST, SHIPPED_LOCK_VERSIONS)
 	);
 	const packedOpcache = opcachePackState === 'usable';
-	const mountEnv = packCachedEnv(site.env);
+	const mountEnv = coldPackEnv(site, packCachedEnv(site.env));
 	site.mountInfo =
 		site.env?.LAZY_MOUNT === '1'
 			? packedOpcache
@@ -85,6 +87,12 @@ export async function bootDrupalTree(
 	// after the packed driver, so an installed module overrides a packed file (the only place
 	// `cfw_module_file` reaches PHP)
 	site.installedModuleFiles = mountInstalledModules(site, binary);
+	// a restarted interpreter keeps the memo it wrapped its lookups with; wrapping twice would nest
+	if (binary.lookupMemo) binary.lookupMemo.clear();
+	else {
+		const lookupMemo = lookupMemoFor(site.env, binary.FS);
+		if (lookupMemo) binary.lookupMemo = lookupMemo;
+	}
 
 	writeDrupalSettings(site, binary);
 }

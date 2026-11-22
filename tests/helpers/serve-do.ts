@@ -138,6 +138,7 @@ export type ServeDo = {
 		setAlarm: (at: number) => Promise<void>;
 		put: (key: string | Record<string, unknown>, value?: unknown) => Promise<void>;
 		delete: (key: string | string[]) => Promise<boolean | number>;
+		sync: () => Promise<void>;
 	};
 	sql: Sql;
 	env: Record<string, unknown>;
@@ -157,6 +158,20 @@ export type ServeDo = {
 	run: (code: string) => Promise<string>;
 	ensurePhp: () => Promise<{ php: { _run: (code: string) => Promise<unknown> } }>;
 	recycleIfOversized: (reason: 'request' | 'alarm') => boolean;
+	dropInterpreter: () => void;
+	/** a dropped interpreter held for the next boot to restart; see REFRESH_INSTANCE */
+	pendingRefresh?: { php: object; binary: object };
+	restartBlocked: boolean;
+	/** what the current interpreter's host closures resolve `this` through */
+	phpOwner?: { current: unknown };
+	parkSockets?: { size: number };
+	trappedRuns?: number;
+	instancesRefreshed?: number;
+	lastRefresh?: { at: number; ok: boolean; ms: number; reason?: string };
+	/** whether the last restart kept its mount, and why */
+	lastMountReuse?: { at: number; kept: boolean; reason: string };
+	mountInfo?: object;
+	heapsReused?: number;
 	lastRecycle?: { at: number; bytes: number; reason: string; rebuild?: boolean };
 	fetch: (request: Request) => Promise<Response>;
 	execSql: (sql: string, params?: unknown) => { rows: Record<string, unknown>[] };

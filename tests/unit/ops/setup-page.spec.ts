@@ -74,7 +74,13 @@ describe('the page itself', () => {
 	 */
 	it('never navigates away on its own', () => {
 		expect(html).not.toContain('location.href =');
-		expect(html).not.toContain('setTimeout');
+		expect(html).not.toContain('location.assign(');
+		expect(html).not.toContain('location.replace(');
+		expect(html).not.toContain('location.reload(');
+		expect(html).not.toContain('window.location');
+		expect(html).not.toContain('document.location');
+		expect(html).not.toContain('window.open(');
+		expect(html).not.toContain('http-equiv="refresh"');
 		// a link is always offered, so leaving is the visitor's decision
 		expect(html).toContain('Log in as admin');
 	});

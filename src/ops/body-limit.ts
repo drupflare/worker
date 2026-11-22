@@ -44,3 +44,9 @@ export const DEFAULT_MAX_PAGED_RESTORE_BYTES = 128 * 1024 * 1024;
  * object, so `MAX_UPLOAD_BYTES` is what an operator lowers to protect the isolate.
  */
 export const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+/**
+ * The largest body `PUT /file` forwards, in bytes. The object never holds it: the body streams to
+ * R2. The default is the platform's own 100 MB request limit, so it lowers nothing that arrived.
+ */
+export const DEFAULT_MAX_FILE_PUT_BYTES = 100 * 1024 * 1024;

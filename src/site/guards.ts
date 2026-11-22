@@ -1,5 +1,6 @@
 import {
 	DEFAULT_MAX_BODY_BYTES,
+	DEFAULT_MAX_FILE_PUT_BYTES,
 	DEFAULT_MAX_RESTORE_BYTES,
 	DEFAULT_MAX_UPLOAD_BYTES,
 	RESTORE_PART_MAX_BYTES
@@ -114,6 +115,7 @@ export type BodyLimitEnv = {
 	MAX_BODY_BYTES?: string | number;
 	MAX_UPLOAD_BYTES?: string | number;
 	MAX_RESTORE_BYTES?: string | number;
+	MAX_FILE_PUT_BYTES?: string | number;
 };
 
 /**
@@ -124,6 +126,11 @@ export type BodyLimitEnv = {
 export function bodyLimitFor(request: Request, env?: BodyLimitEnv): number {
 	// a restore part has a fixed size, so no variable lowers or lifts it
 	if (new URL(request.url).pathname === '/restore-parts') return RESTORE_PART_MAX_BYTES;
+	// a registered file streams to R2 and is never held, so it has its own ceiling
+	if (new URL(request.url).pathname === '/file') {
+		const raw = Number(env?.MAX_FILE_PUT_BYTES ?? DEFAULT_MAX_FILE_PUT_BYTES);
+		return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : DEFAULT_MAX_FILE_PUT_BYTES;
+	}
 	const upload = (request.headers.get('content-type') ?? '')
 		.toLowerCase()
 		.includes('multipart/form-data');

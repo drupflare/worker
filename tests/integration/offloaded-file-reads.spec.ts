@@ -4,10 +4,15 @@ import {
 	drainHydrates,
 	drainMirrors,
 	evictMirrored,
+	listOffloaded,
+	readFile,
+	recordedHash,
 	statFile,
 	type FileBucket
 } from '../../src/db/file-store';
+import { file } from '../../src/do/routes/file';
 import { drupalOp } from '../../src/drupal/site-php';
+import type { SitePhpDurableObject } from '../../src/site-do';
 import { druplicon } from '../fixtures/png';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
@@ -199,6 +204,196 @@ describe('real Drupal over a file that lives only in R2', () => {
 			});
 			expect(out.before.got).toBe(false);
 			expect(out.after.got).toBe('quarterly numbers');
+		},
+		TIMEOUT
+	);
+});
+
+describe('PUT /file', () => {
+	const digest = async (bytes: Uint8Array) =>
+		[...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource))]
+			.map((b) => b.toString(16).padStart(2, '0'))
+			.join('');
+
+	/** an R2 that reads the stream it is given and refuses a digest that does not match */
+	function checkingBucket(truncateBy = 0) {
+		const objects = new Map<string, Uint8Array>();
+		const bucket: FileBucket = {
+			async put(key, value, options) {
+				const bytes = new Uint8Array(await new Response(value as BodyInit).arrayBuffer());
+				const wanted = (options as { sha256?: string } | undefined)?.sha256;
+				if (wanted !== undefined && wanted !== (await digest(bytes))) {
+					throw new Error(
+						'put: the SHA-256 checksum you specified did not match (10037)'
+					);
+				}
+				objects.set(key, bytes);
+				return { size: bytes.length - truncateBy };
+			},
+			async delete(key) {
+				objects.delete(key);
+			},
+			async get(key) {
+				const found = objects.get(key);
+				if (found === undefined) return null;
+				return {
+					size: found.length,
+					body: new Blob([found]).stream(),
+					arrayBuffer: async () => found.slice().buffer as ArrayBuffer
+				};
+			}
+		};
+		return { bucket, objects };
+	}
+
+	const put = async (
+		site: ServeDo,
+		bytes: Uint8Array,
+		query = 'uri=public://imports/logo.png',
+		headers: Record<string, string> = {}
+	) => {
+		const res = await file(
+			site as unknown as SitePhpDurableObject,
+			new Request(`https://cfw.local/file?${query}`, {
+				method: 'PUT',
+				headers: {
+					'x-file-sha256': await digest(bytes),
+					// a constructed request sets no length of its own
+					'content-length': String(bytes.length),
+					'content-type': 'image/png',
+					...headers
+				},
+				body: bytes
+			}),
+			new URL(`https://cfw.local/file?${query}`)
+		);
+		return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+	};
+
+	const armed = (site: ServeDo, bucket: FileBucket, r2 = true) => {
+		const patched = site as unknown as Record<string, unknown>;
+		patched.fileStoreR2 = () => r2;
+		patched.fileBuckets = () => ({ public: bucket, private: undefined });
+		patched.fileSchemes = () => ['public'];
+	};
+
+	it(
+		'streams the bytes to this site prefix and records an evicted row with no chunks',
+		async () => {
+			await inObject(freshSite(), async (site: ServeDo) => {
+				site.ensureServeTables();
+				const { bucket, objects } = checkingBucket();
+				armed(site, bucket);
+				const png = druplicon();
+				const out = await put(site, png);
+				expect(out.status).toBe(200);
+				expect(out.body).toMatchObject({
+					ok: true,
+					uri: 'public://imports/logo.png',
+					size: png.length,
+					store: 'r2',
+					replaced: false
+				});
+				expect([...objects.keys()]).toEqual([
+					`f/${encodeURIComponent(site.siteName())}/public/imports/logo.png`
+				]);
+				const stat = statFile(site.sql, 'public://imports/logo.png');
+				expect(stat).toMatchObject({
+					evicted: true,
+					mirrored: true,
+					chunks: 0,
+					size: png.length
+				});
+				expect(
+					site.sql.exec('SELECT count(*) AS n FROM cfw_file_chunk').toArray()[0]?.['n']
+				).toBe(0);
+				expect(recordedHash(site.sql, 'public://imports/logo.png')).toBe(await digest(png));
+				expect(listOffloaded(site.sql, { limit: 10, site: site.siteName() })).toEqual([
+					expect.objectContaining({ uri: 'public://imports/logo.png', foreign: false })
+				]);
+				const read = await readFile(
+					site.sql,
+					{ public: bucket },
+					'public://imports/logo.png'
+				);
+				expect(read).toEqual(png);
+				// a second put replaces the row and says so
+				const again = await put(site, new Uint8Array([1, 2, 3]));
+				expect(again.body).toMatchObject({ replaced: true, size: 3 });
+			});
+		},
+		TIMEOUT
+	);
+
+	it(
+		'refuses a digest that does not match and records nothing',
+		async () => {
+			await inObject(freshSite(), async (site: ServeDo) => {
+				site.ensureServeTables();
+				const { bucket, objects } = checkingBucket();
+				armed(site, bucket);
+				const out = await put(site, new Uint8Array([9, 9, 9]), undefined, {
+					'x-file-sha256': 'a'.repeat(64)
+				});
+				expect(out.status).toBe(422);
+				expect(out.body['code']).toBe('digest');
+				expect(objects.size).toBe(0);
+				expect(statFile(site.sql, 'public://imports/logo.png')).toBeUndefined();
+			});
+		},
+		TIMEOUT
+	);
+
+	it(
+		'removes the object and writes no row when R2 stored a different size',
+		async () => {
+			await inObject(freshSite(), async (site: ServeDo) => {
+				site.ensureServeTables();
+				const { bucket, objects } = checkingBucket(1);
+				armed(site, bucket);
+				const out = await put(site, new Uint8Array([1, 2, 3, 4]));
+				expect(out.status).toBe(422);
+				expect(out.body['code']).toBe('size');
+				expect(objects.size).toBe(0);
+				expect(statFile(site.sql, 'public://imports/logo.png')).toBeUndefined();
+			});
+		},
+		TIMEOUT
+	);
+
+	it(
+		'refuses a missing sha256, a bad uri, a scheme with no bucket, a wrong method and a site with no R2 store',
+		async () => {
+			await inObject(freshSite(), async (site: ServeDo) => {
+				site.ensureServeTables();
+				const { bucket } = checkingBucket();
+				armed(site, bucket);
+				const bytes = new Uint8Array([1]);
+				expect(
+					(await put(site, bytes, undefined, { 'x-file-sha256': 'nope' })).body['code']
+				).toBe('sha256_required');
+				expect((await put(site, bytes, 'uri=public://a/../../b')).body['code']).toBe(
+					'bad_uri'
+				);
+				expect((await put(site, bytes, 'uri=temporary://a.png')).body['code']).toBe(
+					'bad_uri'
+				);
+				expect((await put(site, bytes, 'uri=private://a.txt')).body['code']).toBe(
+					'bad_uri'
+				);
+				expect((await put(site, bytes, '')).body['code']).toBe('bad_uri');
+				const get = await file(
+					site as unknown as SitePhpDurableObject,
+					new Request('https://cfw.local/file?uri=public://a.png'),
+					new URL('https://cfw.local/file?uri=public://a.png')
+				);
+				expect(get.status).toBe(405);
+				armed(site, bucket, false);
+				const none = await put(site, bytes);
+				expect(none.status).toBe(501);
+				expect(none.body['code']).toBe('no_r2_store');
+				expect(statFile(site.sql, 'public://imports/logo.png')).toBeUndefined();
+			});
 		},
 		TIMEOUT
 	);

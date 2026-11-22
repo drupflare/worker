@@ -34,6 +34,12 @@ chunk that crosses it. `GET` and `HEAD` are not checked.
 be a functional regression. It defaults to 100 MiB, the platform's own request limit, which is the
 only limit a multipart body had before the edge counted it.
 
+## `MAX_FILE_PUT_BYTES`
+
+`PUT /file` streams its body to R2 and never holds it, so it has its own ceiling and neither the
+form-body nor the upload one applies. The default is 100 MiB, the platform's request limit, so it
+lowers nothing that arrived. `0` disables the guard.
+
 ## `MAX_RESTORE_BYTES`
 
 A `/restore` body is one SQL dump, which the object holds as text and splits into statements, so it has

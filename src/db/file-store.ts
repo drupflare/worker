@@ -837,6 +837,115 @@ export async function fetchOffloaded(
 	return object;
 }
 
+/** what registering a file held only in R2 answered */
+export type RegisterResult =
+	| { ok: true; uri: string; size: number; key: string; replaced: boolean }
+	| { ok: false; status: 400 | 422 | 502; code: string; message: string };
+
+/**
+ * Writes a file straight to R2 and records it as evicted, with no resident chunks.
+ *
+ * R2 checks `sha256` as it receives the bytes and refuses a mismatch without storing, and the stored
+ * size has to equal `size`; the row is written only after both, so a row never names bytes that were
+ * not verified. The key is this site's own prefix, so the file reads back and copies like any
+ * other offloaded file. A bound bucket for the scheme is the caller's check.
+ */
+export async function registerOffloaded(
+	sql: FileSql,
+	buckets: FileBuckets,
+	opts: {
+		uri: string;
+		body: ReadableStream<Uint8Array> | Uint8Array;
+		size: number;
+		sha256: string;
+		mime?: string;
+		site: string;
+		nowMs: number;
+		schemes: readonly string[];
+	}
+): Promise<RegisterResult> {
+	const key = normaliseUri(opts.uri);
+	if (key === undefined || !isMirrorable(key, opts.schemes)) {
+		return {
+			ok: false,
+			status: 400,
+			code: 'bad_uri',
+			message: 'that is not a storable file URI'
+		};
+	}
+	const bucket = bucketFor(buckets, key);
+	if (bucket === undefined) {
+		return {
+			ok: false,
+			status: 400,
+			code: 'no_bucket',
+			message: 'no bucket is bound for that scheme'
+		};
+	}
+	const objectKey = mirrorKey(key, opts.site) as string;
+	ensureFileTables(sql);
+	const held = statFile(sql, key);
+	let stored: unknown;
+	try {
+		stored = await bucket.put(objectKey, opts.body as Uint8Array, {
+			sha256: opts.sha256,
+			...(opts.mime === undefined ? {} : { httpMetadata: { contentType: opts.mime } })
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return /checksum|digest|sha-?256/i.test(message)
+			? {
+					ok: false,
+					status: 422,
+					code: 'digest',
+					message: 'the bytes do not match the sha256'
+				}
+			: {
+					ok: false,
+					status: 502,
+					code: 'storage_unavailable',
+					message: 'the bucket refused the put'
+				};
+	}
+	const size = (stored as { size?: number } | null)?.size;
+	if (size !== opts.size) {
+		await bucket.delete(objectKey).catch(() => undefined);
+		sql.exec('DELETE FROM cfw_file WHERE uri = ? AND evicted = 1', key);
+		return {
+			ok: false,
+			status: 422,
+			code: 'size',
+			message: `the bucket stored ${size} of ${opts.size} bytes`
+		};
+	}
+	// a rewrite bumps `rev` so an in-flight mirror of older bytes cannot mark these as its own
+	sql.exec('DELETE FROM cfw_file_chunk WHERE uri = ?', key);
+	sql.exec('DELETE FROM cfw_file_mirror_queue WHERE uri = ?', key);
+	sql.exec(
+		`INSERT INTO cfw_file (uri, size, modified, mime, chunks, mirrored, rev, touched, evicted, hash, r2site)
+     VALUES (?, ?, ?, ?, 0, 1, 1, ?, 1, ?, ?)
+     ON CONFLICT(uri) DO UPDATE SET
+       size = excluded.size,
+       modified = excluded.modified,
+       mime = excluded.mime,
+       chunks = 0,
+       mirrored = 1,
+       rev = cfw_file.rev + 1,
+       touched = excluded.touched,
+       evicted = 1,
+       hash = excluded.hash,
+       r2site = excluded.r2site`,
+		key,
+		opts.size,
+		opts.nowMs,
+		opts.mime ?? null,
+		opts.nowMs,
+		opts.sha256,
+		opts.site
+	);
+	return { ok: true, uri: key, size: opts.size, key: objectKey, replaced: held !== undefined };
+}
+
 /** reads a whole file from the object, or from R2 when it was evicted; undefined when not stored */
 export async function readFile(
 	sql: FileSql,

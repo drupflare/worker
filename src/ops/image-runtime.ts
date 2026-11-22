@@ -610,7 +610,9 @@ const GD2_FMT_TRUECOLOR_COMPRESSED = 4;
 
 /** zlib-wrapped deflate at the default level, which is what libgd's `compress()` writes */
 async function zlibDeflate(data: Uint8Array): Promise<Uint8Array> {
-	const stream = new Blob([data]).stream().pipeThrough(new CompressionStream('deflate'));
+	const stream = new Blob([data as Uint8Array<ArrayBuffer>])
+		.stream()
+		.pipeThrough(new CompressionStream('deflate'));
 	return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 

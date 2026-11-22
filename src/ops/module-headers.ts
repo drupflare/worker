@@ -44,9 +44,9 @@ export function moduleHeaderRecord(raw: unknown): Record<string, string> {
 /** the accepted headers of a response, for a tier that stores the page it answered with */
 export function moduleHeadersOf(headers: Headers): Record<string, string> {
 	const out: Record<string, string> = {};
-	for (const [name, value] of headers) {
+	headers.forEach((value, name) => {
 		if (acceptModuleHeader(name, value)) out[name] = value;
-	}
+	});
 	return out;
 }
 

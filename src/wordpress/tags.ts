@@ -134,19 +134,134 @@ export function writtenTables(sql: string, prefix: string = TABLE_PREFIX): strin
  * The writes of one run that nothing announced.
  *
  * A write is covered by a wholesale purge, by a quiet mark for its table (a write the emitter
- * named and decided no page shows), or by an announced tag of a family that table feeds.
+ * named and decided no page shows), or by an announced tag of a family that table feeds. When
+ * every write to a table named its post ids (see {@link writtenRows}), only a `post:<id>` tag for
+ * each of those ids covers it, so a tag announced for one post no longer covers a write to another.
+ *
+ * @param rows the ids each table was written at; absent or null means the family check applies
  */
 export function uncoveredWrites(
 	writes: ReadonlySet<string>,
 	tags: ReadonlySet<string>,
 	quiet: ReadonlySet<string>,
-	wholesale: boolean
+	wholesale: boolean,
+	rows?: ReadonlyMap<string, ReadonlySet<number> | null>
 ): string[] {
 	if (wholesale) return [];
 	const families = new Set([...tags].map(familyOf));
 	return [...writes].filter((entry) => {
 		if (entry.startsWith('ddl:')) return true;
 		if (quiet.has(entry)) return false;
+		const ids = rows?.get(entry);
+		if (ids !== undefined && ids !== null) {
+			return [...ids].some((id) => !tags.has(`post:${id}`));
+		}
 		return !TABLE_FAMILIES[entry as ContentTable]?.some((family) => families.has(family));
 	});
+}
+
+/** the tables whose written rows a statement can name, and the column that holds the post id */
+const ROW_COLUMN: Readonly<Partial<Record<ContentTable, string>>> = {
+	posts: 'ID',
+	postmeta: 'post_id'
+};
+
+const MAX_NAMED_ROWS = 100;
+
+/**
+ * The post ids a write to `wp_posts` or `wp_postmeta` names, or undefined when it does not name
+ * them in a shape that cannot be misread.
+ *
+ * Accepted: an `UPDATE` or `DELETE` of one table whose `WHERE` is a conjunction holding `ID = n`
+ * (`post_id = n` for meta) or `ID IN (n, ...)`, and a single-row `INSERT` into `wp_posts`, whose id
+ * is the one the database reported. An `OR`, a subselect, a join, a parenthesis outside an `IN`
+ * list, `BETWEEN` or an upsert is undefined, and so is every other table. Extra `AND` terms only
+ * narrow a write, so the listed ids are a superset of the rows it touched.
+ *
+ * @param sql the MySQL statement
+ * @param reply what the database said about it
+ * @param prefix the table prefix
+ */
+export function writtenRows(
+	sql: string,
+	reply: { insertId?: number; affected?: number },
+	prefix: string = TABLE_PREFIX
+): { table: ContentTable; ids: number[] } | undefined {
+	const text = blanked(sql).replace(/`/g, '').replace(/\s+/g, ' ').trim().replace(/;$/, '');
+	if (/\b(SELECT|JOIN|UNION)\b/i.test(text)) return undefined;
+	const tables = writtenTables(sql, prefix);
+	const only = tables.length === 1 ? (tables[0] as ContentTable) : undefined;
+	const column = only === undefined ? undefined : ROW_COLUMN[only];
+	if (only === undefined || column === undefined) return undefined;
+	const name = `${prefix}${only}`;
+
+	const insert = new RegExp(
+		`^(?:INSERT|REPLACE) (?:(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE) )*(?:INTO )?${name}\\b`,
+		'i'
+	).test(text);
+	if (insert) {
+		const id = reply.insertId ?? 0;
+		return only === 'posts' &&
+			reply.affected === 1 &&
+			Number.isSafeInteger(id) &&
+			id > 0 &&
+			!/\bON DUPLICATE\b/i.test(text)
+			? { table: only, ids: [id] }
+			: undefined;
+	}
+
+	const update = new RegExp(
+		`^UPDATE (?:(?:LOW_PRIORITY|IGNORE) )*${name} SET [^()]*? WHERE (.+)$`,
+		'i'
+	).exec(text);
+	const remove = new RegExp(
+		`^DELETE (?:(?:LOW_PRIORITY|QUICK|IGNORE) )*FROM ${name} WHERE (.+)$`,
+		'i'
+	).exec(text);
+	const where = (update ?? remove)?.[1];
+	if (where === undefined) return undefined;
+	const condition = where.replace(/ (?:ORDER BY .*?)?(?:LIMIT \d+(?: OFFSET \d+)?)?$/i, '');
+	const bare = condition.replace(/\bIN ?\( ?\d+(?: ?, ?\d+)* ?\)/gi, 'IN_LIST');
+	if (/[()]|\bOR\b|\bBETWEEN\b|\bXOR\b/i.test(bare)) return undefined;
+	const ids = new Set<number>();
+	for (const term of condition.split(/ AND /i)) {
+		const single = new RegExp(`^(?:${name}\\.)?${column} ?= ?(\\d+)$`, 'i').exec(term.trim());
+		const many = new RegExp(
+			`^(?:${name}\\.)?${column} IN ?\\( ?(\\d+(?: ?, ?\\d+)*) ?\\)$`,
+			'i'
+		).exec(term.trim());
+		const found = single?.[1] ?? many?.[1];
+		if (found === undefined) continue;
+		for (const n of found.split(',')) ids.add(Number(n));
+		break;
+	}
+	if (ids.size === 0 || ids.size > MAX_NAMED_ROWS) return undefined;
+	return [...ids].every((n) => Number.isSafeInteger(n) && n > 0)
+		? { table: only, ids: [...ids] }
+		: undefined;
+}
+
+/** the rows each content table was written at in one run; null means a write that named none */
+export type WrittenRows = Map<string, Set<number> | null>;
+
+/**
+ * Folds one successful write into a run's rows: the ids it named, or a null for each table it
+ * touched without naming rows, which sends that table back to the family check.
+ */
+export function noteWrittenRows(
+	rows: WrittenRows,
+	tables: readonly string[],
+	named: { table: string; ids: readonly number[] } | undefined
+): void {
+	for (const table of tables) {
+		if (named === undefined || named.table !== table) {
+			rows.set(table, null);
+			continue;
+		}
+		const held = rows.get(table);
+		if (held === null) continue;
+		const ids = held ?? new Set<number>();
+		for (const id of named.ids) ids.add(id);
+		rows.set(table, ids);
+	}
 }

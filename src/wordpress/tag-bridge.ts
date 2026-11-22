@@ -4,7 +4,15 @@ import type { MysqlBridge } from '../do/mysql-bridge';
 import type { SiteBinary } from '../do/types';
 import type { SitePhpDurableObject } from '../site-do';
 import { cmsOf } from '../util/cms';
-import { parseAnnouncement, uncoveredWrites, writtenTables, type Announcement } from './tags';
+import {
+	noteWrittenRows,
+	parseAnnouncement,
+	uncoveredWrites,
+	writtenRows,
+	writtenTables,
+	type Announcement,
+	type WrittenRows
+} from './tags';
 
 /** what `/serve-stats` reports about WordPress invalidation */
 export type TagStats = {
@@ -29,6 +37,8 @@ type Run = {
 	tags: Set<string>;
 	quiet: Set<string>;
 	writes: Set<string>;
+	/** the post ids each written table was written at, when every write to it named them */
+	rows: WrittenRows;
 	wholesaled: boolean;
 	settled: boolean;
 };
@@ -43,6 +53,7 @@ const blank = (): Run => ({
 	tags: new Set(),
 	quiet: new Set(),
 	writes: new Set(),
+	rows: new Map(),
 	wholesaled: false,
 	settled: false
 });
@@ -110,7 +121,7 @@ export function settleRun(site: SitePhpDurableObject, run: Run): void {
 	run.settled = true;
 	site.wordpressTags ??= emptyStats();
 	site.wordpressTags.settles += 1;
-	const gaps = uncoveredWrites(run.writes, run.tags, run.quiet, run.wholesaled);
+	const gaps = uncoveredWrites(run.writes, run.tags, run.quiet, run.wholesaled, run.rows);
 	if (gaps.length > 0) {
 		site.wordpressTags.floorPurges += 1;
 		site.wordpressTags.lastFloor = { tables: gaps, at: site.nowMs() };
@@ -188,6 +199,11 @@ export function installTagBridge(
 						const tables = writtenTables(request.sql);
 						if (tables.length > 0 && changed(reply)) {
 							for (const table of tables) run.writes.add(table);
+							noteWrittenRows(
+								run.rows,
+								tables,
+								writtenRows(request.sql, JSON.parse(reply) as { insertId?: number })
+							);
 						}
 					}
 				} catch {

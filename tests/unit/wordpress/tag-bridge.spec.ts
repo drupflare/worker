@@ -252,6 +252,53 @@ describe('the floor: a write nobody announced', () => {
 		expect(out.stats?.floorPurges).toBe(0);
 	});
 
+	it('fires when the tag announced is for another post than the one the write named', async () => {
+		const out = await withRig((rig) => {
+			rig.sql("INSERT INTO wp_posts (post_title) VALUES ('one')");
+			rig.sql("INSERT INTO wp_posts (post_title) VALUES ('two')");
+			rig.tags({ op: 'announce', tags: ['post:1', 'post:2'] });
+			rig.tags({ op: 'settle' });
+			rig.bridge.beginRun();
+			expect(rig.sql("UPDATE wp_posts SET post_title = 'x' WHERE ID = 2").ok).toBe(true);
+			rig.tags({ op: 'announce', tags: ['post:1'] });
+			rig.tags({ op: 'settle' });
+			return rig.site.wordpressTags;
+		});
+		expect(out?.floorPurges).toBe(1);
+		expect(out?.lastFloor?.tables).toEqual(['posts']);
+	});
+
+	it('does not fire when the tag announced is the post the write named', async () => {
+		const out = await withRig((rig) => {
+			rig.sql("INSERT INTO wp_posts (post_title) VALUES ('one')");
+			rig.sql("INSERT INTO wp_posts (post_title) VALUES ('two')");
+			rig.tags({ op: 'announce', tags: ['post:1', 'post:2'] });
+			rig.tags({ op: 'settle' });
+			rig.bridge.beginRun();
+			expect(rig.sql("UPDATE wp_posts SET post_title = 'x' WHERE ID = 2").ok).toBe(true);
+			rig.tags({ op: 'announce', tags: ['post:2'] });
+			rig.tags({ op: 'settle' });
+			return rig.site.wordpressTags;
+		});
+		expect(out?.floorPurges).toBe(0);
+	});
+
+	it('keeps the family check for a write that names no post', async () => {
+		const out = await withRig((rig) => {
+			rig.sql("INSERT INTO wp_posts (post_title) VALUES ('one')");
+			rig.tags({ op: 'announce', tags: ['post:1'] });
+			rig.tags({ op: 'settle' });
+			rig.bridge.beginRun();
+			expect(
+				rig.sql("UPDATE wp_posts SET post_title = 'x' WHERE post_title = 'one'").ok
+			).toBe(true);
+			rig.tags({ op: 'announce', tags: ['post:9'] });
+			rig.tags({ op: 'settle' });
+			return rig.site.wordpressTags;
+		});
+		expect(out?.floorPurges).toBe(0);
+	});
+
 	it('fires when the announced family is not the one the write feeds', async () => {
 		const out = await withRig((rig) => {
 			rig.store('/a', ['post:1']);

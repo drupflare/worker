@@ -1,8 +1,10 @@
-import { existsSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { dropInMissing, WORDPRESS_SRC } from '../../scripts/wp/harness';
+import { dropInMissing, runPhp, WORDPRESS_SRC } from '../../scripts/wp/harness';
 import {
+	installFailure,
 	MU_DIR,
 	PAGE_PATHS,
 	purged,
@@ -309,5 +311,131 @@ describe.skipIf(skip !== undefined)('wordpress cache tags on a real site', () =>
 			}
 		}
 		console.info(JSON.stringify(table));
+	});
+});
+
+const SHAPE_PAGES = [
+	'/',
+	'/?p=1',
+	'/?page_id=2',
+	'/?cat=1',
+	'/?author=1',
+	'/?feed=rss2',
+	'/?feed=comments-rss2',
+	'/?feed=rss2&p=1',
+	'/?m=202601',
+	'/?year=2026',
+	'/?paged=2',
+	'/?tag=tagged',
+	'/?post_type=book',
+	'/?s=zzz',
+	'/?p=999'
+];
+
+describe.skipIf(skip !== undefined)('wordpress cache tags across site shapes', () => {
+	let t: TagSite;
+	const swept: Record<string, Record<string, PageTags>> = {};
+	const HERE = import.meta.dirname;
+
+	const setup = async (shape: string, extra: Record<string, string> = {}) => {
+		const run = await runPhp(t.site, [join(HERE, '../../scripts/wp/tags-site.php')], {
+			SHAPE: shape,
+			CFW_LABEL: `setup:${shape}`,
+			...extra
+		});
+		expect(run.code, `${shape}: ${run.stderr.slice(0, 200)}`).toBe(0);
+	};
+	const sweep = async (label: string) => {
+		swept[label] = {};
+		for (const path of SHAPE_PAGES) {
+			await renderPage(t, path);
+			swept[label]![path] = await renderPage(t, path);
+		}
+	};
+
+	beforeAll(async () => {
+		t = await startTagSite('wp-shapes-');
+		copyFileSync(
+			join(HERE, '../../scripts/wp/tags-cpt.php'),
+			join(t.site.www, 'wp-content/mu-plugins/zz-tags-cpt.php')
+		);
+		await setup('posts');
+		await setup('comments');
+		await setup('books');
+		await setup('widgets');
+		await setup('menu');
+		await sweep('twentytwentyfive');
+		for (const theme of ['twentytwentyone', 'twentyfifteen', 'twentytwentyfour']) {
+			await setup('theme', { THEME: theme });
+			await setup('widgets');
+			await setup('menu');
+			await sweep(theme);
+		}
+	}, 420_000);
+
+	afterAll(async () => {
+		await t?.stop();
+		if (t !== undefined) rmSync(t.site.dir, { recursive: true, force: true });
+	});
+
+	for (const theme of [
+		'twentytwentyfive',
+		'twentytwentyone',
+		'twentyfifteen',
+		'twentytwentyfour'
+	]) {
+		it(`names the tags of every page under ${theme}, with posts, comments, a post type, widgets and a menu`, () => {
+			for (const path of SHAPE_PAGES) {
+				const page = swept[theme]![path]!;
+				expect(page.untaggable, `${theme} ${path}: ${page.reasons.join(', ')}`).toBeNull();
+				expect(page.tags.length, `${theme} ${path}`).toBeGreaterThan(0);
+			}
+		});
+
+		it(`ties ${theme} archives, pagination and the post type to what a write announces`, () => {
+			const pages = swept[theme]!;
+			expect(pages['/?p=1']!.tags).toContain('post:1');
+			expect(pages['/?p=1']!.tags).toContain('comments:1');
+			expect(
+				pages['/?post_type=book']!.tags.some((tag) => tag.startsWith('posts:book'))
+			).toBe(true);
+			expect(pages['/?paged=2']!.tags.some((tag) => tag.startsWith('posts:'))).toBe(true);
+			expect(pages['/?tag=tagged']!.tags.some((tag) => tag.startsWith('term:'))).toBe(true);
+			expect(pages['/?author=1']!.tags.some((tag) => tag.startsWith('user:'))).toBe(true);
+			expect(pages['/?feed=comments-rss2']!.tags).toContain('comments');
+		});
+	}
+});
+
+describe('a failed install', () => {
+	it('names the fatal from the error log when both streams hold only the generic page', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'wp-install-failure-'));
+		const log = join(dir, 'debug.log');
+		try {
+			writeFileSync(log, 'PHP Fatal error:  Uncaught Error: Class "Missing" not found\n');
+			const message = installFailure(
+				{
+					code: 255,
+					stdout: '<style>.a{}</style><p>There has been a critical error.</p>',
+					stderr: ''
+				},
+				log
+			);
+			expect(message).toContain('exit 255');
+			expect(message).toContain('Class "Missing" not found');
+			expect(message).toContain('There has been a critical error.');
+			expect(message).not.toContain('<style>');
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('still reports the exit code when the install left no log', () => {
+		const message = installFailure(
+			{ code: null, stdout: '', stderr: '' },
+			'/nonexistent/debug.log'
+		);
+		expect(message).toContain('exit signal');
+		expect(message).toContain('log: (empty)');
 	});
 });

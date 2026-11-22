@@ -1,15 +1,22 @@
-import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { ROWS_PER_TAGGED_PAGE, ROWS_PER_UNTAGGED_PAGE, fanoutDecision } from '../../src/ops/fanout';
-import { uncoveredWrites, writtenTables } from '../../src/wordpress/tags';
+import {
+	noteWrittenRows,
+	uncoveredWrites,
+	writtenRows,
+	writtenTables,
+	type WrittenRows
+} from '../../src/wordpress/tags';
 import {
 	httpGet,
 	installWordpress,
 	prepareSite,
 	runPhp,
 	startPhpServer,
+	type PhpRun,
 	type PhpServer,
 	type Site
 } from './harness';
@@ -59,6 +66,37 @@ export interface ScenarioResult {
 	failed: boolean;
 }
 
+/** how much of the site's error log a failed install quotes, from the end */
+const LOG_TAIL_CHARS = 2000;
+
+/** a page of markup as plain text, since WordPress answers a fatal with an HTML error page */
+function plainText(markup: string): string {
+	return markup
+		.replace(/<style[\s\S]*?<\/style>/gi, '')
+		.replace(/<[^>]+>/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+/**
+ * The message for a failed install. The fatal itself is in the site's error log, because WordPress
+ * catches it and prints a generic page, so the log tail comes first and both streams follow.
+ */
+export function installFailure(run: PhpRun, log: string): string {
+	let logged = '';
+	try {
+		logged = readFileSync(log, 'utf8').trim();
+	} catch {
+		/* an install that died before the first log line has no file */
+	}
+	return [
+		`install failed (exit ${run.code ?? 'signal'})`,
+		`log: ${logged === '' ? '(empty)' : logged.slice(-LOG_TAIL_CHARS)}`,
+		`stdout: ${plainText(run.stdout).slice(0, 400) || '(empty)'}`,
+		`stderr: ${run.stderr.trim() || '(empty)'}`
+	].join('\n');
+}
+
 /** copies the harness plugins into a prepared site and installs, then starts the server */
 export async function startTagSite(prefix = 'wp-tags-'): Promise<TagSite> {
 	const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -76,7 +114,7 @@ export async function startTagSite(prefix = 'wp-tags-'): Promise<TagSite> {
 	const run = await installWordpress(site);
 	if (run.code !== 0) {
 		await host.stop();
-		throw new Error(`install failed: ${run.stderr.slice(0, 400)}`);
+		throw new Error(installFailure(run, site.log));
 	}
 	const install = host.requests.find((r) => r.label === 'install');
 	const server = await startPhpServer(site);
@@ -129,16 +167,27 @@ export function summarise(
 		if (call['op'] === 'quiet') quiet.add(String(call['table']));
 	}
 	const writes = new Set<string>();
+	const rows: WrittenRows = new Map();
 	for (const s of record?.statements ?? []) {
-		if (s.ok && s.affected !== 0 && s.sql !== undefined)
-			for (const table of writtenTables(s.sql)) writes.add(table);
+		if (s.ok && s.affected !== 0 && s.sql !== undefined) {
+			const tables = writtenTables(s.sql);
+			for (const table of tables) writes.add(table);
+			noteWrittenRows(
+				rows,
+				tables,
+				writtenRows(s.sql, {
+					...(s.insertId === undefined ? {} : { insertId: s.insertId }),
+					...(s.affected === undefined ? {} : { affected: s.affected })
+				})
+			);
+		}
 	}
 	return {
 		announced: [...announced],
 		wholesale: [...wholesale],
 		quiet: [...quiet],
 		writes: [...writes],
-		uncovered: uncoveredWrites(writes, announced, quiet, wholesale.size > 0)
+		uncovered: uncoveredWrites(writes, announced, quiet, wholesale.size > 0, rows)
 	};
 }
 

@@ -53,11 +53,16 @@ function fileSpy(
 	};
 }
 
-async function get(path: string, namespace: unknown, headers: Record<string, string> = {}) {
+async function get(
+	path: string,
+	namespace: unknown,
+	headers: Record<string, string> = {},
+	vars: Record<string, string> = {}
+) {
 	const ctx = createExecutionContext();
 	const res = await worker.fetch(
 		new Request(`https://cfw.local${path}`, { headers }),
-		{ ...env, SITE: namespace } as unknown as typeof env,
+		{ ...env, ...vars, SITE: namespace } as unknown as typeof env,
 		ctx
 	);
 	const bytes = new Uint8Array(await res.arrayBuffer());
@@ -197,6 +202,28 @@ describe('a public file is served by the front worker', () => {
 		expect(svg.nosniff).toBe('nosniff');
 	});
 
+	it('serves a WordPress upload from the file store under the path WordPress wrote', async () => {
+		const spy = fileSpy(200, druplicon());
+		const out = await get(
+			'/wp-content/uploads/2026/11/photo-300x200.png',
+			spy.namespace,
+			{},
+			{
+				CMS: 'wordpress'
+			}
+		);
+		expect(fileReads(spy.seen)).toEqual([
+			'public://wp-content/uploads/2026/11/photo-300x200.png'
+		]);
+		expect(out.status).toBe(200);
+		expect(out.file).toBe('STORED');
+		expect(out.disposition).toBeNull();
+
+		const drupal = fileSpy(200, druplicon());
+		await get('/wp-content/uploads/2026/11/photo.png', drupal.namespace);
+		expect(fileReads(drupal.seen), 'a Drupal site has no such root').toEqual([]);
+	});
+
 	it('falls through to Drupal for a file the site does not hold', async () => {
 		const spy = fileSpy(404);
 		await get('/sites/default/files/missing.png', spy.namespace);
@@ -266,10 +293,10 @@ describe('the public file root is a table per CMS and Drupal is the default', ()
 
 	it('roots WordPress at wp-content/uploads and leaves Drupal paths alone', () => {
 		expect(publicFileUri('GET', '/wp-content/uploads/2026/a.png', 'wordpress')).toBe(
-			'public://2026/a.png'
+			'public://wp-content/uploads/2026/a.png'
 		);
 		expect(publicFileUri('GET', '/wp-content/uploads/styles/a.png', 'wordpress')).toBe(
-			'public://styles/a.png'
+			'public://wp-content/uploads/styles/a.png'
 		);
 		expect(publicFileUri('POST', '/wp-content/uploads/a.png', 'wordpress')).toBeUndefined();
 		expect(publicFileUri('GET', '/sites/default/files/a.png', 'wordpress')).toBeUndefined();

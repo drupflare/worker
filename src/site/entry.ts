@@ -1,7 +1,7 @@
 import { IMAGE_ROUTE_PREFIX } from '../ops/image-runtime';
 import { storeKeyFor } from '../ops/store-rule';
 import { LOGIN_PATH } from '../ui/admin';
-import { cmsOf } from '../util/cms';
+import { cmsOf, type Cms } from '../util/cms';
 import {
 	moduleAssetPath,
 	publicFileUri,
@@ -24,7 +24,7 @@ export async function fileRoute(f: FrontEntry): Promise<Response | undefined> {
 	if (
 		!internal &&
 		ctx !== undefined &&
-		publicFileUri(request.method, url.pathname) !== undefined
+		publicFileUri(request.method, url.pathname, cmsOf(env) as Cms) !== undefined
 	) {
 		const served = await servePublicFile(request, url, env, ctx);
 		if (served !== undefined) return served;

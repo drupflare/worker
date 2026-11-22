@@ -134,6 +134,124 @@ if (
 ) {
 	parse_str($cfwBody, $_POST);
 }
+
+// no POST SAPI fills $_POST and $_FILES for a multipart body, so it is read here. Each file part is
+// written to a temp path and listed in $GLOBALS['__cfw_uploads'], which is what the host plugin
+// accepts in place of is_uploaded_file(). A part over the size limit gets UPLOAD_ERR_INI_SIZE and
+// no file, which is the error WordPress words for it.
+$_FILES = [];
+$GLOBALS['__cfw_uploads'] = [];
+$cfwBoundary = '';
+if (
+	$cfwMethod !== 'GET' &&
+	$cfwMethod !== 'HEAD' &&
+	$cfwBody !== '' &&
+	preg_match(
+		'/^multipart\/form-data;.*boundary="?([^";]+)"?/i',
+		(string) $cfwReq['contentType'],
+		$cfwMatch,
+	)
+) {
+	$cfwBoundary = $cfwMatch[1];
+}
+if ($cfwBoundary !== '') {
+	$cfwPairs = [];
+	foreach (explode('--' . $cfwBoundary, $cfwBody) as $cfwPart) {
+		$cfwSplit = strpos($cfwPart, "\r\n\r\n");
+		if ($cfwSplit === false) {
+			continue;
+		}
+		$cfwHead = substr($cfwPart, 0, $cfwSplit);
+		$cfwValue = substr($cfwPart, $cfwSplit + 4);
+		if (substr($cfwValue, -2) === "\r\n") {
+			$cfwValue = substr($cfwValue, 0, -2);
+		}
+		if (!preg_match('/content-disposition:[^\r\n]*\sname="([^"]*)"/i', $cfwHead, $cfwName)) {
+			continue;
+		}
+		if (!preg_match('/\sfilename="([^"]*)"/i', $cfwHead, $cfwFile)) {
+			$cfwPairs[] = urlencode($cfwName[1]) . '=' . urlencode($cfwValue);
+			continue;
+		}
+		// a file field left empty arrives as filename="" and is no upload
+		if ($cfwFile[1] === '') {
+			$_FILES[$cfwName[1]] = [
+				'name' => '',
+				'type' => '',
+				'tmp_name' => '',
+				'error' => UPLOAD_ERR_NO_FILE,
+				'size' => 0,
+			];
+			continue;
+		}
+		$cfwType = preg_match('/content-type:\s*([^\r\n;]+)/i', $cfwHead, $cfwKind)
+			? trim($cfwKind[1])
+			: 'application/octet-stream';
+		$cfwEntry = [
+			'name' => $cfwFile[1],
+			'type' => $cfwType,
+			'tmp_name' => '',
+			'error' => UPLOAD_ERR_OK,
+			'size' => strlen($cfwValue),
+		];
+		// the host plugin buffers an upload whole, so this is also the most it will store
+		if (strlen($cfwValue) > 10485760) {
+			$cfwEntry['error'] = UPLOAD_ERR_INI_SIZE;
+			$cfwEntry['size'] = 0;
+		} else {
+			$cfwTmp = tempnam(sys_get_temp_dir(), 'cfwup');
+			if ($cfwTmp === false || file_put_contents($cfwTmp, $cfwValue) === false) {
+				$cfwEntry['error'] = UPLOAD_ERR_CANT_WRITE;
+			} else {
+				$cfwTmp = realpath($cfwTmp) ?: $cfwTmp;
+				$GLOBALS['__cfw_uploads'][$cfwTmp] = true;
+				$cfwEntry['tmp_name'] = $cfwTmp;
+			}
+		}
+		$_FILES[$cfwName[1]] = $cfwEntry;
+	}
+	if ($cfwPairs !== []) {
+		parse_str(implode('&', $cfwPairs), $_POST);
+	}
+}
+// wp_handle_upload asks is_uploaded_file(), which only a POST SAPI answers true for, and core has
+// no filter on that call. The one occurrence in core is pointed at a function that also accepts the
+// files parsed above; the copy in this interpreter's filesystem is the only one changed, and only
+// on a request that carries an upload.
+if ($GLOBALS['__cfw_uploads'] !== []) {
+	function cfw_is_uploaded_file($path)
+	{
+		return isset($GLOBALS['__cfw_uploads'][$path]) || is_uploaded_file($path);
+	}
+
+	$cfwUploadsFile = $cfwRoot . '/wp-admin/includes/file.php';
+	$cfwSource = (string) file_get_contents($cfwUploadsFile);
+	if (substr_count($cfwSource, 'is_uploaded_file(') === 1) {
+		file_put_contents(
+			$cfwUploadsFile,
+			str_replace('is_uploaded_file(', 'cfw_is_uploaded_file(', $cfwSource),
+		);
+	}
+}
+// a plugin's own settings page (options-general.php?page=...) is drawn by admin.php, which ends with
+// exit once the footer is out. That one exit becomes a stop, in this interpreter's copy and only on
+// a request that names a page.
+if (str_starts_with($cfwScript, '/wp-admin/') && isset($_GET['page'])) {
+	$cfwAdminFile = $cfwRoot . '/wp-admin/admin.php';
+	$cfwAdminSource = (string) file_get_contents($cfwAdminFile);
+	$cfwFooter = "require_once ABSPATH . 'wp-admin/admin-footer.php';\n\n\t";
+	$cfwNext = "\n} elseif ( isset( \$_GET['import'] ) ) {";
+	if (substr_count($cfwAdminSource, $cfwFooter . 'exit;' . $cfwNext) === 1) {
+		file_put_contents(
+			$cfwAdminFile,
+			str_replace(
+				$cfwFooter . 'exit;' . $cfwNext,
+				$cfwFooter . "throw new CfwWpStop('exit');" . $cfwNext,
+				$cfwAdminSource,
+			),
+		);
+	}
+}
 $_REQUEST = array_merge($_GET, $_POST);
 // php://input is empty here, and the REST server reads this global before it reads the stream
 $GLOBALS['HTTP_RAW_POST_DATA'] = $cfwBody;
@@ -148,6 +266,10 @@ $GLOBALS['wp_filter'] = [
 			[
 				'function' => static function ($by, $status, $location) {
 					$GLOBALS['cfwWp']['redirect'] = [(int) $status, (string) $location];
+					// activate_plugin() sends this one before it includes the plugin and replaces it after
+					if (str_contains((string) $location, '_error_nonce=')) {
+						return $by;
+					}
 					throw new CfwWpStop('redirect');
 				},
 				'accepted_args' => 3,
@@ -334,6 +456,11 @@ foreach (headers_list() as $cfwLine) {
 	}
 }
 
+// the stop reads the redirect from its arguments, and a Location header sent earlier (activate_plugin
+// sends a provisional one) must not replace it
+if ($cfwRedirect !== null) {
+	$cfwLocation = $cfwRedirect[1];
+}
 $cfwOut['status'] = $cfwStatus;
 $cfwOut['html'] = $cfwHtml;
 $cfwOut['bytes'] = strlen($cfwHtml);

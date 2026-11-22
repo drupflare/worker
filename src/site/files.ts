@@ -2,16 +2,17 @@ import { normaliseUri } from '../db/file-store';
 import { defaultCache } from '../ops/cache-api';
 import { parseTransformPath, runImageTransform } from '../ops/image-runtime';
 import { resolveSite, siteStubOptions } from '../ops/site-id';
-import type { Cms } from '../util/cms';
+import { cmsOf, type Cms } from '../util/cms';
 import { errorMessage } from '../util/errors';
 import type { SiteWorkerEnv } from './types';
 
 // image derivatives are produced in the front worker, not the object: the decoder is a second wasm
 // module (1 MiB initial, 4 MiB after 56 transforms) and would share an isolate with PHP's memory
-const PUBLIC_FILES: Record<Cms, { root: string; reserved?: string }> = {
+const PUBLIC_FILES: Record<Cms, { root: string; reserved?: string; prefix?: string }> = {
 	// `styles/` stays Drupal's, because its image style controller owns that prefix
 	drupal: { root: '/sites/default/files/', reserved: 'styles/' },
-	wordpress: { root: '/wp-content/uploads/' },
+	// the uri keeps the path WordPress writes to, `public://wp-content/uploads/`
+	wordpress: { root: '/wp-content/uploads/', prefix: 'wp-content/uploads/' },
 	joomla: { root: '/images/' }
 };
 const INLINE_FILE_TYPES = new Set([
@@ -47,7 +48,7 @@ export function publicFileUri(
 	} catch {
 		return undefined;
 	}
-	return normaliseUri(`public://${rest}`);
+	return normaliseUri(`public://${files.prefix ?? ''}${rest}`);
 }
 
 const MODULE_ASSET_ROOTS = ['/modules/', '/themes/', '/profiles/', '/libraries/'];
@@ -141,7 +142,7 @@ export async function servePublicFile(
 	env: SiteWorkerEnv,
 	ctx: ExecutionContext
 ): Promise<Response | undefined> {
-	const uri = publicFileUri(request.method, url.pathname);
+	const uri = publicFileUri(request.method, url.pathname, cmsOf(env) as Cms);
 	if (uri === undefined) return undefined;
 	return serveFromObject(
 		request,

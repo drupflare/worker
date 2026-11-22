@@ -43,6 +43,17 @@ request and the Durable Object request are per view, and the R2 operations are p
 The Worker-to-Worker row is billed as CPU only, because Cloudflare does not charge a request fee for a
 call through a service binding (`published`, Workers pricing page). Static assets do not bill. Whether that call counts toward the free plan's 100,000 requests a day is unmeasured.
 
+With spool on, a page the Worker decorates costs 5 ms more CPU than an undecorated one at the median
+of two paid-account arms, $1.0e-7 a request at the rate above, and a site whose views are all first
+views pays that and saves no request. The decoration figure is the older of two paid-account readings;
+a later fetch-loop reading put the decorated and undecorated medians at 1 ms each (n=200 per arm), so
+5 ms is an upper estimate. A device's worker fetches a page the first time it sees it, in place of the
+document the browser would have sent, so a visit never sends the Worker more requests than it would
+have, and a visit that returns to pages the device holds sends fewer (`derived (modelled)` over
+measured counts, n=1). The bills at one, ten and thirty million views a month, with the inputs each
+carries, are under
+[Costs Per Request](../energy/views.md#costs-per-request).
+
 The bill for a thousand sites, on the paid plan, in dollars a month (`derived (modelled)`):
 
 | views a site a month | warming | shipped | +1 Worker invocation a view | Worker-to-Worker call billed as a request |

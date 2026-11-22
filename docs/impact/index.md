@@ -8,10 +8,10 @@ What Drupflare costs to run in electricity, carbon, water and money, and how far
 - [Reproducing The Numbers](reproducing.md): commands that reproduce each figure.
 - [References](references.md): the numbered references the other pages cite.
 - [Energy](energy/index.md): the saving against conventional hosting, operating states and the per-request model.
-- [Energy Per View](energy/views.md): the energy of one view, the traffic mix, visitor devices and Spool.
+- [Energy Per View](energy/views.md): the energy of one view, the traffic mix, visitor devices, and what Spool changes in requests, time and the plans' floor.
 - [Fleet Energy](energy/fleet.md): many sites at once, institutional workloads and the saving by site count.
 - [Carbon](carbon.md), [Water](water.md) and [Embodied Carbon](embodied.md): the environmental figures.
-- [Economics](economics/index.md): what each host costs at each traffic level, the plan limits and the comparison against a VPS.
+- [Economics](economics/index.md): what each host costs at each traffic level, what Spool adds to the plans, the plan limits and the comparison against a VPS.
 
 ## Measurement Labels
 

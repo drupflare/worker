@@ -19,6 +19,53 @@ The tables down to [Kept Warm](free-plan-and-warming.md#kept-warm) are for sites
 - [Drupflare vs a Traditional VPS](vps-comparison.md): latency, throughput and cost against nginx and PHP-FPM on the same tree.
 - [Free vs Paid](free-vs-paid/index.md): what each plan allows and which limit binds first.
 
+## What Spool Adds To The Plans
+
+Spool is on by default on every plan, the free plan included, and `SPOOL=0` turns it off. It changes how many Worker requests a visitor costs, which is the meter the free plan's 100,000 a day and the paid plan's request price both count. How much it saves depends on how many pages a visitor reads in a visit and how many of them the device already holds, so the figures below come from the published and measured visit behaviour of each site type, cited in [Visit Behaviour From Public Data](../energy/views.md#visit-behaviour-from-public-data). All of them are `derived (modelled)`, from `bun scripts/economics/behavior.ts --md`, with a month of 30.44 days and every visitor running a worker, which is the upper bound on the saving.
+
+### Per Site, By Site Type
+
+Central visit length of each site type, the share of Worker requests spool removes, the views a month the free plan carries (3,044,000 with spool off), and the paid plan's monthly bill with spool on minus the bill with it off. A positive difference is a net deficit for spool and a negative one a net bonus. The 5 ms column uses the upper estimate of spool's CPU on a page that reaches the Worker, and the 0 ms column the lower bound, since two paid readings put the median difference under 1 ms:
+
+| site type           | views a visit | requests saved | free plan carries a month | 10M views, 5 ms | 30M views, 5 ms | 100M views, 5 ms | 100M views, 0 ms |
+| ------------------- | ------------: | -------------: | ------------------------: | --------------: | --------------: | ---------------: | ---------------: |
+| personal site       |          1.60 |           0.1% |                 3,048,343 |          +$0.76 |          +$2.98 |           +$9.94 |           -$0.05 |
+| blog                |          1.00 |           0.0% |                 3,044,000 |          +$0.76 |          +$3.00 |          +$10.00 |            $0.00 |
+| documentation       |          1.50 |           1.6% |                 3,092,121 |          +$0.74 |          +$2.80 |           +$9.32 |           -$0.52 |
+| marketing site      |          1.33 |           0.0% |                 3,044,057 |          +$0.76 |          +$3.00 |          +$10.00 |            $0.00 |
+| news                |          1.92 |           1.5% |                 3,091,178 |          +$0.74 |          +$2.80 |           +$9.33 |           -$0.51 |
+| higher education    |          2.40 |           1.7% |                 3,095,097 |          +$0.74 |          +$2.78 |           +$9.28 |           -$0.55 |
+| all sites, surveyed |          4.60 |           6.4% |                 3,252,620 |          +$0.67 |          +$2.16 |           +$7.05 |           -$2.31 |
+
+Read the table in three parts. A typical visit is short (the sources give 1.0 to 2.4 pages for six site types), so spool removes between 0% and 1.7% of Worker requests there, and the free plan's floor of 3,044,000 views a month rises by at most 51,000. The paid plan shows no difference up to about 4.4 million views a month, because the 10 million request and 30 million CPU millisecond allowances absorb it. Above that the 5 ms estimate makes spool a net deficit of about $0.10 per million views, from $0.74 at 10 million views to $9.28 for higher education at 100 million, and only the 0 ms bound turns it into a bonus, of $0.55 at most. The bottom row uses a cross-industry session depth of 4.6 pages whose mean or median the source does not state, and its high figure of 14% rests on a survey of 336 marketers, so it is not a site type.
+
+Long visits are where spool pays. A deployed visit of 121 views reached the Worker 12 times with spool on and 122 with it off (measured, n=1), and a modelled visit of 20 views on a nine-page site carries 5,073,343 views a month. The sources show how rare that is. In Wikipedia's data, 68% to 78% of sessions load one page, and the navigation trees that run to a median of 18 page loads are 0.24% of them. The model's long-visit rows are therefore bounds for a site whose visitors read on, and no site type with a measured figure behaves that way on average.
+
+### By Site Size
+
+Requests saved and free-plan views a month for a fixed visit length, by the distinct pages a site has, with visitors drawn from a power law fitted to the measured share of views on the most-read page (the control row draws pages uniformly):
+
+|     distinct pages |         5 views |         10 views |         20 views |
+| -----------------: | --------------: | ---------------: | ---------------: |
+|                 10 | 0.4%, 3,056,409 | 23.0%, 3,951,579 | 52.6%, 6,421,636 |
+|                100 | 0.1%, 3,046,712 |  9.1%, 3,348,367 | 33.9%, 4,601,767 |
+|              1,000 | 0.0%, 3,045,309 |  6.0%, 3,237,988 | 27.6%, 4,204,681 |
+|             10,000 | 0.0%, 3,045,218 |  5.1%, 3,206,016 | 25.3%, 4,072,540 |
+| uniform draws, 100 |            0.0% |             0.0% |             0.5% |
+
+A small site gains more because visitors meet the same pages again. The surveyed sites hold a median of 900 distinct pages for WordPress and 1,475 for Drupal (sitemap counts of 71 and 43 public university sites, many a lower bound), where a 10-view visit saves about 6%. The 405-page site that the model uses where a site's size is not measured is the median of the page counts of four of the owner's own sites and the median of the higher-education sitemaps.
+
+### What The Figures Assume
+
+- Every visitor runs a worker. A visitor on a client that registers none sends the same requests as with spool off, so the saving falls in proportion.
+- Bots send 13% to 73% of HTML views on the owner's own zones, by user agent, and most of them do not run a service worker, so the saving per metered request is smaller than the table.
+- The site types are weighted equally where a single typical figure is needed, because no weights are measured. Nonprofit, community, ecommerce, healthcare and government sites have no readable figure and are not in the table.
+- Pages are drawn independently, with no link structure. The fitted power law overstates the concentration past the first page (it puts 83% of views on the top ten pages of the personal site against 62% measured), so the saving is, if anything, high.
+- A return visit costs one request for each distinct page, past the 900 s freshness bound. One return per returner is assumed.
+- The R2 page mirror and spool are modelled by the same requests-per-view factor, which no deployed reading checks.
+
+These figures use no real site's own visit data beyond the owner's, so they set no price cut and no allowance increase. [What Spool Adds](../energy/views.md#what-spool-adds) has the requests, the sweep over visit length and pages, and what is unmeasured, which includes spool's decoration CPU on a free-plan handler against its 10 ms cap.
+
 ## Prices At Each Traffic Level
 
 What hosting the same site costs conventionally, per site:

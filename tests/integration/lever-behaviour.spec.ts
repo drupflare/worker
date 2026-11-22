@@ -205,6 +205,7 @@ describe('the fixture covers the allow-list', () => {
 			'REPLICA_COUNT',
 			'REPLICA_LAG_MS',
 			'SITE_WARM',
+			'WARM_WINDOW',
 			'WARM_INTERVAL_MS',
 			'WARM_CEILING_MS',
 			'KEEP_WARM_MS',
@@ -758,6 +759,27 @@ describe('SITE_WARM decides the idle re-arm', () => {
 		expect(siteWarmEnabled({ SITE_WARM: '0' }, true)).toBe(false);
 		expect(idleRearmMs({ SITE_WARM: '1' })).toBe(8_000);
 		expect(idleRearmMs({ SITE_WARM: '0' })).toBe(240_000);
+	});
+
+	it('warms inside a WARM_WINDOW and sleeps outside it, with SITE_WARM=0 still winning', async () => {
+		// 2026-11-18 is a Wednesday; 15:00 UTC is 10:00 in New York and 07:00 in Los Angeles
+		const wed = (hour: number, minute = 0) => Date.UTC(2026, 10, 18, hour, minute);
+		const window = 'mon-fri 06:00-22:00 America/New_York';
+		const env = { WARM_WINDOW: window };
+		expect(siteWarmEnabled(env, false, wed(15))).toBe(true);
+		expect(siteWarmEnabled(env, false, wed(3))).toBe(false);
+		// the edges: the start is inside, the end is outside
+		expect(siteWarmEnabled(env, false, wed(11, 0))).toBe(true);
+		expect(siteWarmEnabled(env, false, wed(10, 59))).toBe(false);
+		expect(siteWarmEnabled(env, false, wed(2, 59))).toBe(true);
+		// weekends are outside a weekday window, and a paid plan does not override a closed window
+		const sat = Date.UTC(2026, 10, 21, 15);
+		expect(siteWarmEnabled(env, true, sat)).toBe(false);
+		expect(siteWarmEnabled({ ...env, SITE_WARM: '0' }, true, wed(15))).toBe(false);
+		expect(idleRearmMs(env, true, false, wed(15))).toBe(8_000);
+		expect(idleRearmMs(env, true, true, sat)).toBe(240_000);
+		// a window that does not parse is ignored rather than turning warming off
+		expect(siteWarmEnabled({ WARM_WINDOW: 'sometimes' }, true, wed(3))).toBe(true);
 	});
 
 	/**

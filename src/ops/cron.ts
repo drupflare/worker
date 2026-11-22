@@ -16,6 +16,7 @@ import {
 } from '../drupal/cron-php';
 import { errorMessage } from '../util/errors';
 import { GENERATED_CRON_KNOWN, GENERATED_CRON_POLICY } from './generated/modules';
+import { warmWindowOpen } from './warm-window';
 
 /** the cursor `exec()` hands back, narrowed to what a ledger reads */
 export interface CronCursor {
@@ -251,6 +252,7 @@ export interface CronEnv {
 	WARM_CEILING_MS?: string | number;
 	IDLE_CEILING_MS?: string | number;
 	SITE_WARM?: string | number;
+	WARM_WINDOW?: string;
 	RETAIN_INTERPRETER?: string | number;
 }
 
@@ -412,9 +414,19 @@ export const WARM_INTERVAL_MAX_MS = 600_000;
  * An explicit `SITE_WARM` wins. Unset on paid it warms (10,800 firings a day sit inside included
  * requests and rows). Unset on free it is the thermal policy: the same firings are 10.8% of free's
  * daily row and request budgets, which is the operator's trade.
+ *
+ * `SITE_WARM=0` wins over everything. Otherwise a `WARM_WINDOW` decides: inside it the site is kept
+ * warm and outside it the site sleeps, whatever the plan or the thermal policy would say.
  */
-export function warmForced(env?: CronEnv, paid = false): boolean | undefined {
+export function warmForced(
+	env?: CronEnv,
+	paid = false,
+	nowMs: number = Date.now()
+): boolean | undefined {
 	const set = env?.SITE_WARM;
+	if (set !== undefined && String(set) === '0') return false;
+	const open = warmWindowOpen(env?.WARM_WINDOW, nowMs);
+	if (open !== undefined) return open;
 	if (set !== undefined && String(set) !== '') return String(set) === '1';
 	return paid ? true : undefined;
 }
@@ -438,8 +450,8 @@ export function warmIntervalConfigured(env?: CronEnv): number | undefined {
  * True when `SITE_WARM=1`, or when it is unset on a paid plan. Unset on free is false here because
  * the thermal policy decides there; see {@link warmForced}.
  */
-export function siteWarmEnabled(env?: CronEnv, paid = false): boolean {
-	return warmForced(env, paid) === true;
+export function siteWarmEnabled(env?: CronEnv, paid = false, nowMs: number = Date.now()): boolean {
+	return warmForced(env, paid, nowMs) === true;
 }
 
 /**
@@ -449,8 +461,13 @@ export function siteWarmEnabled(env?: CronEnv, paid = false): boolean {
  *   slow re-arm, protecting account-wide meters (on free, ten warm sites would spend 108% of the
  *   daily rows staying warm). A degraded site un-warms itself and recovers at midnight UTC.
  */
-export function idleRearmMs(env?: CronEnv, hasHeadroom = true, paid = false): number {
-	return hasHeadroom && siteWarmEnabled(env, paid) ? warmIntervalMs(env) : keepWarmMs(env);
+export function idleRearmMs(
+	env?: CronEnv,
+	hasHeadroom = true,
+	paid = false,
+	nowMs: number = Date.now()
+): number {
+	return hasHeadroom && siteWarmEnabled(env, paid, nowMs) ? warmIntervalMs(env) : keepWarmMs(env);
 }
 
 /** a missing table is nothing to do; anything else is a failure */

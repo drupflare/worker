@@ -49,6 +49,7 @@ const PROBE: Record<KvOverridable, string> = {
 	REPLICA_COUNT: '3',
 	REPLICA_LAG_MS: '45000',
 	SITE_WARM: '0',
+	WARM_WINDOW: 'mon-fri 06:00-22:00 America/New_York',
 	WARM_INTERVAL_MS: '60000',
 	WARM_CEILING_MS: '30000',
 	KEEP_WARM_MS: '120000',

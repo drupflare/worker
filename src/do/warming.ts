@@ -64,9 +64,9 @@ export function estimateRenderMs(site: WarmingHost): number {
  */
 export function thermalRearmMs(site: WarmingHost, queued = false): number {
 	const headroom = site.degradation().cron;
-	const configured = idleRearmMs(site.env, headroom, isPaid(site.env));
+	const configured = idleRearmMs(site.env, headroom, isPaid(site.env), site.nowMs());
 	if (!headroom) return noteRearm(site, configured, 'degraded');
-	const forced = warmForced(site.env, isPaid(site.env));
+	const forced = warmForced(site.env, isPaid(site.env), site.nowMs());
 	const stored = storedRenderWindow(site);
 	const decision = warmDecision(site.arrivals ?? [], site.nowMs(), {
 		thresholdMs: HIBERNATION_IDLE_MS,

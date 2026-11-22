@@ -23,13 +23,24 @@ Cron renders against the site's origin, so links in mail it sends point at the s
 
 ## Warming
 
-| var                | default | what it does                                                                                    |
-| ------------------ | ------- | ----------------------------------------------------------------------------------------------- |
-| `KEEP_WARM_MS`     | 240,000 | idle alarm re-arm and the floor of the idle fade; 10,000 to 3,600,000; KV-overridable           |
-| `IDLE_CEILING_MS`  | unset   | ceiling of the idle fade; 10,000 to 3,600,000; unset keeps the re-arm fixed at `KEEP_WARM_MS`   |
-| `SITE_WARM`        | by plan | `1` warms, `0` never warms; unset warms a paid site and leaves a free one to the thermal policy |
-| `WARM_INTERVAL_MS` | 8,000   | the warm re-arm, KV-overridable; clamped to 600,000, or to 8,000 when `RETAIN_INTERPRETER=0`    |
-| `WARM_CEILING_MS`  | unset   | ceiling the solved warm interval may climb to; 9,500 to 120,000; KV-overridable                 |
+| var                | default | what it does                                                                                             |
+| ------------------ | ------- | -------------------------------------------------------------------------------------------------------- |
+| `KEEP_WARM_MS`     | 240,000 | idle alarm re-arm and the floor of the idle fade; 10,000 to 3,600,000; KV-overridable                    |
+| `IDLE_CEILING_MS`  | unset   | ceiling of the idle fade; 10,000 to 3,600,000; unset keeps the re-arm fixed at `KEEP_WARM_MS`            |
+| `SITE_WARM`        | by plan | `1` warms, `0` never warms; unset warms a paid site and leaves a free one to the thermal policy          |
+| `WARM_WINDOW`      | unset   | days and hours the site is kept warm, for example `mon-fri 06:00-22:00 America/New_York`; KV-overridable |
+| `WARM_INTERVAL_MS` | 8,000   | the warm re-arm, KV-overridable; clamped to 600,000, or to 8,000 when `RETAIN_INTERPRETER=0`             |
+| `WARM_CEILING_MS`  | unset   | ceiling the solved warm interval may climb to; 9,500 to 120,000; KV-overridable                          |
+
+`WARM_WINDOW` keeps a site warm only on some days and hours. The value is `<days> HH:MM-HH:MM [zone]`:
+`days` is `daily`, one day (`sat`) or a range that may wrap (`mon-fri`, `fri-mon`), the hours are
+24-hour clock with the start inclusive and the end exclusive, the window does not cross midnight
+(`24:00` ends the day), and `zone` is an IANA name that defaults to UTC. Inside the window the site
+warms at `WARM_INTERVAL_MS` whatever its plan; outside it the site takes the idle re-arm of a site
+that is not warming, so the first visit after the window closes meets a cold start. `SITE_WARM=0`
+still turns warming off in every hour. A value that does not parse answers 400 with
+`code: "invalid_lever"` on the settings write and nothing in that body is stored; one already in KV
+that does not parse is ignored when read. A window that sets the clock to a zone with daylight saving follows the zone.
 
 A Durable Object hibernates after 10 seconds of idle, and hibernation discards in-memory state, so `this.php` dies there. Measured on a deployed worker: an object holding a 32 MB allocation and an id minted in its constructor kept one incarnation across 71 consecutive 8 s alarms, and at 12, 20, 30 and 45 s the constructor ran again on every probe.
 

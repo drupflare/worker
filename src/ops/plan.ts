@@ -2,6 +2,7 @@ import { OPCACHE_MODES } from '../runtime/opcache';
 import { CSP_MODES, type CspMode } from './csp';
 import { ruleDocumentRefusal } from './edge-rules';
 import { spoolExcludeRefusal } from './spool';
+import { parseWarmWindow } from './warm-window';
 
 /** the subset of the environment a plan decision reads */
 export type PlanEnv = { PLAN?: string };
@@ -214,6 +215,8 @@ export const KV_OVERRIDABLE = [
 	'REPLICA_LAG_MS',
 	// on by default; listed so a site on a shared free account can be un-warmed without a deploy
 	'SITE_WARM',
+	// the days and hours a site is kept warm; outside them it sleeps, so a wrong value is a cold visit
+	'WARM_WINDOW',
 	// 8 s holds the object resident; longer intervals trade firings for a chance of adoption
 	'WARM_INTERVAL_MS',
 	// how far the solver may climb past hibernation; each object retreats on its first cold boot
@@ -274,7 +277,8 @@ export type LeverDomain =
 	| { kind: 'enum'; values: readonly string[] }
 	| { kind: 'bins' }
 	| { kind: 'rules' }
-	| { kind: 'paths' };
+	| { kind: 'paths' }
+	| { kind: 'window' };
 
 /** the accepted domain of every overridable lever */
 export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
@@ -310,6 +314,7 @@ export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
 	REPLICA_COUNT: { kind: 'int', min: 0, max: 256 },
 	REPLICA_LAG_MS: { kind: 'int', min: 1_000, max: 300_000, unit: 'ms' },
 	SITE_WARM: { kind: 'flag' },
+	WARM_WINDOW: { kind: 'window' },
 	WARM_INTERVAL_MS: {
 		kind: 'int',
 		min: 8_000,
@@ -434,6 +439,10 @@ export function leverRefusal(name: KvOverridable, value: unknown): string | unde
 			return ruleDocumentRefusal(name as 'RESPONSE_HEADERS' | 'REDIRECTS', text);
 		case 'paths':
 			return spoolExcludeRefusal(text);
+		case 'window': {
+			const parsed = parseWarmWindow(text);
+			return typeof parsed === 'string' ? parsed : undefined;
+		}
 	}
 }
 

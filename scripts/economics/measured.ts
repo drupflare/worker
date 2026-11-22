@@ -182,31 +182,28 @@ export const REPEAT_NAV_DEPLOYED = {
 // --- spool --------------------------------------------------------------------------------------
 
 /**
- * Worker requests of a site that runs spool against the same site with it off, counted at the
- * Worker.
+ * Worker requests a device sends when the site runs spool 1.0.0. The spool files (client, boot
+ * script, stub) are static assets, which are not Worker invocations. The device's worker fetches a
+ * page only the first time it sees it, in place of the document the browser would have sent, so a
+ * device never sends more requests than it would with spool off. There is no precache: the nine
+ * "page copies" an earlier reading counted are the nine distinct pages the session visited.
  *
- * `measured` on two deployed paid-account workers, 2026-10-23, from the Workers Observability events
- * of the whole rig window (04:40 to 06:40 UTC). The on worker answered 1,751 front worker
- * invocations and the off worker 4,196 for the same drive. A new device asked the on worker for
- * `/spool-sw.js` 482 times and for `/.spool/*` 507 times, over about 500 new devices (480 cold
- * navigations in the energy runs, 12 in the count run and the repeat contexts), so a new device
- * costs about two Worker requests beyond its page: `fixedPerDevice` is that figure, `derived` from
- * the two counts and the device count. Every one of 48 repeat navigations on the on worker made
- * zero network requests, against one to six on the off worker.
- *
- * The first reading of this figure was four, `measured` on the laptop (`wrangler dev --local`, five
- * runs, no spread): `/.spool/0.2.0/client.js`, `/spool-sw.js` and two `/.spool/artifact`. A
- * deployed worker did not show the two artifact requests, and the deployed figure replaces it. The
- * local run answered 3 of 12 navigations on the Worker, one repeat arriving before the worker took
- * control, so `pageRequestsOn` stays a local reading.
+ * Every field is `measured` with the same instrument unless it says otherwise: the browser rig in
+ * `scripts/measure/spool-deployed.ts` counting network documents and the service worker's own page
+ * fetches, on `wrangler dev` with the free-plan vars, Chromium headless, one run per cell (n=1, no
+ * spread), on a demo site of nine pages, at 1, 2, 3, 5, 10, 20 and 100 views. A deployed fixed
+ * session on a paid-account worker (21 views) read 12 Worker invocations: 3 network documents and 9
+ * fetches, then 0 for the reload and the repeat visit, from Workers Observability events.
  */
 export const SPOOL_REQUESTS = {
-	navigations: 12,
-	off: 12,
-	on: 7,
-	pageRequestsOn: 3,
-	fixedPerDevice: 2,
-	runs: 5
+	/** views sent to the network before the worker controls the page; 3 on the paid deployed worker (n=1), 2 on the local rig (n=1) */
+	documentsBeforeControl: 3,
+	/** a view of a page the device holds: reload, repeat visit and revisit inside the freshness bound */
+	heldView: 0,
+	/** Worker requests a device adds on a return day past the freshness bound; `assumed`, an upper bound, never read */
+	returnDayContact: 1,
+	/** requests a device adds to every visit beyond its documents and fetches; no reading exists for WebKit's page-runtime-only client, so 0 is a placeholder the sweep varies */
+	deviceExtra: 0
 } as const;
 
 /**
@@ -220,7 +217,9 @@ export const SPOOL_REQUESTS = {
  * and are not savings; the embed and the all-media pages are.
  *
  * `workerCpu` is the platform's `cpuTime` for the front worker, whole milliseconds, per request
- * class on the on worker (page decoration, image conversion) against the off worker.
+ * class on the on worker (page decoration, image conversion) against the off worker. `fetchLoop*` is
+ * 200 sequential fetches of one page on the deployed fixed-session workers, paid account: decorated
+ * and undecorated read the same median, so the 5 ms page difference above is an upper estimate.
  */
 export const SPOOL_DEVICE = {
 	repeat: { onJ: 0.527, offJ: 1.292, ratio: 2.468, control: 1.004, rounds: 8 },
@@ -234,7 +233,9 @@ export const SPOOL_DEVICE = {
 		pageOn: { median: 6, p90: 16, max: 38, n: 544 },
 		pageOff: { median: 1, p90: 4, max: 23, n: 3785 },
 		imageOn: { median: 2, p90: 96, max: 187, n: 182 },
-		imageOff: { median: 1, p90: 3, max: 9, n: 185 }
+		imageOff: { median: 1, p90: 3, max: 9, n: 185 },
+		fetchLoopOn: { median: 1, p90: 3, p99: 4, max: 10, n: 200 },
+		fetchLoopOff: { median: 1, p90: 1, p99: 4, max: 6, n: 200 }
 	}
 } as const;
 

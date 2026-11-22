@@ -1247,3 +1247,62 @@ describe('the WordPress fill priced on a deployed render', () => {
 		expect(wordpress(WORDPRESS_RENDER_SECONDS.p50).regenerationsPerDay).toBeLessThan(rows);
 	});
 });
+
+describe('the envelope when a device answers some views', () => {
+	const off = envelope(DEFAULT_MIX, { rowsPerFill: SHIPPING_ROWS_PER_FILL });
+	const on = (spool: {
+		documentsPerView: number;
+		contactsPerView?: number;
+		missScale?: number;
+	}) => envelope(DEFAULT_MIX, { rowsPerFill: SHIPPING_ROWS_PER_FILL, spool });
+
+	it('leaves every figure where it was when spool sends one document a view', () => {
+		expect(on({ documentsPerView: 1 })).toEqual(off);
+		expect(envelope(DEFAULT_MIX, { spool: undefined })).toEqual(envelope(DEFAULT_MIX));
+	});
+
+	it('scales the document terms by the documents a view sends', () => {
+		const half = on({ documentsPerView: 0.5 });
+		expect(half.perMeterViewCeiling.worker).toBe(2 * off.perMeterViewCeiling.worker);
+		expect(half.perMeterViewCeiling.do).toBeGreaterThan(off.perMeterViewCeiling.do);
+		expect(half.servingViewsPerDay).toBeGreaterThan(off.servingViewsPerDay);
+	});
+
+	it('charges a contact to the Worker meter and to nothing else', () => {
+		const contact = on({ documentsPerView: 1, contactsPerView: 1 });
+		expect(contact.perMeterViewCeiling.worker).toBe(off.perMeterViewCeiling.worker / 2);
+		expect(contact.perMeterViewCeiling.do).toBe(off.perMeterViewCeiling.do);
+		expect(contact.perMeterViewCeiling.rows).toBe(off.perMeterViewCeiling.rows);
+		expect(contact.perMeterViewCeiling.duration).toBe(off.perMeterViewCeiling.duration);
+	});
+
+	it('moves the row and duration ceilings with the misses a view reaches', () => {
+		const same = on({ documentsPerView: 0.5 });
+		const held = on({ documentsPerView: 0.5, missScale: 1 });
+		expect(same.perMeterViewCeiling.rows).toBeGreaterThan(off.perMeterViewCeiling.rows);
+		expect(held.perMeterViewCeiling.rows).toBe(off.perMeterViewCeiling.rows);
+		expect(held.perMeterViewCeiling.duration).toBeLessThan(same.perMeterViewCeiling.duration);
+	});
+
+	it('does not change how many pages can be regenerated a day', () => {
+		const spooled = on({ documentsPerView: 0.1, contactsPerView: 0.05 });
+		expect(spooled.regenerationsPerDay).toBe(off.regenerationsPerDay);
+		expect(spooled.regenerationBoundBy).toBe(off.regenerationBoundBy);
+	});
+
+	it('prices the WordPress arm through the same input', () => {
+		const wordpress = (documentsPerView: number) =>
+			envelope(DEFAULT_MIX, {
+				rowsPerFill: WORDPRESS_ROWS_PER_FILL,
+				renderSeconds: WORDPRESS_RENDER_SECONDS.p50,
+				spool: { documentsPerView }
+			});
+		expect(wordpress(1)).toEqual(
+			envelope(DEFAULT_MIX, {
+				rowsPerFill: WORDPRESS_ROWS_PER_FILL,
+				renderSeconds: WORDPRESS_RENDER_SECONDS.p50
+			})
+		);
+		expect(wordpress(0.1).servingViewsPerDay).toBeGreaterThan(wordpress(1).servingViewsPerDay);
+	});
+});

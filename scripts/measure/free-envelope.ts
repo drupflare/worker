@@ -349,6 +349,20 @@ export type TrafficMix = {
 	offWorker?: number;
 };
 
+/**
+ * What spool does to the requests one view sends. Absent means spool is off and every view is one
+ * document. `documentsPerView` is the Worker requests that are documents, each priced on the mix,
+ * `contactsPerView` is Worker requests that are not (a sync) and cost the Worker meter alone, and
+ * `missScale` is how many misses a view reaches against one without spool: it defaults to
+ * `documentsPerView` (the mix describes the documents that arrive), and 1 holds renders where they
+ * were, which is the bound when renders follow saves and not views. Both are `inference`.
+ */
+export type SpoolInput = {
+	documentsPerView: number;
+	contactsPerView?: number;
+	missScale?: number;
+};
+
 /** the report's realistic mix */
 export const DEFAULT_MIX: TrafficMix = { edgeHit: 0.85, doHit: 0.14, miss: 0.01 };
 
@@ -442,8 +456,13 @@ export function envelope(
 		keepWarmMs?: number;
 		/** what editors do in a day; zero by default because no real site's rate is measured */
 		editorial?: EditorialDay;
+		/** the requests a view sends when spool answers some of them on the device */
+		spool?: SpoolInput;
 	} = {}
 ): Envelope {
+	const docs = opts.spool?.documentsPerView ?? 1;
+	const contacts = opts.spool?.contactsPerView ?? 0;
+	const misses = opts.spool?.missScale ?? docs;
 	// the batch amortises the re-arm row across N pages, so rows/fill is per-page rows + 1/N rather
 	// than a flat figure. `rowsPerFill` still overrides outright, for the dblog comparison.
 	const batch = Math.max(1, Math.floor(opts.fillBatch ?? DEFAULT_FILL_BATCH));
@@ -462,16 +481,19 @@ export function envelope(
 	const absorption = Math.max(0, Math.min(1, opts.cdnAbsorption ?? 0));
 	const perView = {
 		worker:
-			(mix.edgeHit - offEdge) * COST_PER_VIEW.edgeHit.worker +
-			(mix.doHit - offDo) * COST_PER_VIEW.doHit.worker +
-			mix.miss * COST_PER_VIEW.missAndFill.worker,
+			((mix.edgeHit - offEdge) * COST_PER_VIEW.edgeHit.worker +
+				(mix.doHit - offDo) * COST_PER_VIEW.doHit.worker) *
+				docs +
+			mix.miss * COST_PER_VIEW.missAndFill.worker * misses +
+			contacts,
 		do:
-			(mix.edgeHit - offEdge) * COST_PER_VIEW.edgeHit.do +
-			(mix.doHit - offDo) * COST_PER_VIEW.doHit.do +
-			mix.miss * COST_PER_VIEW.missAndFill.do,
-		rows: mix.miss * rowsPerFill,
+			((mix.edgeHit - offEdge) * COST_PER_VIEW.edgeHit.do +
+				(mix.doHit - offDo) * COST_PER_VIEW.doHit.do) *
+				docs +
+			mix.miss * COST_PER_VIEW.missAndFill.do * misses,
+		rows: mix.miss * rowsPerFill * misses,
 		// only the off-Worker share touches R2 at all, and only the part the CDN does not absorb
-		r2ClassB: opts.offWorkerVia === 'assets' ? 0 : wanted * (1 - absorption)
+		r2ClassB: opts.offWorkerVia === 'assets' ? 0 : wanted * (1 - absorption) * docs
 	};
 
 	// duration, the meter nothing counted: an off-Worker read never wakes the object, a DO hit is one read,
@@ -480,9 +502,9 @@ export function envelope(
 		opts.renderSeconds ??
 		(opts.fillWarmth === 'cold' ? SECONDS_PER.coldRender : SECONDS_PER.warmRender);
 	const perViewSeconds =
-		(mix.edgeHit - offEdge) * SECONDS_PER.edgeHit +
-		(mix.doHit - offDo) * SECONDS_PER.doHit +
-		mix.miss * renderSeconds;
+		((mix.edgeHit - offEdge) * SECONDS_PER.edgeHit + (mix.doHit - offDo) * SECONDS_PER.doHit) *
+			docs +
+		mix.miss * renderSeconds * misses;
 	const perViewGbS = perViewSeconds * DO_GB_ALLOCATED;
 	const perFillGbS = renderSeconds * DO_GB_ALLOCATED;
 	// spent before any traffic, and ONLY when the fleet cannot hibernate. A hibernating replica

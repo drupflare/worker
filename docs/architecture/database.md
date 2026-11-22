@@ -123,7 +123,61 @@ After any change, run `bun run assets:sql` to rewrite the migration chunks the D
 replays, then `node scripts/diff-site-db.ts <previous file> assets/drupal/site.sqlite` to see what
 moved.
 
-## Reading It With Other Tools
+## The WordPress Database
+
+The WordPress database is baked by `bun scripts/bake-wordpress.ts`, which runs WordPress's own
+installer through the MySQL translator and cuts the result into `assets/wordpress/sql`. It is a
+separate pack with its own producer. Nothing on this page except this section describes it.
+
+### Planner Statistics
+
+SQLite chooses an index from `sqlite_stat1`, and nothing in a Durable Object runs `ANALYZE` for you.
+A baked database has three posts, so statistics taken from it would describe three rows. Without any,
+the planner guesses ten rows per key, which makes the permalink lookup
+(`post_name = ? AND post_type = 'post' AND post_status = 'publish'`) use `type_status_date`
+and read every published post. On a model site with 20,000 posts a Durable Object read 11,002 rows
+for that lookup, against 3 with statistics.
+
+The bake therefore ships statistics for a model site. `scripts/wp/loaded-data.ts` generates it from a
+fixed seed: 20,000 posts (11,000 published posts, 3,500 attachments, 3,200 revisions and the rest),
+100,000 postmeta rows, 2,000 terms, 50,000 comments, 5,000 users and 3,000 options of which 150 load
+on every request. `modelStatistics()` in `scripts/wp/planner-stats.ts` loads that site into the
+installed schema, runs `ANALYZE` and keeps the `sqlite_stat1` rows. `pack-sql.ts` writes them as the
+last statements of the last chunk, and the migration replay installs them:
+
+1. `ANALYZE sqlite_master` creates `sqlite_stat1`. The name is reserved, so `CREATE TABLE` is refused.
+2. One `INSERT` per row.
+3. `ANALYZE sqlite_master` again. The planner reads the table when the schema loads, so rows written
+   directly have no effect until this reload.
+
+The rows are the same on every bake, and `tests/node/wordpress-planner-stats.spec.ts` compares them
+with the script's output. Run `bun scripts/wp/planner-stats.ts stats` to print them.
+
+### What a Real Site Does to Them
+
+The planner reads the seeded rows and never the site's data, so a plan cannot flip as a site grows.
+What can change is whether the seeded plan is still the one the site's own `ANALYZE` would pick.
+`bun scripts/wp/planner-stats.ts sensitivity` loads seven sites (200, 2,000 and 100,000 posts, and
+20,000 posts that are mostly revisions, attachments or drafts) and compares the 72 read templates
+under the seeded rows against each site's own statistics. The permalink, date permalink, comment and
+post parent reads agree on all seven. The category archive, author archive and admin count reads
+differ only on the 200-post site, where either plan reads a handful of rows. The other
+disagreements are ties between `type_status_date` and `type_status_author` for ordered reads, and
+three reads that the site's own statistics send to a full scan of `wp_posts` on sites whose posts
+are mostly revisions, attachments or drafts.
+
+### Why Not a Full ANALYZE
+
+`ANALYZE` is permitted on a Durable Object and costs the whole database in rows read: 1,671,358 read
+and 34 written on the model site, measured on a local Durable Object. It also makes one hot read
+worse. `wp_options__autoload` holds three values and 95% of the rows carry `off`, so its average of
+1,500 rows per key makes the planner scan all 3,000 options for the request that loads the
+autoloaded ones, where the index reads 155. The seeded rows leave that index out
+(`UNREPRESENTATIVE` in `planner-stats.ts`), so the planner keeps its default for it.
+
+`PRAGMA optimize` is permitted and runs an `ANALYZE`, but its cursor reports 13 rows read and 0
+written while `sqlite_stat1` gains 30 rows, so its cost cannot be read from the meter. Nothing in the
+product runs either.
 
 The user tables are declared `COLLATE NOCASE_UTF8`, a collation the Drupal SQLite driver registers
 per connection. A plain `sqlite3` client or a raw `new PDO()` cannot rebuild an index over them and

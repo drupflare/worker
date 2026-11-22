@@ -20,6 +20,13 @@ curl -X PUT -H "authorization: Bearer $OWNER_TOKEN" -H 'content-type: applicatio
   -d '{"RENDER_BUDGET_MS": 4000, "PREFILL": "0"}' https://your-site/settings
 ```
 
+`GET` answers an `ETag` that covers the plan and every lever with its value and source. A write may
+send it back in `If-Match`. When the settings changed since the read, nothing is written and the
+reply is 412 with `code: "stale_settings"` and the current tag in `etag`, so two writers cannot
+overwrite each other. `*` and a weak tag match, a list matches when any entry does, and a write with
+no `If-Match` is accepted as before. A successful write answers the new tag in its `ETag` header. A
+change made behind the route, such as from the Drupal settings form, changes the tag too.
+
 An unlisted name is refused and named in the reply rather than dropped in silence. The allow-list is
 enforced at the writer as well as the reader: a reader-side filter makes an unlisted name inert, and a
 writer-side filter makes it unstorable.

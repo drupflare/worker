@@ -6,7 +6,8 @@ import {
 	OWNER_FAIL_WINDOW_MS,
 	resetOwnerFailures
 } from '../../src/ops/admin-session';
-import { KV_OVERRIDABLE } from '../../src/ops/plan';
+import { PACKAGE_SCHEMA } from '../../src/ops/discovery';
+import { KV_OVERRIDABLE, SETTINGS_KV_KEY } from '../../src/ops/plan';
 import { OWNER_TOKEN_KEY } from '../../src/ops/site-secrets';
 import worker, { routeTable } from '../../src/site';
 import { inObject, provisionedNamedSite } from '../helpers/serve-do';
@@ -388,6 +389,89 @@ describe('the runtime levers are writable, within the allow-list', () => {
 		TIMEOUT
 	);
 
+	it(
+		'tags a read, writes on a matching If-Match and answers 412 on a stale one',
+		async () => {
+			const first = await settings();
+			const tag = first.headers.get('etag');
+			expect(tag).toMatch(/^"[0-9a-f]{32}"$/);
+			expect((await settings()).headers.get('etag')).toBe(tag);
+
+			// two writers read the same document; the first write lands, the second is stale
+			const withTag = (match: string, body: unknown) =>
+				settings({
+					method: 'PUT',
+					headers: { 'content-type': 'application/json', 'if-match': match },
+					body: JSON.stringify(body)
+				});
+			const winner = await withTag(tag!, { FILL_BATCH_SIZE: '11' });
+			expect(winner.status).toBe(200);
+			const next = winner.headers.get('etag');
+			expect(next).not.toBe(tag);
+
+			const loser = await withTag(tag!, { FILL_BATCH_SIZE: '12' });
+			expect(loser.status).toBe(412);
+			const refusal = (await loser.json()) as { code: string; etag: string };
+			expect(refusal.code).toBe('stale_settings');
+			expect(refusal.etag).toBe(next);
+
+			// the refused write changed nothing, and the tag from the winner's answer still matches
+			const kept = (await (await settings()).json()) as {
+				levers: { name: string; value: unknown }[];
+			};
+			expect(kept.levers.find((l) => l.name === 'FILL_BATCH_SIZE')?.value).toBe('11');
+			expect((await withTag(next!, { FILL_BATCH_SIZE: '13' })).status).toBe(200);
+
+			// a write with no If-Match is still accepted, and `*` and a weak tag match
+			expect((await put({ FILL_BATCH_SIZE: '14' })).status).toBe(200);
+			expect((await withTag('*', { FILL_BATCH_SIZE: '15' })).status).toBe(200);
+			const current = (await settings()).headers.get('etag')!;
+			expect((await withTag(`"other", W/${current}`, { FILL_BATCH_SIZE: '16' })).status).toBe(
+				200
+			);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'answers 400 for a WARM_WINDOW that does not parse and writes nothing from that body',
+		async () => {
+			const before = (await settings()).headers.get('etag');
+			const bad = await put({ WARM_WINDOW: 'sometimes', FILL_BATCH_SIZE: '31' });
+			expect(bad.status).toBe(400);
+			const refusal = (await bad.json()) as { error: string; code: string; name: string };
+			expect(refusal).toMatchObject({ code: 'invalid_lever', name: 'WARM_WINDOW' });
+			expect(refusal.error).toContain('WARM_WINDOW');
+			expect((await put({ WARM_WINDOW: 'mon-fri 22:00-06:00' })).status).toBe(400);
+			expect((await put({ WARM_WINDOW: 'mon-fri 06:00-22:00 Mars/Olympus' })).status).toBe(
+				400
+			);
+			// the refused body changed nothing, including the lever beside the bad one
+			expect((await settings()).headers.get('etag')).toBe(before);
+
+			// the same value in the accepted format, with and without a zone, is stored
+			expect((await put({ WARM_WINDOW: 'mon-fri 06:00-22:00' })).status).toBe(200);
+			expect(
+				(await put({ WARM_WINDOW: 'mon-fri 06:00-22:00 America/New_York' })).status
+			).toBe(200);
+			expect((await put({ WARM_WINDOW: '' })).status).toBe(200);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'sees a settings document written behind the route as a new tag',
+		async () => {
+			const before = (await settings()).headers.get('etag');
+			const kv = (env as unknown as { CONFIG_KV: KVNamespace }).CONFIG_KV;
+			await kv.put(SETTINGS_KV_KEY, JSON.stringify({ MIRROR_LIMIT: '21' }));
+			const after = (await settings()).headers.get('etag');
+			expect(after).not.toBe(before);
+			await kv.delete(SETTINGS_KV_KEY);
+		},
+		TIMEOUT
+	);
+
 	// the route is owner-only and has NO DO_ROUTE entry: CONFIG_KV is a front-worker binding, so
 	// an object hop would spend a Durable Object request to reach a namespace this isolate holds
 	it(
@@ -396,6 +480,122 @@ describe('the runtime levers are writable, within the allow-list', () => {
 			expect([...routeTable().owner]).toContain('/settings');
 			const res = await guarded('/settings');
 			expect(res.status).toBe(401);
+		},
+		TIMEOUT
+	);
+});
+
+/**
+ * The discovery document and the extension list, which the dashboard reads with the owner token.
+ *
+ * Both are owner routes with no diagnostics fallback. The document is answered in the front worker
+ * from the same settings read `/settings` uses, so its tag has to be that route's tag.
+ */
+describe('the discovery document', () => {
+	const PATH = '/.well-known/drupflare';
+	const FAKE_SECRET = 'fake-smtp-secret-0001';
+
+	const read = async (path: string, init: RequestInit = {}, extra: object = {}) => {
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(
+			new Request(`https://cfw.local${path}?site=${SITE}`, init),
+			{ ...env, PW_DIAGNOSTICS: '1', ...extra } as unknown as typeof env,
+			ctx
+		);
+		await waitOnExecutionContext(ctx);
+		return res;
+	};
+
+	it(
+		'refuses a wrong token on the document and on the extension list',
+		async () => {
+			await provisionedNamedSite(SITE);
+			for (const path of [PATH, '/extensions']) {
+				const res = await guarded(path, {
+					headers: { authorization: 'Bearer not-the-owner-token' }
+				});
+				expect(res.status, path).toBe(401);
+				expect(res.headers.get('www-authenticate'), path).toContain('Bearer');
+			}
+		},
+		TIMEOUT
+	);
+
+	it(
+		'answers the settings, the routes and the limits, uncached, under the settings tag',
+		async () => {
+			const res = await read(PATH);
+			expect(res.status).toBe(200);
+			expect(res.headers.get('cache-control')).toBe('no-store');
+			const doc = (await res.json()) as {
+				v: number;
+				kind: string;
+				releaseId: string;
+				schemaVersion: number;
+				settings: { values: Record<string, unknown>; etag: string; schema: object };
+				routes: { path: string }[];
+			};
+			expect(doc).toMatchObject({ v: 1, kind: 'drupal' });
+			const meta = (env as unknown as { CF_VERSION_METADATA?: { id?: string } })
+				.CF_VERSION_METADATA;
+			expect(doc.releaseId).toBe(meta?.id || 'unknown');
+			expect(doc.schemaVersion).toBe(PACKAGE_SCHEMA.version);
+			expect(Object.keys(doc.settings.schema).sort()).toEqual([...KV_OVERRIDABLE].sort());
+			expect(doc.routes.map((r) => r.path)).toContain(PATH);
+			const settings = await read('/settings');
+			expect(doc.settings.etag).toBe(settings.headers.get('etag'));
+		},
+		TIMEOUT
+	);
+
+	it(
+		'follows a stored override, and its tag moves with the settings',
+		async () => {
+			const before = (await (await read(PATH)).json()) as {
+				settings: {
+					etag: string;
+					values: Record<string, unknown>;
+					provenance: Record<string, string>;
+				};
+			};
+			const wrote = await read('/settings', {
+				method: 'PUT',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ SLEEP_BUDGET_MS: '4100' })
+			});
+			expect(wrote.status).toBe(200);
+			const after = (await (await read(PATH)).json()) as typeof before;
+			expect(after.settings.values['SLEEP_BUDGET_MS']).toBe(4100);
+			expect(after.settings.provenance['SLEEP_BUDGET_MS']).toBe('kv');
+			expect(after.settings.etag).not.toBe(before.settings.etag);
+			expect(after.settings.etag).toBe(wrote.headers.get('etag'));
+		},
+		TIMEOUT
+	);
+
+	it(
+		'carries no value outside the override list, whatever the environment holds',
+		async () => {
+			const res = await read(
+				PATH,
+				{},
+				{ SMTP_PASSWORD: FAKE_SECRET, OWNER_SECRET: FAKE_SECRET }
+			);
+			const text = await res.text();
+			expect(res.status).toBe(200);
+			expect(text).not.toContain(FAKE_SECRET);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'refuses other methods, and answers 404 for a CMS it has no kind for',
+		async () => {
+			const post = await read(PATH, { method: 'POST' });
+			expect(post.status).toBe(405);
+			expect(await post.json()).toMatchObject({ allow: 'GET' });
+			const wordpress = await read(PATH, {}, { CMS: 'wordpress' });
+			expect(wordpress.status).toBe(404);
 		},
 		TIMEOUT
 	);

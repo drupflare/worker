@@ -20,7 +20,8 @@ export async function healthRoute(f: FrontContext): Promise<Response | undefined
 				deployment: report && {
 					...report.deployment,
 					serving: site,
-					otherSites: report.sites.filter((one) => one.site !== site)
+					otherSites: report.sites.filter((one) => one.site !== site),
+					...(report.degraded === undefined ? {} : { degraded: report.degraded })
 				}
 			},
 			{ status: res.status }

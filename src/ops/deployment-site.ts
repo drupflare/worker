@@ -111,20 +111,40 @@ export async function readDeployment(
 	kv: DeploymentKv | undefined,
 	nowMs: number = Date.now()
 ): Promise<DeploymentSites> {
-	if (!kv) return { ...EMPTY, claimed: [] };
-	if (memo && nowMs - memo.at < DEPLOYMENT_MEMO_MS) return memo.value;
+	return (await readDeploymentState(kv, nowMs)).value;
+}
+
+/** a read of the document and whether it could be trusted to mean "nothing claimed" */
+export type DeploymentRead = {
+	value: DeploymentSites;
+	/** set when the read failed or timed out, so an empty list is not evidence of no claimed sites */
+	degraded?: 'kv_read_failed' | 'kv_read_timeout';
+};
+
+/** {@link readDeployment} that also says when the read failed, which the document alone hides */
+export async function readDeploymentState(
+	kv: DeploymentKv | undefined,
+	nowMs: number = Date.now()
+): Promise<DeploymentRead> {
+	if (!kv) return { value: { ...EMPTY, claimed: [] } };
+	if (memo && nowMs - memo.at < DEPLOYMENT_MEMO_MS) return { value: memo.value };
 	let raw: string | null;
 	try {
 		const read = await within(kv.get(DEPLOYMENT_KEY), KV_READ_TIMEOUT_MS);
 		// a hung read answers with the last document seen, however old, and is not memoised
-		if (read === TIMED_OUT) return memo?.value ?? { ...EMPTY, claimed: [] };
+		if (read === TIMED_OUT) {
+			return {
+				value: memo?.value ?? { ...EMPTY, claimed: [] },
+				degraded: 'kv_read_timeout'
+			};
+		}
 		raw = read;
 	} catch {
-		return { ...EMPTY, claimed: [] };
+		return { value: { ...EMPTY, claimed: [] }, degraded: 'kv_read_failed' };
 	}
 	const value = parseDeployment(raw);
 	memo = { at: nowMs, value };
-	return value;
+	return { value };
 }
 
 /**

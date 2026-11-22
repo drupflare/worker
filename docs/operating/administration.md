@@ -77,6 +77,15 @@ is refused on the public routes, so a link cannot choose which site answers; an 
 it because the object checks the token itself, and `PW_DIAGNOSTICS=1` accepts it everywhere, which
 is what `/serve?site=X&path=Y` uses.
 
+## Deployment Report
+
+`GET /deployment` answers the deployment document (the primary and the claimed sites) with what each
+claimed site holds, and `GET /health` carries the same document under `deployment`. When the read of
+that document fails or runs past 2 seconds, the answer adds `degraded` with the value `kv_read_failed`
+or `kv_read_timeout`. The claimed list is then empty or the last one this isolate saw, and it does
+not say the deployment has no claimed sites. A caller that is about to act on the list, such as a
+retire, reads again and acts only on an answer with no `degraded` field.
+
 ## Retiring a Site
 
 `POST /retire?site=<id>` with the body `{"confirm": "<id>"}` removes one site from a deployment. It

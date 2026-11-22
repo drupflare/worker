@@ -1,6 +1,7 @@
+import { DISCOVERY_DOCUMENT_PATH } from '../ops/discovery';
 import { SURFACE_PREFIX } from '../ui/admin';
 import { renderAdmin } from './admin';
-import { deploymentRoute, settingsRoute } from './deployment';
+import { deploymentRoute, discoveryRoute, settingsRoute } from './deployment';
 import { runFillWindow } from './fill-window';
 import { retireRoute } from './retire';
 import type { FrontContext } from './types';
@@ -36,6 +37,9 @@ export async function surfaceRoute(f: FrontContext): Promise<Response | undefine
 	}
 	if (url.pathname === '/deployment') {
 		return await deploymentRoute(request, url, env);
+	}
+	if (url.pathname === DISCOVERY_DOCUMENT_PATH) {
+		return await discoveryRoute(request, url, env);
 	}
 
 	if (url.pathname === '/retire') {

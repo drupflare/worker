@@ -3,22 +3,30 @@ import {
 	choosePrimary,
 	type DeploymentSites,
 	emptyCensus,
-	readDeployment,
+	readDeploymentState,
 	resetDeploymentMemo,
 	type SiteCensus
 } from '../ops/deployment-site';
+import { discoveryDocument, discoveryLimits } from '../ops/discovery';
+import { sha256Hex } from '../ops/owner-recovery';
 import {
 	canWriteKv,
 	KV_OVERRIDABLE,
 	LEVER_DOMAINS,
+	leverRefusal,
+	type PlanKv,
+	resetPlanMemo,
+	resetSettingsMemo,
 	resolvePlan,
 	resolveSettings,
 	writePlan,
 	writeSettings
 } from '../ops/plan';
 import { siteStubOptions } from '../ops/site-id';
+import { cmsOf } from '../util/cms';
 import { jsonError } from '../util/reply';
 import type { Stamped } from '../util/types';
+import { bodyLimitFor } from './guards';
 import { siteFor } from './owner';
 import type { SiteWorkerEnv } from './types';
 
@@ -100,13 +108,14 @@ export async function deploymentRoute(
 export async function deploymentReport(env: SiteWorkerEnv): Promise<{
 	deployment: DeploymentSites;
 	sites: SiteCensus[];
+	degraded?: 'kv_read_failed' | 'kv_read_timeout';
 }> {
 	resetDeploymentMemo();
-	const deployment = await readDeployment(env.CONFIG_KV);
+	const { value: deployment, degraded } = await readDeploymentState(env.CONFIG_KV);
 	const sites = await Promise.all(
 		deployment.claimed.map((site) => censusOf(env.SITE, site).catch(() => emptyCensus(site)))
 	);
-	return { deployment, sites };
+	return { deployment, sites, ...(degraded === undefined ? {} : { degraded }) };
 }
 
 /**
@@ -132,24 +141,11 @@ export async function settingsRoute(
 		});
 	}
 
-	const [plan, settings] = await Promise.all([
-		resolvePlan(env, kv, Date.now(), site),
-		resolveSettings(kv, Date.now(), site)
-	]);
-	const view = () => ({
-		ok: true,
-		plan,
-		// every name, including the ones with no override, so a caller can render the whole surface
-		// from one response rather than having to know the list
-		levers: KV_OVERRIDABLE.map((name) => ({
-			name,
-			value: settings[name] ?? (env as unknown as Record<string, string>)[name] ?? null,
-			source: settings[name] !== undefined ? 'kv' : name in env ? 'var' : 'default',
-			domain: LEVER_DOMAINS[name]
-		}))
-	});
+	const read = () => settingsView(env, kv, site);
+	const view = await read();
+	const etag = await settingsEtag(view);
 
-	if (request.method === 'GET') return Response.json(view());
+	if (request.method === 'GET') return Response.json(view, { headers: { etag } });
 
 	if (request.method !== 'PUT' && request.method !== 'POST') {
 		return jsonError('use GET to read or PUT to write', 405);
@@ -157,6 +153,14 @@ export async function settingsRoute(
 
 	if (!canWriteKv(kv)) {
 		return jsonError('this CONFIG_KV binding is read-only', 501);
+	}
+
+	const ifMatch = request.headers.get('if-match');
+	if (ifMatch !== null && !etagMatches(ifMatch, etag)) {
+		return jsonError('the settings changed since they were read', 412, {
+			code: 'stale_settings',
+			etag
+		});
 	}
 
 	let body: unknown;
@@ -170,8 +174,15 @@ export async function settingsRoute(
 	}
 
 	const patch = body as Record<string, unknown>;
+	// a window that does not parse would otherwise be dropped and read as unset, so say so up front
+	const window = patch['WARM_WINDOW'];
+	if (window !== undefined && window !== null && String(window).trim() !== '') {
+		const reason = leverRefusal('WARM_WINDOW', window);
+		if (reason !== undefined)
+			return jsonError(reason, 400, { code: 'invalid_lever', name: 'WARM_WINDOW' });
+	}
 	const wantedPlan = patch['PLAN'] ?? patch['plan'];
-	let planResult = plan;
+	let planResult = view.plan;
 	if (wantedPlan !== undefined) {
 		const asked = String(wantedPlan ?? '').toLowerCase();
 		if (asked !== '' && asked !== 'free' && asked !== 'paid') {
@@ -187,7 +198,78 @@ export async function settingsRoute(
 	const { PLAN: _plan, plan: _lower, ...levers } = patch;
 	const written = await writeSettings(kv, levers, site);
 	await recordSettingsWrite(request, url, env, site);
-	return Response.json({ ok: true, plan: planResult, ...written });
+	const after = await settingsEtag(await read());
+	return Response.json({ ok: true, plan: planResult, ...written }, { headers: { etag: after } });
+}
+
+/**
+ * The plan and every lever with its value and source, read fresh. The memos are dropped first, so
+ * the tag taken from it describes what is stored now.
+ */
+async function settingsView(env: SiteWorkerEnv, kv: PlanKv | undefined, site: string) {
+	resetPlanMemo();
+	resetSettingsMemo();
+	const [plan, settings] = await Promise.all([
+		resolvePlan(env, kv, Date.now(), site),
+		resolveSettings(kv, Date.now(), site)
+	]);
+	return {
+		ok: true,
+		plan,
+		// every name, including the ones with no override, so a caller can render the whole surface
+		// from one response rather than having to know the list
+		levers: KV_OVERRIDABLE.map((name) => ({
+			name,
+			value: settings[name] ?? (env as unknown as Record<string, string>)[name] ?? null,
+			source: (settings[name] !== undefined ? 'kv' : name in env ? 'var' : 'default') as
+				'kv' | 'var' | 'default',
+			domain: LEVER_DOMAINS[name]
+		}))
+	};
+}
+
+/**
+ * The discovery document: the settings, the callable routes and the limits, for the dashboard.
+ * `GET` only, owner token only (checked before it reaches here), never cached. A CMS the document
+ * has no kind for answers 404, which the dashboard reads as "this site publishes none".
+ */
+export async function discoveryRoute(
+	request: Request,
+	url: URL,
+	env: SiteWorkerEnv
+): Promise<Response> {
+	if (cmsOf(env) !== 'drupal') return new Response('not found\n', { status: 404 });
+	if (request.method !== 'GET') return jsonError('use GET', 405, { allow: 'GET' });
+	const kv = env.CONFIG_KV;
+	const view = await settingsView(env, kv, await siteFor(url, env));
+	const upload = bodyLimitFor(
+		new Request(url, { method: 'POST', headers: { 'content-type': 'multipart/form-data' } }),
+		env
+	);
+	return Response.json(
+		discoveryDocument({
+			levers: view.levers,
+			etag: await settingsEtag(view),
+			releaseId: env.CF_VERSION_METADATA?.id || 'unknown',
+			limits: discoveryLimits(upload),
+			writable: kv !== undefined && canWriteKv(kv)
+		}),
+		{ headers: { 'cache-control': 'no-store' } }
+	);
+}
+
+/** a strong tag over the plan and every lever with its value and source, as GET reports them */
+async function settingsEtag(view: { plan: unknown; levers: unknown }): Promise<string> {
+	const digest = await sha256Hex(JSON.stringify([view.plan, view.levers]));
+	return `"${digest.slice(0, 32)}"`;
+}
+
+/** whether an If-Match list names the current tag; weak prefixes are ignored and `*` matches */
+function etagMatches(header: string, current: string): boolean {
+	return header
+		.split(',')
+		.map((tag) => tag.trim().replace(/^W\//, ''))
+		.some((tag) => tag === '*' || tag === current);
 }
 
 /**

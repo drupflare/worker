@@ -1,9 +1,15 @@
 import { env } from 'cloudflare:test';
-import { afterEach, describe, expect, it } from 'vitest';
-import { DEPLOYMENT_KEY, resetDeploymentMemo } from '../../src/ops/deployment-site';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+	DEPLOYMENT_KEY,
+	KV_READ_TIMEOUT_MS,
+	resetDeploymentMemo
+} from '../../src/ops/deployment-site';
 import { resetHostMemo, resolveSite, siteKvKey } from '../../src/ops/site-id';
 import { ORIGIN_KEY } from '../../src/ops/site-origin';
 import worker from '../../src/site';
+import { deploymentReport } from '../../src/site/deployment';
+import type { SiteWorkerEnv } from '../../src/site/types';
 import {
 	inObject,
 	namedSite,
@@ -120,6 +126,43 @@ describe('a deployment with more than one claimed site', () => {
 			lastWrite: 1_700_000_004
 		});
 	});
+});
+
+describe('the deployment report when the document cannot be read', () => {
+	it('marks a failed read degraded instead of reporting an empty claimed list as a fact', async () => {
+		const healthy = await deploymentReport(env as unknown as SiteWorkerEnv);
+		expect(healthy.degraded).toBeUndefined();
+
+		const broken = {
+			...env,
+			CONFIG_KV: {
+				get: () => Promise.reject(new Error('kv unavailable')),
+				put: () => Promise.resolve()
+			}
+		} as unknown as SiteWorkerEnv;
+		const failed = await deploymentReport(broken);
+		expect(failed.deployment.claimed).toEqual([]);
+		expect(failed.degraded).toBe('kv_read_failed');
+
+		const hung = {
+			...env,
+			CONFIG_KV: {
+				get: () => new Promise<string | null>(() => {}),
+				put: () => Promise.resolve()
+			}
+		} as unknown as SiteWorkerEnv;
+		vi.useFakeTimers();
+		try {
+			const pending = deploymentReport(hung);
+			await vi.advanceTimersByTimeAsync(KV_READ_TIMEOUT_MS + 1);
+			expect((await pending).degraded).toBe('kv_read_timeout');
+		} finally {
+			vi.useRealTimers();
+		}
+
+		// control: a read that works reports no flag, and a failed read is not remembered
+		expect((await deploymentReport(env as unknown as SiteWorkerEnv)).degraded).toBeUndefined();
+	}, 20_000);
 });
 
 describe('a site claimed before the deployment document existed', () => {

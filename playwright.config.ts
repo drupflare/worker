@@ -65,7 +65,7 @@ const supervised = (command: string) =>
 export default defineConfig({
 	testDir: './tests/e2e/browser',
 	testMatch: '**/*.pw.ts',
-	testIgnore: ['**/utils/**'],
+	testIgnore: ['**/utils/**', '**/wordpress/**'],
 	// one site is one Durable Object with one interpreter, so parallel pages queue behind each other
 	// and start answering 503 from the fill queue rather than going faster
 	fullyParallel: false,

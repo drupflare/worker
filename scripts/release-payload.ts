@@ -93,7 +93,10 @@ export const PAYLOAD_ASSETS: readonly PlanEntry[] = [
 	{ path: 'assets/wordpress/driver.json', optional: true },
 	{ path: 'assets/wordpress/pf/core.pf.json', optional: true },
 	{ path: 'assets/wordpress/pf/core.pf.bin', optional: true },
-	{ path: 'assets/wordpress/sql', dir: true, optional: true }
+	{ path: 'assets/wordpress/sql', dir: true, optional: true },
+	// spool's worker script and page scripts, written by scripts/pack-spool.ts and tracked
+	{ path: 'assets/spool-sw.js', tracked: true },
+	{ path: 'assets/.spool', dir: true, tracked: true }
 ];
 
 /**
@@ -104,8 +107,15 @@ export const PAYLOAD_ASSETS: readonly PlanEntry[] = [
  * runtime never asks for, which renders a byte-identical page. Carrying 7.8 KB is what lets the
  * release lane run that spec; `.assetsignore` still withholds it from the edge, because everything
  * under `assets/drupal/` is re-ignored.
+ *
+ * `assets/wordpress-site` is the other kind of entry here: the directory a WordPress deploy serves
+ * as its asset directory. The Drupal asset directory never lists it, so a Drupal deploy publishes
+ * none of it. Optional, because a Drupal build never makes it.
  */
-export const PAYLOAD_RECORDS: readonly PlanEntry[] = [{ path: 'assets/drupal/twig-bake.json' }];
+export const PAYLOAD_RECORDS: readonly PlanEntry[] = [
+	{ path: 'assets/drupal/twig-bake.json' },
+	{ path: 'assets/wordpress-site', dir: true, optional: true }
+];
 
 /** a payload file, content-addressed */
 export type PayloadFile = { path: string; bytes: number; sha256: string };
@@ -316,6 +326,7 @@ const PRODUCED_BY: Record<string, string> = {
 	'assets/drupal/twig-bake.json': 'bun run assets:twig',
 	'assets/drupal-pf': 'bun run assets:twig && bun run assets:core && bun run assets:pack',
 	'assets/drupal-sql': 'bun run assets:sql (needs assets/drupal/site.sqlite)',
+	'assets/wordpress-site': 'bun scripts/pack-wordpress.ts --site (needs wordpress-src)',
 	'.interp': 'bun run build:wasm (needs docker and gh auth to drupflare/phasm)'
 };
 

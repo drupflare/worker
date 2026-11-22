@@ -97,13 +97,18 @@ function checkout(seam: string, ignore?: string): string {
 				'/wordpress/pf/*',
 				'!/wordpress/pf/core.pf.json',
 				'!/wordpress/pf/core.pf.bin',
-				'!/wordpress/sql/'
+				'!/wordpress/sql/',
+				'!/spool-sw.js',
+				'!/.spool/'
 			].join('\n')
 	);
 	writeFileSync(join(root, 'assets/drupal/twig-bake.json'), '{"prefix":"x"}');
 	writeFileSync(join(root, 'assets/robots.txt'), 'User-agent: *\n');
 	writeFileSync(join(root, 'assets/driver.json'), '{"a":"b"}');
 	writeFileSync(join(root, 'assets/prefill.json'), '{}');
+	writeFileSync(join(root, 'assets/spool-sw.js'), 'self.__SPOOL_CONFIG__={};');
+	mkdirSync(join(root, 'assets/.spool/1.0.0'), { recursive: true });
+	writeFileSync(join(root, 'assets/.spool/1.0.0/client.js'), '(()=>{})();');
 	writeFileSync(join(root, 'assets/core/misc/drupal.js'), 'window.Drupal = {};');
 	// the contrib half: `assets/core/` cannot answer `/modules/contrib/**`, so an enabled module
 	// shipping its own css or js used to 404 on every page that included it
@@ -218,6 +223,24 @@ describe('expanding the plan to files', () => {
 		// is really for is that nothing is emitted twice and nothing outside the plan appears
 		expect(new Set(files).size).toBe(files.length);
 		expect(files.every((f) => f.startsWith('assets/') || f.startsWith('.interp/'))).toBe(true);
+	});
+
+	it('carries the WordPress site directory when a build made one, and leaves the Drupal set unchanged', () => {
+		const root = checkout(SEAM_85);
+		const without = expandPlan(root, payloadPlan(root));
+		expect(without.some((f) => f.startsWith('assets/wordpress-site'))).toBe(false);
+
+		mkdirSync(join(root, 'assets/wordpress-site/wp-includes/css'), { recursive: true });
+		writeFileSync(join(root, 'assets/wordpress-site/wp-includes/css/a.min.css'), 'a{}');
+		writeFileSync(join(root, 'assets/wordpress-site/_headers'), '/wp-includes/*.css\n');
+		const withSite = expandPlan(root, payloadPlan(root));
+		expect(withSite).toContain('assets/wordpress-site/wp-includes/css/a.min.css');
+		expect(withSite.filter((f) => !f.startsWith('assets/wordpress-site'))).toEqual(without);
+	});
+
+	it('does not publish the WordPress site directory from the Drupal asset directory', () => {
+		const ignore = readFileSync(join(process.cwd(), 'assets/.assetsignore'), 'utf8');
+		expect(shippedPaths(ignore).filter((p) => /wordpress-site|^\/wp-/.test(p))).toEqual([]);
 	});
 
 	it('carries the build records the gate reads and the edge never serves', () => {

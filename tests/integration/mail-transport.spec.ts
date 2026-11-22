@@ -446,6 +446,143 @@ describe('the queue is durable and the chain wakes for it', () => {
 	});
 });
 
+describe('attempts, attachments and the durable failure count', () => {
+	const failed = (stats: unknown) =>
+		(stats as { mailFailed: { count: number; lastError: string } | null }).mailFailed;
+	const queued = (site: ServeDo) =>
+		site.sql.exec('SELECT payload, attempts, retry_at FROM cfw_mail_queue').toArray();
+
+	it('queues a Drupal message exactly as before: no attachments, no attempts field', async () => {
+		const stub = freshSite();
+		const rows = await inObject(stub, (site) => {
+			site.env = { ...site.env, CF_EMAIL_ACCOUNT_ID: 'acct-plain', CF_EMAIL_TOKEN: 'tok' };
+			site.env = { ...site.env, MAIL_DRAIN_ON_ALARM: '0' };
+			callMail(site, MESSAGE);
+			return queued(site);
+		});
+		const payload = JSON.parse(String(rows[0]!.payload)) as Record<string, unknown>;
+		expect(payload).not.toHaveProperty('attachments');
+		expect(payload).not.toHaveProperty('maxAttempts');
+	});
+
+	it('carries attachments to the relay and keeps the attempts the caller asked for', async () => {
+		const stub = freshSite();
+		const calls = stubFetch();
+		const rows = await inObject(stub, (site) => {
+			site.env = {
+				...site.env,
+				CF_EMAIL_ACCOUNT_ID: 'acct-files',
+				CF_EMAIL_TOKEN: 'tok',
+				HTTP_DRAIN_ON_ALARM: '0'
+			};
+			callMail(site, {
+				...MESSAGE,
+				attachments: [{ filename: 'a.pdf', type: 'application/pdf', b64: 'JVBERg==' }],
+				retry: 3
+			});
+			return queued(site);
+		});
+		expect(JSON.parse(String(rows[0]!.payload)).maxAttempts).toBe(3);
+
+		await driveAlarms(stub, (site) => site.countOrNull('cfw_mail_queue') === 0);
+		const body = JSON.parse(String(calls('acct-files')[0]!.init?.body)) as Record<
+			string,
+			unknown
+		>;
+		expect(body.attachments).toEqual([
+			{
+				content: 'JVBERg==',
+				filename: 'a.pdf',
+				type: 'application/pdf',
+				disposition: 'attachment'
+			}
+		]);
+	});
+
+	it('counts a message the relay refused, and the count survives the next serve-stats read', async () => {
+		const stub = freshSite();
+		stubFetch(403, 'domain not onboarded');
+		await inObject(stub, (site) => {
+			site.env = {
+				...site.env,
+				CF_EMAIL_ACCOUNT_ID: 'acct-lost',
+				CF_EMAIL_TOKEN: 'tok',
+				HTTP_DRAIN_ON_ALARM: '0'
+			};
+			callMail(site, MESSAGE);
+		});
+		await driveAlarms(stub, (site) => site.countOrNull('cfw_mail_queue') === 0);
+		const first = await inObject(stub, (site) => statsOf(site));
+		expect(failed(first)).toMatchObject({ count: 1 });
+		expect(failed(first)!.lastError).toContain('403');
+
+		await inObject(stub, (site) => {
+			callMail(site, MESSAGE);
+		});
+		await driveAlarms(stub, (site) => site.countOrNull('cfw_mail_queue') === 0);
+		const second = await inObject(stub, (site) => statsOf(site));
+		expect(failed(second)).toMatchObject({ count: 2 });
+	});
+
+	it('reports no failures before any, so a clean site reads null rather than zero', async () => {
+		const stats = await inObject(freshSite(), (site) => statsOf(site));
+		expect(failed(stats)).toBeNull();
+	});
+
+	it('keeps a rate-limited message for another attempt and does not count it as lost', async () => {
+		const stub = freshSite();
+		stubFetch(429, 'slow down');
+		await inObject(stub, (site) => {
+			site.env = {
+				...site.env,
+				CF_EMAIL_ACCOUNT_ID: 'acct-limited',
+				CF_EMAIL_TOKEN: 'tok',
+				HTTP_DRAIN_ON_ALARM: '0'
+			};
+			callMail(site, { ...MESSAGE, retry: 3 });
+			return site.alarm();
+		});
+		const after = await inObject(stub, async (site) => ({
+			rows: queued(site),
+			stats: await statsOf(site)
+		}));
+		expect(after.rows).toHaveLength(1);
+		expect(after.rows[0]).toMatchObject({ attempts: 1 });
+		expect(Number(after.rows[0]!.retry_at)).toBeGreaterThan(Date.now());
+		expect(failed(after.stats)).toBeNull();
+
+		// once the wait is over the message goes out and nothing was ever lost
+		const calls = stubFetch();
+		await inObject(stub, (site) => {
+			site.sql.exec('UPDATE cfw_mail_queue SET retry_at = 0');
+		});
+		await driveAlarms(stub, (site) => site.countOrNull('cfw_mail_queue') === 0);
+		expect(calls('acct-limited')).toHaveLength(1);
+		const done = await inObject(stub, (site) => statsOf(site));
+		expect(failed(done)).toBeNull();
+	});
+
+	it('leaves a message waiting for its retry out of the alarm backlog', async () => {
+		const stub = freshSite();
+		stubFetch(503, 'busy');
+		const alarmGap = await inObject(stub, async (site) => {
+			site.env = {
+				...site.env,
+				CF_EMAIL_ACCOUNT_ID: 'acct-wait',
+				CF_EMAIL_TOKEN: 'tok',
+				HTTP_DRAIN_ON_ALARM: '0'
+			};
+			callMail(site, { ...MESSAGE, retry: 2 });
+			await site.alarm();
+			const at = await site.ctx.storage.getAlarm();
+			return at === null ? null : at - Date.now();
+		});
+		// the next firing is at the retry time or the idle tick, never the +1 ms of a live backlog
+		expect(alarmGap).not.toBeNull();
+		expect(alarmGap!).toBeGreaterThan(5_000);
+	});
+});
+
 // #region TEMPORARY assertion counter
 import { afterAll as __afterAll, afterEach as __afterEach } from 'vitest';
 let __asserts = 0;

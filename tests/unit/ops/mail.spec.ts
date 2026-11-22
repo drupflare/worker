@@ -5,13 +5,16 @@ import {
 	DEFAULT_MAIL_DRAIN_LIMIT,
 	MAIL_ATTEMPT_BUDGET,
 	MAIL_DRAIN_BUDGET_MS,
+	MAIL_RETRY_BACKOFF_MS,
 	MAIL_SEND_BUDGET_MS,
 	MAIL_TABLE,
 	MAX_HEADER_BYTES,
+	MAX_MAIL_ATTEMPTS,
 	MAX_MAIL_BYTES,
 	MAX_MAIL_DRAIN_LIMIT,
 	MAX_RECIPIENTS,
 	MAX_SUBJECT_CHARS,
+	clampAttempts,
 	cloudflareFailureHint,
 	cloudflareSendBody,
 	cloudflareSendUrl,
@@ -24,6 +27,8 @@ import {
 	mailLimitRefusal,
 	mailQueueDepth,
 	mergeMailEnv,
+	nextFailureLedger,
+	parseFailureLedger,
 	queueMail,
 	resolveMailTransport,
 	sendViaApi,
@@ -32,6 +37,7 @@ import {
 	senderFor,
 	smtpMail,
 	splitAddresses,
+	type MailAttempt,
 	type MailDeps,
 	type MailMessage,
 	type MailSql,
@@ -65,6 +71,9 @@ function memorySql(): MailSql & { rows: Record<string, unknown>[] } {
 		exec(query: string, ...bindings: unknown[]) {
 			const sql = query.replace(/\s+/g, ' ').trim();
 			if (sql.startsWith('CREATE TABLE')) return { toArray: () => [] };
+			if (sql.startsWith('SELECT name FROM pragma_table_info')) {
+				return { toArray: () => [{ name: 'id' }, { name: 'retry_at' }] };
+			}
 			if (sql.startsWith('INSERT INTO')) {
 				const [recipient, transport, payload, queuedAt] = bindings;
 				const row = {
@@ -74,15 +83,17 @@ function memorySql(): MailSql & { rows: Record<string, unknown>[] } {
 					payload,
 					queued_at: queuedAt,
 					attempts: 0,
-					last_error: null as string | null
+					last_error: null as string | null,
+					retry_at: 0
 				};
 				rows.push(row);
 				return { toArray: () => [{ id: row.id }] };
 			}
 			if (sql.startsWith('SELECT COUNT')) return { toArray: () => [{ c: rows.length }] };
 			if (sql.startsWith('SELECT id')) {
-				const limit = Number(bindings[0]);
-				return { toArray: () => rows.slice(0, limit).map((r) => ({ ...r })) };
+				const [now, limit] = bindings.map(Number);
+				const due = rows.filter((r) => Number(r.retry_at) <= now!);
+				return { toArray: () => due.slice(0, limit).map((r) => ({ ...r })) };
 			}
 			if (sql.startsWith('DELETE FROM')) {
 				const at = rows.findIndex((r) => r.id === Number(bindings[0]));
@@ -90,11 +101,12 @@ function memorySql(): MailSql & { rows: Record<string, unknown>[] } {
 				return { toArray: () => [] };
 			}
 			if (sql.startsWith('UPDATE')) {
-				const [attempts, error, id] = bindings;
+				const [attempts, error, retryAt, id] = bindings;
 				const row = rows.find((r) => r.id === Number(id));
 				if (row) {
 					row.attempts = attempts;
 					row.last_error = error;
+					row.retry_at = retryAt;
 				}
 				return { toArray: () => [] };
 			}
@@ -557,6 +569,175 @@ describe('the drain sends what was queued and reports what it could not', () => 
 		expect(script.commands).toContain('MAIL FROM:<site@example.com>');
 		expect(out.sent[0]).toMatchObject({ ok: true, transport: 'smtp' });
 		expect(out.remaining).toBe(0);
+	});
+});
+
+describe('attachments ride every transport', () => {
+	const file = { filename: 'report.pdf', type: 'application/pdf', b64: 'JVBERi0xLjQK' };
+
+	it('puts them in the Cloudflare body in the shape the Email Service documents', () => {
+		const body = cloudflareSendBody(API, message({ attachments: [file] }));
+		expect(body.attachments).toEqual([
+			{
+				content: 'JVBERi0xLjQK',
+				filename: 'report.pdf',
+				type: 'application/pdf',
+				disposition: 'attachment'
+			}
+		]);
+		expect(cloudflareSendBody(API, message())).not.toHaveProperty('attachments');
+	});
+
+	it('decodes them to bytes for the SMTP builder and sends a multipart message', async () => {
+		const mail = smtpMail(SMTP, message({ attachments: [file] }));
+		expect(mail.attachments).toHaveLength(1);
+		expect(mail.attachments![0]!.filename).toBe('report.pdf');
+		expect(mail.attachments![0]!.contentType).toBe('application/pdf');
+		expect(Array.from(mail.attachments![0]!.content.slice(0, 4))).toEqual([
+			0x25, 0x50, 0x44, 0x46
+		]);
+
+		const { connect, script } = smtpServer();
+		await sendViaSmtp(SMTP, message({ attachments: [file] }), {
+			...DEFAULT_MAIL_DEPS,
+			connect
+		});
+		expect(script.body).toContain('multipart/mixed');
+		expect(script.body).toContain('report.pdf');
+		expect(smtpMail(SMTP, message())).not.toHaveProperty('attachments');
+	});
+
+	it('counts their bytes against the queue limit, so an oversized attachment is refused by name', () => {
+		const big = { ...file, b64: 'A'.repeat(MAX_MAIL_BYTES) };
+		const out = queueMail(memorySql(), message({ attachments: [big] }), API, 1);
+		expect(out).toEqual({ refusal: expect.stringContaining(`${MAX_MAIL_BYTES}-byte`) });
+	});
+});
+
+describe('a message that asks for attempts is retried only when the relay did not take it', () => {
+	const BASE = 1_000_000;
+
+	it('queues the Drupal payload byte for byte when no attempts are asked for', () => {
+		const sql = memorySql();
+		queueMail(sql, message(), API, 1);
+		expect(sql.rows[0]!.payload).toBe(JSON.stringify(message()));
+		expect(clampAttempts(undefined)).toBe(MAIL_ATTEMPT_BUDGET);
+		expect(clampAttempts(99)).toBe(MAX_MAIL_ATTEMPTS);
+		expect(clampAttempts(0)).toBe(1);
+		queueMail(sql, message({ maxAttempts: 99 }), API, 1);
+		expect(JSON.parse(String(sql.rows[1]!.payload)).maxAttempts).toBe(MAX_MAIL_ATTEMPTS);
+	});
+
+	it('keeps the row after a 429, waits out the first delay and then sends it', async () => {
+		const sql = memorySql();
+		queueMail(sql, message({ maxAttempts: 3 }), API, 1);
+
+		const limited = recordingFetch({ ok: false, status: 429, body: 'slow down' });
+		const first = await drainMailQueue(sql, API, { deps: limited.deps, nowMs: BASE });
+		expect(first.sent[0]).toMatchObject({
+			ok: false,
+			retryAt: BASE + MAIL_RETRY_BACKOFF_MS[0]!
+		});
+		expect(first.sent[0]!.final).toBeUndefined();
+		expect(first.remaining).toBe(1);
+		expect(sql.rows[0]).toMatchObject({ attempts: 1, retry_at: BASE + 60_000 });
+
+		const early = recordingFetch({ ok: true, status: 200 });
+		const tooSoon = await drainMailQueue(sql, API, { deps: early.deps, nowMs: BASE + 59_999 });
+		expect(early.calls).toHaveLength(0);
+		expect(tooSoon.sent).toEqual([]);
+
+		const later = recordingFetch({ ok: true, status: 200 });
+		const done = await drainMailQueue(sql, API, { deps: later.deps, nowMs: BASE + 60_000 });
+		expect(later.calls).toHaveLength(1);
+		expect(done.sent[0]).toMatchObject({ ok: true });
+		expect(done.remaining).toBe(0);
+	});
+
+	it('drops the message and marks it final once the attempts are spent', async () => {
+		const sql = memorySql();
+		queueMail(sql, message({ maxAttempts: 2 }), API, 1);
+		const { deps } = recordingFetch({ ok: false, status: 503, body: 'busy' });
+		await drainMailQueue(sql, API, { deps, nowMs: BASE });
+		const last = await drainMailQueue(sql, API, { deps, nowMs: BASE + 60_000 });
+		expect(last.sent[0]).toMatchObject({ ok: false, final: true });
+		expect(last.remaining).toBe(0);
+	});
+
+	it('never retries a failure that may have been delivered, however many attempts it asked for', async () => {
+		const sql = memorySql();
+		queueMail(sql, message({ maxAttempts: 5 }), API, 1);
+		const { deps } = recordingFetch({ ok: false, status: 502, body: 'bad gateway' });
+		const out = await drainMailQueue(sql, API, { deps, nowMs: BASE });
+		expect(out.sent[0]).toMatchObject({ ok: false, final: true });
+		expect(out.remaining).toBe(0);
+
+		const refused = memorySql();
+		queueMail(refused, message({ maxAttempts: 5 }), API, 1);
+		const forbidden = recordingFetch({ ok: false, status: 403, body: 'not onboarded' });
+		const again = await drainMailQueue(refused, API, { deps: forbidden.deps, nowMs: BASE });
+		expect(again.sent[0]).toMatchObject({ final: true });
+	});
+
+	it('retries an SMTP connection that never opened, since nothing was sent', async () => {
+		const sql = memorySql();
+		queueMail(sql, message({ maxAttempts: 2 }), SMTP, 1);
+		const down: MailDeps = {
+			...DEFAULT_MAIL_DEPS,
+			connect: async () => {
+				throw new Error('connection refused');
+			}
+		};
+		const out = await drainMailQueue(sql, SMTP, { deps: down, nowMs: BASE });
+		expect(out.sent[0]).toMatchObject({ ok: false, retryAt: BASE + 60_000 });
+		expect(out.remaining).toBe(1);
+	});
+
+	it('does not retry an SMTP rejection after the session opened', async () => {
+		const sql = memorySql();
+		queueMail(sql, message({ maxAttempts: 3 }), SMTP, 1);
+		const { connect } = smtpServer({ failOn: 'MAIL FROM' });
+		const out = await drainMailQueue(sql, SMTP, {
+			deps: { ...DEFAULT_MAIL_DEPS, connect },
+			nowMs: BASE
+		});
+		expect(out.sent[0]).toMatchObject({ ok: false, final: true });
+		expect(out.remaining).toBe(0);
+	});
+});
+
+describe('the failure tally survives the drain that produced it', () => {
+	const lost = (error: string): MailAttempt => ({
+		id: 1,
+		to: 'a@x.test',
+		transport: 'api',
+		ok: false,
+		error,
+		final: true
+	});
+
+	it('adds only the messages that left the queue unsent', () => {
+		const waiting: MailAttempt = { ...lost('later'), final: undefined, retryAt: 5 };
+		const sent: MailAttempt = { id: 2, to: 'b@x.test', transport: 'api', ok: true };
+		expect(nextFailureLedger(undefined, [sent, waiting], 10)).toBeUndefined();
+		expect(nextFailureLedger(undefined, [sent, lost('403: no'), lost('last one')], 10)).toEqual(
+			{
+				count: 2,
+				lastError: 'last one',
+				lastAt: 10
+			}
+		);
+		expect(
+			nextFailureLedger({ count: 4, lastError: 'old', lastAt: 1 }, [lost('new')], 20)
+		).toEqual({ count: 5, lastError: 'new', lastAt: 20 });
+	});
+
+	it('reads back what it stored and refuses what it cannot parse', () => {
+		const ledger = { count: 3, lastError: 'boom', lastAt: 7 };
+		expect(parseFailureLedger(JSON.stringify(ledger))).toEqual(ledger);
+		expect(parseFailureLedger(null)).toBeUndefined();
+		expect(parseFailureLedger('{not json')).toBeUndefined();
+		expect(parseFailureLedger('{"count":"x"}')).toBeUndefined();
 	});
 });
 

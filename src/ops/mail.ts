@@ -10,10 +10,18 @@
 
 import { connect as coreConnect, type ConnectOptions, type CoreSocket } from 'edgeport/core';
 import { _sessionFromSocket, type Mail, type SmtpConnectOptions } from 'edgeport/smtp';
+import { base64ToBytes } from '../db/file-store';
 import { errorMessage } from '../util/errors';
 import { firstRow } from '../util/sql';
 
 // #region shapes
+
+/** one attached file, its bytes base64 encoded so the queued row stays JSON */
+export type MailAttachment = {
+	filename: string;
+	type: string;
+	b64: string;
+};
 
 /** what `CfwMail` hands across the bridge, after `format()` has done Drupal's half */
 export type MailMessage = {
@@ -25,6 +33,10 @@ export type MailMessage = {
 	html?: string | null;
 	/** only `Cc`, `Bcc`, `In-Reply-To` and `References`; `CfwMail` intersects the rest away */
 	headers?: Record<string, string>;
+	/** files to attach; the Drupal mail plugin sends none */
+	attachments?: MailAttachment[];
+	/** sends this message may take; absent means one, see {@link MAIL_ATTEMPT_BUDGET} */
+	maxAttempts?: number;
 };
 
 /**
@@ -81,7 +93,29 @@ export type MailAttempt = {
 	ok: boolean;
 	error?: string;
 	detail?: string;
+	/** a failure that left the queue for good, as opposed to one waiting for another attempt */
+	final?: boolean;
+	/** when a failed message is tried again, ms since epoch */
+	retryAt?: number;
 };
+
+/** the durable tally of messages the host accepted and then could not send */
+export type MailFailureLedger = {
+	count: number;
+	lastError: string;
+	lastAt: number;
+};
+
+/** a send error that says whether the relay could have kept the message */
+export class MailSendError extends Error {
+	constructor(
+		message: string,
+		readonly retryable: boolean
+	) {
+		super(message);
+		this.name = 'MailSendError';
+	}
+}
 
 /** what one drain pass sent and how many messages still wait */
 export type MailDrain = {
@@ -135,6 +169,15 @@ export const MAIL_SEND_BUDGET_MS = MAIL_DRAIN_BUDGET_MS / DEFAULT_MAIL_DRAIN_LIM
  * double-delivers (two different reset links). A failure is recorded, not retried.
  */
 export const MAIL_ATTEMPT_BUDGET = 1;
+
+/**
+ * The most attempts a caller may ask for. A message is retried only after a failure that left the
+ * relay without it: an API 429 or 503, or an SMTP connection or login that never reached DATA.
+ */
+export const MAX_MAIL_ATTEMPTS = 5;
+
+/** the wait before attempt two, three, four and five */
+export const MAIL_RETRY_BACKOFF_MS: readonly number[] = [60_000, 300_000, 900_000, 3_600_000];
 
 // #endregion
 
@@ -350,9 +393,29 @@ export function ensureMailTable(sql: MailSql): void {
 			payload TEXT NOT NULL,
 			queued_at INTEGER NOT NULL,
 			attempts INTEGER NOT NULL DEFAULT 0,
-			last_error TEXT
+			last_error TEXT,
+			retry_at INTEGER NOT NULL DEFAULT 0
 		)`
 	);
+	if (checked.has(sql)) return;
+	const have = sql
+		.exec(`SELECT name FROM pragma_table_info('${MAIL_TABLE}')`)
+		.toArray()
+		.map((r) => String(r.name));
+	if (!have.includes('retry_at')) {
+		sql.exec(`ALTER TABLE ${MAIL_TABLE} ADD COLUMN retry_at INTEGER NOT NULL DEFAULT 0`);
+	}
+	checked.add(sql);
+}
+
+/** handles whose table already has every column, so the check costs one read per object */
+const checked = new WeakSet<object>();
+
+/** a requested attempt count held between one and {@link MAX_MAIL_ATTEMPTS} */
+export function clampAttempts(wanted: unknown): number {
+	const n = Math.floor(Number(wanted));
+	if (!Number.isFinite(n)) return MAIL_ATTEMPT_BUDGET;
+	return Math.max(MAIL_ATTEMPT_BUDGET, Math.min(n, MAX_MAIL_ATTEMPTS));
 }
 
 /** a queued message's id and size, or the reason it was refused */
@@ -408,7 +471,11 @@ export function queueMail(
 		return { refusal: 'no From address: the message carries none and MAIL_FROM is not set' };
 	}
 
-	const payload = JSON.stringify(message);
+	const stored =
+		message.maxAttempts === undefined
+			? message
+			: { ...message, maxAttempts: clampAttempts(message.maxAttempts) };
+	const payload = JSON.stringify(stored);
 	const bytes = new TextEncoder().encode(payload).length;
 	const overLimit = mailLimitRefusal(message, bytes);
 	if (overLimit) return { refusal: overLimit };
@@ -451,6 +518,7 @@ export function cloudflareSendBody(
 	const bcc = splitAddresses(str(headers.Bcc));
 	const replyTo = str(message.replyTo);
 	const html = str(message.html);
+	const files = message.attachments ?? [];
 
 	return {
 		from: senderFor(transport, message),
@@ -461,7 +529,17 @@ export function cloudflareSendBody(
 		...(cc.length > 0 ? { cc } : {}),
 		...(bcc.length > 0 ? { bcc } : {}),
 		...(replyTo ? { replyTo } : {}),
-		...(Object.keys(threading).length > 0 ? { headers: threading } : {})
+		...(Object.keys(threading).length > 0 ? { headers: threading } : {}),
+		...(files.length > 0
+			? {
+					attachments: files.map((f) => ({
+						content: f.b64,
+						filename: f.filename,
+						type: f.type,
+						disposition: 'attachment'
+					}))
+				}
+			: {})
 	};
 }
 
@@ -482,6 +560,7 @@ export function smtpMail(transport: { from: string }, message: MailMessage): Mai
 	const cc = splitAddresses(str(message.headers?.Cc));
 	const bcc = splitAddresses(str(message.headers?.Bcc));
 	const html = str(message.html);
+	const files = message.attachments ?? [];
 
 	return {
 		from: senderFor(transport, message),
@@ -491,7 +570,16 @@ export function smtpMail(transport: { from: string }, message: MailMessage): Mai
 		...(html ? { html } : {}),
 		...(cc.length > 0 ? { cc } : {}),
 		...(bcc.length > 0 ? { bcc } : {}),
-		...(Object.keys(headers).length > 0 ? { headers } : {})
+		...(Object.keys(headers).length > 0 ? { headers } : {}),
+		...(files.length > 0
+			? {
+					attachments: files.map((f) => ({
+						filename: f.filename,
+						content: base64ToBytes(f.b64),
+						contentType: f.type
+					}))
+				}
+			: {})
 	};
 }
 
@@ -566,9 +654,11 @@ export async function sendViaApi(
 	});
 	if (!res.ok) {
 		const detail = await res.text().catch(() => '');
-		throw new Error(
+		// 429 and 503 say the request was not taken up; a 502 or 504 can hide a send that went through
+		throw new MailSendError(
 			`Cloudflare Email Sending API ${res.status}: ${detail.slice(0, 200) || res.statusText}` +
-				cloudflareFailureHint(res.status, plan)
+				cloudflareFailureHint(res.status, plan),
+			res.status === 429 || res.status === 503
 		);
 	}
 	return `api ${res.status}`;
@@ -607,12 +697,18 @@ export async function sendViaSmtp(
 		tls: transport.tls,
 		...(transport.auth ? { auth: transport.auth } : {})
 	};
-	const socket = await deps.connect({
-		hostname: transport.hostname,
-		port: transport.port,
-		tls: transport.tls === 'implicit' ? 'on' : transport.tls === 'off' ? 'off' : 'starttls'
-	});
-	const session = await _sessionFromSocket(socket, opts);
+	let session: Awaited<ReturnType<typeof _sessionFromSocket>>;
+	try {
+		const socket = await deps.connect({
+			hostname: transport.hostname,
+			port: transport.port,
+			tls: transport.tls === 'implicit' ? 'on' : transport.tls === 'off' ? 'off' : 'starttls'
+		});
+		session = await _sessionFromSocket(socket, opts);
+	} catch (e: unknown) {
+		// nothing was sent before the session was open, so the message is still ours to retry
+		throw new MailSendError(errorMessage(e), true);
+	}
 	try {
 		const result = await session.send(smtpMail(transport, message));
 		return `smtp ${result.accepted.length} accepted`;
@@ -639,21 +735,25 @@ export function sendMail(
 
 /**
  * Sends what `cfwMail` queued, between PHP runs and bounded per call. A row leaves the queue
- * either way ({@link MAIL_ATTEMPT_BUDGET} is 1); failures return in {@link MailDrain.sent}.
+ * after its attempts are spent ({@link MAIL_ATTEMPT_BUDGET} unless the message asked for more and
+ * the failure was a retryable one); failures return in {@link MailDrain.sent}.
  */
 export async function drainMailQueue(
 	sql: MailSql,
 	transport: MailTransport,
-	options: { limit?: number; deps?: MailDeps; plan?: string } = {}
+	options: { limit?: number; deps?: MailDeps; plan?: string; nowMs?: number } = {}
 ): Promise<MailDrain> {
 	ensureMailTable(sql);
+	const nowMs = options.nowMs ?? Date.now();
 	const limit = Math.max(
 		1,
 		Math.min(options.limit ?? DEFAULT_MAIL_DRAIN_LIMIT, MAX_MAIL_DRAIN_LIMIT)
 	);
 	const pending = sql
 		.exec(
-			`SELECT id, recipient, payload, attempts FROM ${MAIL_TABLE} ORDER BY id LIMIT ?`,
+			`SELECT id, recipient, payload, attempts FROM ${MAIL_TABLE}
+			 WHERE retry_at <= ? ORDER BY id LIMIT ?`,
+			nowMs,
 			limit
 		)
 		.toArray();
@@ -673,7 +773,8 @@ export async function drainMailQueue(
 				to,
 				transport: transport.kind,
 				ok: false,
-				error: 'unreadable payload'
+				error: 'unreadable payload',
+				final: true
 			});
 			continue;
 		}
@@ -685,21 +786,66 @@ export async function drainMailQueue(
 		} catch (e: unknown) {
 			const error = errorMessage(e).slice(0, 200);
 			const attempts = Number(row.attempts ?? 0) + 1;
-			if (attempts >= MAIL_ATTEMPT_BUDGET) {
+			const retryable = e instanceof MailSendError && e.retryable;
+			if (!retryable || attempts >= clampAttempts(message?.maxAttempts)) {
 				sql.exec(`DELETE FROM ${MAIL_TABLE} WHERE id = ?`, id);
+				sent.push({ id, to, transport: transport.kind, ok: false, error, final: true });
 			} else {
+				const wait = MAIL_RETRY_BACKOFF_MS[attempts - 1] ?? MAIL_RETRY_BACKOFF_MS.at(-1)!;
 				sql.exec(
-					`UPDATE ${MAIL_TABLE} SET attempts = ?, last_error = ? WHERE id = ?`,
+					`UPDATE ${MAIL_TABLE} SET attempts = ?, last_error = ?, retry_at = ? WHERE id = ?`,
 					attempts,
 					error,
+					nowMs + wait,
 					id
 				);
+				sent.push({
+					id,
+					to,
+					transport: transport.kind,
+					ok: false,
+					error,
+					retryAt: nowMs + wait
+				});
 			}
-			sent.push({ id, to, transport: transport.kind, ok: false, error });
 		}
 	}
 
 	return { sent, remaining: mailQueueDepth(sql) };
+}
+
+/**
+ * The failure tally after one drain: every message that left the queue unsent adds one. A message
+ * waiting for another attempt is not counted yet; undefined means nothing changed.
+ */
+export function nextFailureLedger(
+	previous: MailFailureLedger | undefined,
+	attempts: readonly MailAttempt[],
+	nowMs: number
+): MailFailureLedger | undefined {
+	const lost = attempts.filter((a) => !a.ok && a.final === true);
+	if (lost.length === 0) return undefined;
+	return {
+		count: (previous?.count ?? 0) + lost.length,
+		lastError: lost.at(-1)!.error ?? 'unknown',
+		lastAt: nowMs
+	};
+}
+
+/** the ledger as stored, or undefined when none was written or it does not parse */
+export function parseFailureLedger(raw: string | null | undefined): MailFailureLedger | undefined {
+	if (raw === null || raw === undefined || raw === '') return undefined;
+	try {
+		const v = JSON.parse(raw) as Partial<MailFailureLedger>;
+		if (typeof v.count !== 'number' || !Number.isFinite(v.count)) return undefined;
+		return {
+			count: v.count,
+			lastError: String(v.lastError ?? ''),
+			lastAt: Number(v.lastAt ?? 0)
+		};
+	} catch {
+		return undefined;
+	}
 }
 
 // #endregion

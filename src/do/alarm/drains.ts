@@ -2,10 +2,13 @@ import {
 	drainMailQueue,
 	mailDrainEnabled,
 	mailDrainLimit,
+	nextFailureLedger,
+	parseFailureLedger,
 	resolveMailTransport
 } from '../../ops/mail';
 import { isPaid } from '../../ops/plan';
 import { errorMessage } from '../../util/errors';
+import { MAIL_FAILURES_KEY } from '../keys';
 import { httpDrainEnabled, httpDrainLimit } from '../levers';
 import { queueDeclaredFetches } from '../outbound';
 import type { Payload } from '../types';
@@ -49,11 +52,19 @@ export async function drainsPhase({ site }: AlarmContext): Promise<void> {
 				site.mailSocketOpen = plan.transport.kind === 'smtp';
 				const drained = await drainMailQueue(site.sql, plan.transport, {
 					limit: mailDrainLimit(site.env ?? {}),
-					plan: isPaid(site.env) ? 'paid' : 'free'
+					plan: isPaid(site.env) ? 'paid' : 'free',
+					nowMs: site.nowMs()
 				});
 				if (drained.sent.length > 0) {
 					site.lastMailDrain = { at: Date.now(), value: drained as unknown as Payload };
 				}
+				// one meta row per drain that lost a message, not one per message
+				const ledger = nextFailureLedger(
+					parseFailureLedger(site.metaGet(MAIL_FAILURES_KEY)),
+					drained.sent,
+					site.nowMs()
+				);
+				if (ledger !== undefined) site.metaSet(MAIL_FAILURES_KEY, JSON.stringify(ledger));
 			} catch (e) {
 				site.lastMailDrain = { at: Date.now(), value: { error: errorMessage(e) } };
 			} finally {

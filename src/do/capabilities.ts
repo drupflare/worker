@@ -368,7 +368,18 @@ export function installCapabilities(site: SitePhpDurableObject, binary: SiteBina
 			subject: String(msg.subject ?? ''),
 			text: String(msg.text ?? ''),
 			html: msg.html === undefined || msg.html === null ? null : String(msg.html),
-			headers: (msg.headers ?? {}) as Record<string, string>
+			headers: (msg.headers ?? {}) as Record<string, string>,
+			// Drupal's plugin sends neither, and a message without them queues byte for byte as before
+			...(Array.isArray(msg.attachments) && msg.attachments.length > 0
+				? {
+						attachments: (msg.attachments as Record<string, unknown>[]).map((a) => ({
+							filename: String(a.filename ?? ''),
+							type: String(a.type ?? 'application/octet-stream'),
+							b64: String(a.b64 ?? '')
+						}))
+					}
+				: {}),
+			...(msg.retry === undefined ? {} : { maxAttempts: Number(msg.retry) })
 		};
 
 		// `drupal/smtp` socket never runs here; persist its relay so the alarm resolves the same

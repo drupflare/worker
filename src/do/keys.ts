@@ -13,6 +13,8 @@ export const MAIL_ZONE_KEY = 'mail_sending_zone';
 export const MAIL_SENDING_DOMAIN_KEY = 'mail_sending_domain';
 /** the site's own `smtp.settings`, mapped to transport vars; the alarm reads it, see `mailEnv()` */
 export const SITE_SMTP_KEY = 'site_smtp_settings';
+/** how many accepted messages the drain could not send, and the last reason */
+export const MAIL_FAILURES_KEY = 'mail_failures';
 /** Tier B's OIDC provider issuer */
 export const OIDC_ISSUER_KEY = 'oidc_issuer';
 /** Tier B's OIDC client id */

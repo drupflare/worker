@@ -53,7 +53,7 @@ export async function gitPoll(
 	const out: Record<string, unknown>[] = [];
 	for (const id of due) {
 		const remote = remotes.find((r) => r.id === id);
-		if (remote === undefined) continue;
+		if (remote === undefined || remote.tokenless === true) continue;
 		try {
 			const ad = await site.gitRefs(remote);
 			const sha = refSha(ad, remote.branch);
@@ -135,9 +135,18 @@ export async function handleGit(
 				400
 			);
 		}
-		const token = url.searchParams.get('token') ?? '';
+		// a token sent in the header is for this call only, so the remote it adds keeps none
+		const callToken = site.gitCallToken ?? '';
+		const tokenless = url.searchParams.get('tokenless') === '1' || callToken !== '';
+		if (tokenless && (url.searchParams.get('token') ?? '') !== '') {
+			return jsonError(
+				`send the token in the ${GIT_TOKEN_HEADER} header, not the query`,
+				400
+			);
+		}
+		const token = tokenless ? '' : (url.searchParams.get('token') ?? '');
 		// a public remote over smart HTTP needs no credential at all
-		if (token === '' && hasApi(provider)) {
+		if (token === '' && callToken === '' && hasApi(provider)) {
 			return jsonError('an access token is required', 400);
 		}
 		const email = url.searchParams.get('email') ?? '';
@@ -167,9 +176,11 @@ export async function handleGit(
 			...(parsed.host ? { host: parsed.host } : {}),
 			...(email ? { email } : {}),
 			...(username ? { username } : {}),
-			...(mount === undefined ? {} : { mount })
+			...(mount === undefined ? {} : { mount }),
+			...(tokenless ? { tokenless: true } : {})
 		};
-		site.writeSecret('git_token_pending', token);
+		// cleared when tokenless, so a draft left by an earlier add cannot lend its token
+		site.writeSecret('git_token_pending', tokenless ? '' : token);
 		site.metaSet('git_email_pending', email);
 		site.metaSet('git_username_pending', username);
 
@@ -179,7 +190,7 @@ export async function handleGit(
 		try {
 			ad = await discoverRefs(site.gitSmart(draft));
 		} catch (e) {
-			return jsonError(errorMessage(e), 400);
+			return jsonError(scrubToken(site, errorMessage(e)), 400);
 		}
 		let branch = draft.branch || ad.defaultBranch || '';
 		if (branch === '' && hasApi(provider)) {
@@ -198,14 +209,21 @@ export async function handleGit(
 		if (sha === undefined) {
 			return jsonError(`the remote has no branch ${branch}`, 400);
 		}
-		site.writeSecret(`git_token_${remote.id}`, token);
+		if (!tokenless) site.writeSecret(`git_token_${remote.id}`, token);
 		site.metaSet(`git_email_${remote.id}`, email);
 		site.metaSet(`git_username_${remote.id}`, username);
 		site.metaSet(`git_head_${remote.id}`, sha);
 		site.metaSet(`git_checked_${remote.id}`, String(now));
+		// a remote with no stored token has nothing to poll with, so the alarm never polls it
 		site.metaSet(
 			`git_interval_${remote.id}`,
-			String(clampInterval(Number(url.searchParams.get('interval') ?? DEFAULT_POLL_MINUTES)))
+			String(
+				tokenless
+					? 0
+					: clampInterval(
+							Number(url.searchParams.get('interval') ?? DEFAULT_POLL_MINUTES)
+						)
+			)
 		);
 		site.gitSaveRemotes([...remotes.filter((r) => r.id !== remote.id), remote]);
 		return Response.json({
@@ -214,6 +232,7 @@ export async function handleGit(
 			branch,
 			head: sha,
 			id: remote.id,
+			...(tokenless ? { tokenless: true } : {}),
 			...(remote.mount === undefined ? {} : { mount: remote.mount }),
 			branches: branchNames(ad)
 		});
@@ -399,6 +418,9 @@ export async function handleGit(
 			}
 
 			case 'pull': {
+				if (remote.tokenless === true && hasApi(remote.provider) && !site.gitCallToken) {
+					return jsonError('a token is required', 400);
+				}
 				const sha = await requestedSha(site, url, remote);
 				if (sha === '') {
 					return jsonError('nothing to pull', 400);
@@ -407,7 +429,11 @@ export async function handleGit(
 				const result = await site.gitSync(remote, sha, { apply: true });
 				// the write-back is best-effort: a site that pulled must not report a failure
 				// because the provider refused a status it was never required to accept
-				if (hasApi(remote.provider) && site.gitCredential(id).token !== '') {
+				if (
+					hasApi(remote.provider) &&
+					remote.tokenless !== true &&
+					site.gitCredential(id).token !== ''
+				) {
 					await site
 						.gitWriteStatus(
 							remote,
@@ -502,9 +528,18 @@ export async function handleGit(
 				return jsonError(`unknown action ${action}`, 404);
 		}
 	} catch (e) {
-		site.metaSet(`git_lasterror_${id}`, errorMessage(e).slice(0, 300));
-		return jsonError(errorMessage(e), 400);
+		site.metaSet(`git_lasterror_${id}`, scrubToken(site, errorMessage(e)).slice(0, 300));
+		return jsonError(scrubToken(site, errorMessage(e)), 400);
 	}
+}
+
+/** the header a caller sends a provider token in, for one call, so it never rides a URL */
+export const GIT_TOKEN_HEADER = 'x-drupflare-git-token';
+
+/** text with this call's token removed, so a stored or returned error cannot carry it */
+function scrubToken(site: SitePhpDurableObject, text: string): string {
+	const token = site.gitCallToken ?? '';
+	return token === '' ? text : text.split(token).join('[token]');
 }
 
 /** the git transport's view of a remote, which authenticates as Basic, unlike the API */

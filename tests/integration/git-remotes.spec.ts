@@ -870,3 +870,163 @@ describe('a pull against a git server', () => {
 		).toBe('polling off');
 	});
 });
+
+describe('a provider token sent with one call', () => {
+	const TOKEN = 'ghp_header_token_for_the_spec_only';
+	const ID = 'github:o/r@main';
+	const MODULE = {
+		'mymodule.info.yml': 'name: My Module\ntype: module\ncore_version_requirement: ^11\n',
+		'mymodule.module': '<?php\n\nfunction mymodule_help() { return "v1"; }\n'
+	};
+	const realFetch = globalThis.fetch;
+	afterEach(() => {
+		globalThis.fetch = realFetch;
+	});
+
+	/** every outbound url and the Authorization it carried, in order */
+	function recordingFetch(repo: FakeRepo, seen: { url: string; auth: string }[]) {
+		globalThis.fetch = gitFetch(repo, {
+			onCall: (url, init) => {
+				const headers = new Headers(init?.headers);
+				seen.push({ url, auth: headers.get('authorization') ?? '' });
+				return null;
+			}
+		});
+	}
+
+	/** runs one `/git` action with the token as the route would set it */
+	async function api(
+		site: DurableObjectStub,
+		params: Record<string, string>,
+		token?: string
+	): Promise<{ status: number; body: Record<string, unknown> }> {
+		return inObject(site, async (obj) => {
+			const url = new URL('https://do.local/__git');
+			for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+			obj.gitCallToken = token;
+			try {
+				const res = await obj.handleGit(url, 'https://site.example');
+				return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+			} finally {
+				obj.gitCallToken = undefined;
+			}
+		});
+	}
+
+	const basic = (token: string) => `Basic ${btoa(`x-access-token:${token}`)}`;
+
+	async function added(site: DurableObjectStub, seen: { url: string; auth: string }[]) {
+		const head = await fakeCommit(MODULE);
+		recordingFetch(
+			{ refs: { 'refs/heads/main': head.sha }, packs: { [head.sha]: head.pack } },
+			seen
+		);
+		const out = await api(site, { action: 'add', provider: 'github', repo: 'o/r' }, TOKEN);
+		return { head, out };
+	}
+
+	it('adds a remote that keeps no token, with polling off, and authenticates with the header', async () => {
+		const site = freshSite();
+		const seen: { url: string; auth: string }[] = [];
+		const { out } = await added(site, seen);
+		expect(out.body.ok, String(out.body.error)).toBe(true);
+		expect(out.body.tokenless).toBe(true);
+		const kept = await inObject(site, async (obj) => ({
+			token: obj.readSecret(`git_token_${ID}`),
+			pending: obj.readSecret('git_token_pending'),
+			interval: obj.metaGet(`git_interval_${ID}`),
+			remote: obj.gitRemotes().find((r) => r.id === ID),
+			rows: JSON.stringify(obj.sql.exec('SELECT k, v FROM cfw_meta').toArray()),
+			after: obj.gitCallToken
+		}));
+		expect(kept.token ?? '').toBe('');
+		expect(kept.pending ?? '').toBe('');
+		expect(kept.interval).toBe('0');
+		expect(kept.remote).toMatchObject({ tokenless: true });
+		expect(kept.rows).not.toContain(TOKEN);
+		// the control: the header did reach the provider, so the empty token above is a choice
+		expect(seen.some((call) => call.auth === basic(TOKEN))).toBe(true);
+	});
+
+	it('refuses a token in the query on a tokenless add, and a tokenless API add with no header', async () => {
+		const site = freshSite();
+		const inQuery = await api(site, {
+			action: 'add',
+			provider: 'github',
+			repo: 'o/r',
+			tokenless: '1',
+			token: 'q'
+		});
+		const none = await api(site, {
+			action: 'add',
+			provider: 'github',
+			repo: 'o/r',
+			tokenless: '1'
+		});
+		expect(inQuery.status).toBe(400);
+		expect(String(inQuery.body.error)).toContain('x-drupflare-git-token');
+		expect(none.status).toBe(400);
+		expect(String(none.body.error)).toContain('token');
+	});
+
+	it('answers 400 for a pull with no header, pulls with one, and writes no status back', async () => {
+		const site = freshSite();
+		const seen: { url: string; auth: string }[] = [];
+		const { head } = await added(site, seen);
+		seen.length = 0;
+		const without = await api(site, { action: 'pull', id: ID });
+		expect(without).toMatchObject({ status: 400, body: { error: 'a token is required' } });
+		expect(seen, 'the refusal reached the provider').toEqual([]);
+
+		const pulled = await api(site, { action: 'pull', id: ID }, TOKEN);
+		expect(pulled.body.applied, String(pulled.body.error)).toBe(true);
+		expect(pulled.body.sha).toBe(head.sha);
+		expect(seen.length).toBeGreaterThan(0);
+		expect(seen.every((call) => call.auth === basic(TOKEN))).toBe(true);
+		expect(seen.some((call) => call.url.includes('/statuses/'))).toBe(false);
+		const stored = await inObject(site, async (obj) => obj.readSecret(`git_token_${ID}`));
+		expect(stored ?? '').toBe('');
+	});
+
+	it('never polls a tokenless remote, even with an interval set and due', async () => {
+		const site = freshSite();
+		const seen: { url: string; auth: string }[] = [];
+		await added(site, seen);
+		seen.length = 0;
+		await inObject(site, async (obj) => {
+			obj.metaSet(`git_interval_${ID}`, '5');
+			obj.metaSet(`git_checked_${ID}`, '0');
+		});
+		const polled = await inObject(site, async (obj) => obj.gitPoll());
+		expect(polled).toEqual([]);
+		expect(seen).toEqual([]);
+	});
+
+	it('keeps the token out of a stored or returned error, and clears it after the call', async () => {
+		const site = freshSite();
+		const seen: { url: string; auth: string }[] = [];
+		await added(site, seen);
+		globalThis.fetch = (async () => {
+			throw new Error(`connection refused for ${TOKEN}`);
+		}) as unknown as typeof fetch;
+		const failed = await inObject(site, async (obj) => {
+			const res = await obj.fetch(
+				new Request(`https://do.local/__git?action=pull&id=${encodeURIComponent(ID)}`, {
+					headers: { 'x-drupflare-git-token': TOKEN }
+				})
+			);
+			return {
+				status: res.status,
+				text: await res.text(),
+				lastError: obj.metaGet(`git_lasterror_${ID}`),
+				after: obj.gitCallToken
+			};
+		});
+		expect(failed.status).toBe(400);
+		expect(failed.text).toContain('connection refused');
+		expect(failed.text).not.toContain(TOKEN);
+		expect(failed.lastError).toContain('connection refused');
+		expect(failed.lastError).not.toContain(TOKEN);
+		expect(failed.after).toBeUndefined();
+	});
+});

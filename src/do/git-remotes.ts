@@ -18,10 +18,13 @@ export function gitSaveRemotes(host: SiteStore, remotes: readonly Remote[]): voi
 	host.metaSet('git_remotes', JSON.stringify(remotes));
 }
 
-/** the stored token, email and username for a remote (empty strings when unset) */
+/**
+ * The token, email and username for a remote (empty strings when unset). A token sent with this
+ * call wins over a stored one and is never written anywhere.
+ */
 export function gitCredential(host: GitHost, id: string): Credential {
 	return {
-		token: host.readSecret(`git_token_${id}`) ?? '',
+		token: host.gitCallToken || (host.readSecret(`git_token_${id}`) ?? ''),
 		email: host.metaGet(`git_email_${id}`) ?? '',
 		username: host.metaGet(`git_username_${id}`) ?? ''
 	};

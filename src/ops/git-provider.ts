@@ -45,6 +45,8 @@ export interface Remote {
 	username?: string;
 	/** an explicit clone URL, for a host whose git origin is not derivable from its API base */
 	clone?: string;
+	/** the site holds no token for this remote; each call brings one, and the alarm never polls it */
+	tokenless?: boolean;
 	/** a pull/merge request head this remote is previewing instead of its branch */
 	previewOf?: string;
 	/**

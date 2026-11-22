@@ -205,6 +205,22 @@ A plain remote has nowhere to put a status, so `statusRequest()` returns null fo
 
 </details>
 
+## Tokens Sent With One Call
+
+A caller that does not want the site to hold a provider token sends it in the
+`x-drupflare-git-token` header on `/git?action=add` and `/git?action=pull`. The site uses it for that
+call and writes it nowhere: not `git_token_<id>`, not the draft slot, not the audit log. Text of an
+error that would have carried it, stored or returned, has the token replaced by `[token]`.
+
+An add that sends the header, or sets `tokenless=1`, makes a tokenless remote. The remote is
+recorded with `tokenless: true`, its poll interval is `0` and the alarm never polls it, and no
+commit status is written back to the provider. A `token` in the query on a tokenless add answers
+400, so a credential is never put in a URL. A tokenless add for a provider that has an API and no
+header answers 400 `an access token is required`; a plain remote needs none.
+
+`action=pull` on a tokenless remote with no header answers 400 `a token is required` before it
+reaches the provider. An add without the header or `tokenless=1` stores the token as before.
+
 ## Storage
 
 | Setting                 | Where      | What it does                                      |

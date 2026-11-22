@@ -34,6 +34,8 @@ export interface SiteStore {
 /** the store plus the sealed credential read the git remote code needs */
 export interface GitHost extends SiteStore {
 	readSecret(key: string): string | null;
+	/** the provider token the current `/git` call carried in its header; unset outside that call */
+	gitCallToken?: string | undefined;
 }
 
 /** the store plus the sealed credential reads and writes and the replica check */

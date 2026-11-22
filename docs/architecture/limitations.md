@@ -145,3 +145,79 @@ Measured properties of the runtime, listed so they are known before they are hit
 - **Writes do not scale, and a replica pool does not change that.** A lane refuses an authoritative
   write and hands it back, so every write is still one object and one thread. What a pool scales is
   authenticated reads; see [Replica Lanes](../operating/replica-lanes.md) and [`REPLICA_COUNT`](../configuration/replicas.md#replica_count).
+
+## WordPress Outbound Requests
+
+- **WordPress requests leave through the host, with limits.** The host plugin answers `pre_http_request`
+  through the same park as Drupal. It refuses non-HTTP schemes, URLs with credentials, loopback, private,
+  link-local and metadata addresses, and any redirect to one, and the worker checks each hop again. A request
+  is capped at 30 outbound requests on the free plan and 500 on paid, and a response at 5 MiB unless the caller
+  sets `limit_response_size`. These three numbers are chosen, not measured.
+- **`sslverify => false` is not honoured.** The request is made with certificate checks on and a degradation is recorded.
+- **`curl_*` called directly from a WordPress plugin still answers errno 7.** Only the WordPress HTTP API is wired.
+- **A DNS name that resolves to a private address is not checked.** PHP cannot resolve names here, so that case rests on
+  Cloudflare's egress and is untested.
+- **WordPress still reports no SSL support**, so it builds `http://` URLs. The plugin upgrades `wordpress.org` hosts to
+  HTTPS and leaves other hosts as asked.
+
+## WordPress Mail
+
+- **`wp_mail()` returns true when the host accepted the message, not when it was delivered.** The host plugin answers
+  `pre_wp_mail` through the same queue and transports Drupal uses (`send_email` binding, Email Sending API or SMTP).
+  WordPress has no delivered state to report, so none is invented. With `MAIL_TRANSPORT=off`, or with no transport
+  configured, `wp_mail()` returns false and fires `wp_mail_failed` with a `WP_Error` that carries the host's reason.
+- **A message the host accepted and could not send is counted.** The count and the last error are stored, and show on
+  the Site Health screen, the debug tab, `/wp-json/drupflare/v1/status` and `/serve-stats` (`mailFailed`).
+- **A message is sent again only when the relay never took it.** A WordPress message asks for three attempts. The host
+  repeats one after an API 429 or 503, or after an SMTP connection or login that failed before any data was sent, with
+  waits of 1, 5, 15 and 60 minutes. Any other failure ends the message, because a repeat after a lost reply sends a
+  one-time link twice.
+- **Attachments are capped at 700,000 bytes in total.** The queued row holds them as base64 inside the 1,000,000-byte
+  message limit, which comes from the Durable Object record size.
+- **Inline images (`$embeds`) are refused.** The host takes attachments only, and sending without the image would report
+  success for a different message.
+- **Only `In-Reply-To` and `References` pass through as custom headers.** Any other header a caller sets is dropped and a
+  degradation is recorded. A caller-built multipart body is sent as the text it holds.
+
+## WordPress Object Cache
+
+- **No persistent object cache is installed, and no `object-cache.php` or `advanced-cache.php` drop-in ships.** WordPress
+  keeps its default cache, which lasts one request. A front-page render counted in a local run (three renders, one
+  object, measured with `SAVEQUERIES` and the object cache's own counters) issued 17 queries on the first and 13 on the
+  next two, with 127 cache hits and 31 misses. The misses fill options, posts, post meta, terms, term relationships,
+  themes and translation files.
+- **Why not.** A persistent store could answer at most those 13 queries. A hit kept in the object's SQLite is still a row
+  read, so only host memory saves rows, and it adds a host call per lookup. The cost the earlier deployed readings put on
+  a render is the PHP load (487 files, 10.4 MB), which an object cache does not touch. A persistent copy would also go
+  stale when a plugin writes with SQL and skips `wp_cache_delete()`, and every fill would write rows on a budget where
+  writes bind. Rows and CPU saved were not measured on a deployed object, so this is a judgement from the query count,
+  not a measured saving; it reopens if a deployed reading shows the queries matter.
+- **Page caching** is separate and covered by the page store, which already answers an anonymous page without starting
+  WordPress, so `advanced-cache.php` would remove no work the page store does not.
+- **Site Health reports the cache as one request long**, with no recommendation to install a drop-in.
+
+## WordPress Cron
+
+- **The platform drives `wp-cron.php`, and visitors do not.** `DISABLE_WP_CRON` stays on. The alarm requests
+  `wp-cron.php` on the one-shot path, at most once per `CRON_INTERVAL_MS`, and WordPress's own `doing_cron` lock
+  keeps two runs from working the same events. Two triggers arriving together ran a due event once in a local test
+  (one version check reached the stand-in origin). Ten page renders moved the alarm firing count by no more than two.
+- **One firing that has due events wrote 112 rows in a local run, and a firing with nothing due wrote 2** (n=3,
+  counted by the object's SQL wrapper). CPU per firing is not measured; it needs a deployed reading.
+- **Two stand-ins remain, on purpose.** `CURL_VERSION_SSL` is defined by the request fragment because the curl stand-in
+  reports no features and declares no constants, and it is shared with Drupal, whose behaviour stays fixed.
+  `wp-cron.php` ends in a bare `die()` in three places and a die leaves nothing to read, so the fragment turns each
+  into a stop; a node spec fails if a release changes the count.
+- **Action Scheduler stores, claims, runs and recovers actions.** Release 4.2.0 stores an action with an `INSERT ...
+SELECT ... FROM DUAL` and reads `insert_id` back, and claims with `UPDATE ... t1 JOIN (SELECT ... FOR UPDATE) t2 ...
+SET claim_id`. The translator refused the claim by name (`update-multi-table`), could not find a table named `DUAL`,
+  and reported no insert id for an `INSERT ... SELECT`; all three are fixed. A recording of the plugin's statements over
+  its own table definitions answers the same as MySQL 26.7 on every row and every table: three actions claimed by a
+  `LIMIT 3` out of five due, a second claim taking the rest, a third taking none, stale claims found and cleared one by
+  one, and a unique action blocked by a pending twin. The plugin itself is not in the pack, so the statements are
+  copied from release 4.2.0 and the test says so.
+- **Action Scheduler leaves three differences.** A claim that sorts on a key that leaves ties, which only a site filter
+  on the claim order can produce, keeps whichever rows SQLite reads first; the plugin's own order ends in the action id.
+  `SKIP LOCKED` is dropped because the object has one connection and no open transaction, and the plugin only sends it
+  when the server version reads 8.0.1 or later, which this one reports as 8.0.0. Searching actions by a partial JSON
+  match sends `JSON_EXTRACT`, which the translator still refuses (`function-unknown`).

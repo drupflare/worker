@@ -220,3 +220,49 @@ Measured, all locally. Nothing below ran on Cloudflare, and no number here is a 
 GD2 reading (`imagecreatefromgd2`) is not shimmed. A palette GD2 is not written either: the host holds decoded pixels, not
 palette indices, so `imagegd2()` on an indexed handle answers false and records a degradation. Core, WordPress and Joomla do not
 write GD2.
+
+### WordPress Image Editing
+
+A WordPress site does not use the GD editor. The host plugin offers one editor, `Drupflare_Image_Editor`,
+and removes `WP_Image_Editor_GD` and `WP_Image_Editor_Imagick` from `wp_image_editors`. The stock GD editor
+tests only for the extension and `gd_info()`, and the gd stand-in satisfies both, so it would claim support
+for every call. The host editor queues crop, resize, rotate and flip on the encoded source and sends the
+queue to the same image host as the gd path, one request per file written.
+
+It reads and writes JPEG, PNG, GIF, WebP and AVIF. `wp_generate_attachment_metadata()` on a 1600x1000 JPEG
+produces the stock sizes, and each file reads back at the size the metadata states. Anything else answers
+a `WP_Error` that names the reason: a crop outside the image, an image over 10 MiB, a file that is not an
+image, and an AVIF of an image with transparency. A format the editor does not write, such as BMP, falls back
+to JPEG, which is WordPress's own rule. A progressive PNG or GIF is written without interlacing and records
+a degradation.
+
+Not measured: CPU or memory for a multi-size upload (eight host requests for two attachments in a local run),
+EXIF auto-rotation on a real camera photo, and WordPress's own scaling of images over 2560 pixels.
+
+### WordPress Uploads
+
+A WordPress upload lands in the same file store as a Drupal one. The host plugin registers a `public://`
+stream wrapper over the store and points `wp_upload_dir()` at `public://wp-content/uploads`, so every file
+function WordPress calls on an upload, including the image editor's sub-sizes and `wp_delete_file()`, reads and
+writes the store. A write is committed when the handle closes. The front worker serves
+`/wp-content/uploads/...` from the stored file, with the same inline and sandboxed-download rules as Drupal,
+and `FILE_STORE=r2` offloads and restores these files the way it does Drupal's.
+
+The worker parses a `multipart/form-data` body itself, writes each file part to a temporary path and lists it
+as an upload for the request. `wp_handle_upload()` calls `is_uploaded_file()`, which only a POST SAPI
+answers true for and which core has no filter on, so the request fragment points that one call in the
+interpreter's copy of `wp-admin/includes/file.php` at a function that also accepts the parsed files. A node
+spec fails if a WordPress release changes the number of those calls from one.
+
+What is refused, and why:
+
+- **`private://` paths.** WordPress has no private file area on this host. The wrapper answers false and
+  records a degradation, because a write to the interpreter's own filesystem would vanish with the request.
+- **A file over 10 MiB.** A write buffers the whole file in PHP before it is stored, so the cap protects the
+  isolate. The parser answers `UPLOAD_ERR_INI_SIZE` and the wrapper refuses the same size at flush. The figure
+  is chosen, not measured; the oversize path is untested.
+- **A path that climbs out of its directory.** `..` is rejected by the wrapper and again by the file store.
+- **Types WordPress does not allow.** Type and extension checks are WordPress's own (`upload_mimes`,
+  `wp_check_filetype_and_ext()`). PHP here has no `fileinfo`, so WordPress cannot compare a file's bytes with its
+  extension: a text file named `photo.jpg` is accepted. It is served with the stored image type and `nosniff`.
+- **A file field with a bracketed name**, such as `files[]`. Only plain field names are parsed.

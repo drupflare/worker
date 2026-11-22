@@ -32,6 +32,51 @@ deployed worker then answers `/_headers` with the file (200, 282 bytes, measured
 HTML comes from the Worker and is not affected. `/robots.txt`, `/driver.json`, `/prefill.json`,
 `/drupal-pf/*` and `/drupal-sql/*` have no rule.
 
+## WordPress Assets
+
+A WordPress site serves its browser files from `assets/wordpress-site/`, not from `assets/`. The
+Drupal asset directory has no rule for `/wp-includes`, `/wp-admin` or `/wp-content`, so a Drupal
+deploy publishes none of it. Deploy a WordPress site with `--assets assets/wordpress-site` and
+`CMS=wordpress`. The directory has to be separate because the asset layer answers before the Worker:
+`assets/robots.txt` is Drupal's static file, and with it published WordPress could not serve its own
+virtual `robots.txt`. `/favicon.ico` is the same, and WordPress redirects it to the site icon.
+
+`bun scripts/pack-wordpress.ts --site` writes the directory from `wordpress-src`, and `bun run
+assets:wordpress` runs it last. The directory holds:
+
+- the stylesheets, scripts, images and fonts of `wp-includes` and `wp-admin`
+- the same file types of the active theme, `twentytwentyfive`
+- a copy of the WordPress pack the object reads through its asset binding
+- a generated `_headers`
+
+A stock tree publishes 976 files and 41,495,778 bytes. The largest is
+`wp-includes/js/dist/script-modules/vips/worker.min.js` at 13,418,072 bytes. The limits are 20,000
+files per version on free and 100,000 on paid, and 25 MiB per file; the packer fails above the free
+count or the file size. `--themes=a,b` publishes other bundled themes and `--themes=all` publishes
+all fifteen, which is 1,645 files and 75,041,354 bytes. A site that activates a theme whose files
+are not published renders without that theme's fonts and images.
+
+Left out on purpose:
+
+- PHP, JSON, `.txt`, `.scss` and the other files no page links. WordPress reads PHP and JSON from
+  the pack.
+- The plain copy of a script or stylesheet when a `.min` file sits beside it: 528 files, 36,491,342
+  bytes. WordPress loads the plain file only when `SCRIPT_DEBUG` is set. Core PHP names 442
+  scripts and stylesheets outright, and those stay published, since `wp-tooltip.js` and
+  `svg-painter.js` are requested plain even with a `.min` file present.
+- Right-to-left sheets: 460 files, 4,171,329 bytes. No language pack ships.
+- `wp-content/uploads`. Uploaded files are not static assets.
+
+Stylesheets and scripts get `public, max-age=31536000, immutable`, because WordPress requests them
+with a `?ver=` query that changes on an update. Images and fonts are linked from stylesheets with no
+version, so they get the year without `immutable`. `_headers` is generated from the published list
+with one rule per directory and extension, since the platform joins the headers of every rule that
+matches.
+
+`/wp-admin/load-scripts.php` and `load-styles.php` are PHP routes that concatenate files. They end
+with `exit` and answer 500 on the current request fragment, so a page that links them loses jQuery
+and its stylesheets.
+
 ## Request Headers
 
 Drupal receives the request's headers, not only its cookie. `Authorization`, `X-Api-Key`, `Origin`,

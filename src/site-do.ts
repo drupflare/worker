@@ -845,6 +845,12 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 	 */
 	alarmDueMs?: number;
 
+	/** events (requests and alarms) running now; an arm inside one waits for the last of them */
+	armHolds = 0;
+
+	/** the soonest alarm an arm asked for while an event held arming */
+	armHeldAtMs?: number;
+
 	/** set by `retire()`; this incarnation then answers 410 and arms nothing */
 	retired?: boolean;
 
@@ -1796,6 +1802,14 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 		if (this.retired) return;
 		const at = this.nowMs() + Math.max(1, delayMs);
 		if (this.alarmDueMs !== undefined && this.alarmDueMs <= at) return;
+		if (this.armHolds > 0) {
+			if (this.armHeldAtMs === undefined || at < this.armHeldAtMs) this.armHeldAtMs = at;
+			return;
+		}
+		this.setAlarmQuiet(at);
+	}
+
+	private setAlarmQuiet(at: number): void {
 		try {
 			this.alarmDueMs = at;
 			const armed = this.storage.setAlarm(at);
@@ -1803,6 +1817,28 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 		} catch {
 			/* an unschedulable alarm must not fail the save that triggered it */
 		}
+	}
+
+	/** starts an event whose `armFillAlarm()` calls wait for `releaseArming()` */
+	holdArming(): void {
+		this.armHolds += 1;
+	}
+
+	/**
+	 * Ends one event; the last one out sets the alarm the event asked for.
+	 *
+	 * A +1 ms `setAlarm()` armed ahead of an await, on an event with thousands of unconfirmed
+	 * writes, reset a bare object in 5 of 142 requests against 0 of 175 for the same awaits without
+	 * it (suggestive, p about 0.02). The install route's note records the same shape. Arming after
+	 * the event's last await keeps the alarm and avoids that shape.
+	 */
+	releaseArming(): void {
+		this.armHolds = Math.max(0, this.armHolds - 1);
+		if (this.armHolds > 0 || this.armHeldAtMs === undefined || this.retired) return;
+		const at = this.armHeldAtMs;
+		this.armHeldAtMs = undefined;
+		if (this.alarmDueMs !== undefined && this.alarmDueMs <= at) return;
+		this.setAlarmQuiet(at);
 	}
 
 	/**

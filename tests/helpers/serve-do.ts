@@ -186,7 +186,12 @@ export type ServeDo = {
 		at: number;
 		seq: number;
 	};
-	armFillAlarm: () => void;
+	armFillAlarm: (delayMs?: number) => void;
+	setAlarmAt: (atMs: number) => Promise<void>;
+	/** an arm inside an event waits for the last event out; see `releaseArming()` */
+	holdArming: () => void;
+	releaseArming: () => void;
+	armHolds: number;
 	enqueueRefill: (path: string) => void;
 	/** when the alarm this object last set is due; `armFillAlarm()`'s guard reads it */
 	alarmDueMs?: number;

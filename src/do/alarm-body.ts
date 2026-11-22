@@ -76,7 +76,11 @@ export async function alarmBody(
 		const pending = phase(ctx);
 		if (pending === undefined) continue;
 		const end = await pending;
-		if (end) return end.outcome;
+		if (end) {
+			// a gate that armed its own alarm replaces the arms parked before it
+			if (site.alarmDueMs !== undefined) site.armHeldAtMs = undefined;
+			return end.outcome;
+		}
 	}
 	for (const phase of WORK) {
 		const pending = phase(ctx);
@@ -105,6 +109,7 @@ export async function alarmEntry(
 	// would leak into the next request with the wrong parent
 	const linearBefore = site.heapNow();
 	site.resetBridgeBytes();
+	site.holdArming();
 	try {
 		const outcome = await alarmBody(site, info);
 		noteAlarmDemand(site, outcome, linearBefore);
@@ -113,15 +118,19 @@ export async function alarmEntry(
 		site.noteRangeError(e, 'alarm');
 		throw e;
 	} finally {
-		// cron saves content, so settle the plan flag here too; after the work, not at the head
-		// of `route()` (DDL on the fast lane would sit next to an open replay)
-		site.settlePendingIfOwed();
-		const invalidated = site.flushTagPurge();
-		if (invalidated.length > 0) site.lastInvalidatedTags = invalidated;
-		const settled = site.settlePlans(invalidated);
-		if (settled.cleared)
-			site.lastPlanPurge = { purged: settled.purged, tags: invalidated.length };
-		await site.sealGeneration();
-		await keepLaneReplicating(site);
+		try {
+			// cron saves content, so settle the plan flag here too; after the work, not at the head
+			// of `route()` (DDL on the fast lane would sit next to an open replay)
+			site.settlePendingIfOwed();
+			const invalidated = site.flushTagPurge();
+			if (invalidated.length > 0) site.lastInvalidatedTags = invalidated;
+			const settled = site.settlePlans(invalidated);
+			if (settled.cleared)
+				site.lastPlanPurge = { purged: settled.purged, tags: invalidated.length };
+			await site.sealGeneration();
+			await keepLaneReplicating(site);
+		} finally {
+			site.releaseArming();
+		}
 	}
 }

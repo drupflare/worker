@@ -24,6 +24,7 @@ export async function fetchRequest(
 	// and resets it per window
 	site.inflight = (site.inflight ?? 0) + 1;
 	if (site.inflight > (site.inflightPeak ?? 0)) site.inflightPeak = site.inflight;
+	site.holdArming();
 	// the monotonic total, not the ring's length (capped at 20, so the comparison below
 	// saturates and the handoff stops after 20 refusals)
 	const refusalsBefore = site.replicaRefusalsTotal;
@@ -67,6 +68,7 @@ export async function fetchRequest(
 		throw e;
 	} finally {
 		site.inflight = Math.max(0, (site.inflight ?? 1) - 1);
+		site.releaseArming();
 	}
 }
 

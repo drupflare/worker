@@ -36,12 +36,13 @@ value all fall through to the var.
 `/installable`, `/install` and `/enable` take the owner token, the one `/firstrun` mints when the
 site is claimed.
 
-| route                   | what it does                                                           |
-| ----------------------- | ---------------------------------------------------------------------- |
-| `/installable?module=X` | resolves the package and names any conflict with the shipped lock      |
-| `/install?module=X`     | fetches it and writes its files; runs the check first unless `force=1` |
-| `/install-lock`         | installs the packages of a composer lock; `DELETE ?session=` undoes it |
-| `/enable?module=X`      | installs it through Drupal's own module installer                      |
+| route                   | what it does                                                             |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `/installable?module=X` | resolves the package and names any conflict with the shipped lock        |
+| `/install?module=X`     | fetches it and writes its files; runs the check first unless `force=1`   |
+| `/install-lock`         | installs the packages of a composer lock; `DELETE ?session=` undoes it   |
+| `/enable?module=X`      | installs it through Drupal's own module installer                        |
+| `/wp-packages`          | WordPress only: installs, rolls back or deletes a pinned plugin or theme |
 
 Separate steps, because a package that has landed is not yet a module Drupal knows about and the two
 have different failure modes. `/install` also accepts `version=<constraint>` and `registry=npm`;

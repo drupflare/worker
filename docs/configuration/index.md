@@ -70,10 +70,11 @@ Every variable and binding on the configuration pages, once each.
 | `EDGE_PLAN`                     | on                                    | [Serving](serving/page-cache.md#edge_plan)               |
 | `CACHE_API`                     | on                                    | [Configuration](index.md#the-managed-config)             |
 | `CSP_MODE`                      | per plan                              | [Serving](serving/index.md)                              |
-| `SPOOL`                         | per plan                              | [Serving](serving/index.md)                              |
+| `SPOOL`                         | on                                    | [Serving](serving/index.md)                              |
 | `SPOOL_IMAGES`                  | on                                    | [Serving](serving/index.md)                              |
 | `SPOOL_VIDEO`                   | on                                    | [Serving](serving/index.md)                              |
 | `SPOOL_EMBEDS`                  | on                                    | [Serving](serving/index.md)                              |
+| `SPOOL_EXCLUDE`                 | empty                                 | [Spool](integrations/spool.md#excluding-paths)           |
 | `NEVER_STALE`                   | unset                                 | [Serving](serving/page-cache.md#never_stale)             |
 | `AGED_SERVE_MAX_MS`             | 60,000                                | [Serving](serving/index.md)                              |
 | `ASSET_AGGREGATES`              | unset                                 | [Serving](serving/static-assets.md#asset_aggregates)     |

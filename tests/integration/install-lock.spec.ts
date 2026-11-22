@@ -1,7 +1,8 @@
-import { zipSync } from 'fflate';
+import { gzipSync, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import { changeModuleFiles } from '../../src/do/module-files';
-import { installLock } from '../../src/do/routes/packages';
+import { installLock, install as installRoute } from '../../src/do/routes/packages';
+import { sourceBytes } from '../../src/ops/module-bytes';
 import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS } from '../../src/ops/shipped-lock';
 import { randomKeyBase64, rotateOwnerToken } from '../../src/ops/site-secrets';
 import type { SitePhpDurableObject } from '../../src/site-do';
@@ -23,6 +24,45 @@ function withComment(zip: Uint8Array, comment: string): Uint8Array {
 	out[zip.length - 1] = text.length >> 8;
 	return out;
 }
+
+/** a minimal ustar archive, gzipped as an npm registry serves it */
+function tgzOf(entries: readonly (readonly [string, Uint8Array])[]): Uint8Array {
+	const blocks: Uint8Array[] = [];
+	for (const [name, body] of entries) {
+		const header = new Uint8Array(512);
+		const put = (offset: number, text: string) => {
+			for (let i = 0; i < text.length; i++) header[offset + i] = text.charCodeAt(i);
+		};
+		put(0, name);
+		put(100, '0000644\0');
+		put(124, body.length.toString(8).padStart(11, '0') + '\0');
+		put(156, '0');
+		put(257, 'ustar\0' + '00');
+		for (let i = 148; i < 156; i++) header[i] = 32;
+		let sum = 0;
+		for (const b of header) sum += b;
+		put(148, sum.toString(8).padStart(6, '0') + '\0 ');
+		blocks.push(header);
+		const padded = new Uint8Array(Math.ceil(body.length / 512) * 512);
+		padded.set(body);
+		blocks.push(padded);
+	}
+	blocks.push(new Uint8Array(1024));
+	const out = new Uint8Array(blocks.reduce((n, b) => n + b.length, 0));
+	let at = 0;
+	for (const b of blocks) {
+		out.set(b, at);
+		at += b.length;
+	}
+	return gzipSync(out);
+}
+
+const assetTgz = tgzOf([
+	['package/dist/dropzone.js', bytes('var Dropzone = {};')],
+	['package/dist/dropzone.css', bytes('.dropzone {}')],
+	['package/README.md', bytes('docs')],
+	['package/test/spec.js', bytes('spec')]
+]);
 
 const COMMIT = 'a'.repeat(40);
 const OTHER = 'b'.repeat(40);
@@ -306,12 +346,164 @@ describe('POST /install-lock', () => {
 				]);
 				expect(site.sql.exec('SELECT * FROM cfw_package_autoload').toArray()).toEqual([]);
 				const again = await c.call('DELETE', `?session=${out.body['session']}`);
-				expect(again.body).toMatchObject({ rolledBack: true, removed: 0 });
+				expect(again.status).toBe(404);
+				expect(again.body).toMatchObject({ ok: false, rolledBack: true });
 				const missing = await c.call('DELETE', '?session=0123456789abcdef');
 				expect(missing.status).toBe(404);
 				// the lock installs again after a rollback
 				const redo = await c.call('POST', '', lock);
 				expect(redo.body['installed']).toHaveLength(2);
+			});
+		});
+	});
+
+	it('reports the reused packages a rollback leaves in place', async () => {
+		await withArchives(archives, async () => {
+			await inObject(freshSite(), async (site) => {
+				const c = await claimed(site);
+				const [, mod, lib] = await goodPackages();
+				const first = await c.call('POST', '', { packages: [core(), mod, lib] });
+				expect(first.body['done']).toBe(true);
+
+				const bad = pkg('acme/bad', {
+					type: 'drupal-module',
+					dist: {
+						type: 'zip',
+						url: 'https://dist.test/mod.zip',
+						shasum: await sha1(bytes('another archive'))
+					}
+				});
+				const second = await c.call('POST', '', { packages: [core(), mod, bad] });
+				expect(second.status).toBe(502);
+				expect(second.body['installed'].map((i: Json) => [i['name'], i['reused']])).toEqual(
+					[['acme/mod', true]]
+				);
+				const undone = await c.call('DELETE', `?session=${second.body['session']}`);
+				expect(undone.status).toBe(200);
+				expect(undone.body).toMatchObject({ removed: 0, restored: 0 });
+				expect(undone.body['leftInPlace']).toEqual([
+					{ name: 'acme/mod', version: '1.0.0', files: 2 }
+				]);
+				// the first session's files are untouched
+				expect(c.rows()).toBe(3);
+			});
+		});
+	});
+
+	it('installs a package that ships a tar into libraries', async () => {
+		const served = { ...archives, 'https://registry.test/dropzone.tgz': assetTgz };
+		await withArchives(served, async () => {
+			await inObject(freshSite(), async (site) => {
+				const c = await claimed(site);
+				const asset = pkg('npm-asset/dropzone', {
+					version: '5.9.3',
+					type: 'npm-asset-library',
+					dist: {
+						type: 'tar',
+						url: 'https://registry.test/dropzone.tgz',
+						shasum: await sha1(assetTgz)
+					}
+				});
+				const out = await c.call('POST', '', { packages: [core(), asset] });
+				expect(out.status).toBe(200);
+				expect(out.body['installed']).toEqual([
+					expect.objectContaining({ name: 'npm-asset/dropzone', files: 2 })
+				]);
+				expect(out.body['installed'][0]['verified']).toContain('sha1:');
+				const paths = site.sql
+					.exec('SELECT path FROM cfw_module_file ORDER BY path')
+					.toArray()
+					.map((r) => r['path']);
+				expect(paths).toEqual([
+					'libraries/dropzone/dist/dropzone.css',
+					'libraries/dropzone/dist/dropzone.js'
+				]);
+			});
+		});
+	});
+
+	it('keeps a tar library images and fonts as stored bytes and lists an oversized one by path', async () => {
+		const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 255, 254, 0]);
+		const woff = new Uint8Array([0x77, 0x4f, 0x46, 0x32, 0, 0, 0, 1]);
+		const huge = new Uint8Array(1_700_000).fill(0xab);
+		const tgz = tgzOf([
+			['package/dist/dropzone.js', bytes('var Dropzone = {};')],
+			['package/images/spritemap.png', png],
+			['package/fonts/icons.woff2', woff],
+			['package/images/logo.svg', bytes('<svg xmlns="http://www.w3.org/2000/svg"/>')],
+			['package/images/big.png', huge],
+			['package/notes.txt', bytes('dropped')]
+		]);
+		await withArchives({ 'https://registry.test/dropzone.tgz': tgz }, async () => {
+			await inObject(freshSite(), async (site) => {
+				const c = await claimed(site);
+				const asset = pkg('npm-asset/dropzone', {
+					version: '5.9.3',
+					type: 'npm-asset-library',
+					dist: {
+						type: 'tar',
+						url: 'https://registry.test/dropzone.tgz',
+						shasum: await sha1(tgz)
+					}
+				});
+				const out = await c.call('POST', '', { packages: [core(), asset] });
+				expect(out.status).toBe(200);
+				expect(out.body['ok']).toBe(true);
+				expect(out.body['failed']).toEqual([]);
+				expect(out.body['installed'][0]['files']).toBe(4);
+				expect(out.body['skippedFiles']).toEqual([
+					expect.objectContaining({
+						package: 'npm-asset/dropzone',
+						path: 'libraries/dropzone/images/big.png'
+					})
+				]);
+				const held = new Map(
+					site.sql
+						.exec('SELECT path, source FROM cfw_module_file')
+						.toArray()
+						.map((r) => [String(r['path']), String(r['source'])])
+				);
+				expect([...held.keys()].sort()).toEqual([
+					'libraries/dropzone/dist/dropzone.js',
+					'libraries/dropzone/fonts/icons.woff2',
+					'libraries/dropzone/images/logo.svg',
+					'libraries/dropzone/images/spritemap.png'
+				]);
+				expect(sourceBytes(held.get('libraries/dropzone/images/spritemap.png')!)).toEqual(
+					png
+				);
+				expect(sourceBytes(held.get('libraries/dropzone/fonts/icons.woff2')!)).toEqual(
+					woff
+				);
+				expect(held.get('libraries/dropzone/images/logo.svg')).toContain('<svg');
+
+				// a rollback removes the list with the session
+				const session = String(out.body['session']);
+				await c.call('DELETE', `?session=${session}`);
+				const left = site.sql.exec('SELECT 1 AS n FROM cfw_lock_skipped').toArray();
+				expect(left).toEqual([]);
+			});
+		});
+	});
+
+	it('refuses a tar whose digest does not match', async () => {
+		await withArchives({ 'https://registry.test/dropzone.tgz': assetTgz }, async () => {
+			await inObject(freshSite(), async (site) => {
+				const c = await claimed(site);
+				const asset = pkg('npm-asset/dropzone', {
+					type: 'npm-asset-library',
+					dist: {
+						type: 'tar',
+						url: 'https://registry.test/dropzone.tgz',
+						shasum: await sha1(bytes('another archive'))
+					}
+				});
+				const out = await c.call('POST', '', { packages: [core(), asset] });
+				expect(out.status).toBe(502);
+				expect(out.body['failed'][0]['error']).toContain(
+					'does not match its published SHA-1'
+				);
+				expect(c.rows()).toBe(0);
 			});
 		});
 	});
@@ -364,5 +556,71 @@ describe('POST /install-lock', () => {
 				expect(c.rows()).toBe(0);
 			});
 		});
+	});
+});
+
+describe('POST /install with a named conflict', () => {
+	const conflict = (requires: string) => ({
+		requires,
+		constraint: '^1.22',
+		installed: '1.20.0',
+		reason: 'version' as const,
+		detail: `${requires} is ${'1.20.0'}`
+	});
+	const run = async (query: string, conflicts: ReturnType<typeof conflict>[]) =>
+		withArchives({}, async () =>
+			inObject(freshSite(), async (site) => {
+				const c = await claimed(site);
+				(c.real as unknown as { installableVerdict: unknown }).installableVerdict =
+					async () => ({
+						name: 'acme/needs_key',
+						version: '1.0.0',
+						verdict: 'conflict',
+						conflicts
+					});
+				const url = new URL(`https://cfw.local/install?module=acme/needs_key${query}`);
+				const res = await installRoute(
+					c.real,
+					new Request(url, { method: 'POST', headers: { authorization: 'Bearer x' } }),
+					url
+				);
+				return { status: res.status, body: (await res.json()) as Json };
+			})
+		);
+
+	it('refuses a conflict nobody named, and says how', async () => {
+		const out = await run('', [conflict('drupal/key')]);
+		expect(out.status).toBe(409);
+		expect(out.body['refused']).toBe('conflict');
+		expect(out.body['conflicts']).toHaveLength(1);
+	});
+
+	it('goes past the check when every conflict is a named one', async () => {
+		const out = await run('&accept=drupal/key', [conflict('drupal/key')]);
+		// past the gate, the install reaches the registry, which the stub answers 404
+		expect(out.status).not.toBe(409);
+		expect(String(out.body['error'])).toContain('metadata 404');
+	});
+
+	it('answers 400 naming an accepted package that is not a current conflict', async () => {
+		const stale = await run('&accept=drupal/key,drupal/gone', [conflict('drupal/key')]);
+		expect(stale.status).toBe(400);
+		expect(stale.body['code']).toBe('accept_not_in_conflicts');
+		expect(stale.body['unlisted']).toEqual(['drupal/gone']);
+		expect(String(stale.body['error'])).toContain('drupal/gone');
+		// control: with every accepted package in the conflict set the same call goes through
+		const exact = await run('&accept=drupal/key', [conflict('drupal/key')]);
+		expect(exact.status).not.toBe(400);
+		const resolved = await run('&accept=drupal/key', []);
+		expect(resolved.status).toBe(400);
+	});
+
+	it('still refuses when a second conflict was not named', async () => {
+		const out = await run('&accept=drupal/key', [
+			conflict('drupal/key'),
+			conflict('drupal/other')
+		]);
+		expect(out.status).toBe(409);
+		expect(out.body['conflicts']).toHaveLength(2);
 	});
 });

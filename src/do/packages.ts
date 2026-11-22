@@ -1,9 +1,16 @@
 import { type LazyFS, mkdirp } from '@drupflare/cartridge/fs';
 import { withMask } from '@drupflare/cartridge/mask';
 import { defaultCache } from '../ops/cache-api';
+import {
+	bytesToSource,
+	sourceBytes,
+	STORED_BYTES_BINDINGS,
+	STORED_BYTES_SQL
+} from '../ops/module-bytes';
 import { type OracleResult, resolveInstallable } from '../ops/oracle';
 import {
 	asksForBranch,
+	ASSET_KEEP,
 	type AutoloadDeclaration,
 	checkArchiveDigest,
 	classmapOf,
@@ -187,7 +194,9 @@ export function storePackageFiles(
 			put: unpacked.files.map((file) => ({
 				path: file.path,
 				version: dist.version,
-				source: portFibers(file.path, decoder.decode(file.bytes))
+				source: ASSET_KEEP.test(file.path)
+					? bytesToSource(file.bytes)
+					: portFibers(file.path, decoder.decode(file.bytes))
 			})),
 			installedAt: site.nowMs()
 		});
@@ -198,7 +207,9 @@ export function storePackageFiles(
 		const classmap = classmapOf(
 			dist.mount,
 			autoload,
-			unpacked.files.map((f) => ({ path: f.path, source: decoder.decode(f.bytes) }))
+			unpacked.files
+				.filter((f) => f.path.endsWith('.php'))
+				.map((f) => ({ path: f.path, source: decoder.decode(f.bytes) }))
 		);
 		site.sql.exec(
 			`INSERT INTO cfw_package_autoload (package, version, mount, autoload, classmap)
@@ -364,7 +375,8 @@ export function mountInstalledModules(site: SitePhpDurableObject, binary: SiteBi
 	// byte length via BLOB (length() on TEXT counts characters and stops at a NUL)
 	const rows = site.sql
 		.exec<{ path: string; package: string; bytes: number; installed_at: number }>(
-			'SELECT path, package, length(CAST(source AS BLOB)) AS bytes, installed_at FROM cfw_module_file'
+			`SELECT path, package, ${STORED_BYTES_SQL} AS bytes, installed_at FROM cfw_module_file`,
+			...STORED_BYTES_BINDINGS
 		)
 		.toArray();
 	// before the early return, so a claimed site with no rows still adopts and refuses a later plant
@@ -383,7 +395,7 @@ export function mountInstalledModules(site: SitePhpDurableObject, binary: SiteBi
 					node.cfwRow
 				)
 			);
-			const bytes = new TextEncoder().encode(String(row?.source ?? ''));
+			const bytes = sourceBytes(String(row?.source ?? ''));
 			// a refused file reads as empty, so PHP includes nothing from it
 			node.contents = verify(node.cfwRow, bytes, owner.current) ? bytes : new Uint8Array(0);
 			node.usedBytes = node.contents.length;

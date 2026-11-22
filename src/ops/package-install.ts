@@ -11,6 +11,7 @@ import { parseTar, tarEntryTree } from '@drupflare/untarl';
 import { gunzipSync, unzipSync } from 'fflate';
 import { bytesToHex } from '../util/hex';
 import { satisfies } from './composer-constraint';
+import { bytesToSource } from './module-bytes';
 import { SHIPPED_CORE_VERSION } from './shipped-lock';
 
 /** where a package's metadata lives */
@@ -113,16 +114,23 @@ export function mountFor(name: string, composerType?: string): string {
 	const short = name.split('/')[1] ?? name;
 	switch (composerType) {
 		case 'drupal-module':
-		case 'drupal-custom-module':
 			return `modules/contrib/${short}`;
+		case 'drupal-custom-module':
+			return `modules/custom/${short}`;
 		case 'drupal-theme':
-		case 'drupal-custom-theme':
 			return `themes/contrib/${short}`;
+		case 'drupal-custom-theme':
+			return `themes/custom/${short}`;
 		case 'drupal-library':
+		case 'npm-asset':
+		case 'bower-asset':
+		case 'npm-asset-library':
+		case 'bower-asset-library':
 			return `libraries/${short}`;
 		case 'drupal-profile':
-		case 'drupal-custom-profile':
 			return `profiles/contrib/${short}`;
+		case 'drupal-custom-profile':
+			return `profiles/custom/${short}`;
 		default:
 			return `vendor/${name}`;
 	}
@@ -589,6 +597,9 @@ export const KEEP = [
 	/\.json$/
 ] as const;
 
+/** the images and fonts a library ships, which the front worker serves from `/libraries` */
+export const ASSET_KEEP = /\.(png|jpe?g|gif|webp|avif|ico|svg|woff2?|ttf|otf)$/i;
+
 /** paths that never belong in a mounted tree even when their extension passes */
 export const DROP = [
 	/(^|\/)tests?\//i,
@@ -640,11 +651,19 @@ export function unpackZip(archive: Uint8Array, mount: string): UnpackResult {
 export function unpackTar(archive: Uint8Array, mount: string): UnpackResult {
 	// npm serves `.tgz`; a bare `.tar` would already start with the ustar header rather than 0x1f8b
 	const raw = archive[0] === 0x1f && archive[1] === 0x8b ? gunzipSync(archive) : archive;
-	return collect([...tarEntryTree(parseTar(raw), 1).entries()], mount);
+	return collect([...tarEntryTree(parseTar(raw), 1).entries()], mount, true);
 }
 
-/** the filter both unpackers share, so a zip and a tarball cannot diverge on what they keep */
-function collect(entries: readonly (readonly [string, Uint8Array])[], mount: string): UnpackResult {
+/**
+ * The filter both unpackers share, so a zip and a tarball cannot diverge on what they keep. A
+ * tarball also keeps {@link ASSET_KEEP}, held as base64 when not text; the cap applies to that
+ * stored form.
+ */
+function collect(
+	entries: readonly (readonly [string, Uint8Array])[],
+	mount: string,
+	assets = false
+): UnpackResult {
 	const files: UnpackedFile[] = [];
 	const skipped: { path: string; why: string }[] = [];
 	let totalBytes = 0;
@@ -655,12 +674,14 @@ function collect(entries: readonly (readonly [string, Uint8Array])[], mount: str
 			skipped.push({ path: rel, why: 'not part of a mountable tree' });
 			continue;
 		}
-		if (!KEEP.some((re) => re.test(rel))) {
+		const asset = assets && ASSET_KEEP.test(rel);
+		if (!asset && !KEEP.some((re) => re.test(rel))) {
 			skipped.push({ path: rel, why: 'extension is not executable or readable here' });
 			continue;
 		}
-		if (bytes.length > RECORD_CAP) {
-			skipped.push({ path: rel, why: `${bytes.length} bytes exceeds the record cap` });
+		const stored = asset ? bytesToSource(bytes).length : bytes.length;
+		if (stored > RECORD_CAP) {
+			skipped.push({ path: rel, why: `${stored} bytes exceeds the record cap` });
 			continue;
 		}
 		files.push({ path: `${mount}/${rel}`, bytes });

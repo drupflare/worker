@@ -3,6 +3,7 @@ import {
 	type LockEntry,
 	readLock,
 	sessionId,
+	SKIPPED_FILES_PER_PACKAGE,
 	skipReason,
 	zipComment
 } from '../ops/lock-install';
@@ -11,6 +12,7 @@ import {
 	distOf,
 	INSTALL_BATCH,
 	type PackageAutoload,
+	unpackTar,
 	unpackZip
 } from '../ops/package-install';
 import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS, SHIPPED_PROVIDES } from '../ops/shipped-lock';
@@ -91,6 +93,14 @@ function report(site: SitePhpDurableObject, id: string, reached: number): Respon
 	const failed = rows
 		.filter((r) => r.state === 'failed')
 		.map((r) => ({ name: r.package, version: r.version, error: r.detail }));
+	const names = new Map(rows.map((r) => [r.seq, r.package]));
+	const skippedFiles = site.sql
+		.exec<{ seq: number; path: string; why: string }>(
+			'SELECT seq, path, why FROM cfw_lock_skipped WHERE session = ? ORDER BY seq, path',
+			id
+		)
+		.toArray()
+		.map((r) => ({ package: names.get(r.seq) ?? '', path: r.path, why: r.why }));
 	const done = session.state === 'done';
 	return Response.json(
 		{
@@ -102,6 +112,7 @@ function report(site: SitePhpDurableObject, id: string, reached: number): Respon
 			profile: session.profile,
 			installed,
 			skipped,
+			skippedFiles,
 			failed,
 			patches: 'not applied',
 			cache: session.cache
@@ -120,7 +131,7 @@ async function fetchOne(
 	const dist = distOf(entry.raw, entry.name);
 	if (dist === undefined)
 		return { ok: false, error: `${entry.name} has no downloadable archive` };
-	if (dist.type !== 'zip') {
+	if (dist.type !== 'zip' && dist.type !== 'tar') {
 		return { ok: false, error: `${entry.name} ships a ${dist.type}, which is not read here` };
 	}
 	const archive = await fetch(dist.url, { headers: { 'user-agent': 'drupflare' } });
@@ -144,7 +155,8 @@ async function fetchOne(
 			label = `commit:${reference}`;
 		}
 	}
-	const unpacked = unpackZip(bytes, dist.mount);
+	const unpacked =
+		dist.type === 'tar' ? unpackTar(bytes, dist.mount) : unpackZip(bytes, dist.mount);
 	if (unpacked.files.some((f) => f.path.split('/').includes('..'))) {
 		return { ok: false, error: `${entry.name} archive holds a path that leaves its mount` };
 	}
@@ -202,6 +214,18 @@ async function fetchOne(
 			)
 		);
 		storePackageFiles(site, entry.name, dist, autoload, unpacked, false);
+		const oversized = unpacked.skipped
+			.filter((s) => s.why.endsWith('exceeds the record cap'))
+			.slice(0, SKIPPED_FILES_PER_PACKAGE);
+		for (const file of oversized) {
+			site.sql.exec(
+				'INSERT OR REPLACE INTO cfw_lock_skipped (session, seq, path, why) VALUES (?, ?, ?, ?)',
+				id,
+				seq,
+				`${dist.mount}/${file.path}`,
+				file.why
+			);
+		}
 		site.sql.exec(
 			`INSERT OR REPLACE INTO cfw_lock_package
            (session, seq, package, version, digest, state, detail, files, owned, prior_autoload)
@@ -218,7 +242,7 @@ async function fetchOne(
 		if (extension) {
 			site.sql.exec('UPDATE cfw_lock_session SET extensions = 1 WHERE id = ?', id);
 		}
-		site.rowsSinceFlush = (site.rowsSinceFlush ?? 0) + prior.size + 2;
+		site.rowsSinceFlush = (site.rowsSinceFlush ?? 0) + prior.size + 2 + oversized.length;
 	});
 	return { ok: true };
 }
@@ -385,9 +409,16 @@ export function installLockRollback(site: SitePhpDurableObject, id: string): Res
 	const session = readSession(site, id);
 	if (session === undefined) return jsonError('no such session', 404, { session: id });
 	if (session.state === 'rolled-back') {
-		return Response.json({ ok: true, session: id, rolledBack: true, removed: 0, restored: 0 });
+		return jsonError('the session was already rolled back', 404, {
+			session: id,
+			rolledBack: true
+		});
 	}
-	const owned = ledgerRows(site, id).filter((r) => r.owned === 1);
+	const rows = ledgerRows(site, id);
+	const owned = rows.filter((r) => r.owned === 1);
+	const leftInPlace = rows
+		.filter((r) => r.state === 'reused')
+		.map((r) => ({ name: r.package, version: r.version, files: r.files }));
 	const undo = site.sql
 		.exec<{ path: string; package: string; version: string; source: string }>(
 			'SELECT path, package, version, source FROM cfw_lock_undo WHERE session = ?',
@@ -426,6 +457,7 @@ export function installLockRollback(site: SitePhpDurableObject, id: string): Res
 			changeModuleFiles(site, owner, { put, installedAt: now });
 		site.sql.exec('DELETE FROM cfw_lock_package WHERE session = ?', id);
 		site.sql.exec('DELETE FROM cfw_lock_undo WHERE session = ?', id);
+		site.sql.exec('DELETE FROM cfw_lock_skipped WHERE session = ?', id);
 		site.sql.exec(
 			"UPDATE cfw_lock_session SET state = 'rolled-back', cursor = 0, cache = NULL, updated_at = ? WHERE id = ?",
 			now,
@@ -440,6 +472,7 @@ export function installLockRollback(site: SitePhpDurableObject, id: string): Res
 		session: id,
 		rolledBack: true,
 		removed: owned.length,
-		restored: undo.length
+		restored: undo.length,
+		leftInPlace
 	});
 }

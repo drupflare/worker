@@ -216,5 +216,15 @@ export const LOCK_TABLE_SQL = [
        version TEXT NOT NULL,
        source TEXT NOT NULL,
        PRIMARY KEY (session, path)
+     ) WITHOUT ROWID`,
+	`CREATE TABLE IF NOT EXISTS cfw_lock_skipped (
+       session TEXT NOT NULL,
+       seq INTEGER NOT NULL,
+       path TEXT NOT NULL,
+       why TEXT NOT NULL,
+       PRIMARY KEY (session, seq, path)
      ) WITHOUT ROWID`
 ] as const;
+
+/** the most oversized files one package lists in a session's answer */
+export const SKIPPED_FILES_PER_PACKAGE = 100;

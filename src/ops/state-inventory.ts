@@ -137,6 +137,7 @@ const AUTHORITATIVE_TABLES: ReadonlySet<string> = new Set([
 	'cfw_lock_session',
 	'cfw_lock_package',
 	'cfw_lock_undo',
+	'cfw_lock_skipped',
 	'file_usage',
 	'inline_block_usage',
 	'taxonomy_index',

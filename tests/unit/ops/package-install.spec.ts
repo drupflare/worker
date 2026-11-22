@@ -166,6 +166,15 @@ describe('resolving a name to a repository', () => {
 		expect(mountFor('ycloudyusa/yusaopeny', 'drupal-profile')).toBe(
 			'profiles/contrib/yusaopeny'
 		);
+		// asset-packagist names its types npm-asset and bower-asset, which Thunder's lock carries
+		expect(mountFor('npm-asset/dropzone', 'npm-asset')).toBe('libraries/dropzone');
+		expect(mountFor('npm-asset/yaireo--tagify', 'npm-asset')).toBe('libraries/yaireo--tagify');
+		expect(mountFor('bower-asset/chosen', 'bower-asset')).toBe('libraries/chosen');
+		// the paths the Drupal project templates give each type; a profile is never under vendor
+		expect(mountFor('thunder/thunder', 'drupal-profile')).toBe('profiles/contrib/thunder');
+		expect(mountFor('acme/site', 'drupal-custom-profile')).toBe('profiles/custom/site');
+		expect(mountFor('acme/mod', 'drupal-custom-module')).toBe('modules/custom/mod');
+		expect(mountFor('acme/th', 'drupal-custom-theme')).toBe('themes/custom/th');
 		// a plain PHP package goes where the autoloader already has a root
 		expect(mountFor('psr/log', 'library')).toBe('vendor/psr/log');
 		expect(mountFor('psr/log')).toBe('vendor/psr/log');

@@ -1,9 +1,18 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { memoryDatabase } from '../../scripts/measure/sql-translate-run';
 import { frontPageReplies, type WpCapture } from '../../scripts/measure/wp-capture-golden';
+import {
+	bakedDatabase,
+	compareShapes,
+	plansOf,
+	shapeOf,
+	translatedDatabase,
+	type DdlFixture
+} from '../../scripts/wp/oracle-ddl';
+import { loadFixture, replayFixture } from '../../scripts/wp/oracles';
 import { CLASS_ROWS, classRow } from '../../src/db/sql/classes';
 import {
 	CACHE_MAX_ENTRIES,
@@ -67,6 +76,19 @@ function rig(
 	return { state, q, rows, ok, run, atomic, raw: db };
 }
 
+function joinRig(): Rig {
+	const r = rig({ tables: false });
+	r.ok(
+		"CREATE TABLE t_owner (id bigint(20) unsigned NOT NULL auto_increment, name varchar(20) NOT NULL default '', n int NOT NULL default 0, PRIMARY KEY (id))"
+	);
+	r.ok(
+		"CREATE TABLE t_item (id bigint(20) unsigned NOT NULL auto_increment, owner_id bigint(20) unsigned NOT NULL default 0, label varchar(20) NOT NULL default '', flag tinyint NOT NULL default 0, PRIMARY KEY (id), KEY owner_id (owner_id))"
+	);
+	r.ok("INSERT INTO t_owner (name) VALUES ('ann'), ('bob'), ('cy')");
+	r.ok('INSERT INTO t_item (owner_id) VALUES (1), (1), (2), (2), (4)');
+	return r;
+}
+
 const plan = (sql: string, state: MysqlState = createState({ database: 'wp' })): Plan =>
 	translate(sql, state).plan;
 
@@ -92,6 +114,26 @@ const CASES: Record<string, () => void> = {
 	'select-plain': () => {
 		const sql = "SELECT ID FROM wp_posts WHERE post_status = 'publish' ORDER BY post_date DESC";
 		expect(mainSql(sql)).toBe(sql);
+	},
+	'order-ties': () => {
+		const r = rig();
+		const ordered = 'SELECT option_id FROM t_options ORDER BY autoload DESC';
+		expect(translationOf(ordered, r.state).classes).toContain('order-ties');
+		expect(translationOf('SELECT option_id FROM t_options', r.state).classes).not.toContain(
+			'order-ties'
+		);
+		expect(
+			translationOf(
+				'SELECT a FROM (SELECT option_id AS a FROM t_options ORDER BY a) x',
+				r.state
+			).classes
+		).not.toContain('order-ties');
+		r.ok(
+			"INSERT INTO t_options (option_name, option_value) VALUES ('a', '1'), ('b', '2'), ('c', '3')"
+		);
+		expect(r.rows('SELECT option_id FROM t_options ORDER BY autoload DESC, option_id')).toEqual(
+			[[1], [2], [3]]
+		);
 	},
 	'union-having-subquery': () => {
 		const r = rig();
@@ -146,6 +188,33 @@ const CASES: Record<string, () => void> = {
 		expect(r.ok('INSERT INTO t_links (object_id) SELECT note_id FROM t_notes')).toMatchObject({
 			affected: 1
 		});
+		// the id of the generated key is reported, as the plugins that read insert_id expect
+		r.ok("INSERT INTO t_notes (author, body) VALUES ('a', 'b'), ('c', 'd')");
+		expect(
+			r.ok(
+				"INSERT INTO t_notes (author, body) SELECT author, body FROM t_notes WHERE author = 'c'"
+			)
+		).toMatchObject({ affected: 1, insertId: 4 });
+		expect(
+			r.ok(
+				"INSERT INTO t_notes (author, body) SELECT author, body FROM t_notes WHERE author = 'none'"
+			)
+		).toMatchObject({ affected: 0, insertId: 0 });
+	},
+	'from-dual': () => {
+		expect(mainSql('SELECT 1 FROM DUAL WHERE 1 = 1').replace(/\s+/g, ' ')).toBe(
+			'SELECT 1 WHERE 1 = 1'
+		);
+		const r = rig();
+		expect(r.rows('SELECT 1 FROM DUAL WHERE ( SELECT NULL FROM dual ) IS NULL')).toEqual([[1]]);
+		expect(r.rows('SELECT 5 FROM DUAL')).toEqual([[5]]);
+		expect(r.rows('SELECT 5 FROM DUAL WHERE 1 = 2')).toEqual([]);
+		expect(
+			r.ok(
+				"INSERT INTO t_options (option_name, option_value) SELECT 'a', 'b' FROM DUAL WHERE ( SELECT NULL FROM DUAL ) IS NULL"
+			)
+		).toMatchObject({ affected: 1, insertId: 1 });
+		expect(r.q('SELECT a FROM `dual`')).toMatchObject({ errno: 1146 });
 	},
 	'string-literal': () => {
 		expect(mainSql("SELECT 'it\\'s'")).toBe("SELECT 'it''s' AS `it's`");
@@ -459,6 +528,40 @@ const CASES: Record<string, () => void> = {
 				r.state
 			)
 		).toBe('insert-select-odku');
+		const refuse = (sql: string) =>
+			expect(refusedBy(sql, r.state), sql).toBe('insert-select-odku');
+		refuse(
+			"INSERT INTO t_options (option_name, option_value) SELECT 'a', 'b' FROM DUAL ON DUPLICATE KEY UPDATE option_value = VALUES(option_value)"
+		);
+		refuse(
+			"INSERT INTO t_options (option_name, option_value) SELECT option_name, 'b' FROM t_options ON DUPLICATE KEY UPDATE option_name = VALUES(option_name)"
+		);
+		refuse(
+			"INSERT INTO t_options (option_name, option_value) SELECT 'a', 'b' FROM DUAL ON DUPLICATE KEY UPDATE option_name = 'z'"
+		);
+		refuse(
+			'INSERT INTO unknown_table (k) SELECT 1 FROM DUAL ON DUPLICATE KEY UPDATE k = VALUES(k)'
+		);
+	},
+	'insert-select-odku-noop': () => {
+		const r = rig();
+		const sql =
+			"INSERT INTO t_options (option_name, option_value) SELECT 'a', 'b' FROM DUAL WHERE ( SELECT NULL FROM DUAL ) IS NULL ON DUPLICATE KEY UPDATE option_name = VALUES(option_name)";
+		expect(mainSql(sql, r.state)).toMatch(/ ON CONFLICT DO NOTHING$/);
+		expect(translationOf(sql, r.state).classes).toContain('insert-select-odku-noop');
+		expect(r.ok(sql)).toMatchObject({ affected: 1, insertId: 1 });
+		expect(r.ok(sql)).toMatchObject({ affected: 0, insertId: 0 });
+		expect(r.rows('SELECT option_name, option_value FROM t_options')).toEqual([['a', 'b']]);
+		// a column outside the key would change on MySQL, so it stays refused
+		expect(
+			refusedBy(
+				sql.replace(
+					'option_name = VALUES(option_name)',
+					'option_value = VALUES(option_value)'
+				),
+				r.state
+			)
+		).toBe('insert-select-odku');
 	},
 	'insert-set': refused('insert-set', 'INSERT INTO t SET a = 1'),
 	'insert-implicit-default': () => {
@@ -568,10 +671,95 @@ const CASES: Record<string, () => void> = {
 			affected: 1
 		});
 	},
-	'update-multi-table': refused(
-		'update-multi-table',
-		'UPDATE a, b SET a.x = b.x WHERE a.id = b.id'
-	),
+	'update-join': () => {
+		const r = joinRig();
+		const claim =
+			"UPDATE t_item t1 JOIN ( SELECT id FROM t_item WHERE flag = 0 ORDER BY id LIMIT 2 FOR UPDATE ) t2 ON t1.id = t2.id SET flag = 7, label = 'held'";
+		expect(mainSql(claim, r.state)).toBe(
+			"UPDATE `t_item` AS `t1` SET `flag` = 7, `label` = 'held' FROM ( SELECT id FROM t_item WHERE flag = 0 ORDER BY id LIMIT 2  ) AS `t2` WHERE (t1.id = t2.id) AND (`t1`.`flag` IS NOT (7) COLLATE BINARY OR `t1`.`label` IS NOT ('held') COLLATE BINARY)"
+		);
+		expect(translationOf(claim, r.state).classes).toEqual(
+			expect.arrayContaining(['update-join', 'locking-read', 'order-ties'])
+		);
+		expect(r.ok(claim)).toMatchObject({ affected: 2 });
+		expect(r.rows('SELECT id FROM t_item WHERE flag = 7 ORDER BY id')).toEqual([[1], [2]]);
+		expect(r.ok(claim)).toMatchObject({ affected: 2 });
+		expect(r.rows('SELECT id FROM t_item WHERE flag = 7 ORDER BY id')).toEqual([
+			[1],
+			[2],
+			[3],
+			[4]
+		]);
+		expect(r.ok(claim)).toMatchObject({ affected: 1 });
+		expect(r.ok(claim)).toMatchObject({ affected: 0 });
+		// a row already holding the values is matched and not counted
+		expect(
+			r.ok(
+				"UPDATE t_item i INNER JOIN t_owner o ON o.id = i.owner_id SET i.flag = 7 WHERE o.name = 'ann'"
+			)
+		).toMatchObject({ affected: 0 });
+		expect(
+			r.ok(
+				"UPDATE t_item i, t_owner o SET i.label = 'x' WHERE i.owner_id = o.id AND o.name = 'bob'"
+			)
+		).toMatchObject({ affected: 2 });
+		expect(r.rows("SELECT id FROM t_item WHERE label = 'x' ORDER BY id")).toEqual([[3], [4]]);
+		// a self join needs the alias on both sides
+		expect(
+			r.ok(
+				'UPDATE t_item a JOIN t_item b ON a.owner_id = b.owner_id AND b.id < a.id SET a.flag = 2'
+			)
+		).toMatchObject({ affected: 2 });
+		expect(
+			r.ok(
+				"UPDATE t_item i JOIN t_owner o ON o.id = i.owner_id SET label = 'q' WHERE o.name = 'none'"
+			)
+		).toMatchObject({ affected: 0 });
+		expect(
+			refusedBy(
+				'UPDATE t_item i JOIN t_owner o ON o.id = i.owner_id SET flag = 1',
+				createState()
+			)
+		).toBe('update-multi-table');
+	},
+	'update-join-correlated': () => {
+		const r = joinRig();
+		const sql =
+			'UPDATE t_owner o JOIN (SELECT owner_id, COUNT(*) AS c FROM t_item GROUP BY owner_id) x ON x.owner_id = o.id SET o.n = x.c';
+		expect(translationOf(sql, r.state).classes).toEqual(
+			expect.arrayContaining(['update-join', 'update-join-correlated'])
+		);
+		expect(r.ok(sql)).toMatchObject({ affected: 2 });
+		expect(r.rows('SELECT id, n FROM t_owner ORDER BY id')).toEqual([
+			[1, 2],
+			[2, 2],
+			[3, 0]
+		]);
+		expect(
+			translationOf(
+				'UPDATE t_item i JOIN t_owner o ON o.id = i.owner_id SET i.flag = 1',
+				r.state
+			).classes
+		).not.toContain('update-join-correlated');
+		// one target row with two joined rows keeps one of them; which one is not defined
+		r.ok('UPDATE t_owner o JOIN t_item i ON i.owner_id = o.id SET o.n = i.id');
+		expect([1, 2]).toContain(r.rows('SELECT n FROM t_owner WHERE id = 1')[0]?.[0]);
+	},
+	'update-multi-table': () => {
+		const r = joinRig();
+		const refuse = (sql: string) =>
+			expect(refusedBy(sql, r.state), sql).toBe('update-multi-table');
+		refuse('UPDATE t_item i JOIN t_owner o ON o.id = i.owner_id SET o.n = i.flag');
+		refuse('UPDATE t_item i JOIN t_owner o ON o.id = i.owner_id SET i.flag = 1, o.n = 1');
+		refuse('UPDATE t_item i LEFT JOIN t_owner o ON o.id = i.owner_id SET i.flag = 1');
+		refuse('UPDATE t_item i NATURAL JOIN t_owner o SET i.flag = 1');
+		refuse('UPDATE t_item i JOIN t_owner o USING (id) SET i.flag = 1');
+		refuse('UPDATE t_item i JOIN t_owner o ON o.id = i.owner_id SET i.flag = 1 LIMIT 1');
+		refuse('UPDATE t_item i JOIN t_owner o ON o.id = i.owner_id SET i.nope = 1');
+		expect(r.q('UPDATE t_item i JOIN (SELECT 1) ON 1 SET i.flag = 1')).toMatchObject({
+			errno: 1248
+		});
+	},
 	'update-sequential-assign': () => {
 		expect(refusedBy('UPDATE t SET a = 1, b = a')).toBe('update-sequential-assign');
 		expect(refusedBy('UPDATE t SET a = 1, b = c')).toBeUndefined();
@@ -670,6 +858,40 @@ const CASES: Record<string, () => void> = {
 		expect(r.rows("SELECT DATE_ADD('2026-01-31 00:00:00', INTERVAL 1 MONTH)")).toEqual([
 			['2026-03-03 00:00:00']
 		]);
+	},
+	'fn-field': () => {
+		const r = rig();
+		r.ok(
+			"INSERT INTO t_options (option_name, option_value) VALUES ('a', 'x'), ('b', 'y'), ('c', 'z')"
+		);
+		expect(
+			r.rows('SELECT option_id FROM t_options ORDER BY FIELD(option_id, 3, 1, 2)')
+		).toEqual([[3], [1], [2]]);
+		expect(
+			r.rows(
+				'SELECT option_id FROM t_options ORDER BY FIELD(option_id, 2, 3) DESC, option_id'
+			)
+		).toEqual([[3], [2], [1]]);
+		expect(r.rows("SELECT FIELD(NULL, 1, 2), FIELD(7, 1, 2), FIELD('b', 'a', 'b')")).toEqual([
+			[0, 0, 2]
+		]);
+		expect(
+			r.rows("SELECT option_id FROM t_options ORDER BY FIELD(option_name, 'C', 'a', 'B')")
+		).toEqual([[3], [1], [2]]);
+		expect(r.q('SELECT FIELD(1, 1)')).toMatchObject({ columns: ['FIELD(1, 1)'] });
+		expect(refusedBy('SELECT FIELD(1)')).toBe('function-form');
+		// the documented difference: two strings with no column collation compare byte for byte
+		expect(r.rows("SELECT FIELD('A', 'a', 'b')")).toEqual([[0]]);
+	},
+	'fn-length': () => {
+		const r = rig();
+		expect(
+			r.rows("SELECT LENGTH('abc'), LENGTH('café'), LENGTH(123), LENGTH(''), LENGTH(NULL)")
+		).toEqual([[3, 5, 3, 0, null]]);
+		expect(r.q("SELECT LENGTH('a')")).toMatchObject({ columns: ["LENGTH('a')"] });
+		r.ok("INSERT INTO t_options (option_name, option_value) VALUES ('a', 'xé'), ('b', 'yy')");
+		expect(r.rows('SELECT SUM(LENGTH(option_value)) FROM t_options')).toEqual([[5]]);
+		expect(refusedBy('SELECT LENGTH(a, b) FROM t')).toBe('function-form');
 	},
 	'values-function': refused('values-function', 'SELECT VALUES(a) FROM t'),
 	'get-lock': () => {
@@ -798,10 +1020,26 @@ const CASES: Record<string, () => void> = {
 		expect(
 			r.rows("SELECT option_name FROM t_options WHERE option_name = 'a' FOR UPDATE")
 		).toEqual([['a']]);
+		// inside a derived table of a joined UPDATE, the form Action Scheduler claims with
+		expect(
+			mainSql(
+				"UPDATE t_options o JOIN (SELECT option_id FROM t_options LIMIT 1 FOR UPDATE) x ON x.option_id = o.option_id SET autoload = 'no'",
+				r.state
+			)
+		).not.toContain('FOR UPDATE');
 	},
 	'locking-read-nowait': () => {
-		expect(refusedBy('SELECT a FROM t FOR UPDATE SKIP LOCKED')).toBe('locking-read-nowait');
-		expect(refusedBy('SELECT a FROM t FOR UPDATE NOWAIT')).toBe('locking-read-nowait');
+		expect(mainSql('SELECT a FROM t FOR UPDATE SKIP LOCKED').trim()).toBe('SELECT a FROM t');
+		expect(mainSql('SELECT a FROM t FOR SHARE NOWAIT').trim()).toBe('SELECT a FROM t');
+		expect(
+			translationOf('SELECT a FROM t FOR UPDATE SKIP LOCKED', createState()).classes
+		).toEqual(expect.arrayContaining(['locking-read', 'locking-read-nowait']));
+		expect(refusedBy('SELECT a FROM t FOR UPDATE SKIP')).toBe('syntax-error');
+		const r = rig();
+		r.ok("INSERT INTO t_options (option_name, option_value) VALUES ('a', 'x')");
+		expect(
+			r.rows('SELECT option_name FROM t_options ORDER BY option_id FOR UPDATE SKIP LOCKED')
+		).toEqual([['a']]);
 	},
 	'match-against': refused('match-against', "SELECT a FROM t WHERE MATCH(a) AGAINST('x')"),
 	'index-hint': () => {
@@ -1285,4 +1523,83 @@ describe('the captured front page', () => {
 		expect(capture.frontPageCold).toHaveLength(24);
 		expect(frontPageReplies(capture)).toEqual(golden);
 	});
+});
+
+describe('the outside oracles', () => {
+	const dir = resolve(import.meta.dirname, '../fixtures/oracles');
+	const recorded = existsSync(resolve(dir, 'record.json.gz'));
+	const baked = existsSync(
+		resolve(import.meta.dirname, '../../assets/wordpress/sql/manifest.json')
+	);
+
+	it.skipIf(!recorded)('explains every disagreement with MySQL and the upstream plugin', () => {
+		const fixture = loadFixture(resolve(dir, 'record.json.gz'));
+		const { classified } = replayFixture(fixture);
+		expect(classified.filter((c) => c.owner === 'unexplained')).toEqual([]);
+		const count = (pair: string, owner: string) =>
+			classified.filter((c) => c.pair === pair && c.owner === owner).length;
+		expect(count('native/ours', 'documented')).toBe(23);
+		expect(count('native/upstream', 'documented')).toBe(15);
+		expect(count('native/upstream', 'upstream')).toBe(139);
+		expect(
+			classified.filter((c) => c.pair === 'native/ours' && c.owner !== 'documented')
+		).toEqual([]);
+	});
+
+	it.skipIf(!recorded)('answers the Action Scheduler statements exactly as MySQL does', () => {
+		const fixture = loadFixture(resolve(dir, 'record.json.gz'));
+		const inScenario = fixture.statements.filter((s) => s.scenario === 'action-scheduler');
+		const claims = inScenario.filter((s) => /^UPDATE \S+ t1 JOIN/.test(s.sql));
+		expect(claims.length).toBeGreaterThanOrEqual(8);
+		expect(inScenario.filter((s) => s.refused !== undefined)).toHaveLength(4);
+		const { classified } = replayFixture(fixture);
+		expect(
+			classified.filter((c) => c.scenario === 'action-scheduler' && c.pair === 'native/ours')
+		).toEqual([]);
+	});
+
+	it.skipIf(!recorded)('leaves the same table contents as MySQL after every scenario', () => {
+		const { dumps } = replayFixture(loadFixture(resolve(dir, 'record.json.gz')));
+		for (const d of dumps) {
+			expect(d.upstream, d.scenario).toBe(true);
+			expect(d.native, d.scenario).toBe(d.scenario !== 'supplement');
+		}
+	});
+
+	it.skipIf(!recorded || !baked)(
+		'builds the same index set, keys and types as drangler and the upstream plugin',
+		() => {
+			const ddl = JSON.parse(readFileSync(resolve(dir, 'ddl.json'), 'utf8')) as DdlFixture;
+			const creates = loadFixture(resolve(dir, 'record.json.gz'))
+				.statements.filter(
+					(s) =>
+						s.scenario !== 'supplement' &&
+						s.scenario !== 'action-scheduler' &&
+						/^\s*CREATE TABLE/i.test(s.sql)
+				)
+				.map((s) => s.sql);
+			const baked = shapeOf(bakedDatabase());
+			expect(Object.keys(baked)).toHaveLength(12);
+			expect(compareShapes(baked, shapeOf(translatedDatabase(creates)), baked)).toEqual([]);
+			const facets = compareShapes(baked, ddl.converted, ddl.upstream).map((d) => d.facet);
+			expect(facets.filter((f) => !f.endsWith('.collation'))).toEqual([]);
+			const converted = compareShapes(baked, ddl.converted, baked);
+			expect(
+				converted.every((d) => d.facet.endsWith('.collation') && d.converted === '"BINARY"')
+			).toBe(true);
+			expect(converted.length).toBeGreaterThan(40);
+			expect(ddl.refusals.every((r) => r.startsWith('refused:'))).toBe(true);
+		}
+	);
+
+	it.skipIf(!baked)(
+		'keeps the index the single-post lookup by slug needs when the statuses are listed',
+		() => {
+			const db = bakedDatabase();
+			const plan = plansOf(db, [
+				"SELECT wp_posts.* FROM wp_posts WHERE post_name = 'x' AND post_type = 'post' AND (post_status = 'publish' OR post_status = 'private') ORDER BY post_date DESC"
+			]);
+			expect(plan[0]?.[0]).toContain('wp_posts__post_name');
+		}
+	);
 });

@@ -4,12 +4,14 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bake } from '../../scripts/bake-wordpress';
+import { titlesOf } from '../../scripts/wp/frontpage-order';
 import {
 	dropInMissing,
 	httpGet,
 	installWordpress,
 	prepareSite,
 	readLog,
+	runPhp,
 	startPhpServer,
 	WORDPRESS_SRC,
 	type PhpServer,
@@ -139,6 +141,77 @@ describe.skipIf(reason !== undefined)(
 		});
 	}
 );
+
+describe.skipIf(reason !== undefined)('the front page listing order on the local php cli', () => {
+	let site: Site;
+	let host: Host;
+	let server: PhpServer;
+
+	beforeAll(async () => {
+		const dir = mkdtempSync(join(tmpdir(), 'wp-order-'));
+		temps.push(dir);
+		site = await prepareSite(dir);
+		host = await startHost({ dbFile: site.db, socketPath: site.socket, keepText: true });
+		server = await startPhpServer(site);
+		const install = await installWordpress(site);
+		expect(install.code).toBe(0);
+	}, 120_000);
+
+	afterAll(async () => {
+		await server?.stop();
+		await host?.stop();
+	});
+
+	const listed = async (scenario: string, query: string): Promise<string[]> => {
+		const seed = await runPhp(
+			site,
+			[join(import.meta.dirname, '../../scripts/wp/frontpage-order.php')],
+			{
+				CFW_LABEL: 'seed',
+				FRONT_SCENARIO: scenario
+			}
+		);
+		expect(seed.code, seed.stderr).toBe(0);
+		return titlesOf((await httpGet(site, `/?${query}`)).body);
+	};
+
+	it('lists posts that share one date by primary key descending, as MySQL does', async () => {
+		expect(await listed('ties', 'ties=1')).toEqual([
+			'Protected: Protected one',
+			'Seed 6',
+			'Seed 5'
+		]);
+	});
+
+	it('gives a published post with a password one of the page slots', async () => {
+		expect(await listed('protected', 'protected=1')).toEqual([
+			'Protected: Protected one',
+			'Seed 6',
+			'Seed 5'
+		]);
+	});
+
+	it('puts a sticky post ahead of the page size', async () => {
+		expect(await listed('sticky', 'sticky=1')).toEqual([
+			'Seed 1',
+			'Seed 6',
+			'Seed 5',
+			'Seed 4'
+		]);
+	});
+
+	it('is a control: an ascending key on the same ties lists the other end', async () => {
+		await listed('ties', 'control=1');
+		const db = new DatabaseSync(site.db);
+		const ids = db
+			.prepare(
+				"SELECT post_title FROM wp_posts WHERE post_type = 'post' AND post_status = 'publish' ORDER BY post_date DESC, ID ASC LIMIT 3"
+			)
+			.all() as { post_title: string }[];
+		db.close();
+		expect(ids.map((r) => r.post_title)).toEqual(['Seed 1', 'Seed 2', 'Seed 3']);
+	});
+});
 
 describe.skipIf(reason !== undefined)('the baked database on the local php cli', () => {
 	let site: Site;

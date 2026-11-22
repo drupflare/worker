@@ -40,6 +40,8 @@ export interface StatementRecord {
 	errno?: number;
 	/** rows a write changed, as MySQL counts them; absent for a read */
 	affected?: number;
+	/** the id MySQL reports for an insert */
+	insertId?: number;
 	refused?: string;
 	error?: string;
 	sql?: string;
@@ -167,7 +169,10 @@ export function startHost(options: HostOptions): Promise<Host> {
 		record.execMs = performance.now() - t0;
 		if (options.keepReply === true) record.reply = reply;
 		record.ok = reply.ok;
-		if (reply.ok && reply.kind === 'write') record.affected = reply.affected;
+		if (reply.ok && reply.kind === 'write') {
+			record.affected = reply.affected;
+			record.insertId = reply.insertId;
+		}
 		if (!reply.ok) {
 			record.errno = reply.errno;
 			record.error = reply.error;

@@ -206,7 +206,13 @@ export const SUPPLEMENT: SupplementCase[] = [
 	},
 	{ sql: 'SELECT LOWER(option_name) FROM wp_options', refused: 'function-unknown' },
 	{ sql: "SELECT GET_LOCK('x', 1)", refused: 'get-lock' },
-	{ sql: 'SELECT a FROM t FOR UPDATE SKIP LOCKED', refused: 'locking-read-nowait' },
+	{
+		sql: "SELECT option_name FROM wp_options WHERE option_name = 'siteurl' FOR UPDATE SKIP LOCKED"
+	},
+	{
+		sql: 'INSERT INTO wp_options (option_name) SELECT option_name FROM wp_options ON DUPLICATE KEY UPDATE option_name = VALUES(option_name)',
+		refused: 'insert-select-odku'
+	},
 	{ sql: "SELECT option_name FROM wp_options WHERE option_name = 'siteurl' FOR UPDATE" },
 	{ sql: 'SELECT option_name FROM wp_options LOCK IN SHARE MODE' },
 	{ sql: "SELECT SQL_NO_CACHE option_name FROM wp_options WHERE option_name = 'siteurl'" },
@@ -283,5 +289,29 @@ export const SUPPLEMENT: SupplementCase[] = [
 	{ sql: 'SELECT * FROM zz_missing' },
 	{ sql: 'SELECT NOPE_FN(1)', refused: 'function-unknown' },
 	{ sql: 'SELEC 1' },
-	{ sql: "INSERT INTO wp_options (option_id, option_name) VALUES (1, 'dup')" }
+	{ sql: "INSERT INTO wp_options (option_id, option_name) VALUES (1, 'dup')" },
+	// FIELD and LENGTH, which WP_Query post__in ordering and the site health size check send
+	{
+		sql: "SELECT option_name FROM wp_options WHERE option_name IN ('siteurl', 'home', 'blogname') ORDER BY FIELD(option_name, 'home', 'blogname', 'siteurl')"
+	},
+	{
+		sql: 'SELECT option_id FROM wp_options WHERE option_id < 8 ORDER BY FIELD(option_id, 6, 2, 4) DESC, option_id'
+	},
+	{ sql: "SELECT FIELD(NULL, 1, 2), FIELD(7, 1, 2), FIELD('b', 'a', 'b')" },
+	{ sql: "SELECT FIELD('A', 'a', 'b')", known: 'fn-field' },
+	{ sql: "SELECT LENGTH('abc'), LENGTH('café'), LENGTH(123), LENGTH(''), LENGTH(NULL)" },
+	{ sql: 'SELECT SUM(LENGTH(option_value)) FROM wp_options' },
+	// equal sort keys under ORDER BY
+	{
+		sql: "CREATE TABLE zz_o (id bigint(20) unsigned NOT NULL auto_increment, s varchar(20) NOT NULL default '', d datetime NOT NULL default '0000-00-00 00:00:00', PRIMARY KEY  (id), KEY s_d (s, d))"
+	},
+	{
+		sql: "INSERT INTO zz_o (s, d) VALUES ('publish', '2026-01-01 00:00:00'), ('publish', '2026-01-01 00:00:00'), ('draft', '2026-01-01 00:00:00')"
+	},
+	{
+		sql: "SELECT id FROM zz_o WHERE s IN ('publish', 'draft') ORDER BY d DESC",
+		known: 'order-ties'
+	},
+	{ sql: "SELECT id FROM zz_o WHERE s IN ('publish', 'draft') ORDER BY d DESC, id" },
+	{ sql: 'DROP TABLE zz_o' }
 ];

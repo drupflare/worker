@@ -44,6 +44,14 @@ row(
 	'the same text'
 );
 row(
+	'order-ties',
+	'semantics-changed',
+	'a SELECT with ORDER BY, where two rows compare equal on the sort key',
+	"SELECT ID FROM wp_posts WHERE post_status IN ('publish', 'draft') ORDER BY post_date DESC",
+	'the same text',
+	'MySQL does not promise an order for equal keys. Measured on MySQL 26.7, a backward read of the (type, status, date) index returns ties by primary key descending, and a filesort after a range over several statuses returns them by status, then primary key ascending. SQLite matches the first and differs on the second, so a LIMIT can keep other rows. Appending the primary key ascending fixes the second and breaks the first, which is the anonymous front page, so no key is appended'
+);
+row(
 	'union-having-subquery',
 	'supported',
 	'UNION, HAVING and subqueries',
@@ -361,10 +369,18 @@ row(
 row(
 	'insert-select-odku',
 	'refused',
-	'INSERT ... SELECT ... ON DUPLICATE KEY UPDATE',
+	'INSERT ... SELECT ... ON DUPLICATE KEY UPDATE that is not a no-op over a SELECT without a table',
 	'INSERT INTO t (k) SELECT k FROM u ON DUPLICATE KEY UPDATE k = 2',
 	'error 1235 (refused: insert-select-odku)',
 	'SQLite needs WHERE true to disambiguate the clause, and the affected-row count has no probe'
+);
+row(
+	'insert-select-odku-noop',
+	'semantics-changed',
+	'INSERT ... SELECT ... FROM DUAL ... ON DUPLICATE KEY UPDATE k = VALUES(k), where k is in every unique key the insert can conflict on',
+	'INSERT INTO t (k) SELECT 1 FROM DUAL WHERE 1 = 1 ON DUPLICATE KEY UPDATE k = VALUES(k)',
+	'INSERT INTO `t` (`k`) SELECT 1 WHERE 1 = 1 ON CONFLICT DO NOTHING',
+	'the update writes the key it matched on, so a conflict changes nothing and both servers answer 0 rows. Only a key that differs from the stored one in case differs: MySQL rewrites the stored key and answers 2, SQLite keeps it and answers 0'
 );
 row(
 	'insert-set',
@@ -419,12 +435,27 @@ row(
 	'UPDATE `t` SET `a` = 1 WHERE rowid IN (SELECT rowid FROM `t` ORDER BY b LIMIT 2) AND (...)'
 );
 row(
+	'update-join',
+	'translated',
+	'UPDATE of one table joined to other tables or derived tables with JOIN or a comma list',
+	'UPDATE t a JOIN (SELECT k FROM u ORDER BY k LIMIT 2) b ON a.k = b.k SET a.x = 1',
+	'UPDATE `t` AS `a` SET `x` = 1 FROM (SELECT k FROM u ORDER BY k LIMIT 2) AS `b` WHERE (a.k = b.k) AND (`a`.`x` IS NOT (1) COLLATE BINARY)'
+);
+row(
+	'update-join-correlated',
+	'semantics-changed',
+	'an UPDATE with a join whose SET expression reads a column of a joined table',
+	'UPDATE t a JOIN u b ON a.k = b.k SET a.x = b.y',
+	'UPDATE `t` AS `a` SET `x` = b.y FROM `u` AS `b` WHERE (a.k = b.k) AND (...)',
+	'when one target row matches several joined rows, MySQL and SQLite each take the values of one of them and neither says which, so the two can pick different rows. Only a qualified read is detected; a join on a unique key matches one row and behaves the same'
+);
+row(
 	'update-multi-table',
 	'refused',
-	'UPDATE with a table list or a JOIN',
-	'UPDATE a, b SET a.x = b.x WHERE a.id = b.id',
+	'UPDATE that assigns a column of a joined table, uses an outer or natural join, JOIN ... USING, or ORDER BY or LIMIT with a join',
+	'UPDATE a JOIN b ON a.id = b.id SET b.x = a.x',
 	'error 1235 (refused: update-multi-table)',
-	'SQLite UPDATE names one table; a rewrite needs a correlated subquery per assignment'
+	'SQLite UPDATE ... FROM changes only its target table, and an outer join, USING or a column list that cannot be attributed to the target has no equal rewrite'
 );
 row(
 	'update-sequential-assign',
@@ -504,6 +535,21 @@ row(
 	'a month or year step past a short month overflows in SQLite and clamps in MySQL; a DATE input gains a time part'
 );
 row(
+	'fn-field',
+	'semantics-changed',
+	'FIELD(s, s1, s2, ...), as WP_Query orderby post__in sends it',
+	'SELECT FIELD(ID, 6, 4, 5) FROM t',
+	'SELECT CASE (ID) WHEN (6) THEN 1 WHEN (4) THEN 2 WHEN (5) THEN 3 ELSE 0 END AS `FIELD(ID, 6, 4, 5)` FROM t',
+	'SQLite compares two strings with no column collation byte for byte where MySQL ignores case; numbers and columns compare as in MySQL'
+);
+row(
+	'fn-length',
+	'translated',
+	'LENGTH(s), the length in bytes',
+	'SELECT LENGTH(option_value) FROM t',
+	'SELECT length(CAST((option_value) AS BLOB)) AS `LENGTH(option_value)` FROM t'
+);
+row(
 	'values-function',
 	'refused',
 	'VALUES(col) outside ON DUPLICATE KEY UPDATE',
@@ -533,7 +579,7 @@ row(
 	'any function outside the translator table',
 	'SELECT LOWER(a) FROM t',
 	'error 1235 (refused: function-unknown)',
-	'a function SQLite also has can differ (LOWER is ASCII only, LENGTH counts characters), so each is added when a corpus needs it'
+	'a function SQLite also has can differ (LOWER is ASCII only), so each is added when a corpus needs it'
 );
 // #endregion
 
@@ -606,11 +652,18 @@ row(
 );
 row(
 	'locking-read-nowait',
-	'refused',
-	'FOR UPDATE NOWAIT and SKIP LOCKED',
+	'semantics-changed',
+	'FOR UPDATE NOWAIT and SKIP LOCKED are dropped',
 	'SELECT a FROM t FOR UPDATE SKIP LOCKED',
-	'error 1235 (refused: locking-read-nowait)',
-	'there is never another lock holder to skip, and a caller expecting a skipped row would be wrong'
+	'SELECT a FROM t',
+	'there is no second connection and no open transaction (START TRANSACTION is refused), so no row is ever locked by someone else: NOWAIT never fails with 3572 and SKIP LOCKED never skips'
+);
+row(
+	'from-dual',
+	'translated',
+	'SELECT ... FROM DUAL',
+	'SELECT 1 FROM DUAL WHERE 1 = 1',
+	'SELECT 1 WHERE 1 = 1'
 );
 row(
 	'match-against',

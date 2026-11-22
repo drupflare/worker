@@ -607,9 +607,28 @@ class Rewriter {
 			this.note('locking-read');
 			this.lockRead = true;
 			const end = after + 1;
-			const mod = upper(this.tokens[this.next(end, to)]);
-			if (mod === 'NOWAIT' || mod === 'SKIP') throw new Refusal('locking-read-nowait', mod);
+			const modAt = this.next(end, to);
+			const mod = upper(this.tokens[modAt]);
+			if (mod === 'NOWAIT') {
+				this.note('locking-read-nowait');
+				return modAt + 1;
+			}
+			if (mod === 'SKIP') {
+				const lockedAt = this.next(modAt + 1, to);
+				if (upper(this.tokens[lockedAt]) !== 'LOCKED') {
+					throw new Refusal('syntax-error', "near 'SKIP'", 1064, '42000');
+				}
+				this.note('locking-read-nowait');
+				return lockedAt + 1;
+			}
 			return end;
+		}
+		if (up === 'FROM' && upper(this.tokens[after]) === 'DUAL') {
+			const tail = this.next(after + 1, to);
+			if (tail < 0 || this.text(tail) !== '.') {
+				this.note('from-dual');
+				return after + 1;
+			}
 		}
 		if (up === 'LOCK' && upper(this.tokens[after]) === 'IN') {
 			const a = this.next(after + 1, to);
@@ -623,6 +642,7 @@ class Rewriter {
 		if (up === 'LIMIT') return this.limit(out, i, to);
 		if (up === 'ORDER' && upper(this.tokens[after]) === 'BY' && this.depth === 0) {
 			this.orderMark ??= out.length;
+			this.note('order-ties');
 		}
 		if (up === 'UNION' && this.depth === 0) this.unionSeen = true;
 		if (up === 'LIKE') return this.like(out, i, to);
@@ -888,6 +908,22 @@ class Rewriter {
 				}
 				return close + 1;
 			}
+			case 'FIELD': {
+				if (args.length < 2) throw new Refusal('function-form', 'FIELD arguments');
+				this.note('fn-field');
+				out.push('CASE (', ...trimmed(arg(0)), ')');
+				for (let n = 1; n < args.length; n++) {
+					out.push(' WHEN (', ...trimmed(arg(n)), `) THEN ${n}`);
+				}
+				out.push(' ELSE 0 END');
+				return close + 1;
+			}
+			case 'LENGTH': {
+				if (args.length !== 1) throw new Refusal('function-form', 'LENGTH arguments');
+				this.note('fn-length');
+				out.push('length(CAST((', ...trimmed(arg(0)), ') AS BLOB))');
+				return close + 1;
+			}
 			case 'VALUES': {
 				if (this.valuesMode !== 'excluded' || args.length !== 1) {
 					throw new Refusal(
@@ -1150,6 +1186,20 @@ function coerce(
 		}
 	}
 	return undefined;
+}
+
+/** the parsed sources of a multi-table UPDATE */
+interface UpdateJoin {
+	/** the target's alias, when it has one */
+	alias: string | undefined;
+	/** each joined source as SQLite text, with its alias */
+	sources: Part[][];
+	/** the ON conditions of the inner joins */
+	conditions: Part[][];
+	/** lower-cased names a SET expression can use to read a joined source */
+	joined: string[];
+	/** the significant index of SET */
+	setAt: number;
 }
 
 class StatementTranslator {
@@ -1752,18 +1802,30 @@ class StatementTranslator {
 		if (kw === 'SET') throw new Refusal('insert-set', name);
 		if (kw === 'SELECT' || this.at(n)?.text === '(') {
 			this.note('insert-select');
-			if (this.find(n, ['ON']) >= 0 && this.find(n, ['DUPLICATE']) >= 0) {
-				throw new Refusal('insert-select-odku', name);
-			}
+			const onAt = this.find(n, ['ON']);
+			const odku = onAt >= 0 && this.word(onAt + 1) === 'DUPLICATE';
+			if (odku) this.insertSelectOdku(name, schema, columns, n, onAt);
 			const out: Part[] = [head];
 			if (columns !== undefined) out.push(` (${columns.map(quoteName).join(', ')})`);
 			out.push(' ');
 			const selectOut: Part[] = [];
-			r.emit(selectOut, this.sig[n] as number, this.tokens.length);
+			r.emit(
+				selectOut,
+				this.sig[n] as number,
+				odku ? (this.sig[onAt] as number) : this.tokens.length
+			);
+			if (odku) selectOut.push(' ON CONFLICT DO NOTHING');
+			const autoCol = schema?.columns.find((c) => c.autoIncrement);
+			const listed = columns ?? schema?.columns.map((c) => c.name) ?? [];
+			let insertId: InsertIdMode = 'none';
+			if (autoCol !== undefined) {
+				const given = listed.some((c) => c.toLowerCase() === autoCol.name.toLowerCase());
+				insertId = given ? 'explicit' : 'generated';
+			}
 			return {
 				kind: 'write',
 				steps: [finish([...out, ...selectOut], this.state)],
-				insertId: 'none',
+				insertId,
 				rows: 0
 			};
 		}
@@ -1893,6 +1955,59 @@ class StatementTranslator {
 			insertId,
 			tuples.length
 		);
+	}
+
+	/** checks that an INSERT ... SELECT ... ON DUPLICATE KEY UPDATE can only ever be a no-op on conflict */
+	private insertSelectOdku(
+		name: string,
+		schema: TableSchema | undefined,
+		columns: string[] | undefined,
+		n: number,
+		onAt: number
+	): void {
+		const r = this.r;
+		const refuse = (): never => {
+			throw new Refusal('insert-select-odku', name);
+		};
+		if (this.word(onAt + 2) !== 'KEY' || this.word(onAt + 3) !== 'UPDATE') {
+			throw new Refusal('syntax-error', 'ON DUPLICATE', 1064, '42000');
+		}
+		if (schema === undefined) return refuse();
+		const from = this.find(n + 1, ['FROM'], onAt);
+		if (from >= 0 && this.word(from + 1) !== 'DUAL') refuse();
+		const have = new Set(
+			(columns ?? schema.columns.map((c) => c.name)).map((c) => c.toLowerCase())
+		);
+		const candidates = schema.indexes.filter(
+			(x) =>
+				(x.kind === 'primary' || x.kind === 'unique') &&
+				x.parts.every((p) => have.has(p.name.toLowerCase()))
+		);
+		const assigned: string[] = [];
+		for (const [a, b] of r.ranges(this.sig[onAt + 4] as number, this.tokens.length)) {
+			const eq = this.eqIndex(a, b);
+			if (eq < 0) throw new Refusal('syntax-error', 'ON DUPLICATE KEY UPDATE', 1064, '42000');
+			const sig = (x: number, y: number) =>
+				this.tokens
+					.slice(x, y)
+					.filter((t) => t.type !== 'whitespace' && t.type !== 'comment');
+			const lhs = sig(a, eq);
+			const rhs = sig(eq + 1, b);
+			const col = identName(lhs[lhs.length - 1] as Token).toLowerCase();
+			const same =
+				rhs.length === 4 &&
+				upper(rhs[0]) === 'VALUES' &&
+				rhs[1]?.text === '(' &&
+				rhs[3]?.text === ')' &&
+				identName(rhs[2] as Token).toLowerCase() === col;
+			if (!same) refuse();
+			assigned.push(col);
+		}
+		for (const x of candidates) {
+			const cols = x.parts.map((p) => p.name.toLowerCase());
+			if (!assigned.every((c) => cols.includes(c))) refuse();
+		}
+		this.note('insert-select-odku-noop');
 	}
 
 	private odku(
@@ -2040,13 +2155,16 @@ class StatementTranslator {
 		}
 		const { name, next } = this.tableName(n);
 		n = next;
-		if (this.word(n) !== 'SET') {
-			throw new Refusal('update-multi-table', name);
-		}
+		const join = this.word(n) === 'SET' ? undefined : this.updateSources(name, n);
+		if (join !== undefined) n = join.setAt;
 		const setIndex = this.sig[n] as number;
 		const clauses = this.clauses(setIndex);
+		if (join !== undefined && (clauses.ORDER !== undefined || clauses.LIMIT !== undefined)) {
+			throw new Refusal('update-multi-table', `${name}: ORDER BY or LIMIT`);
+		}
 		const setEnd = Math.min(...Object.values(clauses).map((c) => c[0]), this.tokens.length);
 		const schema = schemaOf(this.state, name);
+		const target = join?.alias ?? name;
 		const defs = new Map(schema?.columns.map((c) => [c.name.toLowerCase(), c]) ?? []);
 		const assigns = r.ranges(setIndex + 1, setEnd);
 		const sets: { col: string; expr: Part[] }[] = [];
@@ -2059,6 +2177,20 @@ class StatementTranslator {
 				.slice(a, eq)
 				.filter((t) => t.type !== 'whitespace' && t.type !== 'comment');
 			const col = identName(colTokens[colTokens.length - 1] as Token);
+			if (join !== undefined) {
+				const at = colTokens.length;
+				const qualifier =
+					at >= 3 && colTokens[at - 2]?.text === '.'
+						? identName(colTokens[at - 3] as Token).toLowerCase()
+						: undefined;
+				const known = defs.has(col.toLowerCase());
+				const mine =
+					qualifier === undefined
+						? known
+						: qualifier === target.toLowerCase() && (schema === undefined || known);
+				if (!mine)
+					throw new Refusal('update-multi-table', `${name}: assigns ${qualifier ?? col}`);
+			}
 			for (let i = eq + 1; i < b; i++) {
 				const t = this.tokens[i] as Token;
 				const followedByParen = this.text2(this.r.next(i + 1, b)) === '(';
@@ -2067,7 +2199,23 @@ class StatementTranslator {
 					!followedByParen &&
 					assigned.includes(identName(t).toLowerCase())
 				) {
-					throw new Refusal('update-sequential-assign', identName(t));
+					const owner = this.r.prev(i - 1, eq + 1);
+					const dotted = owner >= 0 && this.text2(owner) === '.';
+					const qualifier = dotted ? this.r.prev(owner - 1, eq + 1) : -1;
+					const foreign =
+						join !== undefined &&
+						qualifier >= 0 &&
+						identName(this.tokens[qualifier] as Token).toLowerCase() !==
+							target.toLowerCase();
+					if (!foreign) throw new Refusal('update-sequential-assign', identName(t));
+				}
+				if (
+					join !== undefined &&
+					(t.type === 'identifier' || t.type === 'quoted_identifier') &&
+					this.text2(this.r.next(i + 1, b)) === '.' &&
+					join.joined.includes(identName(t).toLowerCase())
+				) {
+					this.note('update-join-correlated');
 				}
 			}
 			assigned.push(col.toLowerCase());
@@ -2089,7 +2237,9 @@ class StatementTranslator {
 		}
 		row++;
 		this.note('update');
-		const out: Part[] = [ignore ? 'UPDATE OR IGNORE ' : 'UPDATE ', quoteName(name), ' SET '];
+		const out: Part[] = [ignore ? 'UPDATE OR IGNORE ' : 'UPDATE ', quoteName(name)];
+		if (join?.alias !== undefined) out.push(` AS ${quoteName(join.alias)}`);
+		out.push(' SET ');
 		sets.forEach((s, i) => {
 			if (i > 0) out.push(', ');
 			out.push(`${quoteName(s.col)} = `, ...s.expr);
@@ -2098,6 +2248,29 @@ class StatementTranslator {
 			clauses.WHERE === undefined
 				? []
 				: this.trimParts(r.emitRange(clauses.WHERE[0] + 1, clauses.WHERE[1]));
+		if (join !== undefined) {
+			out.push(' FROM ');
+			join.sources.forEach((s, i) => {
+				if (i > 0) out.push(', ');
+				out.push(...s);
+			});
+			out.push(' WHERE ');
+			for (const c of [...join.conditions, ...(where.length > 0 ? [where] : [])]) {
+				out.push('(', ...c, ') AND ');
+			}
+			out.push('(');
+			sets.forEach((s, i) => {
+				if (i > 0) out.push(' OR ');
+				out.push(
+					`${quoteName(target)}.${quoteName(s.col)} IS NOT (`,
+					...s.expr,
+					') COLLATE BINARY'
+				);
+			});
+			out.push(')');
+			this.note('update-join');
+			return { kind: 'write', steps: [finish(out, this.state)], insertId: 'none', rows: 0 };
+		}
 		const hasLimit = clauses.LIMIT !== undefined;
 		const limitParts = hasLimit
 			? this.trimParts(r.emitRange(clauses.LIMIT![0] + 1, clauses.LIMIT![1]))
@@ -2127,6 +2300,132 @@ class StatementTranslator {
 		});
 		out.push(')');
 		return { kind: 'write', steps: [finish(out, this.state)], insertId: 'none', rows: 0 };
+	}
+
+	/** the sources after the target of a multi-table UPDATE, and the target's alias */
+	private updateSources(name: string, from: number): UpdateJoin {
+		const r = this.r;
+		const sig = this.sig.map((i) => this.tokens[i] as Token);
+		const ends = new Set([
+			'JOIN',
+			'INNER',
+			'CROSS',
+			'LEFT',
+			'RIGHT',
+			'NATURAL',
+			'STRAIGHT_JOIN'
+		]);
+		const stop = new Set([...ends, 'SET', 'OUTER', 'FULL', 'ON', 'USING', 'WHERE']);
+		const refuse = (why: string): never => {
+			throw new Refusal('update-multi-table', `${name}: ${why}`);
+		};
+		const aliasAt = (n: number): { alias?: string; next: number } => {
+			const k = this.word(n) === 'AS' ? n + 1 : n;
+			const t = this.at(k);
+			const named =
+				t?.type === 'quoted_identifier' ||
+				(t?.type === 'identifier' && !stop.has(upper(t)));
+			if (t !== undefined && named) return { alias: identName(t), next: k + 1 };
+			if (k !== n) throw new Refusal('syntax-error', 'UPDATE alias', 1064, '42000');
+			return { next: n };
+		};
+		const first = aliasAt(from);
+		const joined: string[] = [];
+		const sources: Part[][] = [];
+		const conditions: Part[][] = [];
+		let n = first.next;
+		while (this.word(n) !== 'SET') {
+			const w = this.word(n);
+			const lead = this.at(n);
+			if (lead === undefined) throw new Refusal('syntax-error', 'UPDATE', 1064, '42000');
+			let inner = false;
+			if (lead.text === ',') {
+				n++;
+			} else if (w === 'JOIN') {
+				n++;
+				inner = true;
+			} else if ((w === 'INNER' || w === 'CROSS') && this.word(n + 1) === 'JOIN') {
+				n += 2;
+				inner = true;
+			} else if (['LEFT', 'RIGHT', 'NATURAL', 'STRAIGHT_JOIN', 'OUTER', 'FULL'].includes(w)) {
+				refuse(`${w} join`);
+			} else {
+				throw new Refusal('syntax-error', `near '${lead.text}'`, 1064, '42000');
+			}
+			const t = this.at(n);
+			if (t?.type === 'punct' && t.text === '(') {
+				const close = matchingParen(sig, n);
+				if (close < 0) throw new Refusal('syntax-error', 'UPDATE', 1064, '42000');
+				const open = this.sig[n] as number;
+				const end = this.sig[close] as number;
+				const body = r.emitRange(open, end + 1);
+				if (this.orderedLimit(open, end)) this.note('order-ties');
+				const a = aliasAt(close + 1);
+				if (a.alias === undefined) {
+					throw new Refusal(
+						'syntax-error',
+						'every derived table needs an alias',
+						1248,
+						'42000'
+					);
+				}
+				sources.push([...body, ` AS ${quoteName(a.alias)}`]);
+				joined.push(a.alias.toLowerCase());
+				n = a.next;
+			} else {
+				const ref = this.tableName(n);
+				const a = aliasAt(ref.next);
+				sources.push([
+					`${quoteName(ref.name)}${a.alias === undefined ? '' : ` AS ${quoteName(a.alias)}`}`
+				]);
+				joined.push((a.alias ?? ref.name).toLowerCase());
+				n = a.next;
+			}
+			if (this.word(n) === 'USING') refuse('JOIN ... USING');
+			if (inner && this.word(n) === 'ON') {
+				let depth = 0;
+				let stopAt = this.sig.length;
+				for (let k = n + 1; k < this.sig.length; k++) {
+					const x = this.at(k) as Token;
+					if (x.type === 'punct' && x.text === '(') depth++;
+					else if (x.type === 'punct' && x.text === ')') depth--;
+					else if (depth === 0 && x.text === ',') {
+						stopAt = k;
+						break;
+					} else if (depth === 0 && (ends.has(upper(x)) || upper(x) === 'SET')) {
+						const call =
+							this.at(k + 1)?.text === '(' && !['JOIN', 'SET'].includes(upper(x));
+						if (call) continue;
+						stopAt = k;
+						break;
+					}
+				}
+				const a = this.sig[n + 1] as number;
+				const b =
+					stopAt < this.sig.length ? (this.sig[stopAt] as number) : this.tokens.length;
+				conditions.push(this.trimParts(r.emitRange(a, b)));
+				n = stopAt;
+			}
+		}
+		return { alias: first.alias, sources, conditions, joined, setAt: n };
+	}
+
+	/** whether the parenthesised range holds a SELECT with both ORDER BY and LIMIT at its own level */
+	private orderedLimit(open: number, end: number): boolean {
+		let depth = 0;
+		let order = false;
+		let limit = false;
+		for (let i = open; i <= end; i++) {
+			const t = this.tokens[i] as Token;
+			if (t.type === 'punct' && t.text === '(') depth++;
+			else if (t.type === 'punct' && t.text === ')') depth--;
+			else if (depth === 1 && t.type === 'identifier') {
+				const up = t.text.toUpperCase();
+				if (up === 'ORDER' && upper(this.tokens[this.r.next(i + 1)]) === 'BY') order = true;
+				if (up === 'LIMIT') limit = true;
+			}
+		}
+		return order && limit;
 	}
 
 	private text2(i: number): string {

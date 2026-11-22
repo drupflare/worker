@@ -296,6 +296,7 @@ export function auditedRoute(
 				: params.get('after') === null;
 			break;
 		case '/__writemark':
+		case '/__wp-packages':
 			audited = write;
 			break;
 		// the manifest reads counts; the body is the data leaving

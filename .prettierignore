@@ -15,6 +15,7 @@ TECHNICAL_REPORT.md
 experiments/
 tests/fixtures/unicode-corpus.json
 src/ops/generated/
+src/wordpress/generated/
 src/site/generated/assets.ts
 src/site/html/
 scripts/generated/

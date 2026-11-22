@@ -183,6 +183,7 @@ describe('which calls are recorded', () => {
 		['/__install', 'POST', '', '/__install'],
 		['/__install-lock', 'POST', '', '/__install-lock'],
 		['/__install-lock', 'DELETE', 'session=0123456789abcdef', '/__install-lock'],
+		['/__wp-packages', 'POST', 'op=install&slug=classic-editor', '/__wp-packages?op=install'],
 		['/__enable', 'POST', 'module=x', '/__enable'],
 		['/__modify', 'POST', 'action=commit', '/__modify?action=commit'],
 		['/__restore', 'POST', '', '/__restore'],

@@ -115,6 +115,8 @@ export const OWNER_ROUTES = new Set([
 	'/installable',
 	'/install',
 	'/install-lock',
+	// WordPress plugin and theme install, rollback and delete; the files it stores run as code
+	'/wp-packages',
 	'/enable',
 	// site maintenance (cache purge, migration, fill); the owner token is per site, the flag is not
 	'/armfill',
@@ -203,6 +205,7 @@ export const DO_ROUTE: Record<string, string> = {
 	'/installable': '/__installable',
 	'/install': '/__install',
 	'/install-lock': '/__install-lock',
+	'/wp-packages': '/__wp-packages',
 	'/writes': '/__writes',
 	'/replica': '/__replica',
 	'/files': '/__files',

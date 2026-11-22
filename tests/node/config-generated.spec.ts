@@ -1,7 +1,14 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readModulesConfig, readQuotasConfig, renderModules } from '../../scripts/gen-config';
+import {
+	readModulesConfig,
+	readQuotasConfig,
+	readWpPackagesConfig,
+	renderModules,
+	renderWpPackages
+} from '../../scripts/gen-config';
 import { censusPackages } from '../../scripts/install-census';
 import { PREFILL_PATHS } from '../../scripts/lift-prefill';
 import { FREE_QUOTAS } from '../../scripts/measure/free-envelope';
@@ -9,6 +16,7 @@ import { TRAFFIC_MIX } from '../../scripts/measure/verdict-math';
 import { CRON_HOOKS, KNOWN_CRON_HOOKS } from '../../src/ops/cron';
 import { SHIPPING_PACK_CONTRIB, moduleTable } from '../../src/ops/module-table';
 import { MODULE_TIER_NOTES } from '../../src/ops/module-tiers';
+import { compareVersions, resolvePinned } from '../../src/wordpress/registry';
 
 /**
  * `config/modules.yml` is the declaration; `src/ops/generated/modules.ts` is what the edge reads.
@@ -115,5 +123,45 @@ describe('the generated module config', () => {
 				name
 			);
 		}
+	});
+});
+
+describe('the generated WordPress package registry', () => {
+	it('is what config/wp-plugins.yml renders to', () => {
+		expect(
+			readFileSync(resolve(ROOT, 'src', 'wordpress', 'generated', 'packages.ts'), 'utf8'),
+			'src/wordpress/generated/packages.ts is stale; run `bun run gen:config`'
+		).toBe(renderWpPackages(readWpPackagesConfig()));
+	});
+
+	it('reaches the resolver, which takes the highest pinned version', () => {
+		const declared = readWpPackagesConfig();
+		const versions = Object.keys(declared['classic-editor']?.versions ?? {});
+		const pinned = resolvePinned('classic-editor');
+		expect('error' in pinned).toBe(false);
+		expect((pinned as { version: string }).version).toBe(
+			versions.sort((a, b) => compareVersions(a, b)).at(-1)
+		);
+	});
+
+	const read = (kind: string, digest: string) => {
+		const file = join(mkdtempSync(join(tmpdir(), 'wp-registry-')), 'wp-plugins.yml');
+		writeFileSync(
+			file,
+			`packages:\n  demo:\n    kind: ${kind}\n    licence: GPL-2.0-or-later\n    versions:\n      1.0.0:\n        digest: ${digest}\n        php: 7.4\n`
+		);
+		return () => readWpPackagesConfig(file);
+	};
+
+	it('accepts a well-formed entry', () => {
+		expect(read('plugin', `sha256:${'a'.repeat(64)}`)()).toHaveProperty('demo');
+	});
+
+	it('rejects a digest that is not sha256', () => {
+		expect(read('plugin', 'md5:abc')).toThrow(/no sha256 digest/);
+	});
+
+	it('rejects a kind that is neither plugin nor theme', () => {
+		expect(read('widget', `sha256:${'a'.repeat(64)}`)).toThrow(/not plugin or theme/);
 	});
 });

@@ -51,6 +51,7 @@ import { replica } from './replica';
 import { restoreParts } from './restore-parts';
 import { queue, serve, serveStats } from './serve';
 import { spool } from './spool';
+import { wppackages } from './wordpress-packages';
 import { mirror, savenode, txnprobe, writes, writeworkload } from './writes';
 
 /** a Durable Object route handler */
@@ -88,6 +89,7 @@ export const ROUTES: Record<string, Route> = {
 	'/__installable': installable,
 	'/__install': install,
 	'/__install-lock': installLock,
+	'/__wp-packages': wppackages,
 	'/__replica': replica,
 	'/__writemark': writemark,
 	'/__writechanges': writechanges,

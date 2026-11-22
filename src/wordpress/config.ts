@@ -24,7 +24,40 @@ export interface WpConfigValues {
 	salts: Readonly<Record<(typeof SALT_NAMES)[number], string>>;
 	/** the table prefix the baked database uses */
 	tablePrefix?: string;
+	/** how many outbound requests one WordPress request may make; the host plugin counts them */
+	httpBudget?: number;
+	/** extra constants an owner sets; a name only a network uses is refused */
+	constants?: Readonly<Record<string, string | number | boolean>>;
 }
+
+/** the constants that turn Multisite on or describe a network, none of which a site may set */
+export const MULTISITE_CONSTANTS = [
+	'MULTISITE',
+	'WP_ALLOW_MULTISITE',
+	'SUBDOMAIN_INSTALL',
+	'DOMAIN_CURRENT_SITE',
+	'PATH_CURRENT_SITE',
+	'SITE_ID_CURRENT_SITE',
+	'BLOG_ID_CURRENT_SITE',
+	'NOBLOGREDIRECT',
+	'SUNRISE'
+] as const;
+
+/** the config builder refused a constant */
+export class WpConfigRefused extends Error {}
+
+/** the refusal for a Multisite constant, or undefined for any other name */
+function refusedConstant(name: string): string | undefined {
+	return (MULTISITE_CONSTANTS as readonly string[]).includes(name.toUpperCase())
+		? `${name} is refused: WordPress Multisite is not supported, because each site has its own database and one pinned address`
+		: undefined;
+}
+
+/** outbound requests per request when the plan names none; the free plan allows 50 subrequests */
+export const DEFAULT_HTTP_BUDGET = 30;
+
+/** outbound requests per request on a paid plan, which allows 1,000 subrequests */
+export const PAID_HTTP_BUDGET = 500;
 
 /**
  * Eight salts from one per-site secret, one HMAC each, so the secret stays the only stored value
@@ -63,10 +96,24 @@ export function wpConfigText(values: WpConfigValues): string {
 		define('WP_SITEURL', values.origin),
 		define('DISALLOW_FILE_MODS', true),
 		define('DISABLE_WP_CRON', true),
-		define('WP_HTTP_BLOCK_EXTERNAL', true),
+		define('CONCATENATE_SCRIPTS', false),
+		`define( 'DRUPFLARE_HTTP_BUDGET', ${values.httpBudget ?? DEFAULT_HTTP_BUDGET} );`,
 		define('WP_DEBUG', false),
 		define('WP_CACHE', false),
 		define('FS_METHOD', 'direct'),
+		...Object.entries(values.constants ?? {}).map(([name, value]) => {
+			const refusal = refusedConstant(name);
+			if (refusal !== undefined) throw new WpConfigRefused(refusal);
+			if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+				throw new WpConfigRefused(`${name} is not a constant name`);
+			}
+			if (typeof value === 'number') {
+				if (!Number.isFinite(value))
+					throw new WpConfigRefused(`${name} is not a finite number`);
+				return `define( '${name}', ${String(value)} );`;
+			}
+			return define(name, value);
+		}),
 		"if ( ! defined( 'ABSPATH' ) ) {",
 		"\tdefine( 'ABSPATH', __DIR__ . '/' );",
 		'}',

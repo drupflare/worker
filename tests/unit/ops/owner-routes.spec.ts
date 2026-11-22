@@ -29,6 +29,7 @@ const OWNER_ONLY = [
 	'/updb',
 	'/modify',
 	'/install-lock',
+	'/wp-packages',
 	'/mirror',
 	'/offloaded',
 	'/writemark',

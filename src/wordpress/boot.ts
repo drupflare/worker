@@ -1,10 +1,12 @@
 import { mountDrupalLazy, mountRecord } from '@drupflare/cartridge/fs';
 import { assetRequestCounts, packCachedEnv, type SiteMountInfo } from '../do/lazy-mount';
 import type { SiteBinary } from '../do/types';
+import { isPaid } from '../ops/plan';
 import { ensureHashSalt } from '../ops/site-secrets';
 import type { SitePhpDurableObject } from '../site-do';
-import { deriveSalts, wpConfigText } from './config';
+import { DEFAULT_HTTP_BUDGET, deriveSalts, PAID_HTTP_BUDGET, wpConfigText } from './config';
 import { DRIVER_DIGEST } from './driver-digest';
+import { mountOverlay } from './overlay';
 import { DIGEST_KEY, setOriginOptions } from './provision';
 
 /** where the tree is mounted; the cartridge mounts under `/drupal` and the boot moves it */
@@ -89,6 +91,7 @@ export async function bootWordpressTree(
 	const res = await mountEnv.ASSETS.fetch(new URL(`https://a.local/${PREFIX.driver}`));
 	if (!res.ok) throw new Error(`${PREFIX.driver} not reachable: ${res.status}`);
 	mountRecord(binary.FS, await res.json<Record<string, string>>(), WORDPRESS_ROOT);
+	mountOverlay(site, binary, WORDPRESS_ROOT);
 
 	if (site.metaGet(DIGEST_KEY) !== DRIVER_DIGEST) site.metaSet(DIGEST_KEY, DRIVER_DIGEST);
 
@@ -97,6 +100,10 @@ export async function bootWordpressTree(
 	setOriginOptions(site, origin);
 	binary.FS.writeFile(
 		`${WORDPRESS_ROOT}/wp-config.php`,
-		wpConfigText({ origin, salts: deriveSalts(ensureHashSalt(site.secretStore())) })
+		wpConfigText({
+			origin,
+			salts: deriveSalts(ensureHashSalt(site.secretStore())),
+			httpBudget: isPaid(site.env) ? PAID_HTTP_BUDGET : DEFAULT_HTTP_BUDGET
+		})
 	);
 }

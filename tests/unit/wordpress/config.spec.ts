@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { DB_NAME, SALT_NAMES, deriveSalts, wpConfigText } from '../../../src/wordpress/config';
+import {
+	DB_NAME,
+	MULTISITE_CONSTANTS,
+	SALT_NAMES,
+	WpConfigRefused,
+	deriveSalts,
+	wpConfigText
+} from '../../../src/wordpress/config';
 import { phpQuoted } from '../../../src/wordpress/site-php';
 
 const salts = Object.fromEntries(SALT_NAMES.map((name, i) => [name, `salt-${i}`])) as Record<
@@ -27,7 +34,8 @@ define( 'WP_HOME', 'https://site.example:8443' );
 define( 'WP_SITEURL', 'https://site.example:8443' );
 define( 'DISALLOW_FILE_MODS', true );
 define( 'DISABLE_WP_CRON', true );
-define( 'WP_HTTP_BLOCK_EXTERNAL', true );
+define( 'CONCATENATE_SCRIPTS', false );
+define( 'DRUPFLARE_HTTP_BUDGET', 30 );
 define( 'WP_DEBUG', false );
 define( 'WP_CACHE', false );
 define( 'FS_METHOD', 'direct' );
@@ -66,10 +74,60 @@ describe('wp-config.php', () => {
 		}
 		expect(text).toContain("define( 'DISALLOW_FILE_MODS', true );");
 		expect(text).toContain("define( 'DISABLE_WP_CRON', true );");
-		// the curl shim lacks the constants WordPress's transport test reads, so a request would fatal
-		expect(text).toContain("define( 'WP_HTTP_BLOCK_EXTERNAL', true );");
+		expect(text).toContain("define( 'CONCATENATE_SCRIPTS', false );");
 		expect(text).toContain("define( 'WP_DEBUG', false );");
 		expect(DB_NAME).toBe('wordpress');
+	});
+
+	it('does not block external requests, because the host plugin answers them', () => {
+		const text = wpConfigText({ origin: 'https://s.example', salts });
+		expect(text).not.toContain('BLOCK_EXTERNAL');
+		expect(text).toContain("define( 'DRUPFLARE_HTTP_BUDGET', 30 );");
+	});
+
+	it('takes the request budget from the plan', () => {
+		const text = wpConfigText({ origin: 'https://s.example', salts, httpBudget: 500 });
+		expect(text).toContain("define( 'DRUPFLARE_HTTP_BUDGET', 500 );");
+	});
+});
+
+describe('constants an owner sets', () => {
+	const build = (constants: Record<string, string | number | boolean>) =>
+		wpConfigText({ origin: 'https://s.example', salts, constants });
+
+	it('are written after the platform ones and before WordPress loads', () => {
+		const text = build({ WP_POST_REVISIONS: 5, WP_MEMORY_LIMIT: '256M', EMPTY_TRASH_DAYS: 0 });
+		expect(text).toContain("define( 'WP_POST_REVISIONS', 5 );");
+		expect(text).toContain("define( 'WP_MEMORY_LIMIT', '256M' );");
+		expect(text.indexOf('WP_POST_REVISIONS')).toBeGreaterThan(text.indexOf("'FS_METHOD'"));
+		expect(text.indexOf('EMPTY_TRASH_DAYS')).toBeLessThan(text.indexOf('wp-settings.php'));
+	});
+
+	it.each(MULTISITE_CONSTANTS)('refuses %s by name', (name) => {
+		expect(() => build({ [name]: true })).toThrow(WpConfigRefused);
+		expect(() => build({ [name]: true })).toThrow(/Multisite is not supported/);
+	});
+
+	it('refuses a Multisite name in any letter case, since PHP constants are case sensitive but a typo is not a pass', () => {
+		expect(() => build({ multisite: true })).toThrow(WpConfigRefused);
+		expect(() => build({ Wp_Allow_Multisite: 'true' })).toThrow(WpConfigRefused);
+	});
+
+	it('refuses a name PHP cannot define and a number it cannot write', () => {
+		expect(() => build({ 'A B': 1 })).toThrow(/not a constant name/);
+		expect(() => build({ X: Number.NaN })).toThrow(/finite/);
+	});
+
+	it('never names a Multisite constant unless the owner did, which is refused', () => {
+		expect(wpConfigText({ origin: 'https://s.example', salts })).not.toMatch(
+			/MULTISITE|SUNRISE/
+		);
+	});
+
+	it('leaves the golden text alone when there are none', () => {
+		expect(wpConfigText({ origin: 'https://s.example', salts, constants: {} })).toBe(
+			wpConfigText({ origin: 'https://s.example', salts })
+		);
 	});
 });
 

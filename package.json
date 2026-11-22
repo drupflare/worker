@@ -2,6 +2,10 @@
 	"private": true,
 	"name": "@drupflare/worker",
 	"version": "1.1.0",
+	"schema": {
+		"version": 7,
+		"accepts": 7
+	},
 	"type": "module",
 	"description": "Hosting on Cloudflare Workers",
 	"module": "src/index.js",

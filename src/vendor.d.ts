@@ -46,6 +46,13 @@ declare module '*.mjs' {
 }
 
 /**
+ * The root `package.json`, of which `src/ops/discovery.ts` reads only the `schema` field.
+ */
+declare module '*/package.json' {
+	export const schema: { version: number; accepts: number };
+}
+
+/**
  * JSPI as the probes read it; absent from `lib.dom` and workers-types (flagged proposal), so guard
  * every use with `typeof`.
  */

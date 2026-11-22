@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+	contractMsFor,
 	digest,
 	expectation,
 	frontPage,
 	judgeAnswer,
+	judgeContract,
 	judgeError,
 	judgePrivate,
 	judgeQuietWrite,
@@ -16,6 +18,7 @@ import {
 	sameStable,
 	spread,
 	tokensOf,
+	undated,
 	WRITES
 } from '../../scripts/wp/cache-soak-core';
 
@@ -201,6 +204,64 @@ describe('the cache soak', () => {
 		expect(sameStable(run, { ...run, violations: ['publish took 11200 ms'] })).toBe(true);
 		expect(sameStable(run, { ...run, logDigest: 'abd' })).toBe(false);
 		expect(sameStable(run, { ...run, storedPaths: ['/', '/a/'] })).toBe(false);
+	});
+
+	it('ignores the date a permalink carries when two runs straddle midnight', () => {
+		const run = {
+			seed: 1,
+			operations: 10,
+			byKind: {},
+			writesByKind: {},
+			logDigest: 'abc',
+			violations: [],
+			storedPaths: ['/', '/2026/11/21/a/', '/2026/11/']
+		};
+		const next = { ...run, storedPaths: ['/', '/2026/11/22/a/', '/2026/11/'] };
+		expect(sameStable(run, next)).toBe(true);
+		expect(
+			sameStable(run, { ...next, storedPaths: ['/', '/2026/11/22/b/', '/2026/11/'] })
+		).toBe(false);
+		expect(undated('read|/2026/11/21/a/|200')).toBe(undated('read|/2026/11/22/a/|200'));
+		expect(undated('read|/2026/11/21/a/|200')).not.toBe(undated('read|/2026/11/22/b/|200'));
+	});
+
+	it('bounds write-to-fresh by the routes a confirm reads', () => {
+		expect([1, 4, 6, 20].map(contractMsFor)).toEqual([3000, 6000, 8000, 22000]);
+	});
+
+	it('judges a confirm within and over its bound and names the route count', () => {
+		expect(judgeContract('publish', 8000, 6)).toBeUndefined();
+		expect(judgeContract('publish', 9100, 6)).toBe(
+			'publish took 9,100 ms for 6 routes, over the 8,000 ms bound'
+		);
+		expect(judgeContract('edit', 6001, 4)).toContain('for 4 routes');
+		expect(judgeContract('edit', 6000, 4)).toBeUndefined();
+	});
+
+	it('bounds a wholesale purge by the stored rows it refills when they outnumber the routes read', () => {
+		expect(judgeContract('option-change', 9702, 4, undefined, 18)).toBeUndefined();
+		expect(judgeContract('option-change', 20001, 4, undefined, 18)).toBe(
+			'option-change took 20,001 ms for 4 routes read behind 18 stored rows, over the 20,000 ms bound'
+		);
+		expect(judgeContract('option-change', 6001, 4, undefined, 2)).toContain('for 4 routes,');
+	});
+
+	it('holds every confirm to one flat figure when an override is set', () => {
+		expect(judgeContract('publish', 9100, 6, 10000)).toBeUndefined();
+		expect(judgeContract('trash', 3500, 1, 3000)).toBe(
+			'trash took 3,500 ms for 1 routes, over the 3,000 ms flat override'
+		);
+		expect(judgeContract('publish', 9100, 6, Number.NaN)).toContain('8,000 ms bound');
+		const run = {
+			seed: 1,
+			operations: 1,
+			byKind: {},
+			writesByKind: {},
+			logDigest: 'a',
+			violations: [judgeContract('publish', 9100, 6) ?? ''],
+			storedPaths: []
+		};
+		expect(sameStable(run, { ...run, violations: [] })).toBe(true);
 	});
 
 	it('digests a body the same way twice and summarises a spread', () => {

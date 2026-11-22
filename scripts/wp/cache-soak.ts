@@ -24,6 +24,7 @@ import {
 	digest,
 	frontPage,
 	judgeAnswer,
+	judgeContract,
 	judgeError,
 	judgePrivate,
 	judgeQuietWrite,
@@ -40,6 +41,7 @@ import {
 	type StoredRow,
 	tierOf,
 	tokensOf,
+	undated,
 	WRITES
 } from './cache-soak-core';
 
@@ -49,7 +51,8 @@ const arg = (name: string, fallback: string): string =>
 const OPERATIONS_COUNT = Number(arg('operations', '4400'));
 const SEED = Number(arg('seed', '1'));
 const PORT = Number(process.env.SOAK_PORT ?? 8795);
-const CONTRACT_MS = Number(process.env.SOAK_CONTRACT_MS ?? 10_000);
+const CONTRACT_OVERRIDE_MS =
+	process.env.SOAK_CONTRACT_MS === undefined ? undefined : Number(process.env.SOAK_CONTRACT_MS);
 const PLAN = process.env.SOAK_PLAN === 'paid' ? 'paid' : 'free';
 const FRESH_LIMIT_MS = Number(process.env.SOAK_FRESH_LIMIT_MS ?? 45_000);
 const AGED_WINDOW_MS = 62_000;
@@ -520,7 +523,12 @@ async function execute(seed: number, label: string): Promise<Run> {
 		// #endregion
 
 		// #region confirming a write: every affected route must be right within the contract
-		const confirm = async (kind: string, routesToCheck: string[], wrote: number) => {
+		const confirm = async (
+			kind: string,
+			routesToCheck: string[],
+			wrote: number,
+			storedBefore?: number
+		) => {
 			for (const r of routesToCheck) gone(r);
 			const pending = new Set(routesToCheck);
 			let lastWhy = '';
@@ -602,11 +610,15 @@ async function execute(seed: number, label: string): Promise<Run> {
 			const worst = Math.max(0, ...(timed.freshMs[kind] ?? []).slice(-routesToCheck.length));
 			const load = loadavg()[0] ?? 0;
 			(timed.load[kind] ??= []).push(load);
-			if (worst > CONTRACT_MS)
-				note(
-					`${kind} took ${worst} ms, over the ${CONTRACT_MS} ms contract ` +
-						`(load average ${load.toFixed(1)} on ${cpus().length} cores)`
-				);
+			const over = judgeContract(
+				kind,
+				worst,
+				routesToCheck.length,
+				CONTRACT_OVERRIDE_MS,
+				storedBefore
+			);
+			if (over !== undefined)
+				note(`${over} (load average ${load.toFixed(1)} on ${cpus().length} cores)`);
 		};
 		// #endregion
 
@@ -749,11 +761,17 @@ async function execute(seed: number, label: string): Promise<Run> {
 					const name = `Soak ${token()}`;
 					model.gone.push(model.blogname);
 					model.blogname = name;
+					const stored = (await storedRows()).length;
 					const r = await rest('/wp-json/wp/v2/settings', 'POST', { title: name });
 					const t = Date.now();
 					wholesaleUntil = t + AGED_WINDOW_MS;
 					log.push(`write|option-change|${r.status}`);
-					await confirm(kind, ['/', '/sample-page/', model.posts[1]!.route, '/feed/'], t);
+					await confirm(
+						kind,
+						['/', '/sample-page/', model.posts[1]!.route, '/feed/'],
+						t,
+						stored
+					);
 					break;
 				}
 				case 'theme-switch': {
@@ -773,11 +791,12 @@ async function execute(seed: number, label: string): Promise<Run> {
 					}
 					const url = `/wp-admin/${link[0].replaceAll('&amp;', '&').replaceAll('&#038;', '&')}`;
 					model.theme = target;
+					const stored = (await storedRows()).length;
 					const r = await raw(url, { headers: { cookie } });
 					const t = Date.now();
 					wholesaleUntil = t + AGED_WINDOW_MS;
 					log.push(`write|theme-switch|${target}|${r.status}`);
-					await confirm(kind, ['/', '/sample-page/', model.posts[1]!.route], t);
+					await confirm(kind, ['/', '/sample-page/', model.posts[1]!.route], t, stored);
 					break;
 				}
 				case 'menu-edit': {
@@ -1096,7 +1115,7 @@ async function execute(seed: number, label: string): Promise<Run> {
 			operations: OPERATIONS_COUNT,
 			byKind,
 			writesByKind,
-			logDigest: digest(log.join('\n')),
+			logDigest: digest(undated(log.join('\n'))),
 			violations,
 			storedPaths
 		};
@@ -1125,7 +1144,7 @@ for (const label of labels) runs.push(await execute(SEED, label));
 
 const report = {
 	figures: `local: wrangler dev on this machine, PLAN ${PLAN}, WORDPRESS_PAGE_CACHE 1`,
-	contractMs: CONTRACT_MS,
+	contractMs: CONTRACT_OVERRIDE_MS ?? 'per route: 1000 ms each plus 2000 ms',
 	host: { cores: cpus().length, loadAverageAtEnd: loadavg()[0] },
 	runs: runs.map((r) => ({
 		stable: r.stable,

@@ -274,10 +274,43 @@ export function judgeQuietWrite(
 	return found;
 }
 
+/** a text with every dated permalink prefix (year, month, day archives) reduced to one token */
+export function undated(text: string): string {
+	return text.replace(/\/\d{4}(?:\/\d{2}){0,2}\//g, '/DATE/');
+}
+
 /** whether two runs of one seed agree on every figure the clock does not decide */
 export function sameStable(a: Stable, b: Stable): boolean {
-	const figures = ({ violations: _violations, ...rest }: Stable) => JSON.stringify(rest);
+	const figures = ({ violations: _violations, storedPaths, ...rest }: Stable) =>
+		JSON.stringify({ ...rest, storedPaths: storedPaths.map(undated) });
 	return figures(a) === figures(b);
+}
+
+/** the write-to-fresh bound in ms for a confirm that reads this many routes, one render each in series */
+export function contractMsFor(routes: number): number {
+	return 1000 * routes + 2000;
+}
+
+/** the violation text for a confirm that ran over its bound, or undefined when it did not */
+export function judgeContract(
+	kind: string,
+	worstMs: number,
+	routes: number,
+	overrideMs?: number,
+	storedRows?: number
+): string | undefined {
+	const flat = overrideMs !== undefined && Number.isFinite(overrideMs);
+	const renders = Math.max(routes, storedRows ?? 0);
+	const bound = flat ? overrideMs : contractMsFor(renders);
+	if (worstMs <= bound) return undefined;
+	const n = (v: number) => v.toLocaleString('en-US');
+	const what =
+		renders > routes
+			? `${routes} routes read behind ${renders} stored rows`
+			: `${routes} routes`;
+	return flat
+		? `${kind} took ${n(worstMs)} ms for ${what}, over the ${n(bound)} ms flat override`
+		: `${kind} took ${n(worstMs)} ms for ${what}, over the ${n(bound)} ms bound`;
 }
 
 /** the median and extremes of a list of numbers, or undefined when it is empty */

@@ -400,6 +400,91 @@ describe('the box bundle on the release', () => {
 });
 
 /**
+ * The release manifest and the dashboard announcement.
+ *
+ * The manifest is built before anything is published, so a refused build stops the release. The
+ * announcement is its own job after the release exists: it needs a published manifest URL, and a
+ * missing secret there must show red without holding back the deploy-path check.
+ */
+describe('the release manifest and the release announcement', () => {
+	const byFile = (file: string) => workflows().find((w) => w.file === file)?.doc as Workflow;
+	type Steps = NonNullable<Workflow['jobs'][string]['steps']>;
+	const steps = (name: string) => byFile('release.yml').jobs[name]?.steps as Steps;
+	const at = (list: Steps, name: string) => list.findIndex((s) => s.name === name);
+	const text = () => readFileSync(join(DIR, 'release.yml'), 'utf8');
+
+	it('writes the manifest after the box bundle is summed and before anything is published', () => {
+		const payload = steps('payload');
+		const manifest = at(payload, 'Write the Release Manifest');
+		expect(payload[manifest]?.run).toContain('scripts/release-event.ts manifest');
+		expect(manifest).toBeGreaterThan(at(payload, 'Pack the Box Bundle'));
+		const publish = payload.findIndex((s) => (s.run ?? '').includes('publish-payload.ts'));
+		expect(publish).toBeGreaterThan(manifest);
+	});
+
+	it('hands the manifest to the publish job and puts it on the release', () => {
+		const read = steps('payload').find((s) => s.name === 'Read the Version')?.run ?? '';
+		expect(read).toContain('RELEASE_MANIFEST=drupflare-release-manifest-${VERSION}');
+		expect(text()).toContain('dist/${{ env.RELEASE_MANIFEST }}');
+		expect(text()).toContain('dist/drupflare-release-manifest-${{ env.VERSION }}');
+	});
+
+	it('announces in a job of its own, after the release, on master only', () => {
+		const job = byFile('release.yml').jobs['announce'] as unknown as {
+			needs: string;
+			if: string;
+			permissions: Record<string, string>;
+			steps: Steps;
+		};
+		expect(job.needs).toBe('publish');
+		expect(job.if).toContain("github.ref_name == 'master'");
+		expect(job.permissions).toEqual({ contents: 'read' });
+		const post = job.steps.find((s) => (s.run ?? '').includes('scripts/release-event.ts post'));
+		expect(post).toBeDefined();
+		expect(job.steps.indexOf(post!)).toBe(job.steps.length - 1);
+	});
+
+	it('takes the URL from a repository variable and the secret from a repository secret', () => {
+		const post = steps('announce').find((s) => s.name === 'Post the Release Event');
+		expect(post?.env?.['DASHBOARD_RELEASE_URL']).toBe('${{ vars.DASHBOARD_RELEASE_URL }}');
+		expect(post?.env?.['DASHBOARD_RELEASE_SECRET']).toBe(
+			'${{ secrets.DASHBOARD_RELEASE_SECRET }}'
+		);
+		expect(post?.run).not.toContain('secrets.');
+		expect(post?.run).not.toContain('--dry-run');
+		expect(post?.run).not.toContain('echo');
+	});
+
+	it('leaves the secret out of every other job and every other workflow', () => {
+		const doc = byFile('release.yml');
+		for (const [name, job] of Object.entries(doc.jobs)) {
+			if (name === 'announce') continue;
+			expect(JSON.stringify(job), name).not.toContain('DASHBOARD_RELEASE');
+		}
+		for (const { file, doc: other } of workflows()) {
+			if (file === 'release.yml') continue;
+			expect(JSON.stringify(other), file).not.toContain('DASHBOARD_RELEASE');
+			expect(runs(other), file).not.toContain('release-event.ts');
+		}
+	});
+
+	it('uses actions at a major tag and the latest Bun, with no comment inside the job', () => {
+		const job = byFile('release.yml').jobs['announce'] as unknown as { steps: Steps };
+		for (const step of job.steps) {
+			if (step.uses !== undefined && !step.uses.startsWith('./')) {
+				expect(step.uses, step.uses).toMatch(/@v\d+$/);
+			}
+		}
+		const bun = job.steps.find((s) => s.uses?.startsWith('oven-sh/setup-bun'));
+		expect(bun?.with?.['bun-version']).toBe('latest');
+		const source = text();
+		const from = source.indexOf('\n  announce:');
+		const block = source.slice(from, source.indexOf('\n  deploy-path:'));
+		expect(block.split('\n').filter((l) => l.trim().startsWith('#'))).toEqual([]);
+	});
+});
+
+/**
  * A cache key interpolating an empty step output does not fail; it becomes the constant prefix
  * before it. `drupal-${{ steps.drupalver.outputs.version }}` with no value is the key `drupal-`,
  * which `actions/cache` restores by prefix, so the job gets whichever tree was cached last under

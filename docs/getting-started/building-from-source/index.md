@@ -86,6 +86,29 @@ its checksum is a second line in `SHA256SUMS`, below the payload's. `hydrate` re
 line. GitHub release assets cannot be added after a release is cut, so v1.0.5's tarball and its own
 `drupflare-managed-bundle-1.0.5.SHA256SUMS` sit under `payloads/v1.0.5/` on the CDN instead.
 
+## The Release Announcement
+
+After the release is created, the `announce` job posts one signed event to the dashboard's release
+hook. It runs on `master` only. Before that, the payload job writes
+`drupflare-release-manifest-<version>.json` from `SHA256SUMS` with `scripts/release-event.ts
+manifest`: every release file with its URL and `sha256:` digest, plus the `schemaVersion` and
+`acceptsSchema` from the `schema` field of `package.json`. The manifest rides on the release.
+
+`scripts/release-event.ts post` builds the event (`release.published`, kind `worker`, the manifest's
+digest and URL), checks that the manifest URL serves the bytes it hashed, waiting up to 5 minutes for
+the release asset to appear, then sends the body with `x-drupflare-signature: sha256=<hex>`, an
+HMAC-SHA256 of the raw body. A body over 64 KiB is refused. The job needs two settings, and it stops
+before any request when either is missing:
+
+| name                       | kind                | holds                                           |
+| -------------------------- | ------------------- | ----------------------------------------------- |
+| `DASHBOARD_RELEASE_SECRET` | repository secret   | the shared key the dashboard verifies against   |
+| `DASHBOARD_RELEASE_URL`    | repository variable | the full https URL of `POST /api/hooks/release` |
+
+`bun scripts/release-event.ts post --dry-run ...` prints the event and sends nothing. The event id is
+`release-<tag>`, so a repeat is answered as a duplicate. A failed announcement turns the `announce`
+job red without holding back the deploy-path check.
+
 ## The Box Bundle
 
 A release also carries `drupflare-box-bundle-<version>.tar.gz`, the Worker a bastion box runs. It is

@@ -110,6 +110,7 @@ jobs:
             echo "PAYLOAD=drupflare-worker-${VERSION}.tar.gz"
             echo "BUNDLE=drupflare-managed-bundle-${VERSION}.tar.gz"
             echo "BOX=drupflare-box-bundle-${VERSION}.tar.gz"
+            echo "RELEASE_MANIFEST=drupflare-release-manifest-${VERSION}${{ github.event.inputs.suffix }}.json"
           } >> "$GITHUB_ENV"
       - name: Resolve Drupal Version
         id: drupalver
@@ -158,6 +159,8 @@ jobs:
           bun scripts/build-box-bundle.ts --outdir=dist/dry-run/wrangler --out=dist --version="$VERSION" --sums=dist/SHA256SUMS
           cd dist
           sha256sum -c SHA256SUMS
+      - name: Write the Release Manifest
+        run: bun scripts/release-event.ts manifest --dist=dist --tag="$TAG" --repo="$GITHUB_REPOSITORY"
       # AFTER the checks, not before them. A release prefix is what `hydrate` prefers over the
       # GitHub release, so publishing it early would leave a resolvable `payloads/v<version>/` for
       # a version whose checks then failed and which no release ever carried
@@ -195,6 +198,7 @@ jobs:
             dist/${{ env.PAYLOAD }}
             dist/${{ env.BUNDLE }}
             dist/${{ env.BOX }}
+            dist/${{ env.RELEASE_MANIFEST }}
             dist/SHA256SUMS
           retention-days: 1
           if-no-files-found: error
@@ -260,9 +264,40 @@ jobs:
             dist/drupflare-worker-${{ env.VERSION }}.tar.gz
             dist/drupflare-managed-bundle-${{ env.VERSION }}.tar.gz
             dist/drupflare-box-bundle-${{ env.VERSION }}.tar.gz
+            dist/drupflare-release-manifest-${{ env.VERSION }}${{ github.event.inputs.suffix }}.json
             dist/SHA256SUMS
           draft: false
           prerelease: ${{ github.ref_name != 'master' }}
+
+  announce:
+    name: Announce the Release to the Dashboard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: publish
+    if: ${{ github.ref_name == 'master' }}
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Collect the Payload the Previous Job Built
+        uses: actions/download-artifact@v8
+        with:
+          name: release-payload
+          path: dist
+      - name: Post the Release Event
+        env:
+          DASHBOARD_RELEASE_URL: ${{ vars.DASHBOARD_RELEASE_URL }}
+          DASHBOARD_RELEASE_SECRET: ${{ secrets.DASHBOARD_RELEASE_SECRET }}
+          SUFFIX: ${{ github.event.inputs.suffix }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          bun scripts/release-event.ts post --dist=dist --tag="v${VERSION}${SUFFIX}" --repo="$GITHUB_REPOSITORY"
 
   deploy-path:
     name: Verify the Published Deploy Path

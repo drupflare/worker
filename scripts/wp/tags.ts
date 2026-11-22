@@ -64,6 +64,8 @@ export interface ScenarioResult {
 	/** writes the host's floor would turn into a wholesale purge */
 	uncovered: string[];
 	failed: boolean;
+	/** what the scenario printed as JSON, such as the ids it created */
+	output: Record<string, unknown>;
 }
 
 /** how much of the site's error log a failed install quotes, from the end */
@@ -132,6 +134,12 @@ export async function startTagSite(prefix = 'wp-tags-'): Promise<TagSite> {
 
 /** one GET, and what the emitter said about the page; a ping after it completes the record */
 export async function renderPage(t: TagSite, path: string): Promise<PageTags> {
+	const { body: _body, ...page } = await renderBody(t, path);
+	return page;
+}
+
+/** {@link renderPage} with the markup the page answered */
+export async function renderBody(t: TagSite, path: string): Promise<PageTags & { body: string }> {
 	const first = t.host.requests.length;
 	const res = await httpGet(t.site, path);
 	await httpGet(t.site, '/__ping');
@@ -149,7 +157,8 @@ export async function renderPage(t: TagSite, path: string): Promise<PageTags> {
 		untaggable: end.untaggable === undefined ? 'no-emitter' : end.untaggable,
 		reasons: end.reasons ?? [],
 		readers: end.readers ?? [],
-		calls: record?.tagCalls ?? []
+		calls: record?.tagCalls ?? [],
+		body: res.body
 	};
 }
 
@@ -195,20 +204,29 @@ export function summarise(
 export async function runScenario(
 	t: TagSite,
 	scenario: string,
-	removeHook?: string
+	removeHook?: string,
+	env: Record<string, string> = {}
 ): Promise<ScenarioResult> {
 	const label = `scenario:${scenario}:${removeHook ?? ''}:${t.host.requests.length}`;
 	const run = await runPhp(t.site, [join(HERE, 'tags-scenario.php')], {
 		SCENARIO: scenario,
 		CFW_LABEL: label,
-		CFW_REMOVE_HOOK: removeHook ?? ''
+		CFW_REMOVE_HOOK: removeHook ?? '',
+		...env
 	});
 	const record = t.host.requests.find((r) => r.label === label);
+	let output: Record<string, unknown> = {};
+	try {
+		output = JSON.parse(run.stdout.trim().split('\n').pop() ?? '{}') as Record<string, unknown>;
+	} catch {
+		/* a scenario that failed before it printed has no result */
+	}
 	return {
 		scenario,
 		removed: removeHook,
 		...summarise(record),
-		failed: run.code !== 0
+		failed: run.code !== 0,
+		output
 	};
 }
 

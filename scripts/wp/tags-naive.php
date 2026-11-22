@@ -10,6 +10,16 @@ add_action('wp_footer', static function () {
 	if (isset($_GET['plugin_setting'])) {
 		get_option('my_plugin_setting');
 	}
+	if (isset($_GET['adjacent_term'])) {
+		get_adjacent_post(true);
+	}
+	if (isset($_GET['adjacent_excluded'])) {
+		get_adjacent_post(false, '1');
+	}
+	if (isset($_GET['adjacent_sorted'])) {
+		add_filter('get_previous_post_sort', static fn() => 'ORDER BY p.post_title DESC LIMIT 1');
+		get_adjacent_post();
+	}
 	if (isset($_GET['naive_table'])) {
 		$wpdb->get_results("SELECT 1 FROM {$wpdb->prefix}naive_votes LIMIT 1");
 	}

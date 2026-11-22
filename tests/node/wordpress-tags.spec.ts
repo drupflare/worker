@@ -8,6 +8,7 @@ import {
 	MU_DIR,
 	PAGE_PATHS,
 	purged,
+	renderBody,
 	renderPage,
 	rowsFor,
 	runScenario,
@@ -404,6 +405,354 @@ describe.skipIf(skip !== undefined)('wordpress cache tags across site shapes', (
 			expect(pages['/?author=1']!.tags.some((tag) => tag.startsWith('user:'))).toBe(true);
 			expect(pages['/?feed=comments-rss2']!.tags).toContain('comments');
 		});
+	}
+});
+
+/** the page of one post by id, which is the key the harness stores it under */
+const postPath = (id: number): string => `/?p=${id}`;
+
+/** the previous and next links a post page shows, as direction, target and title */
+function linksOf(body: string): string {
+	const out: string[] = [];
+	const link =
+		/<div class="post-navigation-link-(previous|next)[^"]*"[^>]*>.*?<a href="[^"]*?(\?p=\d+)"[^>]*>.*?post-navigation-link__title">([^<]*)</gs;
+	for (const m of body.matchAll(link)) out.push(`${m[1]}:${m[2]}:${m[3]}`);
+	return out.sort().join('|');
+}
+
+/** the handlers that name the published posts beside a post whose place in the order changed */
+const NEIGHBOUR_HANDLERS =
+	'drupflare_tags_on_transition_neighbours,drupflare_tags_on_post_updated,drupflare_tags_on_deleted_post';
+
+/**
+ * A new or removed post also changes its category's post count, which announces the category and
+ * so purges every page that loaded it. The runs that isolate the neighbour announce hold that one
+ * handler aside; a separate case below pins what it purges.
+ */
+const COUNT_HANDLER = 'drupflare_tags_on_edited_term_taxonomy';
+
+type Row = { id: number; date: string; status: string };
+type Step = { op: string; id?: number; date?: string; status?: string };
+
+describe.skipIf(skip !== undefined)('wordpress previous and next links on a real site', () => {
+	const CHAIN = 110;
+	const HELLO = 1;
+	const NEW_ID = 99_999_999;
+	let t: TagSite;
+	let chain: number[] = [];
+	const model = new Map<number, Row>();
+
+	const stamp = (offsetHours: number): string =>
+		new Date(Date.UTC(2015, 0, 1, 12) + offsetHours * 3_600_000)
+			.toISOString()
+			.slice(0, 19)
+			.replace('T', ' ');
+	const chainDate = (index: number): string => stamp((index + 1) * 24);
+	const between = (index: number): string => stamp((index + 1) * 24 + 6);
+	const key = (r: { id: number; date: string }): string =>
+		`${r.date}#${String(r.id).padStart(8, '0')}`;
+
+	/** the published posts either side of a place in date order, ties broken by id */
+	const beside = (date: string, id: number, except: number): number[] => {
+		const published = [...model.values()]
+			.filter((r) => r.status === 'publish' && r.id !== except)
+			.sort((a, b) => key(a).localeCompare(key(b)));
+		const at = key({ id, date });
+		const previous = [...published].reverse().find((r) => key(r) < at);
+		const next = published.find((r) => key(r) > at);
+		return [previous?.id, next?.id].filter((n): n is number => n !== undefined);
+	};
+
+	const snapshot = async (paths: string[]) => {
+		const out: Record<string, { tags: string[]; stored: boolean; links: string }> = {};
+		for (const path of paths) {
+			let page = await renderBody(t, path);
+			for (let i = 0; i < 3 && page.untaggable !== null && page.status === 200; i++) {
+				page = await renderBody(t, path);
+			}
+			out[path] = {
+				tags: page.tags,
+				stored: page.untaggable === null,
+				links: linksOf(page.body)
+			};
+		}
+		return out;
+	};
+
+	const act = (step: Step, hooks?: string) =>
+		runScenario(t, 'adjacent', hooks, { ARGS: JSON.stringify(step) });
+
+	/**
+	 * One event observed from a cache's side: the pages it holds before, which of them the announced
+	 * tags purge, and which pages would still show a link that is no longer true.
+	 */
+	const observe = async (step: Step, watch: number[], hooks?: string) => {
+		const paths = ['/', ...watch.map(postPath)];
+		const before = await snapshot(paths);
+		const run = await act(step, hooks);
+		expect(run.failed).toBe(false);
+		const stored: Record<string, string[]> = {};
+		for (const p of paths) if (before[p]!.stored) stored[p] = before[p]!.tags;
+		const outcome = purged(stored, run);
+		const newId = typeof run.output['id'] === 'number' ? run.output['id'] : undefined;
+		const after = await snapshot([...paths, ...(newId === undefined ? [] : [postPath(newId)])]);
+		const stale = paths.filter(
+			(p) =>
+				stored[p] !== undefined &&
+				!outcome.paths.includes(p) &&
+				before[p]!.links !== after[p]!.links
+		);
+		return { run, outcome, stale, wholesale: run.wholesale, newId };
+	};
+
+	beforeAll(async () => {
+		t = await startTagSite('wp-adjacent-');
+		const HERE = import.meta.dirname;
+		const theme = await runPhp(t.site, [join(HERE, '../../scripts/wp/tags-site.php')], {
+			SHAPE: 'theme',
+			THEME: 'twentytwentyfour',
+			CFW_LABEL: 'setup:adjacent-theme'
+		});
+		expect(theme.code).toBe(0);
+		const seed = await runScenario(t, 'adjacent-seed', undefined, { COUNT: String(CHAIN) });
+		chain = seed.output['ids'] as number[];
+		expect(chain).toHaveLength(CHAIN);
+		chain.forEach((id, i) => model.set(id, { id, date: chainDate(i), status: 'publish' }));
+		model.set(HELLO, { id: HELLO, date: '2999-01-01 00:00:00', status: 'publish' });
+		await snapshot(['/', postPath(chain[0]!)]);
+	}, 900_000);
+
+	afterAll(async () => {
+		await t?.stop();
+		if (t !== undefined) rmSync(t.site.dir, { recursive: true, force: true });
+	});
+
+	const c = (i: number): number => chain[i]!;
+	const far = (): number => c(60);
+
+	type Case = {
+		name: string;
+		/** the place in the order the event touches, for the posts that must be purged */
+		expected: () => number[];
+		watch: () => number[];
+		step: () => Step;
+		/** undoes the event after its control run so the real run starts from the same state */
+		undo?: (made: number | undefined) => Step;
+		setup?: () => Step;
+		apply: (made: number | undefined) => void;
+		/** whether the all-posts listing page is purged too */
+		listing: boolean;
+	};
+
+	const entersPublish = (step: Step): boolean =>
+		step.op === 'insert' ||
+		step.op === 'untrash' ||
+		step.op === 'move' ||
+		(step.op === 'status' && step.status === 'publish');
+	const status = (id: number, to: string): Step => ({
+		op: 'status',
+		id,
+		status: to,
+		date: model.get(id)!.date
+	});
+	const nearby = (i: number, n = 3): number[] =>
+		Array.from({ length: n * 2 + 1 }, (_, k) => c(i - n + k)).filter((id) => id !== undefined);
+
+	const cases: Case[] = [
+		{
+			name: 'publishing a new latest post',
+			expected: () => beside('2015-12-01 12:00:00', NEW_ID, 0),
+			watch: () => [...nearby(CHAIN - 1, 2), HELLO, far()],
+			step: () => ({ op: 'insert', date: '2015-12-01 12:00:00' }),
+			undo: (made) => ({ op: 'delete', id: made! }),
+			apply: (made) =>
+				model.set(made!, { id: made!, date: '2015-12-01 12:00:00', status: 'publish' }),
+			listing: true
+		},
+		{
+			name: 'publishing a post between two others by date',
+			expected: () => beside(between(20), NEW_ID, 0),
+			watch: () => nearby(20),
+			step: () => ({ op: 'insert', date: between(20) }),
+			undo: (made) => ({ op: 'delete', id: made! }),
+			apply: (made) => model.set(made!, { id: made!, date: between(20), status: 'publish' }),
+			listing: true
+		},
+		{
+			name: 'trashing a middle post',
+			expected: () => [c(30), ...beside(model.get(c(30))!.date, c(30), c(30))],
+			watch: () => nearby(30),
+			step: () => ({ op: 'trash', id: c(30) }),
+			undo: () => ({ op: 'untrash', id: c(30) }),
+			apply: () => void (model.get(c(30))!.status = 'trash'),
+			listing: true
+		},
+		{
+			name: 'trashing the first post',
+			expected: () => [c(0), ...beside(model.get(c(0))!.date, c(0), c(0))],
+			watch: () => [c(0), c(1), c(2), far()],
+			step: () => ({ op: 'trash', id: c(0) }),
+			undo: () => ({ op: 'untrash', id: c(0) }),
+			apply: () => void (model.get(c(0))!.status = 'trash'),
+			listing: true
+		},
+		{
+			name: 'trashing the last post',
+			expected: () => [HELLO, ...beside('2999-01-01 00:00:00', HELLO, HELLO)],
+			watch: () => [HELLO, ...beside('2999-01-01 00:00:00', HELLO, HELLO), far()],
+			step: () => ({ op: 'trash', id: HELLO }),
+			undo: () => ({ op: 'untrash', id: HELLO }),
+			apply: () => void (model.get(HELLO)!.status = 'trash'),
+			listing: true
+		},
+		{
+			name: 'moving a post past two neighbours',
+			expected: () => {
+				const from = model.get(c(45))!;
+				return [
+					c(45),
+					...beside(from.date, c(45), c(45)),
+					...beside(between(48), c(45), c(45))
+				];
+			},
+			watch: () => [...nearby(45, 2), ...nearby(49, 2)],
+			step: () => ({ op: 'move', id: c(45), date: between(48) }),
+			undo: () => ({ op: 'move', id: c(45), date: chainDate(45) }),
+			apply: () => void (model.get(c(45))!.date = between(48)),
+			listing: true
+		},
+		{
+			name: 'drafting a published post',
+			expected: () => [c(55), ...beside(model.get(c(55))!.date, c(55), c(55))],
+			watch: () => nearby(55),
+			step: () => status(c(55), 'draft'),
+			undo: () => status(c(55), 'publish'),
+			apply: () => void (model.get(c(55))!.status = 'draft'),
+			listing: true
+		},
+		{
+			name: 'restoring a post from the trash',
+			setup: () => ({ op: 'trash', id: c(65) }),
+			expected: () => [c(65), ...beside(model.get(c(65))!.date, c(65), c(65))],
+			watch: () => nearby(65),
+			step: () => ({ op: 'untrash', id: c(65) }),
+			undo: () => ({ op: 'trash', id: c(65) }),
+			apply: () => void (model.get(c(65))!.status = 'publish'),
+			listing: true
+		},
+		{
+			name: 'publishing a post dated the same as its neighbour',
+			expected: () => beside(chainDate(70), NEW_ID, 0),
+			watch: () => nearby(70),
+			step: () => ({ op: 'insert', date: chainDate(70) }),
+			undo: (made) => ({ op: 'delete', id: made! }),
+			apply: (made) =>
+				model.set(made!, { id: made!, date: chainDate(70), status: 'publish' }),
+			listing: true
+		},
+		{
+			name: 'making a published post private',
+			expected: () => [c(95), ...beside(model.get(c(95))!.date, c(95), c(95))],
+			watch: () => nearby(95),
+			step: () => status(c(95), 'private'),
+			undo: () => status(c(95), 'publish'),
+			apply: () => void (model.get(c(95))!.status = 'private'),
+			listing: true
+		}
+	];
+
+	for (const spec of cases) {
+		it(`${spec.name}: purges the post and the two neighbours and keeps every link current`, async () => {
+			if (spec.setup !== undefined) await act(spec.setup());
+			const expectedIds = [...new Set(spec.expected())];
+			const watch = [...new Set([...spec.watch(), ...expectedIds])];
+
+			const control = await observe(
+				spec.step(),
+				watch,
+				`${COUNT_HANDLER},${NEIGHBOUR_HANDLERS}`
+			);
+			if (entersPublish(spec.step())) {
+				expect(
+					control.stale.length,
+					'without the neighbour announce a link goes stale'
+				).toBeGreaterThan(0);
+			} else {
+				expect(
+					control.stale,
+					'a post that leaves is covered by its own tag on the pages that linked to it'
+				).toEqual([]);
+			}
+			await act(spec.undo!(control.newId));
+
+			const real = await observe(spec.step(), watch, COUNT_HANDLER);
+			expect(real.stale, 'every link a cache would still serve is current').toEqual([]);
+			const posts = real.outcome.paths.filter((p) => p !== '/');
+			expect(posts.sort()).toEqual(expectedIds.map(postPath).sort());
+			expect(real.outcome.paths.includes('/')).toBe(spec.listing);
+			expect(real.outcome.paths).not.toContain(postPath(far()));
+			expect(real.wholesale).toEqual([]);
+			expect(real.run.uncovered.filter((table) => table !== 'term_taxonomy')).toEqual([]);
+			spec.apply(real.newId);
+		}, 600_000);
+	}
+
+	it('a new post still purges every page that loaded its category, since the category count changed', async () => {
+		const watch = [...nearby(105), far()];
+		const result = await observe({ op: 'insert', date: between(105) }, watch);
+		expect(result.stale).toEqual([]);
+		expect(result.run.announced).toEqual(expect.arrayContaining(['term:1', 'terms:category']));
+		expect(result.outcome.paths).toContain(postPath(far()));
+		model.set(result.newId!, { id: result.newId!, date: between(105), status: 'publish' });
+	}, 300_000);
+
+	it('a post whose password changes purges the pages that link to it, with no neighbour announce', async () => {
+		const target = c(80);
+		const watch = [...nearby(80), far()];
+		const result = await observe({ op: 'password', id: target }, watch);
+		expect(result.stale).toEqual([]);
+		expect(result.outcome.paths.filter((p) => p !== '/').sort()).toEqual(
+			[c(79), c(80), c(81)].map(postPath).sort()
+		);
+		expect(result.outcome.paths).not.toContain(postPath(far()));
+	}, 300_000);
+
+	it('a new private post purges no post page and leaves every link current', async () => {
+		const watch = [...nearby(90), far()];
+		const result = await observe({ op: 'insert', status: 'private', date: between(90) }, watch);
+		expect(result.stale).toEqual([]);
+		expect(result.outcome.paths).toEqual([]);
+	}, 300_000);
+
+	it('a retitled post purges its own page and the two pages that link to it, and no others', async () => {
+		const watch = [...nearby(100), far()];
+		const result = await observe({ op: 'title', id: c(100) }, watch);
+		expect(result.stale).toEqual([]);
+		const posts = result.outcome.paths.filter((p) => p !== '/').sort();
+		expect(posts).toEqual([c(99), c(100), c(101)].map(postPath).sort());
+	}, 300_000);
+
+	it('tags a plain adjacent-post read with the links of its own post and not the table', async () => {
+		const page = await renderBody(t, postPath(c(40)));
+		const again = await renderBody(t, postPath(c(40)));
+		expect(again.untaggable).toBeNull();
+		expect(again.readers).toContain('get_adjacent_post');
+		expect(again.tags).not.toContain('posts');
+		expect(again.tags).toContain(`post_links:${c(40)}`);
+		expect(again.tags).toEqual(
+			expect.arrayContaining([c(40), c(39), c(41)].map((id) => `post:${id}`))
+		);
+		expect(page.status).toBe(200);
+	}, 120_000);
+
+	for (const variant of ['adjacent_term', 'adjacent_excluded', 'adjacent_sorted']) {
+		it(`keeps the table-wide tag when a plugin reads adjacent posts with ${variant}`, async () => {
+			const path = `${postPath(c(41))}&${variant}=1`;
+			await renderBody(t, path);
+			const page = await renderBody(t, path);
+			expect(page.untaggable).toBeNull();
+			expect(page.tags).toContain('posts');
+		}, 120_000);
 	}
 });
 

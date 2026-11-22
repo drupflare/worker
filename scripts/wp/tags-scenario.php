@@ -90,6 +90,69 @@ switch ($scenario) {
 	case 'cron':
 		$result['scheduled'] = wp_schedule_single_event(time() + 3600, 'drupflare_test_event');
 		break;
+	case 'adjacent-seed':
+		// a run of published posts a day apart, oldest first, whose previous and next links the events change
+		$ids = [];
+		for ($i = 1; $i <= (int) getenv('COUNT'); $i++) {
+			$ids[] = wp_insert_post([
+				'post_title' => 'Chain ' . $i,
+				'post_content' => 'chain ' . $i,
+				'post_status' => 'publish',
+				'post_date' => gmdate('Y-m-d H:i:s', strtotime('2015-01-01 12:00:00') + $i * 86400),
+			]);
+		}
+		$result['ids'] = $ids;
+		break;
+	case 'adjacent':
+		// one event on the run of posts: ARGS is {"op": ..., "id": ..., "date": ..., "status": ...}
+		$args = json_decode((string) getenv('ARGS'), true);
+		$id = (int) ($args['id'] ?? 0);
+		$date = (string) ($args['date'] ?? '');
+		switch ($args['op']) {
+			case 'insert':
+				$result['id'] = wp_insert_post([
+					'post_title' => 'Added ' . bin2hex(random_bytes(3)),
+					'post_content' => 'added',
+					'post_status' => $args['status'] ?? 'publish',
+					'post_date' => $date,
+				]);
+				break;
+			case 'status':
+				$update = ['ID' => $id, 'post_status' => $args['status']];
+				if ($date !== '') {
+					$update['post_date'] = $date;
+					$update['post_date_gmt'] = get_gmt_from_date($date);
+				}
+				$result['id'] = wp_update_post($update);
+				break;
+			case 'trash':
+				$result['trashed'] = (bool) wp_trash_post($id);
+				break;
+			case 'untrash':
+				add_filter('wp_untrash_post_status', static fn() => 'publish');
+				$result['restored'] = (bool) wp_untrash_post($id);
+				break;
+			case 'delete':
+				$result['deleted'] = (bool) wp_delete_post($id, true);
+				break;
+			case 'move':
+				$result['id'] = wp_update_post([
+					'ID' => $id,
+					'post_date' => $date,
+					'post_date_gmt' => get_gmt_from_date($date),
+				]);
+				break;
+			case 'password':
+				$result['id'] = wp_update_post(['ID' => $id, 'post_password' => 'secret']);
+				break;
+			case 'title':
+				$result['id'] = wp_update_post(['ID' => $id, 'post_title' => 'Retitled']);
+				break;
+			default:
+				fwrite(STDERR, "unknown adjacent op\n");
+				exit(2);
+		}
+		break;
 	case 'naive-write':
 		// a plugin that writes a content table without a WordPress API; this file is outside ABSPATH
 		$result['rows'] = $wpdb->query(

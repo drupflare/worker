@@ -119,6 +119,19 @@ That makes it a `workflow_dispatch` shape with a credential and a human deciding
 a nightly. `scripts/measure/read-tail-cpu.mjs` is the reader; the readings live in
 `TECHNICAL_REPORT.md`.
 
+### Route Peaks
+
+`bun scripts/measure/route-peaks.ts` drives a fixed route set for WordPress or Drupal, each drive from
+a recycled interpreter, and prints one row per route with n, min, p50 and max. An empty cell is a dash
+with its count beside it, never a zero.
+
+A drive fails when the object's isolate id changes or an in-memory counter falls during or right after
+the route, or when a failed answer carries the memory-limit message. The linear peak comes from the
+object's demand log, so it leaves out the JavaScript side of the isolate and is not the platform meter.
+Only a deployed run reads the meter and `cpuTime`. `--margin-mib` and `--warn-share` have no default:
+without them the script prints counts and no share, and with them it prints the arithmetic and no
+verdict. `--dry` lists the routes and the request count without touching a site.
+
 ## Running It
 
 ```sh

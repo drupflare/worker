@@ -140,7 +140,8 @@ reads it, and it is not on `KV_OVERRIDABLE`: a wrong stored page is a wrong answ
 A response is stored only when every rule below passes, and each rule is a named row in
 `src/wordpress/store-rule.ts` with a test that removes it and shows the case then gets through.
 
-- The request is an anonymous `GET` with no cookie, no `Authorization` and none of the headers that
+- The request is an anonymous `GET` with no cookie (analytics and consent cookies are dropped first,
+  see Cookies), no `Authorization` and none of the headers that
   change a body (`Forwarded`, `X-Forwarded-Server`, `X-Original-URL`, `X-HTTP-Method-Override` and
   similar). `X-Forwarded-Host`, `X-Forwarded-For` and `X-Forwarded-Proto` are not on that list:
   proxies and `wrangler dev` add them, and the pinned origin keeps them out of the body.
@@ -160,4 +161,66 @@ A response is stored only when every rule below passes, and each rule is a named
 
 `/wp-json/` and `?rest_route=` are refused. REST collections vary by authentication and some carry
 nonces; storing one needs a per-route allow-list, a check that the route is anonymous, and tags per
-collection.
+collection. Sitemaps, `wp-cron.php` and any path under `wp-*` are refused by the same rule, so each
+request renders.
+
+### Purges and Stale Copies
+
+A write purges the pages that carry the tags it announced. A write nobody announced purges every
+stored page, and structural changes (theme, menus, widgets, core options) do the same by design.
+
+The host checks each run's writes against its announcements, and calls a write nobody announced a
+floor purge. For `wp_posts` and `wp_postmeta` it reads the post ids out of the statement when the
+`WHERE` clause is a plain conjunction on `ID` or `post_id` (an `=` or an `IN` list), or from the id the
+database reports for a single-row insert. Such a write counts as announced only when a `post:<id>` tag
+came for every one of those ids, so a tag for one post no longer covers a write to another. Any other
+statement shape (an `OR`, a subselect, a join, a different key column, more than 100 ids) falls back
+to the table family check: a tag of a family the table feeds covers it.
+
+A floor purge is still wholesale. The host does not know which listings a post it never saw belongs
+to, so it cannot name a smaller set of tags. `/serve-stats` reports `floorPurges` and the tables behind
+the last one under `wordpressTags`. A wholesale purge marks every stored page superseded and queues
+refills for them.
+
+`NEVER_STALE` and the previous-generation tier of `PAGE_KV` do not apply to WordPress. A trashed or
+unpublished post renders a 404 that is never stored, so nothing would replace its old copy in `PAGE_KV`
+and the post would stay visible. After a purge the front worker therefore waits for a render. The
+object still answers a page marked superseded by a wholesale purge for up to `AGED_SERVE_MAX_MS`
+(60 seconds by default), and says so with `x-cfw-cache: AGED`.
+
+An isolate learns a new generation within its pointer window, so another colo can answer the old page
+for a few seconds after a write.
+
+### Validators
+
+A stored page answers with `ETag: "wp-<render time>"`, and a matching `If-None-Match` gets a 304 with
+no body. A copy that spool has decorated carries `W/"wp-<render time>"`, and the two forms never
+validate each other. A refill changes the render time, so a client holding a purged copy always
+fetches. An `AGED` answer carries no validator.
+
+### Cookies
+
+A request is read against three groups of cookie names.
+
+- Login and personal cookies (`wordpress_logged_in_*`, `wordpress_sec_*`, `wordpress_*`,
+  `wp-settings-*`, `wp-postpass_*`, `comment_author_*`) make the request authenticated. It renders for
+  that visitor, spends the authenticated allowance on the free plan, and is never answered from or
+  stored in a shared tier.
+- Analytics and consent cookies never change what WordPress renders: Google Analytics (`_ga`,
+  `_ga_<id>`, `_gid`, `_gat*`, `_gcl_*`, `__utm*`), `_fbp` and `_fbc`, Hotjar, Matomo, Microsoft
+  Clarity, the Cloudflare cookies `__cf_bm`, `_cfuvid` and `cf_clearance`, and the consent cookies of
+  GDPR Cookie Consent, Cookiebot, Complianz, CookieYes, OneTrust, Borlabs and Moove. A request that
+  carries only these is the anonymous request. The front worker drops them before it asks any tier, so
+  the stored page is the one a visitor with no cookie gets, and a visitor with `_ga` and one without
+  read and fill the same entry. The names are anchored patterns in `src/ops/auth-budget.ts`, so a
+  look-alike such as `_ga_session_admin` stays in the third group.
+- Every other name is unclassified. The request is treated as authenticated (no shared tier, no store,
+  the allowance applies) because a plugin cookie such as a cart can make the page per visitor.
+  `/serve-stats` reports these under `unclassifiedCookies`: the request count, the count per name for
+  the first 32 names seen, and the requests whose names did not fit.
+
+An analytics cookie beside a login or an unclassified cookie changes nothing: the request keeps all of
+its cookies and stays per visitor. `wordpress_test_cookie` is kept on every request, because
+`wp-login.php` fails without it. A consent plugin that reads its own cookie on the server and prints
+different markup for it would see no cookie from a visitor who carries only consent cookies, so the
+page such a visitor gets is the one a visitor who has not answered the banner gets.

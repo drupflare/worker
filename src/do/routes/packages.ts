@@ -10,6 +10,7 @@ import { ENABLE_MODULE, ENABLE_VERIFY } from '../../drupal/enable-php';
 import { FILES_PROBE } from '../../drupal/files-php';
 import { BOOT_KERNEL } from '../../drupal/site-php';
 import { hasApi, readHookEvent, verifyHook } from '../../ops/git-provider';
+import { sourceBytes } from '../../ops/module-bytes';
 import type { Registry } from '../../ops/package-install';
 import { derivativeUri } from '../../ops/render-lane';
 import { maySafelyRepair } from '../../ops/repair';
@@ -19,6 +20,7 @@ import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
 import { jsonError } from '../../util/reply';
 import { firstRow } from '../../util/sql';
+import { GIT_TOKEN_HEADER } from '../git';
 import { installLockPost, installLockRollback } from '../install-lock';
 import { lazyMountBytes } from '../lazy-mount';
 import type { Row } from '../types';
@@ -41,7 +43,13 @@ export async function git(
 	if (!ownerOk && !diagnostics) {
 		return jsonError('owner token required', 401);
 	}
-	return site.handleGit(url, site.canonicalOrigin(url.origin));
+	// the token in this header serves this one call; the finally clears it before anything else runs
+	site.gitCallToken = request.headers.get(GIT_TOKEN_HEADER)?.trim() || undefined;
+	try {
+		return await site.handleGit(url, site.canonicalOrigin(url.origin));
+	} finally {
+		site.gitCallToken = undefined;
+	}
 }
 
 /**
@@ -192,7 +200,11 @@ export async function installable(
 /**
  * Installs one package, refusing first if the shipped lock conflicts.
  *
- * `?force=1` skips the check for a package the oracle cannot judge (`unverifiable`). `?ignore_core=1`
+ * `?force=1` skips the check for a package the oracle cannot judge (`unverifiable`). `?accept=a/b,c/d`
+ * skips it only when every conflict names one of those packages in `requires`, so a caller that
+ * showed the owner one conflict does not also waive another it did not show. A package in `accept`
+ * that is not among the current conflicts answers 400, so an old preflight cannot accept more than
+ * it showed. `?ignore_core=1`
  * lets version resolution take a release that declares an older core. Neither skips the archive
  * digest check, which sits in `installPackage()`. Installing does not enable; both
  * routes are owner-gated because they write code the site did not ship with.
@@ -217,14 +229,40 @@ export async function install(
 	// a site that bypasses core's version gate (anachron) takes a release that declares an older
 	// core when none admits this one
 	const ignoreCore = url.searchParams.get('ignore_core') === '1';
+	// the packages whose conflicts the owner has seen and accepts; any other conflict still refuses
+	const accepted = new Set(
+		(url.searchParams.get('accept') ?? '')
+			.split(',')
+			.map((p) => p.trim())
+			.filter((p) => p !== '')
+	);
 	if (url.searchParams.get('force') !== '1') {
 		// the method, not `this.fetch()`: the router already holds the gate
 		const verdict = await site.installableVerdict(name, constraint, stability);
-		const blocking = (verdict.conflicts ?? []).filter(
-			(c) => !(withDeps && c.reason === 'missing' && c.requires.includes('/'))
+		// an accepted package that is not a conflict now was shown from an older preflight
+		const unlisted = [...accepted].filter(
+			(p) => !(verdict.conflicts ?? []).some((c) => c.requires === p)
 		);
+		if (unlisted.length > 0 && verdict.verdict !== 'not-found') {
+			return jsonError(
+				`accept names a package that does not conflict: ${unlisted.join(', ')}`,
+				400,
+				{
+					code: 'accept_not_in_conflicts',
+					unlisted,
+					conflicts: verdict.conflicts ?? []
+				}
+			);
+		}
+		const blocking = (verdict.conflicts ?? []).filter(
+			(c) =>
+				!accepted.has(c.requires) &&
+				!(withDeps && c.reason === 'missing' && c.requires.includes('/'))
+		);
+		const named = accepted.size > 0 && blocking.length === 0 && verdict.verdict !== 'not-found';
 		if (
 			verdict.verdict !== 'installable' &&
+			!named &&
 			(!withDeps || blocking.length > 0 || verdict.verdict === 'not-found')
 		) {
 			return Response.json(
@@ -282,7 +320,7 @@ export async function moduleasset(
 		)
 	);
 	if (row === undefined) return new Response('not found\n', { status: 404 });
-	return new Response(String(row.source), {
+	return new Response(sourceBytes(String(row.source)), {
 		status: 200,
 		headers: { 'cache-control': 'private, no-store' }
 	});

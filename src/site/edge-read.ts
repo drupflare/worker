@@ -1,7 +1,7 @@
 import { MODULE_HEADER_NAMES } from '../ops/module-headers';
 import { lookupPageMemo, pageMemoHeaders, storePageMemo } from '../ops/page-memo';
 import { readPage, readStalePage } from '../ops/page-store';
-import { storesPath } from '../ops/store-rule';
+import { servingFor, storesPath } from '../ops/store-rule';
 import { cmsOf } from '../util/cms';
 import { pageKeyUrl, readGeneration } from './edge-cache';
 import { primeLanes } from './memos';
@@ -120,9 +120,12 @@ export async function readKvTier(f: FrontContext, edge: EdgeRead): Promise<Respo
 		}
 		// a bump changes the key and deletes nothing, so the previous generation is still in kv
 		// (the cold path it replaces is 802 ms at p50 against 4-5 warm); the refill is queued
-		const stale = await readStalePage(env, site, generation, path, {
-			neverStale: env.NEVER_STALE
-		});
+		const stale =
+			servingFor(cmsOf(env)).staleGenerations === false
+				? undefined
+				: await readStalePage(env, site, generation, path, {
+						neverStale: env.NEVER_STALE
+					});
 		if (stale) {
 			defer(
 				stubOf()

@@ -29,6 +29,7 @@ import { type Cms, cmsOf } from '../../util/cms';
 import { phpScript } from '../../util/php';
 import { jsonError } from '../../util/reply';
 import { firstRow } from '../../util/sql';
+import { noteUnclassifiedCookies } from '../../wordpress/cookies';
 import { isolateResidency, retainInterpreterEnabled } from '../isolate';
 import { fillSettleMs, shellAssemblyEnabled } from '../levers';
 import { CFW_HEADER_VERSION, FILL_QUEUE_MAX, SERVE_REQUESTS_FLUSH } from '../limits';
@@ -141,6 +142,7 @@ export async function serve(
 	// would get the empty form back with a 200 and never run Drupal); sessions likewise
 	const cms = cmsOf(site.env) as Cms;
 	const authenticated = isAuthenticatedRequest(request, cms);
+	if (authenticated && cms === 'wordpress') noteUnclassifiedCookies(request);
 	// a CMS that stores nothing in this environment has no row to read and no fill to wait for
 	const stores = storesPath(cms, site.env, path);
 	const cacheable =

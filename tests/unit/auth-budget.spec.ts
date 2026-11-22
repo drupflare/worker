@@ -670,6 +670,89 @@ describe('a request is authenticated by the CMS table it is read against', () =>
 		);
 	});
 
+	const TRACKING_NAMES = [
+		'_ga',
+		'_ga_ABC123XYZ9',
+		'_gid',
+		'_gat',
+		'_gat_gtag_UA_1_2',
+		'_gcl_au',
+		'_gcl_aw',
+		'_gac_UA-1-2',
+		'__utma',
+		'__utmz',
+		'_fbp',
+		'_fbc',
+		'_hjSession_1234567',
+		'_hjSessionUser_1234567',
+		'_hjid',
+		'_hjAbsoluteSessionInProgress',
+		'_pk_id.1.1fff',
+		'_pk_ses.1.1fff',
+		'mtm_consent',
+		'_clck',
+		'_uetsid',
+		'__cf_bm',
+		'_cfuvid',
+		'cf_clearance',
+		'cookielawinfo-checkbox-necessary',
+		'viewed_cookie_policy',
+		'CookieLawInfoConsent',
+		'CookieConsent',
+		'euconsent-v2',
+		'cmplz_banner-status',
+		'cookieyes-consent',
+		'OptanonConsent',
+		'borlabs-cookie',
+		'moove_gdpr_popup'
+	];
+
+	it('reads an analytics or consent cookie as anonymous on WordPress, alone or together', () => {
+		for (const name of TRACKING_NAMES) {
+			expect(cookieKind(name, 'wordpress'), name).toBe('tracking');
+			expect(asked('wordpress', { cookie: `${name}=v` }), name).toBe(false);
+		}
+		expect(asked('wordpress', { cookie: TRACKING_NAMES.map((n) => `${n}=v`).join('; ') })).toBe(
+			false
+		);
+		expect(
+			asked('wordpress', { cookie: '_ga=GA1.2.3; wordpress_test_cookie=WP%20Cookie%20check' })
+		).toBe(false);
+	});
+
+	it('keeps a look-alike name unclassified, and any identity beside a tracking cookie decisive', () => {
+		for (const name of [
+			'_ga_session_admin',
+			'_gid2',
+			'_ga.1',
+			'x_ga',
+			'cmplz',
+			'_hj',
+			'_pk_'
+		]) {
+			expect(cookieKind(name, 'wordpress'), name).toBe('unknown');
+			expect(asked('wordpress', { cookie: `${name}=v` }), name).toBe(true);
+		}
+		for (const identity of [
+			`wordpress_logged_in_${h}=v`,
+			`comment_author_${h}=v`,
+			'wp-settings-1=v',
+			'plugin_cart=1'
+		]) {
+			expect(asked('wordpress', { cookie: `_ga=1; ${identity}; _gid=2` }), identity).toBe(
+				true
+			);
+		}
+		expect(asked('wordpress', { cookie: '_ga=1', authorization: 'Basic YTpi' })).toBe(true);
+	});
+
+	it('does not classify a tracking name on Drupal, which ignores every cookie that is no session', () => {
+		expect(cookieKind('_ga', 'drupal')).toBe('unknown');
+		expect(cookieKind('_ga', 'joomla')).toBe('unknown');
+		expect(asked('drupal', { cookie: '_ga=1' })).toBe(false);
+		expect(asked('joomla', { cookie: '_ga=1' })).toBe(true);
+	});
+
 	it('leaves Drupal exactly as it was: only a session or an Authorization header', () => {
 		expect(asked('drupal', { cookie: `wordpress_logged_in_${h}=v` })).toBe(false);
 		expect(asked('drupal', { cookie: 'wp-settings-1=v' })).toBe(false);

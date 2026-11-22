@@ -39,6 +39,8 @@ export type ServingRow = {
 	pathRefusal?(path: string): string | undefined;
 	/** the path a stored page is keyed and rendered under; absent means the path as sent */
 	key?(path: string): string;
+	/** whether a copy from a previous generation may answer after a change; absent means it may */
+	staleGenerations?: boolean;
 };
 
 /**

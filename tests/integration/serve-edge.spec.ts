@@ -865,7 +865,8 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		'/ledger-gc',
 		'/strata-config',
 		'/strata-store',
-		'/install-lock'
+		'/install-lock',
+		'/wp-packages'
 	])('refuses %s without a credential, with diagnostics off', async (route) => {
 		const res = await worker.fetch(new Request(`https://cfw.local${route}?site=x&path=%2F`), {
 			...env,
@@ -2142,5 +2143,93 @@ describe('the front worker keeps WordPress identity out of the shared tiers', ()
 			kept = ['EDGE', 'MEM'].includes(res.headers.get('x-cfw-cache') ?? '');
 		}
 		expect(kept, 'the anonymous copy was lost').toBe(true);
+	});
+
+	it('treats analytics and consent cookies as the anonymous visitor: one entry, read and written', async () => {
+		const site = 'wp-tracking';
+		await provisionedNamedSite(site);
+		await inObject(namedSite(site), async (obj) => {
+			await seedPage(obj, '/', '<title>wp</title>');
+			await seedPage(obj, '/tracked/', '<title>tracked</title>');
+		});
+		const TRACKED = {
+			cookie: '_ga=GA1.2.3; _gid=GA1.2.4; cookielawinfo-checkbox-necessary=yes'
+		};
+		// a visitor carrying only those cookies is what fills the entry
+		let stored = false;
+		for (let i = 0; i < 6 && !stored; i++) {
+			const res = await through(site, STORE, TRACKED, '/tracked/');
+			stored = res.headers.get('x-cfw-edge-put') === 'deferred';
+		}
+		expect(stored, 'a tracking-cookie visitor never stored the page').toBe(true);
+		// the visitor with no cookie reads that same entry
+		let shared = false;
+		for (let i = 0; i < 6 && !shared; i++) {
+			const res = await through(site, STORE, {}, '/tracked/');
+			shared = ['EDGE', 'MEM'].includes(res.headers.get('x-cfw-cache') ?? '');
+		}
+		expect(shared, 'the cookie-free visitor did not read the tracking visitor entry').toBe(
+			true
+		);
+		// and the visitor with the cookies reads it too
+		const again = await through(site, STORE, TRACKED, '/tracked/');
+		expect(['EDGE', 'MEM']).toContain(again.headers.get('x-cfw-cache'));
+		// the control: any identity beside a tracking cookie keeps the page out of every shared tier
+		for (const cookie of [
+			`_ga=1; wordpress_logged_in_${H}=x`,
+			`_ga=1; comment_author_${H}=x`,
+			'_ga=1; _ga_session_admin=1',
+			'_ga=1; plugin_cart=2'
+		]) {
+			const res = await through(site, STORE, { cookie }, '/tracked/');
+			expect(['EDGE', 'MEM', 'KV'], cookie).not.toContain(res.headers.get('x-cfw-cache'));
+			expect(res.headers.get('x-cfw-edge-put'), cookie).not.toBe('deferred');
+		}
+	});
+
+	// a trashed post renders a 404 that is never stored, so nothing would ever replace its old copy in
+	// `PAGE_KV`; the Drupal tier above answers it, and a WordPress site must not
+	it('never answers a previous generation, which is how a trashed page would stay visible', async () => {
+		const site = 'wp-stalegen';
+		await provisionedNamedSite(site);
+		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>gen one</title>'));
+		const extra = { ...STORE, PAGE_KV_ENABLED: '1' };
+		expect((await through(site, extra)).status).toBe(200);
+		await through(site, extra);
+		await namedSite(site).fetch(new Request('https://do.local/__bump', { method: 'POST' }));
+		const taught = await through(site, extra, {}, '/?edge=0');
+		expect(taught.headers.get('x-cfw-generation')).not.toBe('1');
+		for (let i = 0; i < 6; i++) {
+			const res = await through(site, extra);
+			expect(res.headers.get('x-cfw-edge'), `request ${i}`).not.toBe('STALE');
+			expect(res.headers.get('x-cfw-stale-behind')).toBeNull();
+		}
+	});
+
+	it('gives a stored page a validator and answers a repeat of it with 304 until the row is replaced', async () => {
+		const site = 'wp-etag';
+		await provisionedNamedSite(site);
+		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>one</title>'));
+		let etag: string | null = null;
+		for (let i = 0; i < 6 && etag === null; i++) {
+			const res = await through(site, STORE);
+			if (['EDGE', 'MEM', 'HIT'].includes(res.headers.get('x-cfw-cache') ?? '')) {
+				etag = res.headers.get('etag');
+			}
+		}
+		expect(etag, 'a stored page carried no validator').not.toBeNull();
+		const same = await through(site, STORE, { 'if-none-match': etag ?? '' });
+		expect(same.status).toBe(304);
+		expect(await same.text()).toBe('');
+		const old = await through(site, STORE, { 'if-none-match': 'W/"wp-1"' });
+		expect(old.status).toBe(200);
+		expect(await old.text()).toContain('<title>one</title>');
+		const drupal = await through(
+			site,
+			{ ...STORE, CMS: 'drupal' },
+			{ 'if-none-match': etag ?? '' }
+		);
+		expect(drupal.headers.get('etag')).toBeNull();
+		expect(drupal.status).toBe(200);
 	});
 });

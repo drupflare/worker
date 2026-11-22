@@ -27,6 +27,8 @@ import { fillWindowRoute, surfaceRoute } from './site/surfaces';
 import { openContext } from './site/target';
 import type { Defer, FrontEntry, SiteWorkerEnv } from './site/types';
 import { cmsOf, type Cms } from './util/cms';
+import { answerConditional, withValidator } from './wordpress/conditional';
+import { withoutTrackingCookies } from './wordpress/cookies';
 
 export { RenderLane } from './ops/render-lane';
 export { moduleAssetPath, publicFileUri } from './site/files';
@@ -85,8 +87,22 @@ export default {
 		try {
 			const res = edge.decorate(
 				visited,
-				await throughSpool(request, env, resolvedSite, (r) =>
-					frontFetch(r, env, ctx, r === request ? url : new URL(r.url), t0, resolvedSite)
+				answerConditional(
+					request,
+					env,
+					await throughSpool(request, env, resolvedSite, async (r) =>
+						withValidator(
+							env,
+							await frontFetch(
+								r,
+								env,
+								ctx,
+								r === request ? url : new URL(r.url),
+								t0,
+								resolvedSite
+							)
+						)
+					)
 				),
 				url.protocol === 'https:'
 			);
@@ -208,7 +224,7 @@ async function frontFetch(
 	t0: number,
 	resolvedSite: string
 ): Promise<Response> {
-	const entry = openEntry(request, env, ctx, url, t0, resolvedSite);
+	const entry = openEntry(withoutTrackingCookies(request, env), env, ctx, url, t0, resolvedSite);
 	const filed = await fileRoute(entry);
 	if (filed !== undefined) return filed;
 	const unrouted = pageRewrite(entry);

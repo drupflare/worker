@@ -13,6 +13,7 @@ import {
 	RULE_NAMES,
 	wordpressRefusal
 } from '../../../src/wordpress/store-rule';
+import { freshSite, inObject, markProvisioned, stubRender } from '../../helpers/serve-do';
 
 const ON = { [PAGE_CACHE_SETTING]: '1' };
 
@@ -61,8 +62,12 @@ describe('the serving table', () => {
 		for (const cms of ['plone', 'joomla']) {
 			const row = servingFor(cms);
 			expect(row.readable(ON), cms).toBe(false);
-			expect(row.refuse(anonymous, ON), cms).toBeDefined();
+			expect(row.refuse(anonymous, ON), cms).toBe(
+				cms === 'joomla' ? 'joomla-store-off' : 'unknown-cms'
+			);
 			expect(row.compiledPlans, cms).toBe(false);
+			expect(storesPath(cms, ON, '/'), cms).toBe(false);
+			expect(storeKeyFor(cms, '/?utm_source=a'), cms).toBe('/?utm_source=a');
 		}
 	});
 });
@@ -504,6 +509,25 @@ describe('the WordPress rule, case by case, each with the rule removed', () => {
 		expect(RULE_NAMES.filter((r) => !covered.has(r))).toEqual([]);
 	});
 
+	it('keeps every path a path rule refuses unreadable from the stores, and unkeyed as sent', () => {
+		const pathCases = cases.filter(
+			(c) => c.change.path !== undefined && c.rules.some((r) => PATH_RULE_NAMES.includes(r))
+		);
+		expect(pathCases.length).toBeGreaterThan(30);
+		for (const c of pathCases) {
+			const path = c.change.path as string;
+			const pathRules = c.rules.filter((r) => PATH_RULE_NAMES.includes(r));
+			expect(storesPath('wordpress', ON, path), c.name).toBe(false);
+			expect(servingFor('wordpress').pathRefusal?.(path), c.name).toBeDefined();
+			expect(storeKeyFor('wordpress', path), c.name).toBe(classifyPath(path).key);
+			// the control: with its rules out the path is no longer refused
+			expect(
+				classifyPath(path, new Set(pathRules)).refusal,
+				`without ${pathRules}`
+			).toBeUndefined();
+		}
+	});
+
 	it('ships the whole rule set: an emptied or shortened table fails here', () => {
 		expect(PATH_RULE_NAMES.length).toBeGreaterThanOrEqual(13);
 		expect(RULE_NAMES.length).toBeGreaterThanOrEqual(29);
@@ -741,5 +765,137 @@ describe('the front worker store', () => {
 		expect(stored({}, {}, undefined, '/search/node?keys=a&utm_source=b').out.put).toBe(
 			'deferred'
 		);
+	});
+
+	// every case of the rule table, as the front worker's store sees it: the headers and the path
+	// reach it, the body does not
+	const headerCases = cases.filter(
+		(c) =>
+			c.change.html === undefined &&
+			c.change.path !== undefined &&
+			(c.change.method === undefined || c.change.method === 'GET')
+	);
+
+	for (const c of headerCases) {
+		it(`keeps ${c.name} out of the edge cache and KV`, () => {
+			const change = c.change;
+			const headers: Record<string, string> = {};
+			if (change.hasCookie) headers['cookie'] = 'x=1';
+			if (change.hasAuthorization) headers['authorization'] = 'Basic YTpi';
+			for (const name of change.headerNames ?? []) headers[name] = 'x';
+			const answer: Record<string, string> = {};
+			if (change.setsCookie) answer['set-cookie'] = 'a=b';
+			if (change.cacheControl) answer['cache-control'] = change.cacheControl;
+			if (change.vary) answer['vary'] = change.vary;
+			if (change.contentType) answer['content-type'] = change.contentType;
+			const baseline = stored({ CMS: 'wordpress', ...ON }, {}, undefined, '/');
+			expect(baseline.out.put, 'the control that stores').toBe('deferred');
+			const { out, puts } = stored({ CMS: 'wordpress', ...ON }, headers, answer, change.path);
+			expect(out.put.split(':').slice(0, 2).join(':')).toMatch(/^skipped:/);
+			expect(out.kvPut).toMatch(/^skipped:/);
+			expect(out.put).not.toBe('deferred');
+			expect(puts).toEqual([]);
+		});
+	}
+});
+
+describe('the object fill, case by case: nothing a rule refuses reaches the page table', () => {
+	const KEEPS = (text: string) => `<!DOCTYPE html><html><body>${text}</body></html>\n`;
+
+	// what the fill does with one case, optionally with the named rules removed from the row
+	const fill = (c: Case, skip?: ReadonlySet<string>) =>
+		inObject(freshSite(), async (site) => {
+			const input: StoreInput = { ...anonymous, ...c.change };
+			if (input.path === undefined) return undefined;
+			site.env['CMS'] = 'wordpress';
+			site.env['WORDPRESS_PAGE_CACHE'] = '1';
+			markProvisioned(site);
+			site.ensureServeTables();
+			stubRender(site, () => ({
+				html: input.html ?? KEEPS('hello'),
+				status: input.status,
+				contentType: input.contentType ?? HTML,
+				cacheControl: input.cacheControl,
+				vary: input.vary,
+				setCookie: input.setsCookie ? ['a=b'] : [],
+				cacheTags: ['post:1'],
+				uid: 0,
+				renderMs: 5
+			}));
+			const headers: Record<string, string> = {};
+			if (input.hasAuthorization) headers['authorization'] = 'Basic YTpi';
+			for (const name of input.headerNames ?? []) headers[name] = 'x';
+			const row = servingFor('wordpress');
+			const real = row.refuse;
+			if (skip !== undefined) row.refuse = (i, env) => judge(i, env, skip);
+			try {
+				await site.fillOne(input.path, undefined, false, {
+					method: input.method,
+					...(input.hasCookie ? { cookie: 'x=1' } : {}),
+					headers
+				});
+			} finally {
+				row.refuse = real;
+			}
+			return site.sql.exec('SELECT path FROM cfw_page').toArray().length;
+		});
+
+	it('never stores a page rendered for a login cookie beside an analytics cookie', async () => {
+		const stored = (cookie: string | undefined) =>
+			inObject(freshSite(), async (site) => {
+				site.env['CMS'] = 'wordpress';
+				site.env['WORDPRESS_PAGE_CACHE'] = '1';
+				markProvisioned(site);
+				site.ensureServeTables();
+				stubRender(site, () => ({
+					html: KEEPS('hello'),
+					status: 200,
+					contentType: HTML,
+					cacheTags: ['post:1'],
+					uid: cookie?.includes('wordpress_logged_in_') ? 1 : 0,
+					renderMs: 5
+				}));
+				await site.fillOne('/', undefined, false, cookie === undefined ? {} : { cookie });
+				return site.sql.exec('SELECT path FROM cfw_page').toArray().length;
+			});
+		const login = `wordpress_logged_in_${'a'.repeat(32)}=x`;
+		expect(await stored(undefined)).toBe(1);
+		expect(await stored(`_ga=GA1.2.3; ${login}; _gid=2`)).toBe(0);
+		expect(await stored(`${login}`)).toBe(0);
+	});
+
+	it('stores an anonymous page, which is the control every case below is read against', async () => {
+		expect(await fill({ name: 'none', change: {}, reason: '', rules: [] })).toBe(1);
+	});
+
+	// cases whose fill has a barrier of its own besides the rule, so removing the rule changes
+	// nothing there; every other row is the only thing standing between the response and the table
+	const SECOND_BARRIER = new Set<string>();
+
+	for (const c of cases) {
+		it(`keeps ${c.name} out of the page table, and the rule is what does it unless the fill bars it too`, async () => {
+			const kept = await fill(c);
+			if (kept === undefined) return;
+			expect(kept, `${c.name} reached the page table`).toBe(0);
+			const without = await fill(c, new Set(c.rules));
+			if (without === 0) SECOND_BARRIER.add(c.name);
+		});
+	}
+
+	it('names the cases the fill bars on its own, so a new second barrier or a lost rule shows here', () => {
+		expect([...SECOND_BARRIER].sort()).toEqual([
+			'Cache-Control: no-cache',
+			'Cache-Control: no-store',
+			'Cache-Control: private',
+			'Vary: User-Agent',
+			'a 301',
+			'a HEAD',
+			'a POST',
+			'a login cookie',
+			'a private directive after max-age',
+			'a response that sets a cookie',
+			'the headers nocache_headers() sends',
+			'the untaggable marker'
+		]);
 	});
 });

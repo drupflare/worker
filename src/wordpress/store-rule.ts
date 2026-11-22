@@ -361,5 +361,7 @@ export const WORDPRESS_SERVING: ServingRow = {
 	readable: (env) => pageCacheOn(env),
 	refuse: wordpressRefusal,
 	pathRefusal: (path) => classifyPath(path).refusal,
-	key: (path) => classifyPath(path).key
+	key: (path) => classifyPath(path).key,
+	// a trashed or unpublished page renders a 404 that is never stored, so nothing replaces its old copy
+	staleGenerations: false
 };

@@ -34,13 +34,51 @@ export const SESSION_COOKIE_RE = /^S?SESS[0-9a-f]{32}$/;
 /**
  * What a cookie name says about its visitor: `session` logs a user in and keys the replica,
  * `personal` ties the page to one visitor without being a login, `neutral` is set on anonymous
- * traffic and changes nothing, `unknown` is a name nobody has classified.
+ * traffic and changes nothing, `tracking` is an analytics or consent cookie the CMS never reads
+ * (a request carrying only these is the anonymous request, and the front worker drops them),
+ * `unknown` is a name nobody has classified.
  */
-export type CookieKind = 'session' | 'personal' | 'neutral' | 'unknown';
+export type CookieKind = 'session' | 'personal' | 'neutral' | 'tracking' | 'unknown';
 
 type CookieRule = { re: RegExp; kind: Exclude<CookieKind, 'unknown'>; why: string };
 
 const MD5 = '[0-9a-f]{32}';
+
+const tracking = (re: RegExp, why: string): CookieRule => ({ re, kind: 'tracking', why });
+
+/**
+ * Analytics, advertising and consent cookies a browser sends on every request and WordPress never
+ * reads. Names are anchored and bounded, so a look-alike such as `_ga_session_admin` stays unknown.
+ * A consent plugin that reads its own cookie on the server is the exception, so only the names its
+ * documentation puts in the browser are listed.
+ */
+const WORDPRESS_TRACKING: readonly CookieRule[] = [
+	tracking(/^_ga(?:_[A-Z0-9]{4,24})?$/, 'Google Analytics client and property id'),
+	tracking(/^_gid$/, 'Google Analytics daily id'),
+	tracking(/^_gat(?:_[A-Za-z0-9_-]{1,40})?$/, 'Google Analytics throttle'),
+	tracking(/^_gcl_(?:au|aw|dc|gb|gf|ha)$/, 'Google Ads click id'),
+	tracking(/^_gac_[A-Za-z0-9_-]{1,40}$/, 'Google Ads campaign'),
+	tracking(/^__utm[a-z]{1,2}$/, 'Google Analytics, classic'),
+	tracking(/^_fb[pc]$/, 'Meta pixel'),
+	tracking(/^_hj[A-Za-z]{2,40}(?:_\d{1,12})?$/, 'Hotjar'),
+	tracking(/^_pk_[a-z]{2,12}(?:\.[A-Za-z0-9]{1,12}){0,2}$/, 'Matomo'),
+	tracking(/^mtm_[a-z_]{1,32}$/, 'Matomo Tag Manager'),
+	tracking(/^_cl(?:ck|sk)$/, 'Microsoft Clarity'),
+	tracking(/^_uet(?:sid|vid)$/, 'Microsoft Advertising'),
+	tracking(/^(?:__cf_bm|_cfuvid|cf_clearance)$/, 'set by Cloudflare, never read by WordPress'),
+	tracking(/^cookielawinfo-checkbox-[a-z0-9-]{1,40}$/, 'GDPR Cookie Consent category'),
+	tracking(
+		/^(?:viewed_cookie_policy|wpl_viewed_cookie|CookieLawInfoConsent|cli_user_preference)$/,
+		'GDPR Cookie Consent'
+	),
+	tracking(/^CookieConsent$/, 'Cookiebot'),
+	tracking(/^euconsent(?:-v2)?$/, 'IAB consent string'),
+	tracking(/^cmplz_[a-z0-9_-]{1,40}$/, 'Complianz'),
+	tracking(/^cookieyes-[a-z0-9-]{1,40}$/, 'CookieYes'),
+	tracking(/^(?:OptanonConsent|OptanonAlertBoxClosed)$/, 'OneTrust'),
+	tracking(/^borlabs-cookie$/, 'Borlabs Cookie'),
+	tracking(/^moove_gdpr_popup$/, 'GDPR Cookie Compliance')
+];
 
 /**
  * The cookie names each CMS sets. Drupal's neutral names are cookies it sets with no user
@@ -83,7 +121,8 @@ const COOKIE_RULES: Record<Cms, readonly CookieRule[]> = {
 			kind: 'personal',
 			why: 'a password protected post'
 		},
-		{ re: /^wordpress_test_cookie$/, kind: 'neutral', why: 'set on the login page for anyone' }
+		{ re: /^wordpress_test_cookie$/, kind: 'neutral', why: 'set on the login page for anyone' },
+		...WORDPRESS_TRACKING
 	],
 	joomla: [
 		{ re: new RegExp(`^${MD5}$`), kind: 'session', why: 'md5 of the app name' },
@@ -149,7 +188,9 @@ export function mayUseSharedCopy(
 ): boolean {
 	return cookiePairs(cookieHeader).every(([name]) => {
 		const kind = cookieKind(name, cms);
-		return kind === 'neutral' || (kind === 'unknown' && cms === 'drupal');
+		return (
+			kind === 'neutral' || kind === 'tracking' || (kind === 'unknown' && cms === 'drupal')
+		);
 	});
 }
 

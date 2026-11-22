@@ -88,6 +88,11 @@ export type ParkFetch = {
 	redirect?: 'follow' | 'manual';
 	/** the caller's whole-request timeout (Guzzle `timeout`, `CURLOPT_TIMEOUT`) */
 	timeoutMs?: number;
+	/**
+	 * The most response bytes to read. A response past it is cut there and the reply says so; a
+	 * request without one is read whole.
+	 */
+	maxBytes?: number;
 };
 
 /**
@@ -627,14 +632,60 @@ export async function performFetch(
 		res.headers.forEach((v, k) => {
 			received[k] = v;
 		});
+		if (request.maxBytes === undefined) {
+			return await reply({
+				status: res.status,
+				headers: received,
+				body: b64Bytes(new Uint8Array(await res.arrayBuffer()))
+			});
+		}
+		const read = await readBounded(res, request.maxBytes);
+		// `forEach` folds repeated headers into one value, which would merge cookies
+		const cookies =
+			typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
 		return await reply({
 			status: res.status,
 			headers: received,
-			body: b64Bytes(new Uint8Array(await res.arrayBuffer()))
+			...(cookies.length > 0 ? { setCookie: cookies } : {}),
+			body: b64Bytes(read.bytes),
+			...(read.truncated ? { truncated: true } : {})
 		});
 	} catch (e: unknown) {
 		return await reply({ error: e instanceof Error ? e.message : String(e) });
 	}
+}
+
+/** reads a response up to `max` bytes and cancels the rest, saying whether any was left */
+export async function readBounded(
+	res: Response,
+	max: number
+): Promise<{ bytes: Uint8Array; truncated: boolean }> {
+	const reader = res.body?.getReader();
+	if (!reader) return { bytes: new Uint8Array(0), truncated: false };
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	let truncated = false;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		if (!value) continue;
+		if (total + value.byteLength > max) {
+			chunks.push(value.subarray(0, max - total));
+			total = max;
+			truncated = true;
+			await reader.cancel();
+			break;
+		}
+		chunks.push(value);
+		total += value.byteLength;
+	}
+	const bytes = new Uint8Array(total);
+	let at = 0;
+	for (const c of chunks) {
+		bytes.set(c, at);
+		at += c.byteLength;
+	}
+	return { bytes, truncated };
 }
 
 /** applies a queued gd operation set, answered as a JSON string (a failure is a reply) */
@@ -732,6 +783,9 @@ export function parseParkFetch(packed: string): ParkFetch | undefined {
 		...(one['redirect'] === 'manual' ? { redirect: 'manual' as const } : {}),
 		...(typeof one['timeoutMs'] === 'number' && one['timeoutMs'] > 0
 			? { timeoutMs: one['timeoutMs'] }
+			: {}),
+		...(typeof one['maxBytes'] === 'number' && one['maxBytes'] > 0
+			? { maxBytes: Math.floor(one['maxBytes']) }
 			: {})
 	};
 }

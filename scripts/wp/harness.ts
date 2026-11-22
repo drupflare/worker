@@ -11,7 +11,7 @@ import { PHP_CODEC } from '@drupflare/durabledb/codec';
 export const ROOT = resolve(import.meta.dirname, '../..');
 
 /** where the drop-in and the bridge class live; DRUPFLARE_SRC relocates the checkout */
-const DRUPFLARE = process.env.DRUPFLARE_SRC ?? resolve(ROOT, '../drupflare');
+const DRUPFLARE = resolve(process.env.DRUPFLARE_SRC ?? resolve(ROOT, '../drupflare'));
 
 /** the WordPress tree every run copies, never edits */
 export const WORDPRESS_SRC = process.env.WORDPRESS_SRC ?? join(ROOT, 'wordpress-src');
@@ -163,6 +163,9 @@ export async function prepareSite(
 		"define( 'WP_DEBUG_DISPLAY', false );",
 		`define( 'WP_DEBUG_LOG', '${site.log}' );`,
 		"define( 'SAVEQUERIES', true );",
+		...(options.muPlugins === undefined
+			? []
+			: [`define( 'DRUPFLARE_HOST_LIB', '${join(DRUPFLARE, 'src')}' );`]),
 		"if ( ! defined( 'ABSPATH' ) ) {",
 		"\tdefine( 'ABSPATH', __DIR__ . '/' );",
 		'}',

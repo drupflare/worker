@@ -18,6 +18,7 @@ import {
 	DRIVER_ASSET_PATH,
 	DRIVER_DIGEST_PATH,
 	MODULES as DRUPAL_MODULES,
+	SHIM_CLASSES,
 	buildCms,
 	buildDriverAssets,
 	driverDigest,
@@ -329,9 +330,86 @@ describe('the WordPress row set packs the sibling code Drupal skips', () => {
 			'wp-content/db.php',
 			'wp-content/mu-plugins/drupflare-host.php',
 			'wp-content/mu-plugins/drupflare-host/health.php',
+			'wp-content/mu-plugins/drupflare-host/http.php',
+			'wp-content/mu-plugins/drupflare-host/image-editor.php',
+			'wp-content/mu-plugins/drupflare-host/image.php',
+			'wp-content/mu-plugins/drupflare-host/lib/Degradation.php',
+			'wp-content/mu-plugins/drupflare-host/lib/Host.php',
+			'wp-content/mu-plugins/drupflare-host/lib/Http/Park.php',
+			'wp-content/mu-plugins/drupflare-host/lib/Http/ParkSession.php',
+			'wp-content/mu-plugins/drupflare-host/lib/Shim/Exif.php',
+			'wp-content/mu-plugins/drupflare-host/lib/Shim/Gd.php',
+			'wp-content/mu-plugins/drupflare-host/lib/Shim/GdImage.php',
+			'wp-content/mu-plugins/drupflare-host/mail.php',
+			'wp-content/mu-plugins/drupflare-host/multisite.php',
+			'wp-content/mu-plugins/drupflare-host/shims.php',
 			'wp-content/mu-plugins/drupflare-host/status.php',
-			'wp-content/mu-plugins/drupflare-host/tags.php'
+			'wp-content/mu-plugins/drupflare-host/tags.php',
+			'wp-content/mu-plugins/drupflare-host/updates.php',
+			'wp-content/mu-plugins/drupflare-host/uploads.php'
 		]);
+	});
+
+	const HOST_DIR = 'wp-content/mu-plugins/drupflare-host';
+
+	/** the class names the host plugin's loader resolves, with the lib file each one maps to */
+	const loaderMap = (shims: string): Record<string, string> =>
+		Object.fromEntries(
+			[...shims.matchAll(/'(Drupal(?:\\\\[A-Za-z]+)+)' => '([A-Za-z/]+\.php)'/g)].map((m) => [
+				m[1]!.replaceAll('\\\\', '\\'),
+				m[2]!
+			])
+		);
+
+	it('carries every shim class the host plugin loads, and every file it requires', async () => {
+		const files = await buildDriverAssets('wordpress');
+		const map = loaderMap(files[`${HOST_DIR}/shims.php`]!);
+		expect(Object.keys(map)).toContain('Drupal\\drupflare\\Shim\\Gd');
+		expect(Object.keys(map)).toHaveLength(SHIM_CLASSES.length);
+		for (const [name, file] of Object.entries(map)) {
+			expect(files[`${HOST_DIR}/lib/${file}`], name).toBeDefined();
+			expect(files[`${HOST_DIR}/lib/${file}`], name).toContain(
+				`class ${name.split('\\').pop()}`
+			);
+		}
+		const required = [
+			...files['wp-content/mu-plugins/drupflare-host.php']!.matchAll(
+				/require_once __DIR__ \. '\/(drupflare-host\/[a-z-]+\.php)'/g
+			)
+		].map((m) => m[1]!);
+		expect(required.length).toBeGreaterThanOrEqual(6);
+		for (const file of required)
+			expect(files[`wp-content/mu-plugins/${file}`], file).toBeDefined();
+	});
+
+	it('fails when a shim class is left out of the pack: the control drops one', async () => {
+		const rows = (await import('../../scripts/gen-driver-assets.ts')).WORDPRESS_MODULES;
+		const without = rows.map((row) =>
+			row.mount.endsWith('/lib')
+				? { ...row, parts: row.parts!.filter((p) => p !== 'Shim/Gd.php') }
+				: row
+		);
+		const files = await buildDriverAssets('wordpress', without);
+		const map = loaderMap(files[`${HOST_DIR}/shims.php`]!);
+		const missing = Object.entries(map).filter(
+			([, f]) => files[`${HOST_DIR}/lib/${f}`] === undefined
+		);
+		expect(missing.map(([name]) => name)).toEqual(['Drupal\\drupflare\\Shim\\Gd']);
+	});
+
+	it('keeps the dependency one way: the shim files never name the host plugin or WordPress', async () => {
+		const files = await buildDriverAssets('wordpress');
+		for (const [path, body] of Object.entries(files)) {
+			if (!path.startsWith(`${HOST_DIR}/lib/`)) continue;
+			expect(body, path).not.toMatch(
+				/\b(wp_[a-z_]+\(|WP_[A-Z][A-Za-z_]+|drupflare_(host|http|image)_)/
+			);
+		}
+	});
+
+	it('keeps the shim files out of the Drupal pack under any other name', async () => {
+		const drupal = Object.keys(await buildDriverAssets('drupal'));
+		expect(drupal.some((p) => p.includes('drupflare-host'))).toBe(false);
 	});
 
 	it('leaves WordPress code out of the Drupal pack only because of the skip: without it the drop-in leaks', async () => {

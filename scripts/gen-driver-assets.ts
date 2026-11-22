@@ -137,6 +137,21 @@ export const MODULES: ModuleRow[] = [
 ];
 
 /**
+ * The framework-neutral shim classes a WordPress object loads: the request park, the gd and exif
+ * stand-ins and what they report through. They keep the namespace they have in the Drupal module,
+ * so the same files serve both packs, and the host plugin's loader maps exactly these names.
+ */
+export const SHIM_CLASSES = [
+	'Degradation.php',
+	'Host.php',
+	'Http/Park.php',
+	'Http/ParkSession.php',
+	'Shim/Exif.php',
+	'Shim/Gd.php',
+	'Shim/GdImage.php'
+] as const;
+
+/**
  * The WordPress drop-in, bridge and host plugin, read from the same sibling that Drupal skips them in.
  *
  * `db.php` and `Bridge.php` sit side by side because the drop-in requires the bridge by `__DIR__`.
@@ -145,7 +160,12 @@ export const MODULES: ModuleRow[] = [
  */
 export const WORDPRESS_MODULES: ModuleRow[] = [
 	{ src: `${DRUPFLARE_SRC}/src/Wp`, mount: 'wp-content', parts: ['db.php', 'Bridge.php'] },
-	{ src: `${DRUPFLARE_SRC}/src/Wp/mu`, mount: 'wp-content/mu-plugins' }
+	{ src: `${DRUPFLARE_SRC}/src/Wp/mu`, mount: 'wp-content/mu-plugins' },
+	{
+		src: `${DRUPFLARE_SRC}/src`,
+		mount: 'wp-content/mu-plugins/drupflare-host/lib',
+		parts: SHIM_CLASSES
+	}
 ];
 
 /** the module set each CMS packs */

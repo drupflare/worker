@@ -934,3 +934,59 @@ describe('parkEnabled', () => {
 });
 
 // #endregion
+
+describe('a parked fetch bounded by the caller', () => {
+	const read = async (request: Parameters<typeof performFetch>[0], doFetch: typeof fetch) =>
+		JSON.parse(new TextDecoder().decode(await performFetch(request, doFetch))) as {
+			status?: number;
+			body?: string;
+			truncated?: boolean;
+			setCookie?: string[];
+			headers?: Record<string, string>;
+		};
+	const bytes = (b64: string | undefined) => atob(b64 ?? '').length;
+
+	it('reads a response whole when the descriptor names no limit, and says nothing of cookies', async () => {
+		const doFetch = (async () =>
+			new Response(new Uint8Array(3000), {
+				headers: [['set-cookie', 'a=1']]
+			})) as unknown as typeof fetch;
+		const reply = await read({ method: 'GET', url: 'https://e.test/', headers: {} }, doFetch);
+		expect(bytes(reply.body)).toBe(3000);
+		expect(reply.truncated).toBeUndefined();
+		expect(reply.setCookie).toBeUndefined();
+	});
+
+	it('cuts a response at the limit, marks it truncated and keeps each cookie', async () => {
+		const doFetch = (async () => {
+			const headers = new Headers();
+			headers.append('set-cookie', 'a=1; Path=/');
+			headers.append('set-cookie', 'b=2; Path=/');
+			return new Response(new Uint8Array(3000), { headers });
+		}) as unknown as typeof fetch;
+		const reply = await read(
+			{ method: 'GET', url: 'https://e.test/', headers: {}, maxBytes: 1000 },
+			doFetch
+		);
+		expect(bytes(reply.body)).toBe(1000);
+		expect(reply.truncated).toBe(true);
+		expect(reply.setCookie).toEqual(['a=1; Path=/', 'b=2; Path=/']);
+	});
+
+	it('does not mark a response that fits exactly', async () => {
+		const doFetch = (async () => new Response(new Uint8Array(1000))) as unknown as typeof fetch;
+		const reply = await read(
+			{ method: 'GET', url: 'https://e.test/', headers: {}, maxBytes: 1000 },
+			doFetch
+		);
+		expect(bytes(reply.body)).toBe(1000);
+		expect(reply.truncated).toBeUndefined();
+	});
+
+	it('reads the limit from the descriptor and ignores one that is not a positive number', () => {
+		const pack = (o: object) => btoa(JSON.stringify({ url: 'https://e.test/', ...o }));
+		expect(parseParkFetch(pack({ maxBytes: 4096.9 }))?.maxBytes).toBe(4096);
+		expect(parseParkFetch(pack({ maxBytes: 0 }))?.maxBytes).toBeUndefined();
+		expect(parseParkFetch(pack({ maxBytes: '9' }))?.maxBytes).toBeUndefined();
+	});
+});

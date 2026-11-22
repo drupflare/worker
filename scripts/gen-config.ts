@@ -82,6 +82,7 @@ ${rows.join(',\n')}
 }
 
 export type ModuleDecl = {
+	kind?: 'module' | 'theme';
 	needs?: string[];
 	why?: string;
 	lift?: string;
@@ -124,10 +125,15 @@ export function renderModules(config: ModulesConfig): string {
 	const verified: string[] = [];
 	const evidence: string[] = [];
 	const shipping: string[] = [];
+	const themes: string[] = [];
 	const collisions: string[] = [];
 
 	for (const name of names) {
 		const m = config.modules[name] as ModuleDecl;
+		if (m.kind !== undefined && m.kind !== 'module' && m.kind !== 'theme') {
+			throw new Error(`${name} has kind ${String(m.kind)}, not module or theme`);
+		}
+		if (m.kind === 'theme') themes.push(`\t${lit(name)}`);
 		if (m.why !== undefined) {
 			const parts = [`needs: [${(m.needs ?? []).map(lit).join(', ')}]`, `why: ${lit(m.why)}`];
 			if (m.lift) parts.push(`lift: ${lit(m.lift)}`);
@@ -171,6 +177,10 @@ ${evidence.join(',\n')}
 
 export const GENERATED_SHIPPING_CONTRIB: readonly string[] = [
 ${shipping.join(',\n')}
+];
+
+export const GENERATED_THEMES: readonly string[] = [
+${themes.join(',\n')}
 ];
 
 export const GENERATED_COLLISIONS: Readonly<

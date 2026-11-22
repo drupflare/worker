@@ -17,6 +17,15 @@ import { artifactGate } from './helpers/artifact-gate';
 const here = dirname(fileURLToPath(import.meta.url));
 
 describe('moduleTable', () => {
+	it('marks the themes and leaves every other row a module', () => {
+		const rows = moduleTable();
+		const themes = rows.filter((r) => r.kind === 'theme').map((r) => r.name);
+		expect(themes.sort()).toEqual(['drupal/gin', 'drupal/uswds_base']);
+		expect(new Set(rows.map((r) => r.kind))).toEqual(new Set(['module', 'theme']));
+		// the companion module of a theme is not itself a theme
+		expect(rows.find((r) => r.name === 'drupal/gin_toolbar')?.kind).toBe('module');
+	});
+
 	it('never states a support claim for an unclassified module', () => {
 		const rows = moduleTable();
 		expect(rows.some((r) => r.name === 'drupal/never_classified')).toBe(false);

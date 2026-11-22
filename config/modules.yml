@@ -267,6 +267,7 @@ modules:
     verified: enabled against a real site; `focal_point.settings` is installed and it created the
       `crop.type.focal_point` crop type inside the dependency it pulled in
   drupal/gin:
+    kind: theme
     needs: []
     why: an admin theme; Twig templates, theme settings and asset libraries, no I/O
     verified: installed against a real site through `theme_installer` on 5.0.16; the `gin` asset
@@ -903,6 +904,7 @@ modules:
       and seven asset libraries resolve for it afterwards and none before. The DAP tag is fetched by
       the BROWSER from dap.digitalgov.gov, so nothing outbound happens in PHP
   drupal/uswds_base:
+    kind: theme
     needs: []
     why: 'Twig templates, theme settings and an asset library; no PHP classes and no I/O. It was
       unverifiable for three gate-side reasons and none of them was the runtime: composer installs

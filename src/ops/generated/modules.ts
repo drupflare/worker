@@ -211,6 +211,11 @@ export const GENERATED_SHIPPING_CONTRIB: readonly string[] = [
 	"drupal/token"
 ];
 
+export const GENERATED_THEMES: readonly string[] = [
+	"drupal/gin",
+	"drupal/uswds_base"
+];
+
 export const GENERATED_COLLISIONS: Readonly<
 	Record<
 		string,

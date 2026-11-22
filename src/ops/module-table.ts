@@ -11,6 +11,7 @@ import { KNOWN_MODULE_CAPABILITIES, SHIPPED_CAPABILITIES, tierFor } from './cata
 import {
 	GENERATED_CAPABILITY_EVIDENCE,
 	GENERATED_SHIPPING_CONTRIB,
+	GENERATED_THEMES,
 	GENERATED_VERIFIED
 } from './generated/modules';
 import { MODULE_TIER_NOTES } from './module-tiers';
@@ -56,6 +57,8 @@ export interface TableRow {
 	name: string;
 	/** the short name a reader recognises */
 	label: string;
+	/** a theme installs through `theme_installer` and lands in the `theme` key of `core.extension` */
+	kind: 'module' | 'theme';
 	state: SupportState;
 	/** what the gate asserted, for `verified`; what the analysis concluded, otherwise */
 	evidence: string;
@@ -145,7 +148,13 @@ export function moduleTable(
 				verdict.reason ??
 				'not enabled here; nothing has been asserted about it';
 		}
-		rows.push({ name, label: labelFor(name), state, evidence });
+		rows.push({
+			name,
+			label: labelFor(name),
+			kind: GENERATED_THEMES.includes(name) ? 'theme' : 'module',
+			state,
+			evidence
+		});
 	}
 	return rows;
 }

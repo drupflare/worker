@@ -1,0 +1,674 @@
+[
+	{
+		"id": "r01",
+		"scenarios": [
+			"GET /",
+			"GET /?p=1",
+			"GET /wp-login.php",
+			"GET /wp-json/",
+			"GET /feed/",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /category/uncategorized/feed/",
+			"GET /?cat=1",
+			"GET /wp-sitemap.xml",
+			"GET /wp-sitemap-posts-post-1.xml",
+			"GET /wp-sitemap-taxonomies-category-1.xm",
+			"GET /wp-sitemap-users-1.xml",
+			"GET /wp-sitemap.xsl",
+			"GET /tag/none/",
+			"GET /2026/01/",
+			"GET /author/admin/",
+			"rest-posts",
+			"rest-users",
+			"admin-posts",
+			"login",
+			"single",
+			"widgets"
+		],
+		"count": 23,
+		"sql": "SELECT option_name, option_value FROM wp_options WHERE autoload IN ( 'yes', 'on', 'auto-on', 'auto' )"
+	},
+	{
+		"id": "r02",
+		"scenarios": [
+			"GET /",
+			"GET /?p=1",
+			"GET /wp-login.php",
+			"GET /wp-json/",
+			"GET /feed/",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /category/uncategorized/feed/",
+			"GET /?cat=1",
+			"GET /wp-sitemap.xml",
+			"GET /wp-sitemap-posts-post-1.xml",
+			"GET /wp-sitemap-taxonomies-category-1.xm",
+			"GET /wp-sitemap-users-1.xml",
+			"GET /wp-sitemap.xsl",
+			"GET /tag/none/",
+			"GET /2026/01/",
+			"GET /author/admin/",
+			"rest-posts",
+			"rest-users",
+			"admin-posts",
+			"login",
+			"single",
+			"widgets"
+		],
+		"count": 96,
+		"sql": "SELECT option_value FROM wp_options WHERE option_name = 'WPLANG' LIMIT 1"
+	},
+	{
+		"id": "r03",
+		"scenarios": [
+			"GET /",
+			"GET /?p=1",
+			"GET /wp-login.php",
+			"GET /wp-json/",
+			"GET /feed/",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /category/uncategorized/feed/",
+			"GET /?cat=1",
+			"GET /wp-sitemap.xml",
+			"GET /wp-sitemap-posts-post-1.xml",
+			"GET /wp-sitemap-taxonomies-category-1.xm",
+			"GET /wp-sitemap-users-1.xml",
+			"GET /wp-sitemap.xsl",
+			"GET /tag/none/",
+			"GET /2026/01/",
+			"GET /author/admin/",
+			"rest-posts",
+			"rest-users",
+			"admin-posts",
+			"login",
+			"single",
+			"widgets"
+		],
+		"count": 24,
+		"sql": "SELECT option_name, option_value FROM wp_options WHERE option_name IN ('_site_transient_wp_theme_files_patterns-aeee04c117945235545497f368ab0f27','_site_transient_timeout_wp_theme_files_patterns-aeee04c117945235545497f368ab0f27')"
+	},
+	{
+		"id": "r04",
+		"scenarios": [
+			"GET /",
+			"GET /feed/",
+			"GET /?s=hello",
+			"GET /wp-sitemap.xml",
+			"GET /wp-sitemap-posts-post-1.xml",
+			"GET /wp-sitemap-taxonomies-category-1.xm",
+			"GET /wp-sitemap-users-1.xml",
+			"GET /wp-sitemap.xsl"
+		],
+		"count": 8,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND ((wp_posts.post_type = 'post' AND (wp_posts.post_status = 'publish')))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 10"
+	},
+	{
+		"id": "r05",
+		"scenarios": [
+			"GET /",
+			"GET /feed/",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /category/uncategorized/feed/",
+			"GET /?cat=1",
+			"GET /wp-sitemap.xml",
+			"GET /wp-sitemap-posts-post-1.xml",
+			"GET /wp-sitemap-taxonomies-category-1.xm",
+			"GET /wp-sitemap-users-1.xml",
+			"GET /wp-sitemap.xsl",
+			"GET /tag/none/",
+			"GET /2026/01/",
+			"GET /author/admin/",
+			"rest-posts",
+			"admin-posts",
+			"single",
+			"widgets"
+		],
+		"count": 23,
+		"sql": "SELECT wp_posts.* FROM wp_posts WHERE ID IN (6,5,4,1)"
+	},
+	{
+		"id": "r06",
+		"scenarios": [
+			"GET /",
+			"GET /?p=1",
+			"GET /feed/",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /category/uncategorized/feed/",
+			"GET /?cat=1",
+			"GET /wp-sitemap.xml",
+			"GET /wp-sitemap-posts-post-1.xml",
+			"GET /wp-sitemap-taxonomies-category-1.xm",
+			"GET /wp-sitemap-users-1.xml",
+			"GET /wp-sitemap.xsl",
+			"GET /tag/none/",
+			"GET /2026/01/",
+			"GET /author/admin/",
+			"rest-posts",
+			"admin-posts",
+			"single",
+			"widgets"
+		],
+		"count": 26,
+		"sql": "SELECT post_id, meta_key, meta_value FROM wp_postmeta WHERE post_id IN (6,5,4,1) ORDER BY meta_id ASC"
+	},
+	{
+		"id": "r07",
+		"scenarios": [
+			"GET /",
+			"GET /?p=1",
+			"GET /feed/",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /category/uncategorized/feed/",
+			"GET /?cat=1",
+			"GET /wp-sitemap.xml",
+			"GET /wp-sitemap-posts-post-1.xml",
+			"GET /wp-sitemap-taxonomies-category-1.xm",
+			"GET /wp-sitemap-users-1.xml",
+			"GET /wp-sitemap.xsl",
+			"GET /author/admin/",
+			"rest-posts",
+			"admin-posts",
+			"single",
+			"widgets"
+		],
+		"count": 18,
+		"sql": "SELECT DISTINCT t.term_id, tr.object_id\n\t\t\t FROM wp_terms AS t  INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id INNER JOIN wp_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id\n\t\t\t WHERE tt.taxonomy IN ('category', 'post_tag', 'post_format') AND tr.object_id IN (6, 5, 4, 1)\n\t\t\t ORDER BY t.name ASC\n\t\t\t "
+	},
+	{
+		"id": "r08",
+		"scenarios": [
+			"GET /",
+			"GET /?p=1",
+			"GET /feed/",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /category/uncategorized/feed/",
+			"GET /?cat=1",
+			"GET /wp-sitemap.xml",
+			"GET /wp-sitemap-posts-post-1.xml",
+			"GET /wp-sitemap-taxonomies-category-1.xm",
+			"GET /wp-sitemap-users-1.xml",
+			"GET /wp-sitemap.xsl",
+			"GET /author/admin/",
+			"rest-posts",
+			"admin-posts",
+			"single",
+			"widgets"
+		],
+		"count": 20,
+		"sql": "SELECT t.*, tt.* FROM wp_terms AS t INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id WHERE t.term_id IN (5,6,7,2,1)"
+	},
+	{
+		"id": "r09",
+		"scenarios": [
+			"GET /",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /tag/none/",
+			"GET /2026/01/",
+			"GET /author/admin/",
+			"rest-posts"
+		],
+		"count": 8,
+		"sql": "SELECT  t.term_id\n\t\t\t FROM wp_terms AS t  INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id\n\t\t\t WHERE tt.taxonomy IN ('wp_theme') AND t.name IN ('twentytwentyfive')\n\t\t\t \n\t\t\t LIMIT 1"
+	},
+	{
+		"id": "r10",
+		"scenarios": [
+			"GET /",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /tag/none/",
+			"GET /2026/01/",
+			"GET /author/admin/"
+		],
+		"count": 21,
+		"sql": "SELECT   wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.post_name IN ('front-page') AND ( \n  0 = 1\n) AND wp_posts.post_type = 'wp_template' AND ((wp_posts.post_status = 'publish'))\n\t\t\t\t\t GROUP BY wp_posts.ID\n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 1"
+	},
+	{
+		"id": "r11",
+		"scenarios": [
+			"GET /",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /tag/none/",
+			"GET /2026/01/",
+			"GET /author/admin/",
+			"single",
+			"widgets"
+		],
+		"count": 9,
+		"sql": "SELECT   wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.post_type = 'wp_navigation' AND ((wp_posts.post_status = 'publish'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 1"
+	},
+	{
+		"id": "r12",
+		"scenarios": [
+			"GET /",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /tag/none/",
+			"GET /2026/01/",
+			"GET /author/admin/"
+		],
+		"count": 7,
+		"sql": "SELECT   wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.ID IN (4) AND wp_posts.post_type = 'wp_navigation' AND ((wp_posts.post_status = 'publish'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 1"
+	},
+	{
+		"id": "r13",
+		"scenarios": ["GET /", "rest-posts", "widgets"],
+		"count": 3,
+		"sql": "SELECT  t.term_id\n\t\t\t FROM wp_terms AS t  INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id\n\t\t\t WHERE tt.taxonomy IN ('nav_menu')\n\t\t\t ORDER BY t.name ASC\n\t\t\t "
+	},
+	{
+		"id": "r14",
+		"scenarios": ["GET /"],
+		"count": 1,
+		"sql": "SELECT   wp_posts.*\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.post_name = 'navigation' AND wp_posts.ID NOT IN (0) AND wp_posts.post_type IN ('post', 'page', 'attachment') AND ((wp_posts.post_status = 'trash'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t "
+	},
+	{
+		"id": "r15",
+		"scenarios": ["GET /"],
+		"count": 1,
+		"sql": "SELECT post_name FROM wp_posts WHERE post_name = 'navigation' AND post_type = 'wp_navigation' AND ID != 0 LIMIT 1"
+	},
+	{
+		"id": "r16",
+		"scenarios": ["GET /", "GET /wp-login.php", "single"],
+		"count": 6,
+		"sql": "SELECT * FROM wp_posts WHERE ID = 12 LIMIT 1"
+	},
+	{
+		"id": "r17",
+		"scenarios": ["GET /"],
+		"count": 1,
+		"sql": "SELECT autoload FROM wp_options WHERE option_name = '_transient_is_multi_author'"
+	},
+	{
+		"id": "r18",
+		"scenarios": [
+			"GET /",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /tag/none/",
+			"GET /2026/01/",
+			"GET /author/admin/",
+			"widgets"
+		],
+		"count": 7,
+		"sql": "SELECT   wp_posts.*\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.post_type = 'page' AND ((wp_posts.post_status = 'publish'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.menu_order ASC, wp_posts.post_title ASC\n\t\t\t\t\t "
+	},
+	{
+		"id": "r19",
+		"scenarios": [
+			"GET /",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /tag/none/",
+			"GET /2026/01/",
+			"GET /author/admin/",
+			"rest-posts"
+		],
+		"count": 7,
+		"sql": "SELECT   wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND ( \n  0 = 1\n) AND wp_posts.post_type = 'wp_global_styles' AND ((wp_posts.post_status = 'publish'))\n\t\t\t\t\t GROUP BY wp_posts.ID\n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 1"
+	},
+	{
+		"id": "r20",
+		"scenarios": [
+			"GET /",
+			"GET /feed/",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /category/uncategorized/feed/",
+			"GET /wp-sitemap.xml",
+			"GET /wp-sitemap-users-1.xml",
+			"GET /author/admin/",
+			"rest-posts",
+			"rest-users",
+			"admin-posts",
+			"login",
+			"single"
+		],
+		"count": 13,
+		"sql": "SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id IN (1) ORDER BY umeta_id ASC"
+	},
+	{
+		"id": "r21",
+		"scenarios": [
+			"GET /",
+			"GET /feed/",
+			"GET /?s=hello",
+			"GET /category/uncategorized/",
+			"GET /category/uncategorized/feed/",
+			"GET /wp-sitemap.xml",
+			"GET /wp-sitemap-users-1.xml",
+			"rest-posts",
+			"rest-users"
+		],
+		"count": 9,
+		"sql": "SELECT * FROM wp_users WHERE ID IN (1)"
+	},
+	{
+		"id": "r22",
+		"scenarios": ["GET /"],
+		"count": 1,
+		"sql": "SELECT   wp_posts.*\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.post_name = 'twentytwentyfive' AND wp_posts.post_type = 'custom_css' AND ((wp_posts.post_status = 'publish' OR wp_posts.post_status = 'future' OR wp_posts.post_status = 'draft' OR wp_posts.post_status = 'pending' OR wp_posts.post_status = 'trash' OR wp_posts.post_status = 'auto-draft' OR wp_posts.post_status = 'inherit' OR wp_posts.post_status = 'request-pending' OR wp_posts.post_status = 'request-confirmed' OR wp_posts.post_status = 'request-failed' OR wp_posts.post_status = 'request-completed' OR wp_posts.post_status = 'private'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t "
+	},
+	{
+		"id": "r23",
+		"scenarios": ["GET /?p=1"],
+		"count": 1,
+		"sql": "SELECT   wp_posts.*\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.ID = 1 AND wp_posts.post_type = 'post'\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t "
+	},
+	{
+		"id": "r24",
+		"scenarios": ["GET /feed/", "GET /category/uncategorized/feed/"],
+		"count": 2,
+		"sql": "SELECT post_modified_gmt FROM wp_posts WHERE post_status = 'publish' AND post_type IN ('post', 'page', 'attachment') ORDER BY post_modified_gmt DESC LIMIT 1"
+	},
+	{
+		"id": "r25",
+		"scenarios": ["GET /feed/", "GET /category/uncategorized/feed/"],
+		"count": 2,
+		"sql": "SELECT post_date_gmt FROM wp_posts WHERE post_status = 'publish' AND post_type IN ('post', 'page', 'attachment') ORDER BY post_date_gmt DESC LIMIT 1"
+	},
+	{
+		"id": "r26",
+		"scenarios": ["GET /?s=hello"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND (((wp_posts.post_title LIKE '%hello%') OR (wp_posts.post_excerpt LIKE '%hello%') OR (wp_posts.post_content LIKE '%hello%')))  AND (wp_posts.post_password = '')  AND ((wp_posts.post_type = 'attachment' AND (wp_posts.post_status = 'publish')) OR (wp_posts.post_type = 'page' AND (wp_posts.post_status = 'publish')) OR (wp_posts.post_type = 'post' AND (wp_posts.post_status = 'publish')))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_title LIKE '%hello%' DESC, wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 10"
+	},
+	{
+		"id": "r27",
+		"scenarios": ["GET /category/uncategorized/", "GET /category/uncategorized/feed/"],
+		"count": 2,
+		"sql": "SELECT  t.term_id\n\t\t\t FROM wp_terms AS t  INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id\n\t\t\t WHERE tt.taxonomy IN ('category') AND t.slug IN ('uncategorized')\n\t\t\t \n\t\t\t "
+	},
+	{
+		"id": "r28",
+		"scenarios": [
+			"GET /category/uncategorized/",
+			"GET /category/uncategorized/feed/",
+			"GET /?cat=1",
+			"rest-posts"
+		],
+		"count": 4,
+		"sql": "SELECT  t.term_id\n\t\t\t FROM wp_terms AS t  INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id\n\t\t\t WHERE tt.taxonomy IN ('category') AND t.term_id IN ( 1 )\n\t\t\t \n\t\t\t "
+	},
+	{
+		"id": "r29",
+		"scenarios": [
+			"GET /category/uncategorized/",
+			"GET /category/uncategorized/feed/",
+			"GET /tag/none/"
+		],
+		"count": 3,
+		"sql": "SELECT  t.term_id\n\t\t\t FROM wp_terms AS t  INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id\n\t\t\t WHERE tt.taxonomy IN ('category') AND t.slug IN ('uncategorized')\n\t\t\t \n\t\t\t LIMIT 1"
+	},
+	{
+		"id": "r30",
+		"scenarios": [
+			"GET /category/uncategorized/",
+			"GET /category/uncategorized/feed/",
+			"GET /?cat=1"
+		],
+		"count": 3,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts  LEFT JOIN wp_term_relationships ON (wp_posts.ID = wp_term_relationships.object_id)\n\t\t\t\t\t WHERE 1=1  AND ( \n  wp_term_relationships.term_taxonomy_id IN (1)\n) AND ((wp_posts.post_type = 'post' AND (wp_posts.post_status = 'publish')))\n\t\t\t\t\t GROUP BY wp_posts.ID\n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 10"
+	},
+	{
+		"id": "r31",
+		"scenarios": ["GET /wp-sitemap.xml"],
+		"count": 2,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.post_type = 'post' AND ((wp_posts.post_status = 'publish'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.ID ASC\n\t\t\t\t\t LIMIT 0, 2000"
+	},
+	{
+		"id": "r32",
+		"scenarios": ["GET /wp-sitemap.xml"],
+		"count": 3,
+		"sql": "SELECT  COUNT(*)\n\t\t\t FROM wp_terms AS t  INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id\n\t\t\t WHERE tt.taxonomy IN ('category') AND tt.count > 0\n\t\t\t \n\t\t\t LIMIT 2000"
+	},
+	{
+		"id": "r33",
+		"scenarios": ["GET /wp-sitemap.xml", "GET /wp-sitemap-users-1.xml"],
+		"count": 2,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS wp_users.ID\n\t\t\t\t FROM wp_users\n\t\t\t\t WHERE 1=1 AND wp_users.ID IN ( SELECT DISTINCT wp_posts.post_author FROM wp_posts WHERE wp_posts.post_status = 'publish' AND wp_posts.post_type IN ( 'post' ) )\n\t\t\t\t ORDER BY user_login ASC\n\t\t\t\t LIMIT 0, 2000"
+	},
+	{
+		"id": "r34",
+		"scenarios": ["GET /wp-sitemap-posts-post-1.xml"],
+		"count": 1,
+		"sql": "SELECT   wp_posts.*\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.post_type = 'post' AND ((wp_posts.post_status = 'publish'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.ID ASC\n\t\t\t\t\t LIMIT 0, 2000"
+	},
+	{
+		"id": "r35",
+		"scenarios": ["GET /wp-sitemap-taxonomies-category-1.xm"],
+		"count": 1,
+		"sql": "SELECT  t.term_id\n\t\t\t FROM wp_terms AS t  INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id\n\t\t\t WHERE tt.taxonomy IN ('category') AND tt.count > 0\n\t\t\t ORDER BY t.term_id ASC\n\t\t\t LIMIT 2000"
+	},
+	{
+		"id": "r36",
+		"scenarios": ["GET /tag/none/"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND ( \n  0 = 1\n) AND ((wp_posts.post_type = 'post' AND (wp_posts.post_status = 'publish')))\n\t\t\t\t\t GROUP BY wp_posts.ID\n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 10"
+	},
+	{
+		"id": "r37",
+		"scenarios": ["GET /2026/01/"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND ( \n  ( YEAR( wp_posts.post_date ) = 2026 AND MONTH( wp_posts.post_date ) = 1 )\n) AND ((wp_posts.post_type = 'post' AND (wp_posts.post_status = 'publish')))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 10"
+	},
+	{
+		"id": "r38",
+		"scenarios": ["GET /author/admin/"],
+		"count": 1,
+		"sql": "SELECT * FROM wp_users WHERE user_nicename = 'admin' LIMIT 1"
+	},
+	{
+		"id": "r39",
+		"scenarios": ["GET /author/admin/"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND (wp_posts.post_author = 1) AND ((wp_posts.post_type = 'post' AND (wp_posts.post_status = 'publish')))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 10"
+	},
+	{
+		"id": "r40",
+		"scenarios": ["rest-posts"],
+		"count": 2,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.post_type = 'post' AND ((wp_posts.post_status = 'publish'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 10"
+	},
+	{
+		"id": "r41",
+		"scenarios": ["rest-posts"],
+		"count": 5,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.post_parent = 6  AND wp_posts.post_type = 'revision' AND ((wp_posts.post_status = 'inherit'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC, wp_posts.ID DESC\n\t\t\t\t\t LIMIT 0, 1"
+	},
+	{
+		"id": "r42",
+		"scenarios": ["rest-posts"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.post_name IN ('hello-world') AND wp_posts.post_type = 'post' AND ((wp_posts.post_status = 'publish'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 10"
+	},
+	{
+		"id": "r43",
+		"scenarios": ["rest-posts"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND (((wp_posts.post_title LIKE '%hello%') OR (wp_posts.post_excerpt LIKE '%hello%') OR (wp_posts.post_content LIKE '%hello%')))  AND (wp_posts.post_password = '')  AND wp_posts.post_type = 'post' AND ((wp_posts.post_status = 'publish'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 10"
+	},
+	{
+		"id": "r44",
+		"scenarios": ["rest-posts"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts  LEFT JOIN wp_term_relationships ON (wp_posts.ID = wp_term_relationships.object_id)\n\t\t\t\t\t WHERE 1=1  AND ( \n  wp_term_relationships.term_taxonomy_id IN (1)\n) AND wp_posts.post_type = 'post' AND ((wp_posts.post_status = 'publish'))\n\t\t\t\t\t GROUP BY wp_posts.ID\n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 10"
+	},
+	{
+		"id": "r45",
+		"scenarios": ["rest-posts"],
+		"count": 1,
+		"sql": "SELECT  COUNT(*)\n\t\t\t FROM wp_terms AS t  INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id\n\t\t\t WHERE tt.taxonomy IN ('category')\n\t\t\t \n\t\t\t "
+	},
+	{
+		"id": "r46",
+		"scenarios": ["rest-posts"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS wp_comments.comment_ID\n\t\t\t FROM wp_comments \n\t\t\t WHERE ( comment_approved = '1' ) AND comment_post_ID IN ( 1 ) AND comment_type IN ('', 'comment') AND comment_type NOT IN ('note')\n\t\t\t \n\t\t\t ORDER BY wp_comments.comment_date_gmt DESC, wp_comments.comment_ID DESC\n\t\t\t LIMIT 0,10"
+	},
+	{
+		"id": "r47",
+		"scenarios": ["rest-posts", "single", "widgets"],
+		"count": 3,
+		"sql": "SELECT wp_comments.* FROM wp_comments WHERE comment_ID IN (1)"
+	},
+	{
+		"id": "r48",
+		"scenarios": ["rest-posts"],
+		"count": 1,
+		"sql": "SELECT comment_id, meta_key, meta_value FROM wp_commentmeta WHERE comment_id IN (1) ORDER BY meta_id ASC"
+	},
+	{
+		"id": "r49",
+		"scenarios": ["rest-posts"],
+		"count": 1,
+		"sql": "SELECT  COUNT(*)\n\t\t\t FROM wp_comments \n\t\t\t WHERE ( ( comment_approved = '0' OR comment_approved = '1' ) ) AND comment_parent = 1\n\t\t\t \n\t\t\t \n\t\t\t "
+	},
+	{
+		"id": "r50",
+		"scenarios": ["rest-users"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS wp_users.ID\n\t\t\t\t FROM wp_users\n\t\t\t\t WHERE 1=1 AND wp_users.ID IN ( SELECT DISTINCT wp_posts.post_author FROM wp_posts WHERE wp_posts.post_status = 'publish' AND wp_posts.post_type IN ( 'post', 'page', 'attachment', 'nav_menu_item', 'wp_block', 'wp_template', 'wp_template_part', 'wp_global_styles', 'wp_navigation', 'wp_font_family', 'wp_font_face' ) )\n\t\t\t\t ORDER BY display_name ASC\n\t\t\t\t LIMIT 0, 10"
+	},
+	{
+		"id": "r51",
+		"scenarios": ["rest-users"],
+		"count": 1,
+		"sql": "SELECT COUNT(*) FROM wp_posts WHERE ( ( post_type = 'attachment' AND ( post_status = 'publish' ) ) OR ( post_type = 'nav_menu_item' AND ( post_status = 'publish' ) ) OR ( post_type = 'page' AND ( post_status = 'publish' ) ) OR ( post_type = 'post' AND ( post_status = 'publish' ) ) OR ( post_type = 'wp_block' AND ( post_status = 'publish' ) ) OR ( post_type = 'wp_font_face' AND ( post_status = 'publish' ) ) OR ( post_type = 'wp_font_family' AND ( post_status = 'publish' ) ) OR ( post_type = 'wp_global_styles' AND ( post_status = 'publish' ) ) OR ( post_type = 'wp_navigation' AND ( post_status = 'publish' ) ) OR ( post_type = 'wp_template' AND ( post_status = 'publish' ) ) OR ( post_type = 'wp_template_part' AND ( post_status = 'publish' ) ) ) AND post_author = 1"
+	},
+	{
+		"id": "r52",
+		"scenarios": ["rest-users"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS wp_users.ID\n\t\t\t\t FROM wp_users\n\t\t\t\t WHERE 1=1 AND wp_users.ID IN ( SELECT DISTINCT wp_posts.post_author FROM wp_posts WHERE wp_posts.post_status = 'publish' AND wp_posts.post_type IN ( 'post', 'page', 'attachment', 'nav_menu_item', 'wp_block', 'wp_template', 'wp_template_part', 'wp_global_styles', 'wp_navigation', 'wp_font_family', 'wp_font_face' ) ) AND user_nicename IN ( 'admin' )\n\t\t\t\t ORDER BY display_name ASC\n\t\t\t\t LIMIT 0, 10"
+	},
+	{
+		"id": "r53",
+		"scenarios": ["rest-users"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS wp_users.ID\n\t\t\t\t FROM wp_users\n\t\t\t\t WHERE 1=1\n\t\t\t\t ORDER BY display_name ASC\n\t\t\t\t LIMIT 0, 20"
+	},
+	{
+		"id": "r54",
+		"scenarios": ["admin-posts", "single"],
+		"count": 2,
+		"sql": "SELECT * FROM wp_users WHERE ID = '1' LIMIT 1"
+	},
+	{
+		"id": "r55",
+		"scenarios": ["admin-posts"],
+		"count": 3,
+		"sql": "SELECT COUNT( 1 )\n\t\t\t\tFROM wp_posts\n\t\t\t\tWHERE post_type = 'post'\n\t\t\t\tAND post_status NOT IN ( 'trash','auto-draft','inherit','request-pending','request-confirmed','request-failed','request-completed' )\n\t\t\t\tAND post_author = 1"
+	},
+	{
+		"id": "r56",
+		"scenarios": ["admin-posts", "widgets"],
+		"count": 2,
+		"sql": "\n\t\t\tSELECT post_status, COUNT(*) AS num_posts\n\t\t\tFROM wp_posts\n\t\t\tWHERE post_type = 'post'\n\t\t GROUP BY post_status"
+	},
+	{
+		"id": "r57",
+		"scenarios": ["admin-posts"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND ((wp_posts.post_type = 'post' AND (wp_posts.post_status = 'publish' OR wp_posts.post_status = 'future' OR wp_posts.post_status = 'draft' OR wp_posts.post_status = 'pending' \nOR wp_posts.post_status = 'private')))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t LIMIT 0, 20"
+	},
+	{
+		"id": "r58",
+		"scenarios": ["admin-posts"],
+		"count": 1,
+		"sql": "SELECT DISTINCT YEAR( post_date ) AS year, MONTH( post_date ) AS month\n\t\t\t\t\tFROM wp_posts\n\t\t\t\t\tWHERE post_type = 'post'\n\t\t\t\t\tAND post_status != 'auto-draft' AND post_status != 'trash'\n\t\t\t\t\tORDER BY post_date DESC"
+	},
+	{
+		"id": "r59",
+		"scenarios": ["admin-posts"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.post_type = 'post' AND ((wp_posts.post_status = 'draft'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_modified DESC\n\t\t\t\t\t LIMIT 0, 20"
+	},
+	{
+		"id": "r60",
+		"scenarios": ["admin-posts"],
+		"count": 1,
+		"sql": "SELECT SQL_CALC_FOUND_ROWS  wp_posts.ID\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND (((wp_posts.post_title LIKE '%planner%') OR (wp_posts.post_excerpt LIKE '%planner%') OR (wp_posts.post_content LIKE '%planner%')))  AND wp_posts.post_type = 'post' AND ((wp_posts.post_status = 'draft'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_modified DESC\n\t\t\t\t\t LIMIT 0, 20"
+	},
+	{
+		"id": "r61",
+		"scenarios": ["login"],
+		"count": 2,
+		"sql": "SELECT * FROM wp_users WHERE user_login = 'admin' LIMIT 1"
+	},
+	{
+		"id": "r62",
+		"scenarios": ["single"],
+		"count": 1,
+		"sql": "SELECT  wp_comments.comment_ID\n\t\t\t FROM wp_comments \n\t\t\t WHERE ( comment_approved = '1' ) AND comment_post_ID = 1 AND comment_type NOT IN ('note')\n\t\t\t \n\t\t\t ORDER BY wp_comments.comment_date_gmt ASC\n\t\t\t "
+	},
+	{
+		"id": "r63",
+		"scenarios": ["single"],
+		"count": 5,
+		"sql": "SELECT  COUNT(*)\n\t\t\t FROM wp_comments \n\t\t\t WHERE ( comment_approved = '1' ) AND comment_post_ID = 1 AND comment_type NOT IN ('note')\n\t\t\t \n\t\t\t \n\t\t\t "
+	},
+	{
+		"id": "r64",
+		"scenarios": ["single"],
+		"count": 1,
+		"sql": "SELECT p.ID FROM wp_posts AS p  WHERE (p.post_date < '2026-11-21 06:58:14' OR (p.post_date = '2026-11-21 06:58:14' AND p.ID < 1)) AND p.post_type = 'post'  AND p.post_status = 'publish' ORDER BY p.post_date DESC, p.ID DESC LIMIT 1"
+	},
+	{
+		"id": "r65",
+		"scenarios": ["single"],
+		"count": 1,
+		"sql": "SELECT p.ID FROM wp_posts AS p  WHERE (p.post_date > '2026-11-21 06:58:14' OR (p.post_date = '2026-11-21 06:58:14' AND p.ID > 1)) AND p.post_type = 'post'  AND p.post_status = 'publish' ORDER BY p.post_date ASC, p.ID ASC LIMIT 1"
+	},
+	{
+		"id": "r66",
+		"scenarios": ["single"],
+		"count": 2,
+		"sql": "SELECT DISTINCT t.term_id\n\t\t\t FROM wp_terms AS t  INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id INNER JOIN wp_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id\n\t\t\t WHERE tt.taxonomy IN ('category') AND tr.object_id IN (1)\n\t\t\t ORDER BY t.name ASC\n\t\t\t "
+	},
+	{
+		"id": "r67",
+		"scenarios": ["single"],
+		"count": 1,
+		"sql": "\n\t\tSELECT ID, post_name, post_parent, post_type\n\t\tFROM wp_posts\n\t\tWHERE post_name IN ('sample-page')\n\t\tAND post_type IN ('page','attachment')\n\t"
+	},
+	{
+		"id": "r68",
+		"scenarios": ["single"],
+		"count": 1,
+		"sql": "SELECT   wp_posts.*\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND ( \n  ( YEAR( wp_posts.post_date ) = 2026 AND MONTH( wp_posts.post_date ) = 1 AND DAYOFMONTH( wp_posts.post_date ) = 1 )\n) AND wp_posts.post_name = 'hello-world' AND wp_posts.post_type = 'post'\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_date DESC\n\t\t\t\t\t "
+	},
+	{
+		"id": "r69",
+		"scenarios": ["single"],
+		"count": 1,
+		"sql": "SELECT   wp_posts.*\n\t\t\t\t\t FROM wp_posts \n\t\t\t\t\t WHERE 1=1  AND wp_posts.post_type = 'page' AND ((wp_posts.post_status = 'publish'))\n\t\t\t\t\t \n\t\t\t\t\t ORDER BY wp_posts.post_title ASC\n\t\t\t\t\t "
+	},
+	{
+		"id": "r70",
+		"scenarios": ["widgets"],
+		"count": 1,
+		"sql": "SELECT YEAR(post_date) AS `year`, MONTH(post_date) AS `month`, count(ID) as posts FROM wp_posts  WHERE post_type = 'post' AND post_status = 'publish' GROUP BY YEAR(post_date), MONTH(post_date) ORDER BY post_date DESC "
+	},
+	{
+		"id": "r71",
+		"scenarios": ["widgets"],
+		"count": 1,
+		"sql": "SELECT  t.term_id\n\t\t\t FROM wp_terms AS t  INNER JOIN wp_term_taxonomy AS tt ON t.term_id = tt.term_id\n\t\t\t WHERE tt.taxonomy IN ('post_tag') AND tt.count > 0\n\t\t\t ORDER BY tt.count DESC\n\t\t\t LIMIT 45"
+	},
+	{
+		"id": "r72",
+		"scenarios": ["widgets"],
+		"count": 1,
+		"sql": "SELECT  wp_comments.comment_ID\n\t\t\t FROM wp_comments JOIN wp_posts ON wp_posts.ID = wp_comments.comment_post_ID\n\t\t\t WHERE ( comment_approved = '1' ) AND comment_type NOT IN ('note') AND  wp_posts.post_status IN ('publish')\n\t\t\t \n\t\t\t ORDER BY wp_comments.comment_date_gmt DESC\n\t\t\t LIMIT 0,5"
+	}
+]

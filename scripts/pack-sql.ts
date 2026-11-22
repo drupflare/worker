@@ -496,6 +496,35 @@ for (const table of tables) {
 	totalRows += n;
 }
 
+/**
+ * The planner statistics of a database that carries them, as the statements that restore them.
+ *
+ * `sqlite_stat1` is skipped above with every engine-owned object and its name is reserved, so a
+ * plain CREATE cannot make it; `ANALYZE sqlite_master` makes it empty and costs no scan. The rows go
+ * in after the indexes, and a second `ANALYZE sqlite_master` reloads them into the connection,
+ * because the planner reads the table once when the schema is parsed. Only another CMS than Drupal
+ * packs them: a Drupal pack ships none and stays as it was.
+ */
+function statisticStatements(): { s: string; p: PackedParam[] }[] {
+	if (drupalSteps) return [];
+	const has = db
+		.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'")
+		.get();
+	if (!has) return [];
+	const rows = db.prepare('SELECT tbl, idx, stat FROM sqlite_stat1 ORDER BY tbl, idx').all();
+	if (rows.length === 0) return [];
+	return [
+		{ s: 'ANALYZE sqlite_master', p: [] },
+		{ s: 'DELETE FROM sqlite_stat1', p: [] },
+		...rows.map((r) => ({
+			s: 'INSERT INTO sqlite_stat1 (tbl, idx, stat) VALUES (?, ?, ?)',
+			p: [r.tbl, r.idx, r.stat] as PackedParam[]
+		})),
+		{ s: 'ANALYZE sqlite_master', p: [] }
+	];
+}
+const statistics = statisticStatements();
+
 // read before the close; published beside the manifest below. The pack's own variant is the
 // `cache_container` row, fingerprinted by the pack's `core.extension`; the rest are the bake's table
 // a database fresh from an install may not have created the bin yet; then there is no packed variant
@@ -555,7 +584,8 @@ function tableNameOf(ddl: string): string | null {
 const ordered: { s: string; p: PackedParam[]; b?: number; ddl?: boolean }[] = [
 	...tableDdl.map((s) => ({ ...s, b: s.s.length, ddl: true })),
 	...inserts,
-	...laterDdl.map((s) => ({ ...s, b: s.s.length, ddl: true }))
+	...laterDdl.map((s) => ({ ...s, b: s.s.length, ddl: true })),
+	...statistics.map((s) => ({ ...s, b: s.s.length }))
 ];
 
 const chunks: { s: string; p: PackedParam[] }[][] = [];
@@ -633,6 +663,7 @@ const manifest = {
 		collationsRewritten,
 		bakeRowsDropped,
 		sessionsSynthesised,
+		...(statistics.length > 0 ? { statisticRows: statistics.length - 3 } : {}),
 		withoutRowidTables,
 		base64Values,
 		bigintValues,

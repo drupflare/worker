@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { dropInMissing, prepareSite, runPhp } from './wp/harness';
 import { startHost } from './wp/host';
+import { installStatistics, modelStatistics } from './wp/planner-stats';
 
 /**
  * Bakes the WordPress database the pack ships: WordPress's own installer runs through the MySQL
@@ -128,6 +129,7 @@ export async function bake(work: string, out: string | undefined): Promise<Baked
 	const db = new DatabaseSync(site.db);
 	try {
 		for (const sql of scrubStatements()) db.exec(sql);
+		installStatistics(db, modelStatistics(db));
 		const secrets = [site.pass, ...site.salts];
 		for (const secret of secrets) {
 			const leaked = findHits(db, secret);

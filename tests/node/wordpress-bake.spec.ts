@@ -198,6 +198,14 @@ describe.skipIf(reason !== undefined)('two bakes of the installer', () => {
 		).creates;
 		expect(names).toContain('cfw_mysql_schema');
 		expect(names.filter((n) => n.startsWith('wp_')).length).toBe(12);
+		// the planner statistics a loaded site needs ride in the last chunk
+		const notes = (
+			JSON.parse(readFileSync(join(a.sql!, 'manifest.json'), 'utf8')) as {
+				notes: { statisticRows?: number };
+			}
+		).notes;
+		expect(notes.statisticRows).toBeGreaterThan(20);
+		expect(Object.values(chunksA).join('')).toContain('INSERT INTO sqlite_stat1');
 		// the origin is the one declared placeholder, in the rows the provisioning step does not own
 		expect(a.hits.map((h) => `${h.table}.${h.column}`).sort()).toEqual([
 			'wp_options.option_value',

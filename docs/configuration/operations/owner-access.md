@@ -66,9 +66,19 @@ Limits worth knowing:
   Storage: Edit" is enough. In a managed deployment the operator owns the namespace and can already
   read every object, so tenants must never hold KV API access.
 - A client clock more than about a minute behind the worker's makes `exp` already past (410).
-- The token is not rotated. Whatever else holds it keeps working.
+- A recovery rotates the token. The site keeps only a hash, so it cannot return the old token; the
+  answer carries a new one with `rotated: true` and the old one stops working. Whatever else holds
+  the old token has to store the new one.
 - A local `wrangler dev` site has local KV, which the Cloudflare API cannot write; the route is
   meant for a deployed site.
+
+## Rotating the Token
+
+`POST /rotate-token` with the current owner token issues a new one and refuses the old one from then
+on. It answers `{"ok": true, "ownerToken": "...", "rotated": true}` once, with `cache-control:
+no-store`; the site stores only the hash. Without a valid token it answers 401, a `GET` answers 405,
+and a replica answers 409 and changes nothing. The entry in the audit log carries the first 8
+characters of the hash of the token that asked, recorded before the old token stops matching.
 
 ## Owner Audit Log
 
@@ -76,7 +86,7 @@ The object records every owner call that changes state or reads a secret, and `G
 the log. A call is recorded when it carries the owner token and reaches one of these: `/install`,
 `/install-lock` (POST and DELETE), `/enable`, `/modify`, `/restore`, `/restore-parts` (`begin`, `commit` and `abort`), `/export`, `/offloaded` (the
 listing, and a read of a `private://` file), `/migrate`, `/bump`, `/invalidate`, `/pitr` (POST),
-`/updb` (POST), `/reconcile` (POST), `/recycle` (POST), `/ledger-gc` (POST), `/strata-config` (POST), `/strata-store` (POST), `/writemark` (POST and DELETE), `/writechanges?body=1`,
+`/updb` (POST), `/reconcile` (POST), `/recycle` (POST), `/ledger-gc` (POST), `/strata-config` (POST), `/strata-store` (POST), `/uninstall` (POST, except `?dry=1`), `/theme-default` (POST), `/rotate-token`, `/db-console` (POST), `/admin-password` (POST), `/file` (PUT), `/writemark` (POST and DELETE), `/writechanges?body=1`,
 `/firstrun?force=1`, `/git` with any action but `list`,
 `check`, `branches`, `prs`, `diff` and `status`, `/queue?action=drop`, `/ops` with an `op`, the
 `/setup/*` pages when they write, `/health?clear=1`, and a `/settings` write. A token recovery is

@@ -177,6 +177,27 @@ came for every one of those ids, so a tag for one post no longer covers a write 
 statement shape (an `OR`, a subselect, a join, a different key column, more than 100 ids) falls back
 to the table family check: a tag of a family the table feeds covers it.
 
+A post page's previous and next links used to carry the all-posts tag, so any publish purged every
+post page. The stock lookup, a published post of the same type ordered by date and then ID, now
+carries a tag for the links of its own post instead. Publishing a post, restoring it from the trash
+or moving it to a new date announces the links of the two published posts on either side of its new
+place, one indexed query each way, and nothing else about those posts. A post that leaves
+publication, whether trashed, drafted, made private or deleted, announces nothing extra: every page
+that linked to it loaded it and already carries its tag. Equal dates break on ID, as the lookup does.
+A lookup limited to the same category or tag, one that excludes terms, one a theme or plugin changed
+with a filter, and any other statement shape keep the all-posts tag and purge with every publish.
+
+That narrows the post pages a publish purges to the post, its two neighbours and the pages that
+list it. It does not cover everything a post page loads. A new or removed post changes its
+category's post count, which purges every page that loaded the category, and a theme that lists
+recent posts on its post pages carries the listing tag a publish announces. On those sites a
+publish still purges most post pages.
+
+Publishing also sets two flags in post meta, `_pingme` and `_encloseme`, which WordPress's next cron
+run clears. No page shows either, so the host announces nothing for them, and it announces nothing
+for the option where it records its own cron run. Before this, the cron run that followed a publish
+purged about as many pages as the publish had.
+
 A floor purge is still wholesale. The host does not know which listings a post it never saw belongs
 to, so it cannot name a smaller set of tags. `/serve-stats` reports `floorPurges` and the tables behind
 the last one under `wordpressTags`. A wholesale purge marks every stored page superseded and queues
@@ -190,6 +211,33 @@ object still answers a page marked superseded by a wholesale purge for up to `AG
 
 An isolate learns a new generation within its pointer window, so another colo can answer the old page
 for a few seconds after a write.
+
+### Background Fills and Visitors
+
+A purge queues a refill for every page it removed, and the object works through the queue on its
+alarm. A WordPress render takes about half a second and holds the object for all of it, so a request
+that arrives in the middle waits, and the alarm used to start the next fill the moment one ended.
+After a publish that left a dozen pages queued, a visitor's reads waited for the whole queue to
+drain.
+
+The fill batch now yields to the event loop between fills, so a request that arrived during a render
+is served before the next fill starts. It also stands aside for `VISITOR_QUIET_MS` (500 ms by
+default) after a request reaches the gated lane, which covers the gap between two requests of one
+visitor. Two rules keep the queue moving:
+
+- A queued page that a visitor is waiting on is filled at once. Only background pages wait.
+- A fill goes through once none has run for ten windows, so a steady stream of requests cannot hold
+  the queue back for good.
+
+`0` turns the wait off and leaves only the yield. The pages nobody asked for are filled after the
+visitors go quiet, so the queue takes longer to empty than it did.
+
+How long a page can stay stale after the write that purged it depends on how many pages that write
+purges, because the object renders one page at a time. The bound is 1 second per page the write
+affects plus 2 seconds: 8 seconds for a publish (six pages), 6 seconds for an edit (four), and 1
+second per stored page plus 2 seconds for a write that purges every stored page. It rests on a
+measured render of about 0.6 seconds per page on a local object that renders one page at a time. No
+deployed reading has been taken, so treat it as the local figure.
 
 ### Validators
 

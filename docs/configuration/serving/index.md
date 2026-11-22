@@ -18,6 +18,7 @@ Settings for page caching, static assets, prefill, files and images, and the R2 
 | `MAX_BODY_BYTES`         | 2 MiB    | largest non-file request body the edge forwards                                                           |
 | `MAX_RESTORE_BYTES`      | 16 MiB   | largest `/restore` dump the edge forwards                                                                 |
 | `MAX_UPLOAD_BYTES`       | 100 MiB  | largest `multipart/form-data` body the edge forwards                                                      |
+| `MAX_FILE_PUT_BYTES`     | 100 MiB  | largest body `PUT /file` forwards; the body streams to R2                                                 |
 | `OUTBOUND_GUARD`         | on       | refuse an outbound fetch to a private, loopback or metadata address; `0` off                              |
 | `PAGE_KV_ENABLED`        | on       | the cross-colo KV page tier; `0` off, `1` also lets free store compiled plans                             |
 | `PAGE_KV_TTL`            | 86,400   | seconds a stored page lives; floored at KV's own 60 s minimum                                             |
@@ -36,6 +37,7 @@ Settings for page caching, static assets, prefill, files and images, and the R2 
 | `MEMORY_CACHE_MAX_ITEMS` | 64       | entries one in-memory bin may hold before it drops its oldest                                             |
 | `RENDER_BUDGET_MS`       | per plan | wall-clock ms a MISS may spend rendering before handing off to the alarm                                  |
 | `FILL_BATCH_SIZE`        | per plan | pages one alarm firing may fill before re-arming; capped at 50                                            |
+| `VISITOR_QUIET_MS`       | 500      | how long background fills stand aside after a visitor's request reached the object; `0` off               |
 | `WINDOW_SITES`           | unset    | narrows the scheduled fill window to these sites; unset drives the whole fleet                            |
 | `WINDOW_MAX_FILLS`       | 50       | fills one window may drive                                                                                |
 | `WINDOW_WALL_MS`         | 60,000   | wall-clock ms one window may run                                                                          |

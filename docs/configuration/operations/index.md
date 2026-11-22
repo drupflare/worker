@@ -7,6 +7,7 @@ Settings for maintenance, owner access, audit, runtime overrides, database updat
 - [Owner Access and Audit](owner-access.md): owner token recovery and the audit log.
 - [Updates and Reconciliation](updates.md): database updates, pack reconciliation and the addressable sweep.
 - [Runtime Overrides](overrides.md): reading and writing overrides, and the three permissions.
+- [Discovery Document](discovery.md): the settings, routes and limits a Drupal site reports to the dashboard.
 - [WordPress Packages](wordpress-packages.md): installing, updating, rolling back and deleting plugins and themes, archive limits, core updates and the Multisite refusal.
 
 ## Site Maintenance
@@ -38,27 +39,36 @@ What an owner token can fix, and what each one costs. The class decides whether 
 unattended: `safe` changes nothing a visitor sees, `rebuild` discards derived state that comes back
 on its own, and `stateful` changes what the site serves.
 
-| route                   | class    | what it does                                                           |
-| ----------------------- | -------- | ---------------------------------------------------------------------- |
-| `/health`               | safe     | reads the repair state, the ledger and the worker version              |
-| `/health?clear=1`       | stateful | releases a quarantine, so the site serves again                        |
-| `/updb`                 | safe     | reads the update run                                                   |
-| `/updb` (POST)          | stateful | advances one beat of a database update                                 |
-| `/updb?action=prepare`  | stateful | starts an update run, fence and snapshot included                      |
-| `/updb?action=rollback` | stateful | restores the bookkeeping a halted run snapshotted                      |
-| `/armfill`              | rebuild  | queues a fill, so cold paths warm without a visitor                    |
-| `/invalidate`           | rebuild  | drops stored pages for a path or a tag                                 |
-| `/bump`                 | rebuild  | advances the generation, retiring every stored page                    |
-| `/migrate`              | stateful | resumes first-run migration on a site that stalled                     |
-| `/recycle` (POST)       | rebuild  | drops the PHP interpreter; the next request pays a full boot           |
-| `/ledger-gc` (POST)     | safe     | trims the health ledger to 500 rows, newest kept                       |
-| `/strata-config`        | safe     | reads Strata's `capture.statements`                                    |
-| `/strata-config` (POST) | stateful | sets Strata's `capture.statements`; the next request boots fresh       |
-| `/strata-store`         | safe     | reads Strata's store: provider, bucket, endpoint, region, key flags    |
-| `/strata-store` (POST)  | stateful | points Strata at an S3 or R2 bucket; makes the key; `enable` starts it |
-| `/writemark`            | safe     | reads the accepted-write count; POST and DELETE start and end the mark |
-| `/writechanges`         | safe     | reads the rows changed since the mark                                  |
-| `/git?action=unpin`     | stateful | releases a preview pin without reaching the remote                     |
+| route                    | class    | what it does                                                           |
+| ------------------------ | -------- | ---------------------------------------------------------------------- |
+| `/health`                | safe     | reads the repair state, the ledger and the worker version              |
+| `/health?clear=1`        | stateful | releases a quarantine, so the site serves again                        |
+| `/updb`                  | safe     | reads the update run                                                   |
+| `/updb` (POST)           | stateful | advances one beat of a database update                                 |
+| `/updb?action=prepare`   | stateful | starts an update run, fence and snapshot included                      |
+| `/updb?action=rollback`  | stateful | restores the bookkeeping a halted run snapshotted                      |
+| `/armfill`               | rebuild  | queues a fill, so cold paths warm without a visitor                    |
+| `/invalidate`            | rebuild  | drops stored pages for a path or a tag                                 |
+| `/bump`                  | rebuild  | advances the generation, retiring every stored page                    |
+| `/migrate`               | stateful | resumes first-run migration on a site that stalled                     |
+| `/recycle` (POST)        | rebuild  | drops the PHP interpreter; the next request pays a full boot           |
+| `/ledger-gc` (POST)      | safe     | trims the health ledger to 500 rows, newest kept                       |
+| `/strata-config`         | safe     | reads Strata's `capture.statements`                                    |
+| `/strata-config` (POST)  | stateful | sets Strata's `capture.statements`; the next request boots fresh       |
+| `/strata-store`          | safe     | reads Strata's store: provider, bucket, endpoint, region, key flags    |
+| `/strata-store` (POST)   | stateful | points Strata at an S3 or R2 bucket; makes the key; `enable` starts it |
+| `/uninstall` (POST)      | stateful | removes a module through Drupal's installer, after naming dependents   |
+| `/theme-default`         | safe     | reads the default and admin theme and the installed themes             |
+| `/theme-default` (POST)  | stateful | sets the default or the admin theme to an installed theme              |
+| `/extensions`            | safe     | lists every module, theme and profile with its version and state       |
+| `/.well-known/drupflare` | safe     | reads the discovery document: settings, routes and limits              |
+| `/rotate-token` (POST)   | stateful | issues a new owner token and refuses the old one                       |
+| `/file` (PUT)            | stateful | writes a streamed body to R2 and records the file as held only there   |
+| `/admin-password` (POST) | stateful | sets a new password for user 1 and answers it once                     |
+| `/db-console` (POST)     | safe     | runs one read-only SELECT against the site database and returns rows   |
+| `/writemark`             | safe     | reads the accepted-write count; POST and DELETE start and end the mark |
+| `/writechanges`          | safe     | reads the rows changed since the mark                                  |
+| `/git?action=unpin`      | stateful | releases a preview pin without reaching the remote                     |
 
 `/recycle` and `/ledger-gc` take the owner token only; `PW_DIAGNOSTICS` does not reach them, and a
 `GET` answers 405. `/recycle` answers `{ok, recycled, recyclesBefore, recyclesAfter}`, with
@@ -96,6 +106,79 @@ only while `enabled` is still false. It answers 409
 `strata_s3_not_enabled` when `strata_s3` is not enabled (enable it through `/enable` first), and 409
 while a transaction is open. A failed write answers 500 `strata_store_write_failed` with at most the
 PHP exception class, never its message.
+
+`/uninstall`, `/theme-default` and `/rotate-token` take the owner token only. `POST /uninstall?module=NAME`
+removes one enabled module. It reads the enabled modules that require NAME first and answers 409
+`module_has_dependents` with their names while any is enabled, then answers 409 `uninstall_blocked`
+with `reasons` when Drupal's own uninstall validators refuse (a module that ships with every site, or
+one that owns content). `?dry=1` answers 200 with `{module, dryRun, enabledModules, dependents,
+reasons, wouldDelete}` and changes nothing. `wouldDelete` lists the files `cfw_module_file` holds for
+the package `drupal/NAME` or `NAME`; the route never deletes them. A success answers
+`{ok, module, uninstalled: true, dependents: []}`, drops the interpreter and heap images and advances
+the page generation. A module that is not in `core.extension` answers 404 `module_not_enabled`, a
+name that is not a machine name answers 400, and a failure answers 500 `uninstall_failed` with the
+PHP class and a message of at most 300 characters.
+
+`/extensions` takes the owner token and answers `GET` only. It answers a JSON array of
+`{name, kind, version, enabled}`, one row for each module, theme and install profile Drupal discovers,
+sorted by name and then kind. `kind` is `module`, `theme` or `profile`. `version` is the value the
+info file states, or `null` when it states none. `enabled` is true when `core.extension` holds the
+extension; a profile is enabled when it is the installed one, and appears once, as a profile, not
+again as a module. A module whose files were delivered but not yet enabled is listed with
+`enabled: false`. The route reads only, so it answers on a replica as `/health` does. It carries no
+advisory state; the dashboard adds that from its own feed. It answers 405 for other methods, 501
+`drupal_only` on WordPress and 500 `extensions_unreadable` with the PHP class when the kernel cannot
+list them.
+
+`/theme-default` answers `GET` and `POST ?dry=1` with `{default, admin, installed}`. `POST` takes
+`{"project": "<theme>", "target": "default" | "admin"}` and answers
+`{default, admin, installed, previous, applied: true}`; it sets that one key of `system.theme`
+through `ConfigFactory`, then drops the interpreter and heap images and advances the page
+generation. Naming the theme a key already holds writes nothing. An empty `project` with target
+`admin` clears the admin theme, so the site uses the default theme for admin pages; `default`
+takes no empty value. A theme that is not installed
+answers 404 `theme_not_installed` (install and enable it first), and a body of any other shape
+answers 400.
+
+`/admin-password` takes the owner token only, `POST` only, with no body. It generates a password of
+32 characters, sets it on user 1 through Drupal's user entity (so Drupal hashes it and ends that
+user's other sessions), and answers `{ok, uid, name, blocked, password, applied: true}` with
+`cache-control: no-store`. The password is shown once in this reply and is never stored or audited;
+the audit entry names the route only. It does not unblock a blocked account. It answers 404
+`admin_not_found` when user 1 does not exist, 409 while a transaction is open or on a replica, and 500
+`admin_password_failed` with the PHP class on a failure. A site that runs WordPress answers 501
+`drupal_only`.
+
+`PUT /file?uri=public://path/name.png` registers a file that is held only in R2, which a site import
+uses so the bytes never pass through the object. It takes the owner token, a `content-length`, the
+hex sha256 of the bytes in `x-file-sha256` and, optionally, the type in `content-type`. The body
+streams to this site's own prefix in the bucket for the scheme (`FILES`, or `FILES_PRIVATE` for
+`private://`), where R2 checks the digest as it receives the bytes; the object then records an
+evicted row with no resident chunks, so `/offloaded` lists it and a read comes from R2. The row is
+written only after R2 has stored the size the caller declared. An existing file at the same URI is
+replaced. The site needs `FILE_STORE=r2` and the bucket bound, or the route answers 501
+`no_r2_store`. Other refusals, each `{ok: false, error, code}`: 400 `bad_uri`, `sha256_required`
+and `length_required`; 422 `digest` when the bytes do not match, and `size`; 429 `r2_budget` when
+this month's R2 write allowance is spent; 502 `storage_unavailable`; 405 for any method but `PUT`.
+Each call spends one R2 write against that allowance. The body ceiling is `MAX_FILE_PUT_BYTES`
+(100 MiB by default, the platform's request limit; `0` disables). The success answer is
+`{ok, uri, size, sha256, store: "r2", replaced}`. Every call is recorded in the audit log as `/file`.
+
+`/db-console` takes the owner token only, `POST` only. The body is
+`{"v": 1, "sql", "params", "limit", "timeoutMs"}` with `sql` up to 10,000 characters, up to 100
+params, a `limit` up to 1,000 rows and a `timeoutMs` up to 30,000. A success answers
+`{columns, rows, truncated, elapsedMs}`; each cell is a string, number, boolean or null, a blob is
+`x'<hex>'`, and an integer past 2^53 is a string. Every refusal is `{code, message}`: 422
+`not_read_only` for anything but one SELECT, WITH or VALUES statement (a write or schema keyword
+anywhere outside a comment or literal refuses it, so quote a column named `update`), 413
+`too_large` for a bound above those limits, 400 `statement_failed` for a statement SQLite rejects
+(a typo or a missing table, with SQLite's message), and 400 or 503 `unavailable` for a malformed
+body or a transaction that is open. A statement that wrote a row despite the check is rolled back
+and answers 422. Durable Object SQL cannot be interrupted, so the row limit stops the copy and not
+the scan, and a result cut at `limit` answers `truncated: true`. `timeoutMs` is advisory: it is
+checked against its bound and never enforced, so a slow statement still answers its rows, and
+`elapsedMs` says how long it took. Send a `LIMIT` with the statement. Every call is recorded in the
+audit log as `/db-console`, never with the statement.
 
 `/git?action=unpin` exists because `unpreview` cannot help here: it re-syncs to the branch head, so it
 needs the remote to answer, and a pin held against a remote that is down is exactly what an operator

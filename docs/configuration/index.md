@@ -63,6 +63,7 @@ Every variable and binding on the configuration pages, once each.
 | `MAX_RESTORE_BYTES`             | 16 MiB                                | [Serving](serving/request-limits.md#max_restore_bytes)   |
 | `MAX_RESTORE_PAGED_BYTES`       | 128 MiB                               | [Serving](serving/request-limits.md)                     |
 | `MAX_UPLOAD_BYTES`              | 100 MiB                               | [Serving](serving/index.md)                              |
+| `MAX_FILE_PUT_BYTES`            | 100 MiB                               | [Serving](serving/index.md)                              |
 | `OUTBOUND_GUARD`                | on                                    | [Serving](serving/request-limits.md#outbound_guard)      |
 | `PAGE_KV_ENABLED`               | on                                    | [Serving](serving/index.md)                              |
 | `PAGE_KV_TTL`                   | 86,400                                | [Serving](serving/index.md)                              |
@@ -83,6 +84,7 @@ Every variable and binding on the configuration pages, once each.
 | `MEMORY_CACHE_MAX_ITEMS`        | 64                                    | [Serving](serving/index.md)                              |
 | `RENDER_BUDGET_MS`              | per plan                              | [Serving](serving/index.md)                              |
 | `FILL_BATCH_SIZE`               | per plan                              | [Serving](serving/index.md)                              |
+| `VISITOR_QUIET_MS`              | 500                                   | [Serving](serving/index.md)                              |
 | `WINDOW_SITES`                  | unset                                 | [Serving](serving/index.md)                              |
 | `WINDOW_MAX_FILLS`              | 50                                    | [Serving](serving/index.md)                              |
 | `WINDOW_WALL_MS`                | 60,000                                | [Serving](serving/index.md)                              |
@@ -111,6 +113,7 @@ Every variable and binding on the configuration pages, once each.
 | `WATCHDOG_ROW_LIMIT`            | unset                                 | [Runtime](runtime.md)                                    |
 | `KEEP_WARM_MS`                  | 240,000                               | [Runtime](runtime.md)                                    |
 | `SITE_WARM`                     | by plan                               | [Runtime](runtime.md)                                    |
+| `WARM_WINDOW`                   | unset                                 | [Runtime](runtime.md)                                    |
 | `WARM_INTERVAL_MS`              | 8,000                                 | [Runtime](runtime.md)                                    |
 | `WARM_CEILING_MS`               | unset                                 | [Runtime](runtime.md)                                    |
 | `IDLE_CEILING_MS`               | unset                                 | [Runtime](runtime.md)                                    |

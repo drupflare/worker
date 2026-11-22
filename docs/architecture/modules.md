@@ -57,6 +57,33 @@ hash again before a revision is applied.
 Bytes are bounded twice: by `MAX_BODY_BYTES` per request, and by a 2,199,995-byte cap per file,
 since each file is one stored row. A client batches to stay under both.
 
+A blob carries text by default. Set `encoding` to `base64` on a blob to send a file's raw bytes, such
+as a theme's images and fonts: `{ "hash": "...", "source": "<base64>", "encoding": "base64" }`. The
+hash is the sha256 of the decoded bytes, so the same file has the same hash whichever way it was
+sent. A blob whose bytes do not match its hash, whose base64 does not decode, or whose `encoding` is
+not `utf8` or `base64` is rejected with 422. A file that is not UTF-8 text is stored as base64 in its
+row and decoded when PHP opens it, so PHP and the integrity check see the original bytes. The cap
+above applies to the stored form, which is a third larger than the file.
+
+The front worker serves a delivered file under `/modules/`, `/themes/`, `/profiles/` and
+`/libraries/` with the type its extension names: `css`, `js`, `mjs`, `svg`, `png`, `jpg`, `jpeg`,
+`gif`, `webp`, `avif`, `ico`, `woff`, `woff2`, `ttf` and `otf`. A path the site does not hold falls
+through to Drupal.
+
+A `commit` replaces the whole package unless it sets `keep` to `true`. With `keep`, the files the
+commit names replace their paths in the active revision and every other file stays, so one changed
+file needs only that file sent. `remove` is a list of paths to delete from the kept set and needs
+`keep`. A path that is both named and removed, or a result with no files, is refused with 400. The
+reply carries `kept`, the count of files carried over, and `removed`, the paths dropped. `plan`
+takes the same two fields and reports the same counts. `keep` reads the active revision, so a
+package with no revision keeps nothing.
+
+A `commit` may also carry `base`, the revision hash the caller read. If `base` is not the active
+revision when the commit arrives, nothing is written and the answer is 409 with
+`{"code": "stale_base", "base": "...", "active": "<active hash or null>"}`, so the caller can fetch
+the active manifest and show what changed. A package with no active revision answers `active: null`.
+A `base` that is not a revision hash answers 400. Without `base` the commit is last writer wins.
+
 A `commit` body may carry `autoload`, one object or an array, for vendor packages a build delivers:
 `{"name":"acme/widget","version":"1.4.0","mount":"vendor/acme/widget","autoload":{"psr-4":{...}}}`.
 The mount must sit under `vendor/` or `libraries/`. The site registers each map with the class loader
@@ -105,6 +132,14 @@ flags, branch aliases, branch archives, metapackages and virtual packages. Compo
 skipped. Installing does not enable a module. The two are separate steps, because a package that
 lands is not yet a module Drupal knows about.
 
+`/install` refuses a package whose requirements conflict with the shipped lock and lists each
+conflict. `force=1` installs anyway. `accept=drupal/key,vendor/other` is narrower: it installs only
+when every conflict names one of the listed packages in its `requires`, so a caller that showed the
+owner one conflict cannot waive a second one it did not show. A conflict outside the list still
+answers 409 with the full list, and a package the registry cannot find still answers 404. A package
+in `accept` that is not among the current conflicts answers 400 with `code: "accept_not_in_conflicts"`
+and the unlisted names, so a preflight that has gone stale cannot accept more than it showed.
+
 ### Installing a Lock
 
 `POST /install-lock` takes a `composer.lock` as the JSON body and installs the packages it names, so a
@@ -113,7 +148,7 @@ site restored from a template bundle gets the code its database expects. The bod
 and `cursor`. The route is owner-token only; `GET` answers 405.
 
 One call handles a window of 40 packages, the same count `/install` takes, and answers
-`{ session, done, cursor, total, installed, skipped, failed, patches, cache }`. Send the same body
+`{ session, done, cursor, total, installed, skipped, skippedFiles, failed, patches, cache }`. Send the same body
 with the returned `cursor` until `done` is true. The session id comes from the lock's packages, so the
 same lock always maps to the same session. A package already installed at the locked version and
 digest counts as `installed` with `reused: true` and writes nothing, and repeating a call returns the
@@ -130,7 +165,24 @@ Each archive is checked before anything is unpacked. A `dist.shasum` must match.
 only a `dist.reference` that is a commit and the archive is a GitHub zipball, the commit recorded in
 the archive comment must equal it. Other archives with neither install as `unverified`. A mismatch
 fails that package, stops the session and writes nothing for it; sending the same call again retries
-it. Any other failure (a fetch error, an archive type that is not a zip) also stops the session.
+it. Any other failure (a fetch error, a corrupt archive) also stops the session.
+
+An archive is a zip or a tar. A `dist.type` of `tar` is read the way an npm registry serves it, as a
+gzipped tarball with one leading folder that is stripped, which is what asset-packagist locks name for
+`npm-asset/*` packages. Packages of type `npm-asset` and `bower-asset` (the types asset-packagist
+publishes, and the older `npm-asset-library` and `bower-asset-library` spellings) mount under
+`libraries/<name>`, like a `drupal-library`. A tarball keeps the file types a zip install keeps, and
+also the images and fonts the front worker serves from `/libraries` (`png`, `jpg`, `jpeg`, `gif`,
+`webp`, `avif`, `ico`, `svg`, `woff`, `woff2`, `ttf`, `otf`). A file that is not text is stored as
+base64 the way a binary `/modify` blob is, so the mount hands PHP and the browser its exact bytes.
+The per-file cap of 2,199,995 bytes applies to the stored form. A file over it never fails the lock:
+the answer lists it in `skippedFiles` as `{package, path, why}`, at most 100 per package, and the
+rest of the package installs.
+
+A package's mount follows the paths of the Drupal project templates: `modules/contrib/<name>`,
+`themes/contrib/<name>` and `profiles/contrib/<name>` for `drupal-module`, `drupal-theme` and
+`drupal-profile`, and the `custom` directories for the `drupal-custom-*` types. A profile never lands
+under `vendor/`.
 
 The route refuses, with the reason in the body, a lock for a different Drupal core (major and minor
 are compared, and the answer names both versions), a lock with no `drupal/core` entry, a lock of
@@ -146,6 +198,12 @@ the session wrote and restores the rows it replaced, which the session saved bef
 saved rows exist only for a package that replaced files, and they stay until the session is rolled
 back. A session that failed and was not rolled back stays resumable. Roll back the newest session
 first when two share packages.
+
+The answer is `{ ok, session, rolledBack, removed, restored, leftInPlace }`. `removed` counts the
+packages this session installed and deleted. `leftInPlace` lists the packages the session reused
+(`name`, `version`, `files`): an earlier session installed them, so this rollback does not touch them.
+A second `DELETE` for a session already rolled back answers 404 with `rolledBack: true`, the same as a
+session the site never held. An unknown session answers 404 with `session` set.
 
 A module you wrote yourself arrives through a git remote or through `/modify`. A git pull fetches
 one commit at depth one and boots the kernel against the new tree, rolling back if it fatals. See
@@ -172,6 +230,8 @@ applies afterwards.
 `views_bulk_operations`, `views_data_export`, `webform`, `xmlsitemap`.
 
 `uswds_base` is a theme and installs through `theme_installer` and not the module installer.
+`config/modules.yml` marks it, and `gin`, with `kind: theme`; every other entry is a module. The
+support table carries that as `kind` (`module` or `theme`) on each row.
 
 `strata` (Packagist `earth-app/strata`) is verified for what the run asserted: it enables, its
 services, config and routes appear, and its own cipher seals and opens a frame under a key the module

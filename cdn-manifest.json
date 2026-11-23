@@ -210,8 +210,8 @@
 		{
 			"key": "assets/drupal/site.sqlite",
 			"bytes": 5832704,
-			"sha256": "9457d4507a574f3fd4a68a2089587b3ef2bb75430cf2f848dc735e718d934933",
-			"md5": "48472805f40763ea722fc66bef36b750",
+			"sha256": "3dd5294a2da9c21dba32cbd87339a17620c4dd6bad83971d8ce4b0e8db974fac",
+			"md5": "205a3c624561dda32a87ae084df20e13",
 			"tracked": true
 		}
 	],
@@ -303,17 +303,17 @@
 		},
 		{
 			"key": "vendor/static-long64/php8.5-worker.mjs.wasm",
-			"bytes": 14011458,
-			"sha256": "e723ca7bf0a2ee614bbb3faaa5cebe7dfd233679bfd1e10d64ba0698a06244f6",
-			"md5": "02977fd30f95a2cbf95d8a865e6eef6f",
+			"bytes": 14216032,
+			"sha256": "199fb90d612aa878d3097720ab01ea6c7e076846410c522f6906e20bed5e5438",
+			"md5": "3dbec02f97d96927f6f7e94f837997a5",
 			"mirrors": ".interp/php8.5.wasm",
 			"note": "the shipping PHP 8.5 binary: wasm32 pointers with 64-bit zend_long, so PHP_INT_SIZE is 8"
 		},
 		{
 			"key": "vendor/static-long64/php8.5-worker.mjs",
-			"bytes": 1034868,
-			"sha256": "ec6a890146d411e80345db91e8513d6c359b032a38b4990bd5347960e962b38c",
-			"md5": "1c76b8ff48711ea96c4f5eb238aeda9f",
+			"bytes": 1035735,
+			"sha256": "fa79e319b06abf267cd74913f5c79bff22f22a5c3700947c9c283517da30a007",
+			"md5": "eb5a10fcb7ae3b30a3db97e1b9224f64",
 			"mirrors": ".interp/php8.5-worker.mjs",
 			"note": "its glue, which the seam imports as PHPFactory"
 		},
@@ -393,6 +393,27 @@
 			"sha256": "778d5b59130775cc8d643c05edd73a9753db8721c5492c4e9c36d30773f48a84",
 			"md5": "70a17300bce64101bfd8329968308b2b",
 			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-11-08"
+		},
+		{
+			"key": "snapshots/site.sqlite.0f95160e9998",
+			"bytes": 5832704,
+			"sha256": "0f95160e999884e8feee083e457d397ad8360a3e5f3498136d77d40855e7c562",
+			"md5": "8ee83aa98652d749d9d4e64e75547e1c",
+			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-11-23"
+		},
+		{
+			"key": "snapshots/php8.5-worker.mjs.wasm.e723ca7bf0a2",
+			"bytes": 14011458,
+			"sha256": "e723ca7bf0a2ee614bbb3faaa5cebe7dfd233679bfd1e10d64ba0698a06244f6",
+			"md5": "02977fd30f95a2cbf95d8a865e6eef6f",
+			"note": "vendor/static-long64/php8.5-worker.mjs.wasm as the bucket held it until an upload replaced it on 2026-11-23"
+		},
+		{
+			"key": "snapshots/php8.5-worker.mjs.ec6a890146d4",
+			"bytes": 1034868,
+			"sha256": "ec6a890146d411e80345db91e8513d6c359b032a38b4990bd5347960e962b38c",
+			"md5": "1c76b8ff48711ea96c4f5eb238aeda9f",
+			"note": "vendor/static-long64/php8.5-worker.mjs as the bucket held it until an upload replaced it on 2026-11-23"
 		}
 	]
 }

@@ -9,7 +9,10 @@
  */
 import { errorMessage } from '../util/errors';
 import {
+	advanceCursor,
 	cronStep,
+	cronUnits,
+	readCursor,
 	type CronDeps,
 	type CronOptions,
 	type CronStep,
@@ -100,6 +103,50 @@ export function cronBudget(env?: CronDriveEnv): CronBudget {
 		maxRows: num(env?.CRON_MAX_ROWS, DEFAULT_CRON_BUDGET.maxRows),
 		maxMs: num(env?.CRON_MAX_MS, DEFAULT_CRON_BUDGET.maxMs)
 	};
+}
+
+/**
+ * The unit indexes a firing from `rawCursor` can reach: from the cursor to the end of the round,
+ * and no more than `maxUnits` of them. A firing ends at the first PHP unit that does work, but one
+ * that skips (an empty queue) lets the next run, so any PHP unit in reach may have run and
+ * `phpAt` is the last of them.
+ */
+function firingReach(rawCursor: unknown, options: CronOptions, maxUnits: number) {
+	const units = cronUnits(options);
+	const cursor = readCursor(rawCursor as never, units.length);
+	const last = Math.min(cursor.i + maxUnits, units.length) - 1;
+	let phpAt = -1;
+	for (let at = cursor.i; at <= last; at++) if (units[at]?.kind === 'php') phpAt = at;
+	return { units, cursor, phpAt };
+}
+
+/**
+ * Whether a firing from `rawCursor` runs SQL passes only. Such a firing leaves the same state when
+ * it runs twice, so the outbox may replay it after a reset; a firing that reaches a PHP unit (a
+ * `hook_cron`, a queue worker, the health scan) is reported instead.
+ */
+export function firingIdempotent(
+	rawCursor: unknown,
+	options: CronOptions = {},
+	budget: CronBudget = DEFAULT_CRON_BUDGET
+): boolean {
+	return firingReach(rawCursor, options, budget.maxUnits).phpAt === -1;
+}
+
+/**
+ * The cursor to store after a firing was reported lost: one past the last PHP unit it may have
+ * run, so none of them runs a second time. A unit between the two skips this round. A firing with no PHP unit in reach
+ * returns the cursor it started from.
+ */
+export function lostFiringCursor(
+	rawCursor: unknown,
+	options: CronOptions = {},
+	budget: CronBudget = DEFAULT_CRON_BUDGET
+): StoredCursor {
+	const { units, cursor, phpAt } = firingReach(rawCursor, options, budget.maxUnits);
+	if (phpAt === -1) return cursor;
+	const { wrapped: _wrapped, ...next } = advanceCursor({ ...cursor, i: phpAt }, units.length);
+	return next;
 }
 
 /** what one cron firing did and where the caller resumes */

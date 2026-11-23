@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { cronPhase } from '../../src/do/alarm/cron';
 import { kernelBoot, runCronHook } from '../../src/drupal/cron-php';
 import { writeCursor, type StoredCursor } from '../../src/ops/cron';
-import { DEFAULT_CRON_BUDGET, driveCron } from '../../src/ops/cron-drive';
-import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
+import { DEFAULT_CRON_BUDGET, driveCron, lostFiringCursor } from '../../src/ops/cron-drive';
+import { OUTBOX_POLICIES, openOutbox } from '../../src/ops/outbox';
+import { freshSite, inObject, statsOf, type ServeDo } from '../helpers/serve-do';
 
 /**
  * Drupal's cron, run for real, more than once.
@@ -297,6 +299,187 @@ describe('the cron boot gives Drupal the globals a web request gets', () => {
 				return site.runJson(runCronHook('update', origin));
 			});
 			expect(hook.error, 'hook:update refused its site key').toBeUndefined();
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+describe('the cron lock: a firing is claimed in the outbox before it runs', () => {
+	// three units is the three SQL passes at the head of the round, so no PHP runs
+	const threeUnits = { CRON_MAX_UNITS: '3' };
+	const startCursor = writeCursor({
+		v: 1,
+		i: 0,
+		round: 0,
+		queueRepeats: 0,
+		rowsWritten: 0,
+		lastUnit: null,
+		lastQueue: null,
+		lastAt: 0
+	});
+	const ctxOf = (site: ServeDo) =>
+		({ site, hold: undefined, held: false, outcomes: [] }) as never;
+
+	/** a migrated site with no PHP behind cron: a unit that needs the interpreter fails loudly */
+	async function cronSite(site: ServeDo, env: Record<string, string> = threeUnits) {
+		await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+		const any = site as any;
+		any.env = { ...any.env, ...env };
+		any.cronHooksForSite = async () => ({ hooks: [], discovered: false });
+		const php: string[] = [];
+		any.runJsonMaybeParked = async (code: string) => {
+			php.push(code.slice(0, 40));
+			throw new Error('no interpreter in this spec');
+		};
+		return { any, php };
+	}
+
+	/** what a predecessor left: a claimed firing whose lease ended */
+	function seedLost(site: ServeDo, kind: string, cursor: string) {
+		const outbox = openOutbox(site.sql as never, 'cron', () => {});
+		const id = `cron-seed-${kind}`;
+		outbox.table.enqueue(id, kind, JSON.stringify({ cursor, hooks: [] }), kind);
+		outbox.table.claim(Date.now() - 60_000, 15_000, 1, { policies: OUTBOX_POLICIES });
+		return id;
+	}
+
+	const cursorOf = async (site: ServeDo) =>
+		JSON.parse(String((await (site as any).storage.get('cronCursor')) ?? 'null'));
+
+	it(
+		'claims a due firing, runs it, completes it and leaves no row behind',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				const { any } = await cronSite(site);
+				await any.storage.put('cronLastRunMs', Date.now() - 20 * 60_000);
+				// the row as the firing sees it, taken from inside the gated run
+				let during: unknown[] = [];
+				const gate = any.gate;
+				const run = gate.run.bind(gate);
+				gate.run = ((fn: () => unknown, label: string) => {
+					// the table appears with the claim, after the hook discovery that runs first
+					const rows =
+						site.countOrNull('cfw_outbox_cron') === null
+							? []
+							: site.sql
+									.exec('SELECT kind, state, attempt FROM cfw_outbox_cron')
+									.toArray();
+					if (rows.length > 0) during = rows;
+					return run(fn, label);
+				}) as typeof gate.run;
+				const before = Date.now();
+				await cronPhase(ctxOf(site));
+				return {
+					during,
+					last: any.lastCron?.value,
+					cursor: await cursorOf(site),
+					stamped: Number(await any.storage.get('cronLastRunMs')) >= before,
+					rows: site.sql.exec('SELECT * FROM cfw_outbox_cron').toArray()
+				};
+			});
+			// claimed and running while the firing ran; three SQL passes make it idempotent
+			expect(out.during).toEqual([{ kind: 'cron-idempotent', state: 'running', attempt: 1 }]);
+			expect(out.last).toMatchObject({ units: 3, stoppedBy: 'units' });
+			expect(out.cursor.i).toBe(3);
+			expect(out.stamped).toBe(true);
+			expect(out.rows).toEqual([]);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'claims a firing that reaches a PHP unit as a report kind',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				const { any } = await cronSite(site, { CRON_MAX_UNITS: '6' });
+				await any.storage.put('cronLastRunMs', Date.now() - 20 * 60_000);
+				let during: unknown[] = [];
+				const gate = any.gate;
+				const run = gate.run.bind(gate);
+				gate.run = ((fn: () => unknown, label: string) => {
+					const rows =
+						site.countOrNull('cfw_outbox_cron') === null
+							? []
+							: site.sql.exec('SELECT kind, state FROM cfw_outbox_cron').toArray();
+					if (rows.length > 0) during = rows;
+					return run(fn, label);
+				}) as typeof gate.run;
+				await cronPhase(ctxOf(site));
+				return { during, last: any.lastCron?.value };
+			});
+			expect(out.during).toEqual([{ kind: 'cron', state: 'running' }]);
+			// the first PHP unit failed in this spec, and driveCron records that instead of throwing
+			expect((out.last as { ran: string[] }).ran.at(-1)).toContain('error:');
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'reports a firing a reset left running and moves the cursor past the PHP unit, once',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				const { any, php } = await cronSite(site, { CRON_MAX_UNITS: '6' });
+				// not due, so only the settle step runs
+				await any.storage.put('cronLastRunMs', Date.now());
+				await any.storage.put('cronCursor', startCursor);
+				const id = seedLost(site, 'cron', startCursor);
+				await cronPhase(ctxOf(site));
+				const moved = await cursorOf(site);
+				const rows = site.sql.exec('SELECT state, error FROM cfw_outbox_cron').toArray();
+				const last = any.lastCron?.value;
+				// a second pass changes nothing: the cursor no longer equals the lost firing's
+				await cronPhase(ctxOf(site));
+				return {
+					id,
+					php,
+					moved,
+					again: await cursorOf(site),
+					rows,
+					last,
+					reported: ((await statsOf(site)) as unknown as { outboxReported: unknown[] })
+						.outboxReported
+				};
+			});
+			const expected = lostFiringCursor(startCursor, { hooks: [] });
+			expect(expected.i).toBeGreaterThan(3);
+			expect(out.moved.i).toBe(expected.i);
+			expect(out.again).toEqual(out.moved);
+			// the hook was not run again
+			expect(out.php).toEqual([]);
+			expect(out.rows).toHaveLength(1);
+			expect(out.rows[0]).toMatchObject({ state: 'failed' });
+			expect(String(out.rows[0]!.error)).toContain('policy report');
+			expect(out.last).toMatchObject({ reported: out.id });
+			expect(out.reported).toEqual([
+				expect.objectContaining({
+					lane: 'cron',
+					id: out.id,
+					kind: 'cron',
+					hint: expect.stringContaining('check the receiver before re-enqueueing')
+				})
+			]);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'replays a firing that ran SQL passes alone, since running them twice changes nothing',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				const { any } = await cronSite(site);
+				await any.storage.put('cronLastRunMs', Date.now());
+				await any.storage.put('cronCursor', startCursor);
+				seedLost(site, 'cron-idempotent', startCursor);
+				await cronPhase(ctxOf(site));
+				return {
+					cursor: await cursorOf(site),
+					last: any.lastCron?.value,
+					rows: site.sql.exec('SELECT * FROM cfw_outbox_cron').toArray()
+				};
+			});
+			expect(out.last).toMatchObject({ units: 3 });
+			expect(out.cursor.i).toBe(3);
+			expect(out.rows).toEqual([]);
 		},
 		REQUEST_TIMEOUT
 	);

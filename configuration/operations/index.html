@@ -395,6 +395,8 @@
 <li><a href="owner-access.html">Owner Access and Audit</a>: owner token recovery and the audit log.</li>
 <li><a href="updates.html">Updates and Reconciliation</a>: database updates, pack reconciliation and the addressable sweep.</li>
 <li><a href="overrides.html">Runtime Overrides</a>: reading and writing overrides, and the three permissions.</li>
+<li><a href="discovery.html">Discovery Document</a>: the settings, routes and limits a Drupal site reports to the dashboard.</li>
+<li><a href="wordpress-packages.html">WordPress Packages</a>: installing, updating, rolling back and deleting plugins and themes, archive limits, core updates and the Multisite refusal.</li>
 </ul>
 <h2 id="site-maintenance">Site Maintenance</h2>
 <p><code>/armfill</code>, <code>/invalidate</code>, <code>/bump</code>, <code>/migrate</code>, <code>/recycle</code>, <code>/ledger-gc</code>, <code>/strata-config</code>, <code>/strata-store</code> and <code>/updb</code> take the owner token. Purging your own page
@@ -527,6 +529,51 @@ on its own, and <code>stateful</code> changes what the site serves.</p>
 <td>points Strata at an S3 or R2 bucket; makes the key; <code>enable</code> starts it</td>
 </tr>
 <tr>
+<td><code>/uninstall</code> (POST)</td>
+<td>stateful</td>
+<td>removes a module through Drupal&#39;s installer, after naming dependents</td>
+</tr>
+<tr>
+<td><code>/theme-default</code></td>
+<td>safe</td>
+<td>reads the default and admin theme and the installed themes</td>
+</tr>
+<tr>
+<td><code>/theme-default</code> (POST)</td>
+<td>stateful</td>
+<td>sets the default or the admin theme to an installed theme</td>
+</tr>
+<tr>
+<td><code>/extensions</code></td>
+<td>safe</td>
+<td>lists every module, theme and profile with its version and state</td>
+</tr>
+<tr>
+<td><code>/.well-known/drupflare</code></td>
+<td>safe</td>
+<td>reads the discovery document: settings, routes and limits</td>
+</tr>
+<tr>
+<td><code>/rotate-token</code> (POST)</td>
+<td>stateful</td>
+<td>issues a new owner token and refuses the old one</td>
+</tr>
+<tr>
+<td><code>/file</code> (PUT)</td>
+<td>stateful</td>
+<td>writes a streamed body to R2 and records the file as held only there</td>
+</tr>
+<tr>
+<td><code>/admin-password</code> (POST)</td>
+<td>stateful</td>
+<td>sets a new password for user 1 and answers it once</td>
+</tr>
+<tr>
+<td><code>/db-console</code> (POST)</td>
+<td>safe</td>
+<td>runs one read-only SELECT against the site database and returns rows</td>
+</tr>
+<tr>
 <td><code>/writemark</code></td>
 <td>safe</td>
 <td>reads the accepted-write count; POST and DELETE start and end the mark</td>
@@ -576,6 +623,72 @@ only while <code>enabled</code> is still false. It answers 409
 <code>strata_s3_not_enabled</code> when <code>strata_s3</code> is not enabled (enable it through <code>/enable</code> first), and 409
 while a transaction is open. A failed write answers 500 <code>strata_store_write_failed</code> with at most the
 PHP exception class, never its message.</p>
+<p><code>/uninstall</code>, <code>/theme-default</code> and <code>/rotate-token</code> take the owner token only. <code>POST /uninstall?module=NAME</code>
+removes one enabled module. It reads the enabled modules that require NAME first and answers 409
+<code>module_has_dependents</code> with their names while any is enabled, then answers 409 <code>uninstall_blocked</code>
+with <code>reasons</code> when Drupal&#39;s own uninstall validators refuse (a module that ships with every site, or
+one that owns content). <code>?dry=1</code> answers 200 with <code>{module, dryRun, enabledModules, dependents, reasons, wouldDelete}</code> and changes nothing. <code>wouldDelete</code> lists the files <code>cfw_module_file</code> holds for
+the package <code>drupal/NAME</code> or <code>NAME</code>; the route never deletes them. A success answers
+<code>{ok, module, uninstalled: true, dependents: []}</code>, drops the interpreter and heap images and advances
+the page generation. A module that is not in <code>core.extension</code> answers 404 <code>module_not_enabled</code>, a
+name that is not a machine name answers 400, and a failure answers 500 <code>uninstall_failed</code> with the
+PHP class and a message of at most 300 characters.</p>
+<p><code>/extensions</code> takes the owner token and answers <code>GET</code> only. It answers a JSON array of
+<code>{name, kind, version, enabled}</code>, one row for each module, theme and install profile Drupal discovers,
+sorted by name and then kind. <code>kind</code> is <code>module</code>, <code>theme</code> or <code>profile</code>. <code>version</code> is the value the
+info file states, or <code>null</code> when it states none. <code>enabled</code> is true when <code>core.extension</code> holds the
+extension; a profile is enabled when it is the installed one, and appears once, as a profile, not
+again as a module. A module whose files were delivered but not yet enabled is listed with
+<code>enabled: false</code>. The route reads only, so it answers on a replica as <code>/health</code> does. It carries no
+advisory state; the dashboard adds that from its own feed. It answers 405 for other methods, 501
+<code>drupal_only</code> on WordPress and 500 <code>extensions_unreadable</code> with the PHP class when the kernel cannot
+list them.</p>
+<p><code>/theme-default</code> answers <code>GET</code> and <code>POST ?dry=1</code> with <code>{default, admin, installed}</code>. <code>POST</code> takes
+<code>{&quot;project&quot;: &quot;&lt;theme&gt;&quot;, &quot;target&quot;: &quot;default&quot; | &quot;admin&quot;}</code> and answers
+<code>{default, admin, installed, previous, applied: true}</code>; it sets that one key of <code>system.theme</code>
+through <code>ConfigFactory</code>, then drops the interpreter and heap images and advances the page
+generation. Naming the theme a key already holds writes nothing. An empty <code>project</code> with target
+<code>admin</code> clears the admin theme, so the site uses the default theme for admin pages; <code>default</code>
+takes no empty value. A theme that is not installed
+answers 404 <code>theme_not_installed</code> (install and enable it first), and a body of any other shape
+answers 400.</p>
+<p><code>/admin-password</code> takes the owner token only, <code>POST</code> only, with no body. It generates a password of
+32 characters, sets it on user 1 through Drupal&#39;s user entity (so Drupal hashes it and ends that
+user&#39;s other sessions), and answers <code>{ok, uid, name, blocked, password, applied: true}</code> with
+<code>cache-control: no-store</code>. The password is shown once in this reply and is never stored or audited;
+the audit entry names the route only. It does not unblock a blocked account. It answers 404
+<code>admin_not_found</code> when user 1 does not exist, 409 while a transaction is open or on a replica, and 500
+<code>admin_password_failed</code> with the PHP class on a failure. A site that runs WordPress answers 501
+<code>drupal_only</code>.</p>
+<p><code>PUT /file?uri=public://path/name.png</code> registers a file that is held only in R2, which a site import
+uses so the bytes never pass through the object. It takes the owner token, a <code>content-length</code>, the
+hex sha256 of the bytes in <code>x-file-sha256</code> and, optionally, the type in <code>content-type</code>. The body
+streams to this site&#39;s own prefix in the bucket for the scheme (<code>FILES</code>, or <code>FILES_PRIVATE</code> for
+<code>private://</code>), where R2 checks the digest as it receives the bytes; the object then records an
+evicted row with no resident chunks, so <code>/offloaded</code> lists it and a read comes from R2. The row is
+written only after R2 has stored the size the caller declared. An existing file at the same URI is
+replaced. The site needs <code>FILE_STORE=r2</code> and the bucket bound, or the route answers 501
+<code>no_r2_store</code>. Other refusals, each <code>{ok: false, error, code}</code>: 400 <code>bad_uri</code>, <code>sha256_required</code>
+and <code>length_required</code>; 422 <code>digest</code> when the bytes do not match, and <code>size</code>; 429 <code>r2_budget</code> when
+this month&#39;s R2 write allowance is spent; 502 <code>storage_unavailable</code>; 405 for any method but <code>PUT</code>.
+Each call spends one R2 write against that allowance. The body ceiling is <code>MAX_FILE_PUT_BYTES</code>
+(100 MiB by default, the platform&#39;s request limit; <code>0</code> disables). The success answer is
+<code>{ok, uri, size, sha256, store: &quot;r2&quot;, replaced}</code>. Every call is recorded in the audit log as <code>/file</code>.</p>
+<p><code>/db-console</code> takes the owner token only, <code>POST</code> only. The body is
+<code>{&quot;v&quot;: 1, &quot;sql&quot;, &quot;params&quot;, &quot;limit&quot;, &quot;timeoutMs&quot;}</code> with <code>sql</code> up to 10,000 characters, up to 100
+params, a <code>limit</code> up to 1,000 rows and a <code>timeoutMs</code> up to 30,000. A success answers
+<code>{columns, rows, truncated, elapsedMs}</code>; each cell is a string, number, boolean or null, a blob is
+<code>x&#39;&lt;hex&gt;&#39;</code>, and an integer past 2^53 is a string. Every refusal is <code>{code, message}</code>: 422
+<code>not_read_only</code> for anything but one SELECT, WITH or VALUES statement (a write or schema keyword
+anywhere outside a comment or literal refuses it, so quote a column named <code>update</code>), 413
+<code>too_large</code> for a bound above those limits, 400 <code>statement_failed</code> for a statement SQLite rejects
+(a typo or a missing table, with SQLite&#39;s message), and 400 or 503 <code>unavailable</code> for a malformed
+body or a transaction that is open. A statement that wrote a row despite the check is rolled back
+and answers 422. Durable Object SQL cannot be interrupted, so the row limit stops the copy and not
+the scan, and a result cut at <code>limit</code> answers <code>truncated: true</code>. <code>timeoutMs</code> is advisory: it is
+checked against its bound and never enforced, so a slow statement still answers its rows, and
+<code>elapsedMs</code> says how long it took. Send a <code>LIMIT</code> with the statement. Every call is recorded in the
+audit log as <code>/db-console</code>, never with the statement.</p>
 <p><code>/git?action=unpin</code> exists because <code>unpreview</code> cannot help here: it re-syncs to the branch head, so it
 needs the remote to answer, and a pin held against a remote that is down is exactly what an operator
 is trying to release. Releasing without a sync leaves the site serving what it already serves and

@@ -414,9 +414,9 @@
 </tbody></table></div>
 <p><code>bun run hydrate</code> takes the payload route by default and falls back to the source route when no
 payload exists. <code>--payload-only</code> forbids the fallback; <code>--from-source</code> skips straight to it.</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#why-two-routes">Why Two Routes</a></li><li><a href="#where-a-payload-comes-from">Where a Payload Comes From</a></li><li><a href="#the-managed-bundle">The Managed Bundle</a></li><li><a href="#the-box-bundle">The Box Bundle</a></li><li><a href="#quick-start">Quick Start</a></li><li><a href="#prerequisites-per-route">Prerequisites, Per Route</a></li><li><a href="#related">Related</a></li></ol></nav><h2 id="pages">Pages</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#why-two-routes">Why Two Routes</a></li><li><a href="#where-a-payload-comes-from">Where a Payload Comes From</a></li><li><a href="#the-managed-bundle">The Managed Bundle</a></li><li><a href="#the-release-announcement">The Release Announcement</a></li><li><a href="#the-box-bundle">The Box Bundle</a></li><li><a href="#quick-start">Quick Start</a></li><li><a href="#prerequisites-per-route">Prerequisites, Per Route</a></li><li><a href="#related">Related</a></li></ol></nav><h2 id="pages">Pages</h2>
 <ul>
-<li><a href="steps.html">The Steps</a>: the seventeen build steps, from the interpreter to the assets.</li>
+<li><a href="steps.html">The Steps</a>: the eighteen build steps, from the interpreter to the assets.</li>
 <li><a href="build-order.html">Build Order and Caching</a>: why the order is fixed, what is cached, and partial rebuilds.</li>
 <li><a href="upgrading-core.html">Upgrading Drupal Core</a>: the sequence for a core bump and what a patch release moves.</li>
 </ul>
@@ -498,6 +498,38 @@ those objects in 17 minutes before one failed request ended the run.</p>
 its checksum is a second line in <code>SHA256SUMS</code>, below the payload&#39;s. <code>hydrate</code> reads only the first
 line. GitHub release assets cannot be added after a release is cut, so v1.0.5&#39;s tarball and its own
 <code>drupflare-managed-bundle-1.0.5.SHA256SUMS</code> sit under <code>payloads/v1.0.5/</code> on the CDN instead.</p>
+<h2 id="the-release-announcement">The Release Announcement</h2>
+<p>After the release is created, the <code>announce</code> job posts one signed event to the dashboard&#39;s release
+hook. It runs on <code>master</code> only. Before that, the payload job writes
+<code>drupflare-release-manifest-&lt;version&gt;.json</code> from <code>SHA256SUMS</code> with <code>scripts/release-event.ts manifest</code>: every release file with its URL and <code>sha256:</code> digest, plus the <code>schemaVersion</code> and
+<code>acceptsSchema</code> from the <code>schema</code> field of <code>package.json</code>. The manifest rides on the release.</p>
+<p><code>scripts/release-event.ts post</code> builds the event (<code>release.published</code>, kind <code>worker</code>, the manifest&#39;s
+digest and URL), checks that the manifest URL serves the bytes it hashed, waiting up to 5 minutes for
+the release asset to appear, then sends the body with <code>x-drupflare-signature: sha256=&lt;hex&gt;</code>, an
+HMAC-SHA256 of the raw body. A body over 64 KiB is refused. The job needs two settings, and it stops
+before any request when either is missing:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>name</th>
+<th>kind</th>
+<th>holds</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>DASHBOARD_RELEASE_SECRET</code></td>
+<td>repository secret</td>
+<td>the shared key the dashboard verifies against</td>
+</tr>
+<tr>
+<td><code>DASHBOARD_RELEASE_URL</code></td>
+<td>repository variable</td>
+<td>the full https URL of <code>POST /api/hooks/release</code></td>
+</tr>
+</tbody></table></div>
+<p><code>bun scripts/release-event.ts post --dry-run ...</code> prints the event and sends nothing. The event id is
+<code>release-&lt;tag&gt;</code>, so a repeat is answered as a duplicate. A failed announcement turns the <code>announce</code>
+job red without holding back the deploy-path check.</p>
 <h2 id="the-box-bundle">The Box Bundle</h2>
 <p>A release also carries <code>drupflare-box-bundle-&lt;version&gt;.tar.gz</code>, the Worker a bastion box runs. It is
 the output of <code>wrangler deploy --dry-run --outdir</code> for <code>wrangler.jsonc</code>, with the modules at the
@@ -511,8 +543,7 @@ never from a walk of <code>assets/</code>. A box serves static files from its ow
 with none answers 503 <code>pack not reachable</code>, so <code>bastion</code> copies this folder there when it adds the
 site. <code>assets.manifest</code> at the root lists each file with its size and sha-256, and the box refuses a
 tree that differs from it. The packer fails when a required asset is missing, so a short tree never
-ships. The box bundle leaves out <code>assets/bootimage/</code>: <code>BOOT_IMAGE</code> is not in <code>wrangler.jsonc</code>, so a
-box never opens it. The archive holds about 4,600 files, 39 MB unpacked and 26 MB packed. A baked
+ships. The box bundle leaves out <code>assets/bootimage/</code>: a box site finds no image index and boots plain. The archive holds about 4,600 files, 39 MB unpacked and 26 MB packed. A baked
 boot image would add 80 MB unpacked and 24 MB packed.</p>
 <p><code>box.vars</code> at the root holds the <code>vars</code> block of <code>wrangler.jsonc</code> as a flat json object, read when
 the archive is built. A bundle carries no config, so <code>bastion</code> writes these values as the site&#39;s

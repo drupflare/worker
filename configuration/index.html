@@ -578,6 +578,11 @@ serving path, and a typo must not take a site down.</p>
 <td><a href="serving/index.html">Serving</a></td>
 </tr>
 <tr>
+<td><code>MAX_FILE_PUT_BYTES</code></td>
+<td>100 MiB</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
 <td><code>OUTBOUND_GUARD</code></td>
 <td>on</td>
 <td><a href="serving/request-limits.html#outbound_guard">Serving</a></td>
@@ -614,7 +619,7 @@ serving path, and a typo must not take a site down.</p>
 </tr>
 <tr>
 <td><code>SPOOL</code></td>
-<td>per plan</td>
+<td>on</td>
 <td><a href="serving/index.html">Serving</a></td>
 </tr>
 <tr>
@@ -631,6 +636,11 @@ serving path, and a typo must not take a site down.</p>
 <td><code>SPOOL_EMBEDS</code></td>
 <td>on</td>
 <td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>SPOOL_EXCLUDE</code></td>
+<td>empty</td>
+<td><a href="integrations/spool.html#excluding-paths">Spool</a></td>
 </tr>
 <tr>
 <td><code>NEVER_STALE</code></td>
@@ -670,6 +680,11 @@ serving path, and a typo must not take a site down.</p>
 <tr>
 <td><code>FILL_BATCH_SIZE</code></td>
 <td>per plan</td>
+<td><a href="serving/index.html">Serving</a></td>
+</tr>
+<tr>
+<td><code>VISITOR_QUIET_MS</code></td>
+<td>500</td>
 <td><a href="serving/index.html">Serving</a></td>
 </tr>
 <tr>
@@ -813,6 +828,11 @@ serving path, and a typo must not take a site down.</p>
 <td><a href="runtime.html">Runtime</a></td>
 </tr>
 <tr>
+<td><code>WARM_WINDOW</code></td>
+<td>unset</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
 <td><code>WARM_INTERVAL_MS</code></td>
 <td>8,000</td>
 <td><a href="runtime.html">Runtime</a></td>
@@ -859,7 +879,7 @@ serving path, and a typo must not take a site down.</p>
 </tr>
 <tr>
 <td><code>BOOT_IMAGE</code></td>
-<td>off</td>
+<td>on</td>
 <td><a href="runtime.html">Runtime</a></td>
 </tr>
 <tr>
@@ -880,6 +900,26 @@ serving path, and a typo must not take a site down.</p>
 <tr>
 <td><code>LAZY_FS_BUDGET_BYTES</code></td>
 <td>20 MiB, 4 MiB in the canonical config</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>COLD_PACK</code></td>
+<td>on</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>COLD_PACK_CACHE_CHUNKS</code></td>
+<td>8, at most 64</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>REFRESH_INSTANCE</code></td>
+<td>off</td>
+<td><a href="runtime.html">Runtime</a></td>
+</tr>
+<tr>
+<td><code>REUSE_MOUNT</code></td>
+<td>off</td>
 <td><a href="runtime.html">Runtime</a></td>
 </tr>
 <tr>

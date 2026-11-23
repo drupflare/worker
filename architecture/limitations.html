@@ -391,17 +391,18 @@
 <h1 id="limitations">Limitations</h1>
 <p>What does not run, what runs differently, and the platform limits behind each.</p>
 <p>Measured properties of the runtime, listed so they are known before they are hit.</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#unavailable-features">Unavailable Features</a></li><li><a href="#behavior-differences">Behavior Differences</a></li><li><a href="#platform-limits">Platform Limits</a></li></ol></nav><h2 id="unavailable-features">Unavailable Features</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#unavailable-features">Unavailable Features</a></li><li><a href="#behavior-differences">Behavior Differences</a></li><li><a href="#platform-limits">Platform Limits</a></li><li><a href="#wordpress-outbound-requests">WordPress Outbound Requests</a></li><li><a href="#wordpress-mail">WordPress Mail</a></li><li><a href="#wordpress-object-cache">WordPress Object Cache</a></li><li><a href="#wordpress-cron">WordPress Cron</a></li></ol></nav><h2 id="unavailable-features">Unavailable Features</h2>
 <ul>
 <li><strong>Fibers are not available.</strong> <code>new Fiber()</code> aborts the interpreter, because emscripten implements
 none of the context-switching calls it needs. The build rewrites core&#39;s five uses to a
 synchronous stand-in with the same surface.</li>
-<li><strong><code>exit()</code> in a request is not handled generically.</strong> The serve prints its JSON result after the
-kernel returns, and <code>pib_run</code> performs no request shutdown, so shutdown handlers never fire. A
-request that reaches <code>exit</code> ends the program before the JSON and answers 500 with &quot;no JSON in the
-output&quot;, and an <code>exit</code> while an output buffer is open leaves the buffer open until the object
-recycles. Measured with SimpleSAMLphp&#39;s own redirect. SimpleSAMLphp works through a switch for its
-<code>exit</code>; other code that exits does not have one, and the generic handler is planned for v1.1.</li>
+<li><strong><code>exit()</code> ends the request and answers what PHP produced.</strong> The interpreter survives an exit, runs
+shutdown functions and fires output-buffer callbacks, and the page render prints its reply from a
+shutdown function: the status, headers and cookies PHP had set, and the body it printed. The next
+request runs on the same interpreter. A <code>finally</code> block, a destructor and a <code>catch</code> do not run on
+exit. A page that exits is not stored in the page cache. Only the page render answers this way;
+other internal runs that exit report &quot;no JSON in the output&quot;. WordPress turns the exits it knows
+into stops before they happen.</li>
 <li><strong>Shell commands run only through a router.</strong> <code>exec()</code>, <code>shell_exec()</code>, <code>proc_open()</code> and the rest
 serve a fixed set of programs with platform equivalents (<code>echo</code>, <code>date</code>, <code>file</code>, <code>zip</code>, <code>unzip</code>,
 <code>gzip</code>, <code>wget</code>, <code>curl</code>, checksums and a few more). Pipes, redirection and any other program fail
@@ -490,7 +491,13 @@ reset is sent once more to the fresh instance and answers normally with <code>x-
 POST is repeated only when the object never started it: it records an attempt id before the page
 runs, so a missing record means nothing was saved. A POST it had started gets a short &quot;Try Again
 in a Moment&quot; page with <code>Retry-After: 2</code> instead of Cloudflare&#39;s 1101, because it may already have
-saved.</li>
+saved. A GET that runs cron (<code>/cron/{key}</code>, <code>/admin/reports/status/run-cron</code>, <code>wp-cron.php</code>) is
+treated as a POST: it is not sent again, because the first try may already have run every hook.</li>
+<li><strong>A reset can leave one cron firing unfinished.</strong> The alarm claims each firing in a durable
+outbox before it runs. A firing that reached only SQL passes is replayed; one that reached a PHP
+hook is reported in <code>/serve-stats</code> under <code>outboxReported</code>, and the cursor moves past that hook so
+it does not run twice. Drupal&#39;s own queues stay at-least-once: an item whose worker finished
+before its delete can run again after its lease expires.</li>
 <li><strong>A freshly deployed site is claimable until it is provisioned.</strong> <code>/firstrun</code> answers without a
 credential while the site has never been configured, because the owner token that <code>/export</code> takes
 is minted by that route and nowhere else; gating it would mean the only way to get your data out
@@ -532,6 +539,80 @@ while a session is active.</li>
 <li><strong>Writes do not scale, and a replica pool does not change that.</strong> A lane refuses an authoritative
 write and hands it back, so every write is still one object and one thread. What a pool scales is
 authenticated reads; see <a href="../operating/replica-lanes.html">Replica Lanes</a> and <a href="../configuration/replicas.html#replica_count"><code>REPLICA_COUNT</code></a>.</li>
+</ul>
+<h2 id="wordpress-outbound-requests">WordPress Outbound Requests</h2>
+<ul>
+<li><strong>WordPress requests leave through the host, with limits.</strong> The host plugin answers <code>pre_http_request</code>
+through the same park as Drupal. It refuses non-HTTP schemes, URLs with credentials, loopback, private,
+link-local and metadata addresses, and any redirect to one, and the worker checks each hop again. A request
+is capped at 30 outbound requests on the free plan and 500 on paid, and a response at 5 MiB unless the caller
+sets <code>limit_response_size</code>. These three numbers are chosen, not measured.</li>
+<li><strong><code>sslverify =&gt; false</code> is not honoured.</strong> The request is made with certificate checks on and a degradation is recorded.</li>
+<li><strong><code>curl_*</code> called directly from a WordPress plugin still answers errno 7.</strong> Only the WordPress HTTP API is wired.</li>
+<li><strong>A DNS name that resolves to a private address is not checked.</strong> PHP cannot resolve names here, so that case rests on
+Cloudflare&#39;s egress and is untested.</li>
+<li><strong>WordPress still reports no SSL support</strong>, so it builds <code>http://</code> URLs. The plugin upgrades <code>wordpress.org</code> hosts to
+HTTPS and leaves other hosts as asked.</li>
+</ul>
+<h2 id="wordpress-mail">WordPress Mail</h2>
+<ul>
+<li><strong><code>wp_mail()</code> returns true when the host accepted the message, not when it was delivered.</strong> The host plugin answers
+<code>pre_wp_mail</code> through the same queue and transports Drupal uses (<code>send_email</code> binding, Email Sending API or SMTP).
+WordPress has no delivered state to report, so none is invented. With <code>MAIL_TRANSPORT=off</code>, or with no transport
+configured, <code>wp_mail()</code> returns false and fires <code>wp_mail_failed</code> with a <code>WP_Error</code> that carries the host&#39;s reason.</li>
+<li><strong>A message the host accepted and could not send is counted.</strong> The count and the last error are stored, and show on
+the Site Health screen, the debug tab, <code>/wp-json/drupflare/v1/status</code> and <code>/serve-stats</code> (<code>mailFailed</code>).</li>
+<li><strong>A message is sent again only when the relay never took it.</strong> A WordPress message asks for three attempts. The host
+repeats one after an API 429 or 503, or after an SMTP connection or login that failed before any data was sent, with
+waits of 1, 5, 15 and 60 minutes. Any other failure ends the message, because a repeat after a lost reply sends a
+one-time link twice.</li>
+<li><strong>Attachments are capped at 700,000 bytes in total.</strong> The queued row holds them as base64 inside the 1,000,000-byte
+message limit, which comes from the Durable Object record size.</li>
+<li><strong>Inline images (<code>$embeds</code>) are refused.</strong> The host takes attachments only, and sending without the image would report
+success for a different message.</li>
+<li><strong>Only <code>In-Reply-To</code> and <code>References</code> pass through as custom headers.</strong> Any other header a caller sets is dropped and a
+degradation is recorded. A caller-built multipart body is sent as the text it holds.</li>
+</ul>
+<h2 id="wordpress-object-cache">WordPress Object Cache</h2>
+<ul>
+<li><strong>No persistent object cache is installed, and no <code>object-cache.php</code> or <code>advanced-cache.php</code> drop-in ships.</strong> WordPress
+keeps its default cache, which lasts one request. A front-page render counted in a local run (three renders, one
+object, measured with <code>SAVEQUERIES</code> and the object cache&#39;s own counters) issued 17 queries on the first and 13 on the
+next two, with 127 cache hits and 31 misses. The misses fill options, posts, post meta, terms, term relationships,
+themes and translation files.</li>
+<li><strong>Why not.</strong> A persistent store could answer at most those 13 queries. A hit kept in the object&#39;s SQLite is still a row
+read, so only host memory saves rows, and it adds a host call per lookup. The cost the earlier deployed readings put on
+a render is the PHP load (487 files, 10.4 MB), which an object cache does not touch. A persistent copy would also go
+stale when a plugin writes with SQL and skips <code>wp_cache_delete()</code>, and every fill would write rows on a budget where
+writes bind. Rows and CPU saved were not measured on a deployed object, so this is a judgement from the query count,
+not a measured saving; it reopens if a deployed reading shows the queries matter.</li>
+<li><strong>Page caching</strong> is separate and covered by the page store, which already answers an anonymous page without starting
+WordPress, so <code>advanced-cache.php</code> would remove no work the page store does not.</li>
+<li><strong>Site Health reports the cache as one request long</strong>, with no recommendation to install a drop-in.</li>
+</ul>
+<h2 id="wordpress-cron">WordPress Cron</h2>
+<ul>
+<li><strong>The platform drives <code>wp-cron.php</code>, and visitors do not.</strong> <code>DISABLE_WP_CRON</code> stays on. The alarm requests
+<code>wp-cron.php</code> on the one-shot path, at most once per <code>CRON_INTERVAL_MS</code>, and WordPress&#39;s own <code>doing_cron</code> lock
+keeps two runs from working the same events. Two triggers arriving together ran a due event once in a local test
+(one version check reached the stand-in origin). Ten page renders moved the alarm firing count by no more than two.</li>
+<li><strong>One firing that has due events wrote 112 rows in a local run, and a firing with nothing due wrote 2</strong> (n=3,
+counted by the object&#39;s SQL wrapper). CPU per firing is not measured; it needs a deployed reading.</li>
+<li><strong>Two stand-ins remain, on purpose.</strong> <code>CURL_VERSION_SSL</code> is defined by the request fragment because the curl stand-in
+reports no features and declares no constants, and it is shared with Drupal, whose behaviour stays fixed.
+<code>wp-cron.php</code> ends in a bare <code>die()</code> in three places and a die leaves nothing to read, so the fragment turns each
+into a stop; a node spec fails if a release changes the count.</li>
+<li><strong>Action Scheduler stores, claims, runs and recovers actions.</strong> Release 4.2.0 stores an action with an <code>INSERT ... SELECT ... FROM DUAL</code> and reads <code>insert_id</code> back, and claims with <code>UPDATE ... t1 JOIN (SELECT ... FOR UPDATE) t2 ... SET claim_id</code>. The translator refused the claim by name (<code>update-multi-table</code>), could not find a table named <code>DUAL</code>,
+and reported no insert id for an <code>INSERT ... SELECT</code>; all three are fixed. A recording of the plugin&#39;s statements over
+its own table definitions answers the same as MySQL 26.7 on every row and every table: three actions claimed by a
+<code>LIMIT 3</code> out of five due, a second claim taking the rest, a third taking none, stale claims found and cleared one by
+one, and a unique action blocked by a pending twin. The plugin itself is not in the pack, so the statements are
+copied from release 4.2.0 and the test says so.</li>
+<li><strong>Action Scheduler leaves three differences.</strong> A claim that sorts on a key that leaves ties, which only a site filter
+on the claim order can produce, keeps whichever rows SQLite reads first; the plugin&#39;s own order ends in the action id.
+<code>SKIP LOCKED</code> is dropped because the object has one connection and no open transaction, and the plugin only sends it
+when the server version reads 8.0.1 or later, which this one reports as 8.0.0. Searching actions by a partial JSON
+match sends <code>JSON_EXTRACT</code>, which the translator still refuses (<code>function-unknown</code>).</li>
 </ul>
 			</div>
 		</main>

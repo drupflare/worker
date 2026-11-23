@@ -397,7 +397,8 @@ the Workers Paid plan is $5 a month, including 10 million requests, 50 million r
 of storage.</p>
 <p>Worker requests, one per view, are the meter that runs out first. Every view reaches the Worker,
 cached or not, so no change to rendering moves this ceiling. Only a response that never runs the
-Worker avoids it: a static asset, or a hostname not routed to the Worker. The 3.04 million assumes
+Worker avoids it: a static asset, a hostname not routed to the Worker, or a view a visitor&#39;s device
+answers itself under spool. The 3.04 million assumes
 the 65 static assets beside each page do not bill as Worker requests, and a 198,000-request drive
 invoked no Worker (<code>measured</code>). The one exception is Workers Cache,
 which the shipped config does not enable: with it on, the same page load spends 66 requests and the
@@ -410,6 +411,20 @@ fill writes 1.75 rows, and the re-render ceiling is 50,916 a day, set by rows wr
 saves rather than views: at five saves a day a site re-renders about 25 pages, so a thousand active
 sites use under half of that ceiling. For a large idle fleet the binding meter changes to storage, at
 4.7 MB per site, and uploaded files are stored in each site&#39;s database against the same 5 GB.</p>
+<p>Spool is on by default and can only raise the request ceiling. A device&#39;s worker fetches a page the
+first time it sees it, in place of the document the browser would have sent, and answers a page it
+holds with no request, so a device never sends more requests than with spool off and the net floor is
+the cap, 100,000 views a day (<code>derived (modelled)</code> over local and paid-deployed counts, n=1). A
+device that makes many views of few pages carries more than the 3.04 million a month, for example
+166,667 views a day at 20-view visits to 9 pages. On the visit lengths that public sources and the
+maintainer&#39;s own analytics give for six site types, spool carries 3,069,133 views a month
+(3,058,892 at the lowest visit length of each type and 3,090,459 at the highest), against
+3,044,000 without it, so the gain on a typical site is under 1.5% (<code>derived (modelled)</code>). With the R2
+page mirror at its 77% share the same factor gives 13,286,276 views a month (13,241,945 to
+13,378,598) against 13,177,476, an 0.8% rise at the central figure. No real site has reported its
+views a device or its distinct pages, so the capacity above the floor is a sweep. <a href="../energy/views.html#what-spool-adds">What Spool
+Adds</a> has both tables, and <a href="index.html#what-spool-adds-to-the-plans">What Spool Adds To The
+Plans</a> has the figures by site type.</p>
 <p>What you pay, on your own account:</p>
 <div class="table"><table>
 <thead>

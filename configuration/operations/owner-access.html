@@ -390,7 +390,7 @@
 				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Operations Settings</a></p>
 <h1 id="owner-access-and-audit">Owner Access and Audit</h1>
 <p>How an owner recovers a lost token and how owner actions are logged.</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#owner-token-recovery">Owner Token Recovery</a></li><li><a href="#owner-audit-log">Owner Audit Log</a></li></ol></nav><h2 id="owner-token-recovery">Owner Token Recovery</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#owner-token-recovery">Owner Token Recovery</a></li><li><a href="#rotating-the-token">Rotating the Token</a></li><li><a href="#owner-audit-log">Owner Audit Log</a></li></ol></nav><h2 id="owner-token-recovery">Owner Token Recovery</h2>
 <p>The owner token is shown once, at the claim. <code>POST /recover-token</code> gives it back to anyone who can
 write the deployment&#39;s <code>CONFIG_KV</code> namespace, which means anyone who can already redeploy the worker
 with <code>PW_DIAGNOSTICS=1</code> and read it through <code>/sql</code>. The proof is no weaker than the token.</p>
@@ -490,16 +490,23 @@ never the threat.</p>
 Storage: Edit&quot; is enough. In a managed deployment the operator owns the namespace and can already
 read every object, so tenants must never hold KV API access.</li>
 <li>A client clock more than about a minute behind the worker&#39;s makes <code>exp</code> already past (410).</li>
-<li>The token is not rotated. Whatever else holds it keeps working.</li>
+<li>A recovery rotates the token. The site keeps only a hash, so it cannot return the old token; the
+answer carries a new one with <code>rotated: true</code> and the old one stops working. Whatever else holds
+the old token has to store the new one.</li>
 <li>A local <code>wrangler dev</code> site has local KV, which the Cloudflare API cannot write; the route is
 meant for a deployed site.</li>
 </ul>
+<h2 id="rotating-the-token">Rotating the Token</h2>
+<p><code>POST /rotate-token</code> with the current owner token issues a new one and refuses the old one from then
+on. It answers <code>{&quot;ok&quot;: true, &quot;ownerToken&quot;: &quot;...&quot;, &quot;rotated&quot;: true}</code> once, with <code>cache-control: no-store</code>; the site stores only the hash. Without a valid token it answers 401, a <code>GET</code> answers 405,
+and a replica answers 409 and changes nothing. The entry in the audit log carries the first 8
+characters of the hash of the token that asked, recorded before the old token stops matching.</p>
 <h2 id="owner-audit-log">Owner Audit Log</h2>
 <p>The object records every owner call that changes state or reads a secret, and <code>GET /audit</code> returns
 the log. A call is recorded when it carries the owner token and reaches one of these: <code>/install</code>,
 <code>/install-lock</code> (POST and DELETE), <code>/enable</code>, <code>/modify</code>, <code>/restore</code>, <code>/restore-parts</code> (<code>begin</code>, <code>commit</code> and <code>abort</code>), <code>/export</code>, <code>/offloaded</code> (the
 listing, and a read of a <code>private://</code> file), <code>/migrate</code>, <code>/bump</code>, <code>/invalidate</code>, <code>/pitr</code> (POST),
-<code>/updb</code> (POST), <code>/reconcile</code> (POST), <code>/recycle</code> (POST), <code>/ledger-gc</code> (POST), <code>/strata-config</code> (POST), <code>/strata-store</code> (POST), <code>/writemark</code> (POST and DELETE), <code>/writechanges?body=1</code>,
+<code>/updb</code> (POST), <code>/reconcile</code> (POST), <code>/recycle</code> (POST), <code>/ledger-gc</code> (POST), <code>/strata-config</code> (POST), <code>/strata-store</code> (POST), <code>/uninstall</code> (POST, except <code>?dry=1</code>), <code>/theme-default</code> (POST), <code>/rotate-token</code>, <code>/db-console</code> (POST), <code>/admin-password</code> (POST), <code>/file</code> (PUT), <code>/writemark</code> (POST and DELETE), <code>/writechanges?body=1</code>,
 <code>/firstrun?force=1</code>, <code>/git</code> with any action but <code>list</code>,
 <code>check</code>, <code>branches</code>, <code>prs</code>, <code>diff</code> and <code>status</code>, <code>/queue?action=drop</code>, <code>/ops</code> with an <code>op</code>, the
 <code>/setup/*</code> pages when they write, <code>/health?clear=1</code>, and a <code>/settings</code> write. A token recovery is

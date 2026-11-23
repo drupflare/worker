@@ -482,7 +482,7 @@ follows.</p>
     B -- &quot;binding&quot; --> T1
     B -- &quot;api&quot; --> T2
     B -- &quot;smtp&quot; --> T3
-    B -- &quot;off&quot; --> R2[&quot;refused: mail switched off&quot;]</code></pre><nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-smtp-modules-own-settings">The <code>smtp</code> Module&#39;s Own Settings</a></li><li><a href="#what-each-transport-reaches">What Each Transport Reaches</a></li><li><a href="#the-send_email-binding">The <code>send_email</code> Binding</a></li><li><a href="#smtp">SMTP</a></li><li><a href="#limits-and-what-a-refusal-means">Limits and What a Refusal Means</a></li><li><a href="#connecting-a-cloudflare-account">Connecting a Cloudflare Account</a></li><li><a href="#onboarding-a-sending-domain">Onboarding a Sending Domain</a></li></ol></nav><h2 id="the-smtp-modules-own-settings">The <code>smtp</code> Module&#39;s Own Settings</h2>
+    B -- &quot;off&quot; --> R2[&quot;refused: mail switched off&quot;]</code></pre><nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-smtp-modules-own-settings">The <code>smtp</code> Module&#39;s Own Settings</a></li><li><a href="#what-each-transport-reaches">What Each Transport Reaches</a></li><li><a href="#the-send_email-binding">The <code>send_email</code> Binding</a></li><li><a href="#smtp">SMTP</a></li><li><a href="#limits-and-what-a-refusal-means">Limits and What a Refusal Means</a></li><li><a href="#delivery-after-a-reset">Delivery After a Reset</a></li><li><a href="#connecting-a-cloudflare-account">Connecting a Cloudflare Account</a></li><li><a href="#onboarding-a-sending-domain">Onboarding a Sending Domain</a></li></ol></nav><h2 id="the-smtp-modules-own-settings">The <code>smtp</code> Module&#39;s Own Settings</h2>
 <p>A site with <code>drupal/smtp</code> installed and configured needs none of the <code>SMTP_*</code> vars. The module
 installs on this runtime and its socket never runs, so its settings would otherwise sit unread while
 an operator typed the same relay a second time. Its
@@ -535,7 +535,20 @@ Durable Object record ceiling of 2,199,995 bytes; Cloudflare&#39;s own 5 MiB is 
 never fires first.</p>
 <p>A failure after commit is only visible on <code>/serve-stats</code>, under <code>mailQueue</code>, <code>lastMailDrain</code> and
 <code>lastMailDrainAt</code>. A failed send is not retried: a send is not idempotent, and a password reset
-delivered twice with two different one-time links is worse than one that did not arrive.</p>
+delivered twice with two different one-time links is worse than one that did not arrive. The only
+retry is for a failure that left the relay without the message (an API 429 or 503, an SMTP
+connection that never opened), and only for a message that asked for more attempts.</p>
+<h2 id="delivery-after-a-reset">Delivery After a Reset</h2>
+<p>Each send runs through a durable outbox (<code>cfw_outbox_mail</code>). The drain writes the outbox row,
+flushes it, sends, writes the completion and flushes again. The queued row stays in <code>cfw_mail_queue</code>
+until the send settles, so <code>mailQueue</code> still counts it.</p>
+<p>If the object is reset after the relay took the message and before the completion was saved, the
+next drain sends it again under the same outbox key. Over SMTP that key is the <code>Message-ID</code>
+(<code>&lt;mail-12-0@your-domain&gt;</code>), so a relay that drops duplicate message ids drops the repeat. The
+Cloudflare API and the <code>send_email</code> binding refuse a <code>Message-ID</code> header (<code>E_HEADER_NOT_ALLOWED</code>),
+so those sends carry the key in <code>X-Cfw-Outbox-Key</code> instead. Cloudflare does not drop duplicates by
+it, so over those two transports a reset in that window can deliver one message twice. A reset
+before the claim was saved sends nothing and loses nothing.</p>
 <p>Mail sent through the <code>send_email</code> binding shows as dropped in the Email Routing summary even
 when it was delivered. Read Email Sending metrics instead.</p>
 <h2 id="connecting-a-cloudflare-account">Connecting a Cloudflare Account</h2>

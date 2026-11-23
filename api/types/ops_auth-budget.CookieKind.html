@@ -11,13 +11,15 @@
 <li><a href="../modules/ops_auth-budget.html">ops/auth-budget</a></li>
 <li><a href="" aria-current="page">CookieKind</a></li></ul>
 <h1>Type Alias CookieKind</h1></div>
-<div class="tsd-signature"><span class="tsd-kind-type-alias">CookieKind</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;session&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;personal&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;neutral&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;unknown&quot;</span></div>
+<div class="tsd-signature"><span class="tsd-kind-type-alias">CookieKind</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;session&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;personal&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;neutral&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;tracking&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;unknown&quot;</span></div>
 <div class="tsd-comment tsd-typography"><p>What a cookie name says about its visitor: <code>session</code> logs a user in and keys the replica,
 <code>personal</code> ties the page to one visitor without being a login, <code>neutral</code> is set on anonymous
-traffic and changes nothing, <code>unknown</code> is a name nobody has classified.</p>
+traffic and changes nothing, <code>tracking</code> is an analytics or consent cookie the CMS never reads
+(a request carrying only these is the anonymous request, and the front worker drops them),
+<code>unknown</code> is a name nobody has classified.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/ops/auth-budget.ts#L39">src/ops/auth-budget.ts:39</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/auth-budget.ts#L41">src/ops/auth-budget.ts:41</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

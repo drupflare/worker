@@ -485,6 +485,29 @@ manifest cannot come to name content the site never received. Stored blobs are c
 hash again before a revision is applied.</p>
 <p>Bytes are bounded twice: by <code>MAX_BODY_BYTES</code> per request, and by a 2,199,995-byte cap per file,
 since each file is one stored row. A client batches to stay under both.</p>
+<p>A blob carries text by default. Set <code>encoding</code> to <code>base64</code> on a blob to send a file&#39;s raw bytes, such
+as a theme&#39;s images and fonts: <code>{ &quot;hash&quot;: &quot;...&quot;, &quot;source&quot;: &quot;&lt;base64&gt;&quot;, &quot;encoding&quot;: &quot;base64&quot; }</code>. The
+hash is the sha256 of the decoded bytes, so the same file has the same hash whichever way it was
+sent. A blob whose bytes do not match its hash, whose base64 does not decode, or whose <code>encoding</code> is
+not <code>utf8</code> or <code>base64</code> is rejected with 422. A file that is not UTF-8 text is stored as base64 in its
+row and decoded when PHP opens it, so PHP and the integrity check see the original bytes. The cap
+above applies to the stored form, which is a third larger than the file.</p>
+<p>The front worker serves a delivered file under <code>/modules/</code>, <code>/themes/</code>, <code>/profiles/</code> and
+<code>/libraries/</code> with the type its extension names: <code>css</code>, <code>js</code>, <code>mjs</code>, <code>svg</code>, <code>png</code>, <code>jpg</code>, <code>jpeg</code>,
+<code>gif</code>, <code>webp</code>, <code>avif</code>, <code>ico</code>, <code>woff</code>, <code>woff2</code>, <code>ttf</code> and <code>otf</code>. A path the site does not hold falls
+through to Drupal.</p>
+<p>A <code>commit</code> replaces the whole package unless it sets <code>keep</code> to <code>true</code>. With <code>keep</code>, the files the
+commit names replace their paths in the active revision and every other file stays, so one changed
+file needs only that file sent. <code>remove</code> is a list of paths to delete from the kept set and needs
+<code>keep</code>. A path that is both named and removed, or a result with no files, is refused with 400. The
+reply carries <code>kept</code>, the count of files carried over, and <code>removed</code>, the paths dropped. <code>plan</code>
+takes the same two fields and reports the same counts. <code>keep</code> reads the active revision, so a
+package with no revision keeps nothing.</p>
+<p>A <code>commit</code> may also carry <code>base</code>, the revision hash the caller read. If <code>base</code> is not the active
+revision when the commit arrives, nothing is written and the answer is 409 with
+<code>{&quot;code&quot;: &quot;stale_base&quot;, &quot;base&quot;: &quot;...&quot;, &quot;active&quot;: &quot;&lt;active hash or null&gt;&quot;}</code>, so the caller can fetch
+the active manifest and show what changed. A package with no active revision answers <code>active: null</code>.
+A <code>base</code> that is not a revision hash answers 400. Without <code>base</code> the commit is last writer wins.</p>
 <p>A <code>commit</code> body may carry <code>autoload</code>, one object or an array, for vendor packages a build delivers:
 <code>{&quot;name&quot;:&quot;acme/widget&quot;,&quot;version&quot;:&quot;1.4.0&quot;,&quot;mount&quot;:&quot;vendor/acme/widget&quot;,&quot;autoload&quot;:{&quot;psr-4&quot;:{...}}}</code>.
 The mount must sit under <code>vendor/</code> or <code>libraries/</code>. The site registers each map with the class loader
@@ -538,13 +561,20 @@ that asks for them, so a new site stays small.</p>
 flags, branch aliases, branch archives, metapackages and virtual packages. Composer plugins are
 skipped. Installing does not enable a module. The two are separate steps, because a package that
 lands is not yet a module Drupal knows about.</p>
+<p><code>/install</code> refuses a package whose requirements conflict with the shipped lock and lists each
+conflict. <code>force=1</code> installs anyway. <code>accept=drupal/key,vendor/other</code> is narrower: it installs only
+when every conflict names one of the listed packages in its <code>requires</code>, so a caller that showed the
+owner one conflict cannot waive a second one it did not show. A conflict outside the list still
+answers 409 with the full list, and a package the registry cannot find still answers 404. A package
+in <code>accept</code> that is not among the current conflicts answers 400 with <code>code: &quot;accept_not_in_conflicts&quot;</code>
+and the unlisted names, so a preflight that has gone stale cannot accept more than it showed.</p>
 <h3 id="installing-a-lock">Installing a Lock</h3>
 <p><code>POST /install-lock</code> takes a <code>composer.lock</code> as the JSON body and installs the packages it names, so a
 site restored from a template bundle gets the code its database expects. The body may also carry
 <code>dev: true</code> (to include <code>packages-dev</code>), <code>profile</code> (a Drupal machine name, recorded with the session)
 and <code>cursor</code>. The route is owner-token only; <code>GET</code> answers 405.</p>
 <p>One call handles a window of 40 packages, the same count <code>/install</code> takes, and answers
-<code>{ session, done, cursor, total, installed, skipped, failed, patches, cache }</code>. Send the same body
+<code>{ session, done, cursor, total, installed, skipped, skippedFiles, failed, patches, cache }</code>. Send the same body
 with the returned <code>cursor</code> until <code>done</code> is true. The session id comes from the lock&#39;s packages, so the
 same lock always maps to the same session. A package already installed at the locked version and
 digest counts as <code>installed</code> with <code>reused: true</code> and writes nothing, and repeating a call returns the
@@ -559,7 +589,22 @@ Composer patches are not applied: a lock does not hold them, so the answer says
 only a <code>dist.reference</code> that is a commit and the archive is a GitHub zipball, the commit recorded in
 the archive comment must equal it. Other archives with neither install as <code>unverified</code>. A mismatch
 fails that package, stops the session and writes nothing for it; sending the same call again retries
-it. Any other failure (a fetch error, an archive type that is not a zip) also stops the session.</p>
+it. Any other failure (a fetch error, a corrupt archive) also stops the session.</p>
+<p>An archive is a zip or a tar. A <code>dist.type</code> of <code>tar</code> is read the way an npm registry serves it, as a
+gzipped tarball with one leading folder that is stripped, which is what asset-packagist locks name for
+<code>npm-asset/*</code> packages. Packages of type <code>npm-asset</code> and <code>bower-asset</code> (the types asset-packagist
+publishes, and the older <code>npm-asset-library</code> and <code>bower-asset-library</code> spellings) mount under
+<code>libraries/&lt;name&gt;</code>, like a <code>drupal-library</code>. A tarball keeps the file types a zip install keeps, and
+also the images and fonts the front worker serves from <code>/libraries</code> (<code>png</code>, <code>jpg</code>, <code>jpeg</code>, <code>gif</code>,
+<code>webp</code>, <code>avif</code>, <code>ico</code>, <code>svg</code>, <code>woff</code>, <code>woff2</code>, <code>ttf</code>, <code>otf</code>). A file that is not text is stored as
+base64 the way a binary <code>/modify</code> blob is, so the mount hands PHP and the browser its exact bytes.
+The per-file cap of 2,199,995 bytes applies to the stored form. A file over it never fails the lock:
+the answer lists it in <code>skippedFiles</code> as <code>{package, path, why}</code>, at most 100 per package, and the
+rest of the package installs.</p>
+<p>A package&#39;s mount follows the paths of the Drupal project templates: <code>modules/contrib/&lt;name&gt;</code>,
+<code>themes/contrib/&lt;name&gt;</code> and <code>profiles/contrib/&lt;name&gt;</code> for <code>drupal-module</code>, <code>drupal-theme</code> and
+<code>drupal-profile</code>, and the <code>custom</code> directories for the <code>drupal-custom-*</code> types. A profile never lands
+under <code>vendor/</code>.</p>
 <p>The route refuses, with the reason in the body, a lock for a different Drupal core (major and minor
 are compared, and the answer names both versions), a lock with no <code>drupal/core</code> entry, a lock of
 more than 400 packages, a body above the request ceiling (413), and any call while a transaction is
@@ -572,6 +617,11 @@ the session wrote and restores the rows it replaced, which the session saved bef
 saved rows exist only for a package that replaced files, and they stay until the session is rolled
 back. A session that failed and was not rolled back stays resumable. Roll back the newest session
 first when two share packages.</p>
+<p>The answer is <code>{ ok, session, rolledBack, removed, restored, leftInPlace }</code>. <code>removed</code> counts the
+packages this session installed and deleted. <code>leftInPlace</code> lists the packages the session reused
+(<code>name</code>, <code>version</code>, <code>files</code>): an earlier session installed them, so this rollback does not touch them.
+A second <code>DELETE</code> for a session already rolled back answers 404 with <code>rolledBack: true</code>, the same as a
+session the site never held. An unknown session answers 404 with <code>session</code> set.</p>
 <p>A module you wrote yourself arrives through a git remote or through <code>/modify</code>. A git pull fetches
 one commit at depth one and boots the kernel against the new tree, rolling back if it fatals. See
 <a href="../operating/git-remotes.html">Git Remotes</a> and <a href="#module-revisions">Module Revisions</a>. The same <code>/enable</code> step
@@ -593,7 +643,9 @@ applies afterwards.</p>
 <code>search_api</code>, <code>search_api_solr</code>, <code>seckit</code>, <code>simple_sitemap</code>, <code>simplesamlphp_auth</code>, <code>smtp</code>, <code>stage_file_proxy</code>, <code>strata</code>, <code>svg_image</code>,
 <code>token</code>, <code>twig_tweak</code>, <code>usfedgov_google_analytics</code>, <code>uswds_base</code>, <code>video_embed_field</code>,
 <code>views_bulk_operations</code>, <code>views_data_export</code>, <code>webform</code>, <code>xmlsitemap</code>.</p>
-<p><code>uswds_base</code> is a theme and installs through <code>theme_installer</code> and not the module installer.</p>
+<p><code>uswds_base</code> is a theme and installs through <code>theme_installer</code> and not the module installer.
+<code>config/modules.yml</code> marks it, and <code>gin</code>, with <code>kind: theme</code>; every other entry is a module. The
+support table carries that as <code>kind</code> (<code>module</code> or <code>theme</code>) on each row.</p>
 <p><code>strata</code> (Packagist <code>earth-app/strata</code>) is verified for what the run asserted: it enables, its
 services, config and routes appear, and its own cipher seals and opens a frame under a key the module
 created, refuses tampered frames, and matches a frame sealed by native libsodium. Its

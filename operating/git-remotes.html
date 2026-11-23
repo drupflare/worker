@@ -394,7 +394,7 @@ result is written back to the provider as a commit status. The page that manages
 <code>/_cfw/git</code>, and it drives three files: <code>src/ops/git-smart.ts</code> (the transport),
 <code>src/ops/git-provider.ts</code> (the provider layer above it) and <code>src/ops/git-sync.ts</code> (the layout and
 diff).</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-transport">The Transport</a></li><li><a href="#what-gets-installed">What Gets Installed</a></li><li><a href="#branches-requests-and-diffs">Branches, Requests and Diffs</a></li><li><a href="#triggers">Triggers</a></li><li><a href="#deliveries">Deliveries</a></li><li><a href="#what-a-push-does">What a Push Does</a></li><li><a href="#verify-and-roll-back">Verify and Roll Back</a></li><li><a href="#write-back">Write-Back</a></li><li><a href="#storage">Storage</a></li><li><a href="#provider-coverage">Provider Coverage</a></li></ol></nav><h2 id="the-transport">The Transport</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-transport">The Transport</a></li><li><a href="#what-gets-installed">What Gets Installed</a></li><li><a href="#branches-requests-and-diffs">Branches, Requests and Diffs</a></li><li><a href="#triggers">Triggers</a></li><li><a href="#deliveries">Deliveries</a></li><li><a href="#what-a-push-does">What a Push Does</a></li><li><a href="#verify-and-roll-back">Verify and Roll Back</a></li><li><a href="#write-back">Write-Back</a></li><li><a href="#tokens-sent-with-one-call">Tokens Sent With One Call</a></li><li><a href="#storage">Storage</a></li><li><a href="#provider-coverage">Provider Coverage</a></li></ol></nav><h2 id="the-transport">The Transport</h2>
 <p>The transport is git&#39;s own smart HTTP, so anything that serves a repository over HTTPS works:
 GitHub, GitLab, Bitbucket, Gitea, Forgejo, a bare repository behind nginx, or an internal mirror. Two
 requests do the whole job:</p>
@@ -668,7 +668,19 @@ account email as the username, so its row asks for one.</p>
 <p>Gitea takes <code>state</code> on the way in and answers <code>status</code> on the way out, which matters when reading a
 status back through its API.</p>
 <p>A plain remote has nowhere to put a status, so <code>statusRequest()</code> returns null for it.</p>
-</details><h2 id="storage">Storage</h2>
+</details><h2 id="tokens-sent-with-one-call">Tokens Sent With One Call</h2>
+<p>A caller that does not want the site to hold a provider token sends it in the
+<code>x-drupflare-git-token</code> header on <code>/git?action=add</code> and <code>/git?action=pull</code>. The site uses it for that
+call and writes it nowhere: not <code>git_token_&lt;id&gt;</code>, not the draft slot, not the audit log. Text of an
+error that would have carried it, stored or returned, has the token replaced by <code>[token]</code>.</p>
+<p>An add that sends the header, or sets <code>tokenless=1</code>, makes a tokenless remote. The remote is
+recorded with <code>tokenless: true</code>, its poll interval is <code>0</code> and the alarm never polls it, and no
+commit status is written back to the provider. A <code>token</code> in the query on a tokenless add answers
+400, so a credential is never put in a URL. A tokenless add for a provider that has an API and no
+header answers 400 <code>an access token is required</code>; a plain remote needs none.</p>
+<p><code>action=pull</code> on a tokenless remote with no header answers 400 <code>a token is required</code> before it
+reaches the provider. An add without the header or <code>tokenless=1</code> stores the token as before.</p>
+<h2 id="storage">Storage</h2>
 <div class="table"><table>
 <thead>
 <tr>

@@ -482,6 +482,10 @@ site is claimed.</p>
 <td><code>/enable?module=X</code></td>
 <td>installs it through Drupal&#39;s own module installer</td>
 </tr>
+<tr>
+<td><code>/wp-packages</code></td>
+<td>WordPress only: installs, rolls back or deletes a pinned plugin or theme</td>
+</tr>
 </tbody></table></div>
 <p>Separate steps, because a package that has landed is not yet a module Drupal knows about and the two
 have different failure modes. <code>/install</code> also accepts <code>version=&lt;constraint&gt;</code> and <code>registry=npm</code>;

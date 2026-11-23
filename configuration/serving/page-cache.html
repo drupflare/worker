@@ -513,7 +513,8 @@ reads it, and it is not on <code>KV_OVERRIDABLE</code>: a wrong stored page is a
 <p>A response is stored only when every rule below passes, and each rule is a named row in
 <code>src/wordpress/store-rule.ts</code> with a test that removes it and shows the case then gets through.</p>
 <ul>
-<li>The request is an anonymous <code>GET</code> with no cookie, no <code>Authorization</code> and none of the headers that
+<li>The request is an anonymous <code>GET</code> with no cookie (analytics and consent cookies are dropped first,
+see Cookies), no <code>Authorization</code> and none of the headers that
 change a body (<code>Forwarded</code>, <code>X-Forwarded-Server</code>, <code>X-Original-URL</code>, <code>X-HTTP-Method-Override</code> and
 similar). <code>X-Forwarded-Host</code>, <code>X-Forwarded-For</code> and <code>X-Forwarded-Proto</code> are not on that list:
 proxies and <code>wrangler dev</code> add them, and the pinned origin keeps them out of the body.</li>
@@ -533,7 +534,100 @@ has the content type its path implies, carries no nonce, and is not a search or 
 </ul>
 <p><code>/wp-json/</code> and <code>?rest_route=</code> are refused. REST collections vary by authentication and some carry
 nonces; storing one needs a per-route allow-list, a check that the route is anonymous, and tags per
-collection.</p>
+collection. Sitemaps, <code>wp-cron.php</code> and any path under <code>wp-*</code> are refused by the same rule, so each
+request renders.</p>
+<h3 id="purges-and-stale-copies">Purges and Stale Copies</h3>
+<p>A write purges the pages that carry the tags it announced. A write nobody announced purges every
+stored page, and structural changes (theme, menus, widgets, core options) do the same by design.</p>
+<p>The host checks each run&#39;s writes against its announcements, and calls a write nobody announced a
+floor purge. For <code>wp_posts</code> and <code>wp_postmeta</code> it reads the post ids out of the statement when the
+<code>WHERE</code> clause is a plain conjunction on <code>ID</code> or <code>post_id</code> (an <code>=</code> or an <code>IN</code> list), or from the id the
+database reports for a single-row insert. Such a write counts as announced only when a <code>post:&lt;id&gt;</code> tag
+came for every one of those ids, so a tag for one post no longer covers a write to another. Any other
+statement shape (an <code>OR</code>, a subselect, a join, a different key column, more than 100 ids) falls back
+to the table family check: a tag of a family the table feeds covers it.</p>
+<p>A post page&#39;s previous and next links used to carry the all-posts tag, so any publish purged every
+post page. The stock lookup, a published post of the same type ordered by date and then ID, now
+carries a tag for the links of its own post instead. Publishing a post, restoring it from the trash
+or moving it to a new date announces the links of the two published posts on either side of its new
+place, one indexed query each way, and nothing else about those posts. A post that leaves
+publication, whether trashed, drafted, made private or deleted, announces nothing extra: every page
+that linked to it loaded it and already carries its tag. Equal dates break on ID, as the lookup does.
+A lookup limited to the same category or tag, one that excludes terms, one a theme or plugin changed
+with a filter, and any other statement shape keep the all-posts tag and purge with every publish.</p>
+<p>That narrows the post pages a publish purges to the post, its two neighbours and the pages that
+list it. It does not cover everything a post page loads. A new or removed post changes its
+category&#39;s post count, which purges every page that loaded the category, and a theme that lists
+recent posts on its post pages carries the listing tag a publish announces. On those sites a
+publish still purges most post pages.</p>
+<p>Publishing also sets two flags in post meta, <code>_pingme</code> and <code>_encloseme</code>, which WordPress&#39;s next cron
+run clears. No page shows either, so the host announces nothing for them, and it announces nothing
+for the option where it records its own cron run. Before this, the cron run that followed a publish
+purged about as many pages as the publish had.</p>
+<p>A floor purge is still wholesale. The host does not know which listings a post it never saw belongs
+to, so it cannot name a smaller set of tags. <code>/serve-stats</code> reports <code>floorPurges</code> and the tables behind
+the last one under <code>wordpressTags</code>. A wholesale purge marks every stored page superseded and queues
+refills for them.</p>
+<p><code>NEVER_STALE</code> and the previous-generation tier of <code>PAGE_KV</code> do not apply to WordPress. A trashed or
+unpublished post renders a 404 that is never stored, so nothing would replace its old copy in <code>PAGE_KV</code>
+and the post would stay visible. After a purge the front worker therefore waits for a render. The
+object still answers a page marked superseded by a wholesale purge for up to <code>AGED_SERVE_MAX_MS</code>
+(60 seconds by default), and says so with <code>x-cfw-cache: AGED</code>.</p>
+<p>An isolate learns a new generation within its pointer window, so another colo can answer the old page
+for a few seconds after a write.</p>
+<h3 id="background-fills-and-visitors">Background Fills and Visitors</h3>
+<p>A purge queues a refill for every page it removed, and the object works through the queue on its
+alarm. A WordPress render takes about half a second and holds the object for all of it, so a request
+that arrives in the middle waits, and the alarm used to start the next fill the moment one ended.
+After a publish that left a dozen pages queued, a visitor&#39;s reads waited for the whole queue to
+drain.</p>
+<p>The fill batch now yields to the event loop between fills, so a request that arrived during a render
+is served before the next fill starts. It also stands aside for <code>VISITOR_QUIET_MS</code> (500 ms by
+default) after a request reaches the gated lane, which covers the gap between two requests of one
+visitor. Two rules keep the queue moving:</p>
+<ul>
+<li>A queued page that a visitor is waiting on is filled at once. Only background pages wait.</li>
+<li>A fill goes through once none has run for ten windows, so a steady stream of requests cannot hold
+the queue back for good.</li>
+</ul>
+<p><code>0</code> turns the wait off and leaves only the yield. The pages nobody asked for are filled after the
+visitors go quiet, so the queue takes longer to empty than it did.</p>
+<p>How long a page can stay stale after the write that purged it depends on how many pages that write
+purges, because the object renders one page at a time. The bound is 1 second per page the write
+affects plus 2 seconds: 8 seconds for a publish (six pages), 6 seconds for an edit (four), and 1
+second per stored page plus 2 seconds for a write that purges every stored page. It rests on a
+measured render of about 0.6 seconds per page on a local object that renders one page at a time. No
+deployed reading has been taken, so treat it as the local figure.</p>
+<h3 id="validators">Validators</h3>
+<p>A stored page answers with <code>ETag: &quot;wp-&lt;render time&gt;&quot;</code>, and a matching <code>If-None-Match</code> gets a 304 with
+no body. A copy that spool has decorated carries <code>W/&quot;wp-&lt;render time&gt;&quot;</code>, and the two forms never
+validate each other. A refill changes the render time, so a client holding a purged copy always
+fetches. An <code>AGED</code> answer carries no validator.</p>
+<h3 id="cookies">Cookies</h3>
+<p>A request is read against three groups of cookie names.</p>
+<ul>
+<li>Login and personal cookies (<code>wordpress_logged_in_*</code>, <code>wordpress_sec_*</code>, <code>wordpress_*</code>,
+<code>wp-settings-*</code>, <code>wp-postpass_*</code>, <code>comment_author_*</code>) make the request authenticated. It renders for
+that visitor, spends the authenticated allowance on the free plan, and is never answered from or
+stored in a shared tier.</li>
+<li>Analytics and consent cookies never change what WordPress renders: Google Analytics (<code>_ga</code>,
+<code>_ga_&lt;id&gt;</code>, <code>_gid</code>, <code>_gat*</code>, <code>_gcl_*</code>, <code>__utm*</code>), <code>_fbp</code> and <code>_fbc</code>, Hotjar, Matomo, Microsoft
+Clarity, the Cloudflare cookies <code>__cf_bm</code>, <code>_cfuvid</code> and <code>cf_clearance</code>, and the consent cookies of
+GDPR Cookie Consent, Cookiebot, Complianz, CookieYes, OneTrust, Borlabs and Moove. A request that
+carries only these is the anonymous request. The front worker drops them before it asks any tier, so
+the stored page is the one a visitor with no cookie gets, and a visitor with <code>_ga</code> and one without
+read and fill the same entry. The names are anchored patterns in <code>src/ops/auth-budget.ts</code>, so a
+look-alike such as <code>_ga_session_admin</code> stays in the third group.</li>
+<li>Every other name is unclassified. The request is treated as authenticated (no shared tier, no store,
+the allowance applies) because a plugin cookie such as a cart can make the page per visitor.
+<code>/serve-stats</code> reports these under <code>unclassifiedCookies</code>: the request count, the count per name for
+the first 32 names seen, and the requests whose names did not fit.</li>
+</ul>
+<p>An analytics cookie beside a login or an unclassified cookie changes nothing: the request keeps all of
+its cookies and stays per visitor. <code>wordpress_test_cookie</code> is kept on every request, because
+<code>wp-login.php</code> fails without it. A consent plugin that reads its own cookie on the server and prints
+different markup for it would see no cookie from a visitor who carries only consent cookies, so the
+page such a visitor gets is the one a visitor who has not answered the banner gets.</p>
 			</div>
 		</main>
 		<footer>

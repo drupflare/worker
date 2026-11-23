@@ -14,21 +14,24 @@
 <section class="tsd-panel">
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="warmforced"><span class="tsd-kind-call-signature">warmForced</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/ops_cron.CronEnv.html" class="tsd-signature-type tsd-kind-interface">CronEnv</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">paid</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><a href="#warmforced" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="warmforced"><span class="tsd-kind-call-signature">warmForced</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/ops_cron.CronEnv.html" class="tsd-signature-type tsd-kind-interface">CronEnv</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">paid</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">nowMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><a href="#warmforced" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Whether warming is forced, off, or left to the thermal policy.</p>
 <p>An explicit <code>SITE_WARM</code> wins. Unset on paid it warms (10,800 firings a day sit inside included
 requests and rows). Unset on free it is the thermal policy: the same firings are 10.8% of free's
 daily row and request budgets, which is the operator's trade.</p>
+<p><code>SITE_WARM=0</code> wins over everything. Otherwise a <code>WARM_WINDOW</code> decides: inside it the site is kept
+warm and outside it the site sleeps, whatever the plan or the thermal policy would say.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">env</span>: <a href="../interfaces/ops_cron.CronEnv.html" class="tsd-signature-type tsd-kind-interface">CronEnv</a></span></li>
-<li><span><span class="tsd-kind-parameter">paid</span>: <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol"> = false</span></span></li></ul></div>
+<li><span><span class="tsd-kind-parameter">paid</span>: <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol"> = false</span></span></li>
+<li><span><span class="tsd-kind-parameter">nowMs</span>: <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol"> = ...</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/ops/cron.ts#L416">src/ops/cron.ts:416</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/cron.ts#L421">src/ops/cron.ts:421</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

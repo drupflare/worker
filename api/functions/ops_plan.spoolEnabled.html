@@ -16,10 +16,9 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="spoolenabled"><span class="tsd-kind-call-signature">spoolEnabled</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../types/ops_plan.SpoolEnv.html" class="tsd-signature-type tsd-kind-type-alias">SpoolEnv</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><a href="#spoolenabled" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Whether spool runs: on for a paid site and off for a free one, and <code>SPOOL</code> overrides either way
-(<code>0</code> off, anything else on). A free site starts off because a first visit adds the client
-script, the worker script and a beacon to a page view, and Worker requests are the limit that
-binds a free site; a return visit is where the saving is.</p>
+<div class="tsd-comment tsd-typography"><p>Whether spool runs: on for every plan, and <code>SPOOL</code> turns it off with <code>0</code>. A first visit adds only
+requests the static tier and the stub's lease answer without a Worker invocation, so the plan
+with the least headroom starts on like the other.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -27,7 +26,7 @@ binds a free site; a return visit is where the saving is.</p>
 <li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">env</span>: <a href="../types/ops_plan.SpoolEnv.html" class="tsd-signature-type tsd-kind-type-alias">SpoolEnv</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/ops/plan.ts#L47">src/ops/plan.ts:47</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/plan.ts#L49">src/ops/plan.ts:49</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

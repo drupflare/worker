@@ -428,6 +428,11 @@
 <td>largest <code>multipart/form-data</code> body the edge forwards</td>
 </tr>
 <tr>
+<td><code>MAX_FILE_PUT_BYTES</code></td>
+<td>100 MiB</td>
+<td>largest body <code>PUT /file</code> forwards; the body streams to R2</td>
+</tr>
+<tr>
 <td><code>OUTBOUND_GUARD</code></td>
 <td>on</td>
 <td>refuse an outbound fetch to a private, loopback or metadata address; <code>0</code> off</td>
@@ -459,8 +464,8 @@
 </tr>
 <tr>
 <td><code>SPOOL</code></td>
-<td>per plan</td>
-<td>spool, the client-side replica: on for paid, off for free; <code>0</code> off, <code>1</code> on</td>
+<td>on</td>
+<td>spool, the client-side replica of public pages: on for every plan; <code>0</code> off</td>
 </tr>
 <tr>
 <td><code>SPOOL_IMAGES</code></td>
@@ -476,6 +481,11 @@
 <td><code>SPOOL_EMBEDS</code></td>
 <td>on</td>
 <td>swap YouTube and Vimeo iframes for click-to-load facades while spool is on; <code>0</code> off</td>
+</tr>
+<tr>
+<td><code>SPOOL_EXCLUDE</code></td>
+<td>empty</td>
+<td>comma-separated path prefixes kept out of spool, such as a route editors change often</td>
 </tr>
 <tr>
 <td><code>NEVER_STALE</code></td>
@@ -511,6 +521,11 @@
 <td><code>FILL_BATCH_SIZE</code></td>
 <td>per plan</td>
 <td>pages one alarm firing may fill before re-arming; capped at 50</td>
+</tr>
+<tr>
+<td><code>VISITOR_QUIET_MS</code></td>
+<td>500</td>
+<td>how long background fills stand aside after a visitor&#39;s request reached the object; <code>0</code> off</td>
 </tr>
 <tr>
 <td><code>WINDOW_SITES</code></td>

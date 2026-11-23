@@ -390,7 +390,7 @@
 				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Serving and Caching Settings</a></p>
 <h1 id="static-asset-settings">Static Asset Settings</h1>
 <p>Cache lifetimes for static assets, the response headers a request carries, and asset aggregation.</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#static-asset-cache-lifetimes">Static Asset Cache Lifetimes</a></li><li><a href="#request-headers">Request Headers</a></li><li><a href="#asset_aggregates"><code>ASSET_AGGREGATES</code></a></li></ol></nav><h2 id="static-asset-cache-lifetimes">Static Asset Cache Lifetimes</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#static-asset-cache-lifetimes">Static Asset Cache Lifetimes</a></li><li><a href="#wordpress-assets">WordPress Assets</a></li><li><a href="#request-headers">Request Headers</a></li><li><a href="#asset_aggregates"><code>ASSET_AGGREGATES</code></a></li></ol></nav><h2 id="static-asset-cache-lifetimes">Static Asset Cache Lifetimes</h2>
 <p><code>assets/_headers</code> sets <code>Cache-Control</code> on the files the asset layer serves. Without it every asset
 answers <code>public, max-age=0, must-revalidate</code>, so a repeat view revalidates each stylesheet, script
 and font.</p>
@@ -425,6 +425,45 @@ default and reads the rules from the directory; an allow line uploads it as an o
 deployed worker then answers <code>/_headers</code> with the file (200, 282 bytes, measured on a deployed worker).</p>
 <p>HTML comes from the Worker and is not affected. <code>/robots.txt</code>, <code>/driver.json</code>, <code>/prefill.json</code>,
 <code>/drupal-pf/*</code> and <code>/drupal-sql/*</code> have no rule.</p>
+<h2 id="wordpress-assets">WordPress Assets</h2>
+<p>A WordPress site serves its browser files from <code>assets/wordpress-site/</code>, not from <code>assets/</code>. The
+Drupal asset directory has no rule for <code>/wp-includes</code>, <code>/wp-admin</code> or <code>/wp-content</code>, so a Drupal
+deploy publishes none of it. Deploy a WordPress site with <code>--assets assets/wordpress-site</code> and
+<code>CMS=wordpress</code>. The directory has to be separate because the asset layer answers before the Worker:
+<code>assets/robots.txt</code> is Drupal&#39;s static file, and with it published WordPress could not serve its own
+virtual <code>robots.txt</code>. <code>/favicon.ico</code> is the same, and WordPress redirects it to the site icon.</p>
+<p><code>bun scripts/pack-wordpress.ts --site</code> writes the directory from <code>wordpress-src</code>, and <code>bun run assets:wordpress</code> runs it last. The directory holds:</p>
+<ul>
+<li>the stylesheets, scripts, images and fonts of <code>wp-includes</code> and <code>wp-admin</code></li>
+<li>the same file types of the active theme, <code>twentytwentyfive</code></li>
+<li>a copy of the WordPress pack the object reads through its asset binding</li>
+<li>a generated <code>_headers</code></li>
+</ul>
+<p>A stock tree publishes 976 files and 41,495,778 bytes. The largest is
+<code>wp-includes/js/dist/script-modules/vips/worker.min.js</code> at 13,418,072 bytes. The limits are 20,000
+files per version on free and 100,000 on paid, and 25 MiB per file; the packer fails above the free
+count or the file size. <code>--themes=a,b</code> publishes other bundled themes and <code>--themes=all</code> publishes
+all fifteen, which is 1,645 files and 75,041,354 bytes. A site that activates a theme whose files
+are not published renders without that theme&#39;s fonts and images.</p>
+<p>Left out on purpose:</p>
+<ul>
+<li>PHP, JSON, <code>.txt</code>, <code>.scss</code> and the other files no page links. WordPress reads PHP and JSON from
+the pack.</li>
+<li>The plain copy of a script or stylesheet when a <code>.min</code> file sits beside it: 528 files, 36,491,342
+bytes. WordPress loads the plain file only when <code>SCRIPT_DEBUG</code> is set. Core PHP names 442
+scripts and stylesheets outright, and those stay published, since <code>wp-tooltip.js</code> and
+<code>svg-painter.js</code> are requested plain even with a <code>.min</code> file present.</li>
+<li>Right-to-left sheets: 460 files, 4,171,329 bytes. No language pack ships.</li>
+<li><code>wp-content/uploads</code>. Uploaded files are not static assets.</li>
+</ul>
+<p>Stylesheets and scripts get <code>public, max-age=31536000, immutable</code>, because WordPress requests them
+with a <code>?ver=</code> query that changes on an update. Images and fonts are linked from stylesheets with no
+version, so they get the year without <code>immutable</code>. <code>_headers</code> is generated from the published list
+with one rule per directory and extension, since the platform joins the headers of every rule that
+matches.</p>
+<p><code>/wp-admin/load-scripts.php</code> and <code>load-styles.php</code> are PHP routes that concatenate files. They end
+with <code>exit</code> and answer 500 on the current request fragment, so a page that links them loses jQuery
+and its stylesheets.</p>
 <h2 id="request-headers">Request Headers</h2>
 <p>Drupal receives the request&#39;s headers, not only its cookie. <code>Authorization</code>, <code>X-Api-Key</code>, <code>Origin</code>,
 <code>User-Agent</code> and any other header an API reads reach <code>$request-&gt;headers</code> and <code>$_SERVER</code>. Before this

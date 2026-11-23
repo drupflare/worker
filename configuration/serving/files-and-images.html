@@ -690,6 +690,45 @@ request, so timings come from bun running the same host function with the same w
 <p>GD2 reading (<code>imagecreatefromgd2</code>) is not shimmed. A palette GD2 is not written either: the host holds decoded pixels, not
 palette indices, so <code>imagegd2()</code> on an indexed handle answers false and records a degradation. Core, WordPress and Joomla do not
 write GD2.</p>
+<h3 id="wordpress-image-editing">WordPress Image Editing</h3>
+<p>A WordPress site does not use the GD editor. The host plugin offers one editor, <code>Drupflare_Image_Editor</code>,
+and removes <code>WP_Image_Editor_GD</code> and <code>WP_Image_Editor_Imagick</code> from <code>wp_image_editors</code>. The stock GD editor
+tests only for the extension and <code>gd_info()</code>, and the gd stand-in satisfies both, so it would claim support
+for every call. The host editor queues crop, resize, rotate and flip on the encoded source and sends the
+queue to the same image host as the gd path, one request per file written.</p>
+<p>It reads and writes JPEG, PNG, GIF, WebP and AVIF. <code>wp_generate_attachment_metadata()</code> on a 1600x1000 JPEG
+produces the stock sizes, and each file reads back at the size the metadata states. Anything else answers
+a <code>WP_Error</code> that names the reason: a crop outside the image, an image over 10 MiB, a file that is not an
+image, and an AVIF of an image with transparency. A format the editor does not write, such as BMP, falls back
+to JPEG, which is WordPress&#39;s own rule. A progressive PNG or GIF is written without interlacing and records
+a degradation.</p>
+<p>Not measured: CPU or memory for a multi-size upload (eight host requests for two attachments in a local run),
+EXIF auto-rotation on a real camera photo, and WordPress&#39;s own scaling of images over 2560 pixels.</p>
+<h3 id="wordpress-uploads">WordPress Uploads</h3>
+<p>A WordPress upload lands in the same file store as a Drupal one. The host plugin registers a <code>public://</code>
+stream wrapper over the store and points <code>wp_upload_dir()</code> at <code>public://wp-content/uploads</code>, so every file
+function WordPress calls on an upload, including the image editor&#39;s sub-sizes and <code>wp_delete_file()</code>, reads and
+writes the store. A write is committed when the handle closes. The front worker serves
+<code>/wp-content/uploads/...</code> from the stored file, with the same inline and sandboxed-download rules as Drupal,
+and <code>FILE_STORE=r2</code> offloads and restores these files the way it does Drupal&#39;s.</p>
+<p>The worker parses a <code>multipart/form-data</code> body itself, writes each file part to a temporary path and lists it
+as an upload for the request. <code>wp_handle_upload()</code> calls <code>is_uploaded_file()</code>, which only a POST SAPI
+answers true for and which core has no filter on, so the request fragment points that one call in the
+interpreter&#39;s copy of <code>wp-admin/includes/file.php</code> at a function that also accepts the parsed files. A node
+spec fails if a WordPress release changes the number of those calls from one.</p>
+<p>What is refused, and why:</p>
+<ul>
+<li><strong><code>private://</code> paths.</strong> WordPress has no private file area on this host. The wrapper answers false and
+records a degradation, because a write to the interpreter&#39;s own filesystem would vanish with the request.</li>
+<li><strong>A file over 10 MiB.</strong> A write buffers the whole file in PHP before it is stored, so the cap protects the
+isolate. The parser answers <code>UPLOAD_ERR_INI_SIZE</code> and the wrapper refuses the same size at flush. The figure
+is chosen, not measured; the oversize path is untested.</li>
+<li><strong>A path that climbs out of its directory.</strong> <code>..</code> is rejected by the wrapper and again by the file store.</li>
+<li><strong>Types WordPress does not allow.</strong> Type and extension checks are WordPress&#39;s own (<code>upload_mimes</code>,
+<code>wp_check_filetype_and_ext()</code>). PHP here has no <code>fileinfo</code>, so WordPress cannot compare a file&#39;s bytes with its
+extension: a text file named <code>photo.jpg</code> is accepted. It is served with the stored image type and <code>nosniff</code>.</li>
+<li><strong>A file field with a bracketed name</strong>, such as <code>files[]</code>. Only plain field names are parsed.</li>
+</ul>
 			</div>
 		</main>
 		<footer>

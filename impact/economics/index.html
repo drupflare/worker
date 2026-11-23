@@ -396,7 +396,7 @@ per-tenant charge. Quotas are account-wide, so several sites share one envelope 
 their own floor.</p>
 <p>The tables down to <a href="free-plan-and-warming.html#kept-warm">Kept Warm</a> are for sites that sleep, which is the free plan&#39;s default and
 <code>SITE_WARM=0</code> on any plan. <a href="free-plan-and-warming.html#kept-warm">Kept Warm</a> prices the paid plan&#39;s default, where every site stays warm.</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#prices-at-each-traffic-level">Prices At Each Traffic Level</a></li><li><a href="#where-the-curves-meet">Where The Curves Meet</a></li></ol></nav><h2 id="pages">Pages</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#pages">Pages</a></li><li><a href="#what-spool-adds-to-the-plans">What Spool Adds To The Plans</a></li><li><a href="#prices-at-each-traffic-level">Prices At Each Traffic Level</a></li><li><a href="#where-the-curves-meet">Where The Curves Meet</a></li></ol></nav><h2 id="pages">Pages</h2>
 <ul>
 <li><a href="conventional-hosts.html">Conventional Hosts</a>: the conventional hosts, what they need, and what running it showed.</li>
 <li><a href="free-plan-and-warming.html">The Free Plan and Keeping a Site Warm</a>: the free plan, keeping a site warm and what the price does not buy.</li>
@@ -404,6 +404,149 @@ their own floor.</p>
 <li><a href="vps-comparison.html">Drupflare vs a Traditional VPS</a>: latency, throughput and cost against nginx and PHP-FPM on the same tree.</li>
 <li><a href="free-vs-paid/index.html">Free vs Paid</a>: what each plan allows and which limit binds first.</li>
 </ul>
+<h2 id="what-spool-adds-to-the-plans">What Spool Adds To The Plans</h2>
+<p>Spool is on by default on every plan, the free plan included, and <code>SPOOL=0</code> turns it off. It changes how many Worker requests a visitor costs, which is the meter the free plan&#39;s 100,000 a day and the paid plan&#39;s request price both count. How much it saves depends on how many pages a visitor reads in a visit and how many of them the device already holds, so the figures below come from the published and measured visit behaviour of each site type, cited in <a href="../energy/views.html#visit-behaviour-from-public-data">Visit Behaviour From Public Data</a>. All of them are <code>derived (modelled)</code>, from <code>bun scripts/economics/behavior.ts --md</code>, with a month of 30.44 days and every visitor running a worker, which is the upper bound on the saving.</p>
+<h3 id="per-site-by-site-type">Per Site, By Site Type</h3>
+<p>Central visit length of each site type, the share of Worker requests spool removes, the views a month the free plan carries (3,044,000 with spool off), and the paid plan&#39;s monthly bill with spool on minus the bill with it off. A positive difference is a net deficit for spool and a negative one a net bonus. The 5 ms column uses the upper estimate of spool&#39;s CPU on a page that reaches the Worker, and the 0 ms column the lower bound, since two paid readings put the median difference under 1 ms:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>site type</th>
+<th align="right">views a visit</th>
+<th align="right">requests saved</th>
+<th align="right">free plan carries a month</th>
+<th align="right">10M views, 5 ms</th>
+<th align="right">30M views, 5 ms</th>
+<th align="right">100M views, 5 ms</th>
+<th align="right">100M views, 0 ms</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>personal site</td>
+<td align="right">1.60</td>
+<td align="right">0.1%</td>
+<td align="right">3,048,343</td>
+<td align="right">+$0.76</td>
+<td align="right">+$2.98</td>
+<td align="right">+$9.94</td>
+<td align="right">-$0.05</td>
+</tr>
+<tr>
+<td>blog</td>
+<td align="right">1.00</td>
+<td align="right">0.0%</td>
+<td align="right">3,044,000</td>
+<td align="right">+$0.76</td>
+<td align="right">+$3.00</td>
+<td align="right">+$10.00</td>
+<td align="right">$0.00</td>
+</tr>
+<tr>
+<td>documentation</td>
+<td align="right">1.50</td>
+<td align="right">1.6%</td>
+<td align="right">3,092,121</td>
+<td align="right">+$0.74</td>
+<td align="right">+$2.80</td>
+<td align="right">+$9.32</td>
+<td align="right">-$0.52</td>
+</tr>
+<tr>
+<td>marketing site</td>
+<td align="right">1.33</td>
+<td align="right">0.0%</td>
+<td align="right">3,044,057</td>
+<td align="right">+$0.76</td>
+<td align="right">+$3.00</td>
+<td align="right">+$10.00</td>
+<td align="right">$0.00</td>
+</tr>
+<tr>
+<td>news</td>
+<td align="right">1.92</td>
+<td align="right">1.5%</td>
+<td align="right">3,091,178</td>
+<td align="right">+$0.74</td>
+<td align="right">+$2.80</td>
+<td align="right">+$9.33</td>
+<td align="right">-$0.51</td>
+</tr>
+<tr>
+<td>higher education</td>
+<td align="right">2.40</td>
+<td align="right">1.7%</td>
+<td align="right">3,095,097</td>
+<td align="right">+$0.74</td>
+<td align="right">+$2.78</td>
+<td align="right">+$9.28</td>
+<td align="right">-$0.55</td>
+</tr>
+<tr>
+<td>all sites, surveyed</td>
+<td align="right">4.60</td>
+<td align="right">6.4%</td>
+<td align="right">3,252,620</td>
+<td align="right">+$0.67</td>
+<td align="right">+$2.16</td>
+<td align="right">+$7.05</td>
+<td align="right">-$2.31</td>
+</tr>
+</tbody></table></div>
+<p>Read the table in three parts. A typical visit is short (the sources give 1.0 to 2.4 pages for six site types), so spool removes between 0% and 1.7% of Worker requests there, and the free plan&#39;s floor of 3,044,000 views a month rises by at most 51,000. The paid plan shows no difference up to about 4.4 million views a month, because the 10 million request and 30 million CPU millisecond allowances absorb it. Above that the 5 ms estimate makes spool a net deficit of about $0.10 per million views, from $0.74 at 10 million views to $9.28 for higher education at 100 million, and only the 0 ms bound turns it into a bonus, of $0.55 at most. The bottom row uses a cross-industry session depth of 4.6 pages whose mean or median the source does not state, and its high figure of 14% rests on a survey of 336 marketers, so it is not a site type.</p>
+<p>Long visits are where spool pays. A deployed visit of 121 views reached the Worker 12 times with spool on and 122 with it off (measured, n=1), and a modelled visit of 20 views on a nine-page site carries 5,073,343 views a month. The sources show how rare that is. In Wikipedia&#39;s data, 68% to 78% of sessions load one page, and the navigation trees that run to a median of 18 page loads are 0.24% of them. The model&#39;s long-visit rows are therefore bounds for a site whose visitors read on, and no site type with a measured figure behaves that way on average.</p>
+<h3 id="by-site-size">By Site Size</h3>
+<p>Requests saved and free-plan views a month for a fixed visit length, by the distinct pages a site has, with visitors drawn from a power law fitted to the measured share of views on the most-read page (the control row draws pages uniformly):</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">distinct pages</th>
+<th align="right">5 views</th>
+<th align="right">10 views</th>
+<th align="right">20 views</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">10</td>
+<td align="right">0.4%, 3,056,409</td>
+<td align="right">23.0%, 3,951,579</td>
+<td align="right">52.6%, 6,421,636</td>
+</tr>
+<tr>
+<td align="right">100</td>
+<td align="right">0.1%, 3,046,712</td>
+<td align="right">9.1%, 3,348,367</td>
+<td align="right">33.9%, 4,601,767</td>
+</tr>
+<tr>
+<td align="right">1,000</td>
+<td align="right">0.0%, 3,045,309</td>
+<td align="right">6.0%, 3,237,988</td>
+<td align="right">27.6%, 4,204,681</td>
+</tr>
+<tr>
+<td align="right">10,000</td>
+<td align="right">0.0%, 3,045,218</td>
+<td align="right">5.1%, 3,206,016</td>
+<td align="right">25.3%, 4,072,540</td>
+</tr>
+<tr>
+<td align="right">uniform draws, 100</td>
+<td align="right">0.0%</td>
+<td align="right">0.0%</td>
+<td align="right">0.5%</td>
+</tr>
+</tbody></table></div>
+<p>A small site gains more because visitors meet the same pages again. The surveyed sites hold a median of 900 distinct pages for WordPress and 1,475 for Drupal (sitemap counts of 71 and 43 public university sites, many a lower bound), where a 10-view visit saves about 6%. The 405-page site that the model uses where a site&#39;s size is not measured is the median of the page counts of four of the owner&#39;s own sites and the median of the higher-education sitemaps.</p>
+<h3 id="what-the-figures-assume">What The Figures Assume</h3>
+<ul>
+<li>Every visitor runs a worker. A visitor on a client that registers none sends the same requests as with spool off, so the saving falls in proportion.</li>
+<li>Bots send 13% to 73% of HTML views on the owner&#39;s own zones, by user agent, and most of them do not run a service worker, so the saving per metered request is smaller than the table.</li>
+<li>The site types are weighted equally where a single typical figure is needed, because no weights are measured. Nonprofit, community, ecommerce, healthcare and government sites have no readable figure and are not in the table.</li>
+<li>Pages are drawn independently, with no link structure. The fitted power law overstates the concentration past the first page (it puts 83% of views on the top ten pages of the personal site against 62% measured), so the saving is, if anything, high.</li>
+<li>A return visit costs one request for each distinct page, past the 900 s freshness bound. One return per returner is assumed.</li>
+<li>The R2 page mirror and spool are modelled by the same requests-per-view factor, which no deployed reading checks.</li>
+</ul>
+<p>These figures use no real site&#39;s own visit data beyond the owner&#39;s, so they set no price cut and no allowance increase. <a href="../energy/views.html#what-spool-adds">What Spool Adds</a> has the requests, the sweep over visit length and pages, and what is unmeasured, which includes spool&#39;s decoration CPU on a free-plan handler against its 10 ms cap.</p>
 <h2 id="prices-at-each-traffic-level">Prices At Each Traffic Level</h2>
 <p>What hosting the same site costs conventionally, per site:</p>
 <div class="table"><table>

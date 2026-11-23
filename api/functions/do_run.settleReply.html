@@ -16,11 +16,12 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="settlereply"><span class="tsd-kind-call-signature">settleReply</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">host</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/do_host.RunHost.html" class="tsd-signature-type tsd-kind-interface">RunHost</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">reply</span><span class="tsd-signature-symbol">:</span> <a href="../types/do_types.Payload.html" class="tsd-signature-type tsd-kind-type-alias">Payload</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/do_types.Payload.html" class="tsd-signature-type tsd-kind-type-alias">Payload</a><span class="tsd-signature-symbol">&gt;</span><a href="#settlereply" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Answers an <code>exit()</code> for a reply that carries no JSON, and drops the interpreter it left behind.</p>
-<p><code>exit()</code> returns 0 and leaves an instance that runs nothing and prints nothing, so every later
-request would answer empty until something recycled it. Headers, cookies and shutdown functions
-set before the exit are not recoverable from PHP, so the request fails rather than answering
-without them.</p>
+<div class="tsd-comment tsd-typography"><p>Counts an <code>exit()</code> the harness answered, and answers one it could not, for a reply that carries
+no JSON.</p>
+<p>The pinned interpreter survives an exit and a harness prints its reply from a shutdown function
+(<code>phpExit</code>), so that reply goes through as it is. Only an interpreter built without the exit fix
+is dead afterwards: it runs nothing and prints nothing, so every later request would answer
+empty until something recycled it. Its request fails and the instance is dropped.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -29,7 +30,7 @@ without them.</p>
 <li><span><span class="tsd-kind-parameter">reply</span>: <a href="../types/do_types.Payload.html" class="tsd-signature-type tsd-kind-type-alias">Payload</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/do_types.Payload.html" class="tsd-signature-type tsd-kind-type-alias">Payload</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/do/run.ts#L53">src/do/run.ts:53</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/do/run.ts#L67">src/do/run.ts:67</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

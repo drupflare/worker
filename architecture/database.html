@@ -397,7 +397,7 @@ off the file rather than from here. <code>node scripts/diff-site-db.ts</code> co
 <span class="line"><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">  scripts/drupal/install-site-db.php</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> drupal-src</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> /tmp/site.sqlite</span></span></code></pre><p><code>bun run build:site-db &lt;output&gt;</code> runs the same command with the flags already set. The script refuses to write
 <code>assets/drupal/site.sqlite</code> unless given <code>--allow-shipping-pack</code>, so the normal loop is build
 elsewhere and compare:</p>
-<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">node</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/diff-site-db.ts</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> assets/drupal/site.sqlite</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> /tmp/site.sqlite</span></span></code></pre><nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#what-the-script-does">What the Script Does</a></li><li><a href="#the-five-configuration-values">The Five Configuration Values</a></li><li><a href="#the-cache-indexes">The Cache Indexes</a></li><li><a href="#what-reproducible-means-here">What Reproducible Means Here</a></li><li><a href="#the-router-follows-the-driver">The Router Follows the Driver</a></li><li><a href="#changing-one-row">Changing One Row</a></li><li><a href="#reading-it-with-other-tools">Reading It With Other Tools</a></li><li><a href="#upgrading-drupal-core">Upgrading Drupal Core</a></li></ol></nav><h2 id="what-the-script-does">What the Script Does</h2>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">node</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/diff-site-db.ts</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> assets/drupal/site.sqlite</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> /tmp/site.sqlite</span></span></code></pre><nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#what-the-script-does">What the Script Does</a></li><li><a href="#the-five-configuration-values">The Five Configuration Values</a></li><li><a href="#the-cache-indexes">The Cache Indexes</a></li><li><a href="#what-reproducible-means-here">What Reproducible Means Here</a></li><li><a href="#the-router-follows-the-driver">The Router Follows the Driver</a></li><li><a href="#changing-one-row">Changing One Row</a></li><li><a href="#the-wordpress-database">The WordPress Database</a></li><li><a href="#upgrading-drupal-core">Upgrading Drupal Core</a></li></ol></nav><h2 id="what-the-script-does">What the Script Does</h2>
 <ol>
 <li><strong>Installs Drupal</strong> into <code>drupal-src/sites/build</code> with the <code>standard</code> profile, driving
 <code>install_drupal()</code> directly. It never installs into <code>sites/default</code>, which holds the baked Twig
@@ -528,7 +528,52 @@ present and rejected, so the cost it was meant to remove is still paid and nothi
 <p>After any change, run <code>bun run assets:sql</code> to rewrite the migration chunks the Durable Object
 replays, then <code>node scripts/diff-site-db.ts &lt;previous file&gt; assets/drupal/site.sqlite</code> to see what
 moved.</p>
-<h2 id="reading-it-with-other-tools">Reading It With Other Tools</h2>
+<h2 id="the-wordpress-database">The WordPress Database</h2>
+<p>The WordPress database is baked by <code>bun scripts/bake-wordpress.ts</code>, which runs WordPress&#39;s own
+installer through the MySQL translator and cuts the result into <code>assets/wordpress/sql</code>. It is a
+separate pack with its own producer. Nothing on this page except this section describes it.</p>
+<h3 id="planner-statistics">Planner Statistics</h3>
+<p>SQLite chooses an index from <code>sqlite_stat1</code>, and nothing in a Durable Object runs <code>ANALYZE</code> for you.
+A baked database has three posts, so statistics taken from it would describe three rows. Without any,
+the planner guesses ten rows per key, which makes the permalink lookup
+(<code>post_name = ? AND post_type = &#39;post&#39; AND post_status = &#39;publish&#39;</code>) use <code>type_status_date</code>
+and read every published post. On a model site with 20,000 posts a Durable Object read 11,002 rows
+for that lookup, against 3 with statistics.</p>
+<p>The bake therefore ships statistics for a model site. <code>scripts/wp/loaded-data.ts</code> generates it from a
+fixed seed: 20,000 posts (11,000 published posts, 3,500 attachments, 3,200 revisions and the rest),
+100,000 postmeta rows, 2,000 terms, 50,000 comments, 5,000 users and 3,000 options of which 150 load
+on every request. <code>modelStatistics()</code> in <code>scripts/wp/planner-stats.ts</code> loads that site into the
+installed schema, runs <code>ANALYZE</code> and keeps the <code>sqlite_stat1</code> rows. <code>pack-sql.ts</code> writes them as the
+last statements of the last chunk, and the migration replay installs them:</p>
+<ol>
+<li><code>ANALYZE sqlite_master</code> creates <code>sqlite_stat1</code>. The name is reserved, so <code>CREATE TABLE</code> is refused.</li>
+<li>One <code>INSERT</code> per row.</li>
+<li><code>ANALYZE sqlite_master</code> again. The planner reads the table when the schema loads, so rows written
+directly have no effect until this reload.</li>
+</ol>
+<p>The rows are the same on every bake, and <code>tests/node/wordpress-planner-stats.spec.ts</code> compares them
+with the script&#39;s output. Run <code>bun scripts/wp/planner-stats.ts stats</code> to print them.</p>
+<h3 id="what-a-real-site-does-to-them">What a Real Site Does to Them</h3>
+<p>The planner reads the seeded rows and never the site&#39;s data, so a plan cannot flip as a site grows.
+What can change is whether the seeded plan is still the one the site&#39;s own <code>ANALYZE</code> would pick.
+<code>bun scripts/wp/planner-stats.ts sensitivity</code> loads seven sites (200, 2,000 and 100,000 posts, and
+20,000 posts that are mostly revisions, attachments or drafts) and compares the 72 read templates
+under the seeded rows against each site&#39;s own statistics. The permalink, date permalink, comment and
+post parent reads agree on all seven. The category archive, author archive and admin count reads
+differ only on the 200-post site, where either plan reads a handful of rows. The other
+disagreements are ties between <code>type_status_date</code> and <code>type_status_author</code> for ordered reads, and
+three reads that the site&#39;s own statistics send to a full scan of <code>wp_posts</code> on sites whose posts
+are mostly revisions, attachments or drafts.</p>
+<h3 id="why-not-a-full-analyze">Why Not a Full ANALYZE</h3>
+<p><code>ANALYZE</code> is permitted on a Durable Object and costs the whole database in rows read: 1,671,358 read
+and 34 written on the model site, measured on a local Durable Object. It also makes one hot read
+worse. <code>wp_options__autoload</code> holds three values and 95% of the rows carry <code>off</code>, so its average of
+1,500 rows per key makes the planner scan all 3,000 options for the request that loads the
+autoloaded ones, where the index reads 155. The seeded rows leave that index out
+(<code>UNREPRESENTATIVE</code> in <code>planner-stats.ts</code>), so the planner keeps its default for it.</p>
+<p><code>PRAGMA optimize</code> is permitted and runs an <code>ANALYZE</code>, but its cursor reports 13 rows read and 0
+written while <code>sqlite_stat1</code> gains 30 rows, so its cost cannot be read from the meter. Nothing in the
+product runs either.</p>
 <p>The user tables are declared <code>COLLATE NOCASE_UTF8</code>, a collation the Drupal SQLite driver registers
 per connection. A plain <code>sqlite3</code> client or a raw <code>new PDO()</code> cannot rebuild an index over them and
 fails with <code>no such collation sequence</code>. Read-only queries are fine; anything that rewrites an index

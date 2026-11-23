@@ -390,7 +390,7 @@
 				<p class="crumbs"><a href="index.html">Operating</a></p>
 <h1 id="administration">Administration</h1>
 <p>The surfaces an owner uses to operate a site, and how each is authorised.</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-admin-surfaces">The Admin Surfaces</a></li><li><a href="#inside-drupals-own-admin">Inside Drupal&#39;s Own Admin</a></li><li><a href="#single-sign-on">Single Sign-On</a></li><li><a href="#url-routing">URL Routing</a></li><li><a href="#retiring-a-site">Retiring a Site</a></li><li><a href="#scripts">Scripts</a></li></ol></nav><h2 id="the-admin-surfaces">The Admin Surfaces</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#the-admin-surfaces">The Admin Surfaces</a></li><li><a href="#inside-drupals-own-admin">Inside Drupal&#39;s Own Admin</a></li><li><a href="#single-sign-on">Single Sign-On</a></li><li><a href="#url-routing">URL Routing</a></li><li><a href="#deployment-report">Deployment Report</a></li><li><a href="#retiring-a-site">Retiring a Site</a></li><li><a href="#scripts">Scripts</a></li></ol></nav><h2 id="the-admin-surfaces">The Admin Surfaces</h2>
 <p>Seven pages under <code>/_cfw</code> drive machinery that already exists, and all take the owner token; the
 sign-in flow is on <a href="../configuration/operations/index.html#the-admin-surface">Configuration Operations</a>.</p>
 <div class="table"><table>
@@ -500,6 +500,13 @@ the Custom Domain route. On <code>localhost</code> the hostname names no site, s
 is refused on the public routes, so a link cannot choose which site answers; an owner route accepts
 it because the object checks the token itself, and <code>PW_DIAGNOSTICS=1</code> accepts it everywhere, which
 is what <code>/serve?site=X&amp;path=Y</code> uses.</p>
+<h2 id="deployment-report">Deployment Report</h2>
+<p><code>GET /deployment</code> answers the deployment document (the primary and the claimed sites) with what each
+claimed site holds, and <code>GET /health</code> carries the same document under <code>deployment</code>. When the read of
+that document fails or runs past 2 seconds, the answer adds <code>degraded</code> with the value <code>kv_read_failed</code>
+or <code>kv_read_timeout</code>. The claimed list is then empty or the last one this isolate saw, and it does
+not say the deployment has no claimed sites. A caller that is about to act on the list, such as a
+retire, reads again and acts only on an answer with no <code>degraded</code> field.</p>
 <h2 id="retiring-a-site">Retiring a Site</h2>
 <p><code>POST /retire?site=&lt;id&gt;</code> with the body <code>{&quot;confirm&quot;: &quot;&lt;id&gt;&quot;}</code> removes one site from a deployment. It
 is an owner route answered by the Worker, with no route table entry for the object, because

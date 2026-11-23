@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>WordPress Packages - Drupflare</title>
+		<meta
+			name="description"
+			content="A WordPress site keeps DISALLOWFILEMODS on, so no dashboard screen installs, updates, deletes or uploads a plugin or theme, and none updates core."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="WordPress Packages - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="A WordPress site keeps DISALLOWFILEMODS on, so no dashboard screen installs, updates, deletes or uploads a plugin or theme, and none updates core."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			nav .menu {
+				position: relative;
+			}
+			nav .menu summary {
+				color: var(--muted);
+				font-size: 0.925rem;
+				list-style: none;
+				cursor: pointer;
+			}
+			nav .menu summary::-webkit-details-marker {
+				display: none;
+			}
+			nav .menu summary::after {
+				content: ' \25BE';
+				font-size: 0.75em;
+			}
+			nav .menu summary:hover,
+			nav .menu[open] summary,
+			nav .menu[data-current] summary {
+				color: var(--accent);
+			}
+			nav .menu .panel {
+				position: absolute;
+				z-index: 10;
+				top: 1.9rem;
+				left: -0.75rem;
+				display: flex;
+				flex-direction: column;
+				min-width: 12rem;
+				padding: 0.5rem;
+				border: 1px solid var(--line);
+				border-radius: 0.7rem;
+				background: var(--card);
+				box-shadow: 0 0.75rem 2rem var(--glow);
+			}
+			nav .menu .panel a {
+				padding: 0.4rem 0.75rem;
+				border-radius: 0.4rem;
+			}
+			nav .menu .panel a:hover {
+				background: var(--code-bg);
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<details class="menu" data-current><summary>Run</summary><div class="panel"><a href="../../getting-started/index.html">Getting Started</a><a href="../../operating/index.html">Operating</a><a href="../../configuration/index.html" aria-current="page">Configuration</a></div></details>
+				<details class="menu"><summary>Understand</summary><div class="panel"><a href="../../architecture/index.html">Architecture</a><a href="../../security/index.html">Security</a><a href="../../impact/index.html">Impact</a><a href="../../audiences/index.html">Audiences</a></div></details>
+				<details class="menu"><summary>Reference</summary><div class="panel"><a href="../../technical-report.html">Technical Report</a><a href="../../api/index.html">API</a><a href="../../php/index.html">PHP</a></div></details>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Operations Settings</a></p>
+<h1 id="wordpress-packages">WordPress Packages</h1>
+<p>A WordPress site keeps <code>DISALLOW_FILE_MODS</code> on, so no dashboard screen installs, updates, deletes or uploads a plugin or theme, and none updates core. The code tree is a packed, read-only layer with nowhere for a request to write. A maintainer still adds, updates and rolls back plugins and themes, and none of it needs an engineer on the day: the host does it as a staged operation behind the owner token.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#what-a-maintainer-does">What a Maintainer Does</a></li><li><a href="#the-registry">The Registry</a></li><li><a href="#staged-operations-and-receipts">Staged Operations and Receipts</a></li><li><a href="#archive-rules">Archive Rules</a></li><li><a href="#core-updates">Core Updates</a></li><li><a href="#multisite-is-refused">Multisite Is Refused</a></li><li><a href="#tested-with-classic-editor">Tested With Classic Editor</a></li><li><a href="#what-is-not-built">What Is Not Built</a></li></ol></nav><h2 id="what-a-maintainer-does">What a Maintainer Does</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>change</th>
+<th>what to do</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>add a plugin or theme</td>
+<td>add its slug, version, archive digest, licence and declared PHP version to <code>config/wp-plugins.yml</code>, deploy, then <code>POST /wp-packages?op=install&amp;slug=&lt;slug&gt;</code></td>
+</tr>
+<tr>
+<td>update one</td>
+<td>pin the new version in the same file, deploy, then <code>POST /wp-packages?op=install&amp;slug=&lt;slug&gt;&amp;version=&lt;version&gt;</code></td>
+</tr>
+<tr>
+<td>undo an update</td>
+<td><code>POST /wp-packages?op=rollback&amp;slug=&lt;slug&gt;</code>; a second call undoes the rollback</td>
+</tr>
+<tr>
+<td>remove one</td>
+<td>deactivate it in the dashboard, then <code>POST /wp-packages?op=delete&amp;slug=&lt;slug&gt;</code>; <code>rollback</code> brings it back</td>
+</tr>
+<tr>
+<td>update WordPress core</td>
+<td>deliver a new WordPress pack (see Core Updates); nothing in the dashboard does it</td>
+</tr>
+<tr>
+<td>see what changed and when</td>
+<td><code>GET /wp-packages</code> lists the delivered packages, the receipts and the pinned registry</td>
+</tr>
+</tbody></table></div>
+<p>Activating and deactivating stay in the dashboard, through WordPress&#39;s own <code>activate_plugin()</code> path. Delivery makes the files available; switching a plugin on is the site owner&#39;s decision.</p>
+<h2 id="the-registry">The Registry</h2>
+<p><code>config/wp-plugins.yml</code> is the trust anchor. Each package lists its kind, licence and one entry per pinned version with the SHA-256 of its archive and the PHP version it declares. <code>bun run gen:config</code> compiles it into <code>src/wordpress/generated/packages.ts</code>, and <code>gen:config:check</code> fails when the two disagree. Nothing outside the file is ever downloaded, and no request parameter waives the digest.</p>
+<p>The archive comes from <code>downloads.wordpress.org</code> through the outbound guard, redirects included. Its SHA-256 must equal the pin. The main file&#39;s <code>Version</code> header must equal the pinned version and its <code>Requires PHP</code> header must equal the declared one, so a pin that misdescribes its archive is refused.</p>
+<p>WordPress.org publishes no checksum for a plugin archive: a <code>.sha1</code> and a <code>.md5</code> beside <code>classic-editor.1.7.0.zip</code> both answered 404 (measured with HTTP HEAD requests, 2026-11-21). The pin is therefore recorded by whoever adds the version, from an archive they fetched and read.</p>
+<h3 id="what-a-mirror-would-change">What a Mirror Would Change</h3>
+<p>The default is this registry reading from wordpress.org, with no mirror built. A mirror under our control would store each archive after review and serve it from a stable address, so an update would no longer wait on wordpress.org being reachable or on a deploy: the pin list could live beside the mirror and change at runtime. It would also remove the dependence on wordpress.org keeping an old version online. It costs a reviewed publishing step per release and a store to keep. Which one ships is Gregory&#39;s decision.</p>
+<h2 id="staged-operations-and-receipts">Staged Operations and Receipts</h2>
+<p>An install runs the download, the digest check, the archive rules and the header checks before it writes anything. The write is one Durable Object transaction: the file rows, their sealed integrity records, the manifest and the receipt commit together. A failure at any earlier step, or inside the transaction, leaves the old version mounted and no row of the new one that anything reads. Rows of a generation the manifest does not name are removed by the next delivery, which cleans up after a crash.</p>
+<p>A package keeps two generations, the active one and the previous one. The next boot mounts the active generation over the base tree, one file at a time on first open, and drops any folder of the same name from the pack first, so a file the new version no longer ships is gone too. Each file is hashed against its sealed record when it is first opened on a claimed site, and a file that does not match reads as empty.</p>
+<p>Every operation leaves a receipt: the operation, the package, the version and archive digest before and after, the file count and a note. Receipts are rows in <code>cfw_wp_receipt</code>, newest first on <code>GET /wp-packages</code>, and <code>POST /wp-packages</code> calls are recorded in the owner audit log.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>operation</th>
+<th>receipt says</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>install</code></td>
+<td>no earlier version, the pinned version and digest</td>
+</tr>
+<tr>
+<td><code>update</code></td>
+<td>the active version and digest replaced, and the new ones</td>
+</tr>
+<tr>
+<td><code>rollback</code></td>
+<td>the version it left and the one it restored</td>
+</tr>
+<tr>
+<td><code>delete</code></td>
+<td>the version removed, and that the package&#39;s uninstall hook was not run</td>
+</tr>
+</tbody></table></div>
+<h3 id="uninstall-hooks-are-refused">Uninstall Hooks Are Refused</h3>
+<p>Delete does not run a package&#39;s <code>uninstall.php</code> or its <code>register_uninstall_hook</code> callback. WordPress runs those only when it deletes the files itself, which this site never lets it do, and the host will not run code a package chooses with write access to every table at removal time. The package&#39;s options and tables stay, which also lets <code>rollback</code> restore a working package. The receipt carries the note. Delete refuses a package that WordPress still has active, because the next request would fail on a missing file.</p>
+<h2 id="archive-rules">Archive Rules</h2>
+<p>Every archive is held to these rules before any file is expanded. The directory is read first, so names, types, counts and declared sizes are judged without inflating anything. Each file is then inflated into a buffer one byte over its declared size and compared with it, so a header that understates its data fails instead of growing memory. The limits are chosen values, not measured ones.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>rule</th>
+<th>refused</th>
+<th>why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>path-traversal</code></td>
+<td>a <code>..</code> segment</td>
+<td>a file written outside the package folder</td>
+</tr>
+<tr>
+<td><code>absolute-path</code></td>
+<td>a name starting with <code>/</code></td>
+<td>the same</td>
+</tr>
+<tr>
+<td><code>drive-letter</code></td>
+<td>a name starting with <code>C:</code></td>
+<td>the same, on a Windows-made archive</td>
+</tr>
+<tr>
+<td><code>backslash</code></td>
+<td>a backslash in a name</td>
+<td>some tools read it as a separator</td>
+</tr>
+<tr>
+<td><code>invalid-name</code></td>
+<td>an empty name, a control character, or a name that is not UTF-8</td>
+<td>names must be unambiguous</td>
+</tr>
+<tr>
+<td><code>symlink</code></td>
+<td>a unix symlink entry</td>
+<td>it can point a later read at any file</td>
+</tr>
+<tr>
+<td><code>device-entry</code></td>
+<td>a device, pipe or socket entry</td>
+<td>nothing a plugin ships should be one</td>
+</tr>
+<tr>
+<td><code>duplicate-name</code></td>
+<td>the same name twice</td>
+<td>which one wins depends on the reader</td>
+</tr>
+<tr>
+<td><code>case-collision</code></td>
+<td>names that differ only in case</td>
+<td>the same file on a case-insensitive reader</td>
+</tr>
+<tr>
+<td><code>encrypted</code></td>
+<td>an encrypted entry</td>
+<td>it cannot be checked</td>
+</tr>
+<tr>
+<td><code>unsupported-compression</code></td>
+<td>any method except stored and deflate</td>
+<td>only those two are read</td>
+</tr>
+<tr>
+<td><code>zip64</code>, <code>not-a-zip</code></td>
+<td>zip64, a multi-disk archive, a truncated or malformed one</td>
+<td>the reader does not trust what it cannot parse</td>
+</tr>
+<tr>
+<td><code>overlap</code></td>
+<td>two entries sharing bytes</td>
+<td>the overlapping-entry bomb</td>
+</tr>
+<tr>
+<td><code>archive-too-large</code></td>
+<td>more than 20 MiB compressed</td>
+<td>a plugin that size will not fit the object&#39;s budget</td>
+</tr>
+<tr>
+<td><code>too-many-entries</code></td>
+<td>more than 1,500 entries</td>
+<td>each file is a row written</td>
+</tr>
+<tr>
+<td><code>entry-too-large</code></td>
+<td>a file over 2,000,000 bytes expanded</td>
+<td>a row holds at most 2,199,995 bytes</td>
+</tr>
+<tr>
+<td><code>expanded-too-large</code></td>
+<td>more than 20 MiB expanded in total</td>
+<td>the same budget</td>
+</tr>
+<tr>
+<td><code>ratio</code></td>
+<td>expansion over 100 to 1, per file above 64 KiB and for the whole archive</td>
+<td>a bomb; legitimate text and images stay well under it</td>
+</tr>
+<tr>
+<td><code>size-mismatch</code></td>
+<td>a header whose size differs from the data</td>
+<td>the header cannot be trusted to bound the work</td>
+</tr>
+<tr>
+<td><code>layout</code></td>
+<td>not exactly one top-level folder named for the package</td>
+<td>the folder is the package&#39;s identity</td>
+</tr>
+<tr>
+<td><code>php-outside-folder</code></td>
+<td>a PHP file beside the folder</td>
+<td>it would sit where WordPress loads from</td>
+</tr>
+</tbody></table></div>
+<p>Hidden paths and <code>node_modules</code> are left out and listed as skipped. The central directory names are the only ones used; a local header that disagrees is ignored.</p>
+<h2 id="core-updates">Core Updates</h2>
+<p>Core is part of the packed tree, so a core update is a new WordPress pack delivered by the platform, not a write to the tree. This page does not build that delivery for WordPress. What exists: the pack and its reconciliation for the Drupal path, and the host&#39;s pack build for WordPress (<code>bun run assets:wordpress</code>). Delivering a new WordPress pack to a running site is not built.</p>
+<p>The dashboard says so on every screen that could have offered a write:</p>
+<ul>
+<li><code>update-core.php</code>, <code>update.php</code>, <code>plugin-install.php</code> and <code>theme-install.php</code> answer with 200 and a page that names the running version, says the files are read-only, and points to <code>/wp-packages</code>. They carry no form and no button.</li>
+<li>WordPress&#39;s own notice for an available update is removed, since it tells a user without the update capability to notify an administrator. An administrator sees one line instead: the available version, and that the platform applies core updates.</li>
+<li>Site Health replaces its core version test with one that reports the same facts, with status <code>recommended</code> when a newer version is known.</li>
+</ul>
+<p>The version check still runs on WordPress&#39;s schedule through the outbound budget, so the offer shown is the real one.</p>
+<h2 id="multisite-is-refused">Multisite Is Refused</h2>
+<p>WordPress Multisite is not supported. Each site has its own database and one pinned address, so one WordPress install cannot hold a network of sites. Create a separate site for each.</p>
+<ul>
+<li>The boot never defines <code>MULTISITE</code>, <code>WP_ALLOW_MULTISITE</code> or any network constant.</li>
+<li><code>network.php</code> (Network Setup) answers 501 with the refusal. <code>wp-signup.php</code>, <code>wp-activate.php</code> and <code>wp-admin/network/</code> answer the same.</li>
+<li>The config builder refuses a constant set through its <code>constants</code> input if it is <code>MULTISITE</code>, <code>WP_ALLOW_MULTISITE</code>, <code>SUBDOMAIN_INSTALL</code>, <code>DOMAIN_CURRENT_SITE</code>, <code>PATH_CURRENT_SITE</code>, <code>SITE_ID_CURRENT_SITE</code>, <code>BLOG_ID_CURRENT_SITE</code>, <code>NOBLOGREDIRECT</code> or <code>SUNRISE</code>, in any letter case. Nothing passes <code>constants</code> yet; the input exists so the refusal is enforced where an owner-set constant would enter.</li>
+</ul>
+<h2 id="tested-with-classic-editor">Tested With Classic Editor</h2>
+<p>Classic Editor 1.6.7 and 1.7.0 are pinned in the registry and run through a local <code>wrangler dev</code> site in a browser spec (<code>tests/e2e/browser/wordpress/site.pw.ts</code>). The spec installs 1.7.0 through <code>/wp-packages</code>, activates it from the Plugins screen, and checks that <code>post-new.php</code> shows the classic editor in place of the block editor. It then installs 1.6.7 as an update, rolls back to 1.7.0, and deactivates the plugin to bring the block editor back. The archive is fetched from wordpress.org by the site and is not stored in the repository. After an activation the browser lands on the Plugins list without an <code>activate=true</code> parameter in the address, so the spec reads the row class and the notice instead; the cause is not yet traced.</p>
+<h2 id="what-is-not-built">What Is Not Built</h2>
+<ul>
+<li>A dashboard button for any of this. The operations exist behind the owner route and are tested.</li>
+<li>Delivering a new WordPress core pack to a running site.</li>
+<li>A mirror of wordpress.org.</li>
+<li>Deployed readings of any of it: the rows and CPU a delivery and a boot with an overlay cost on a deployed object are not measured.</li>
+</ul>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

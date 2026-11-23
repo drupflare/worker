@@ -19,6 +19,8 @@
 <div class="tsd-comment tsd-typography"><p>The JSON object a PHP fragment printed after any notices. A deprecation such as <code>{closure}</code> or
 a log line such as <code>%date{M j}</code> carries a brace, so each <code>{</code> that could open an object is tried
 in turn until the rest parses; one that cannot (<code>{</code> then a letter) is skipped without counting.</p>
+<p>A reply that follows <a href="../variables/ops_json-reply.EXIT_REPLY_MARK.html" class="tsd-kind-variable">EXIT_REPLY_MARK</a> is read from the mark, since the page PHP printed
+before an <code>exit()</code> can hold any number of braces.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -26,7 +28,7 @@ in turn until the rest parses; one that cannot (<code>{</code> then a letter) is
 <li><span><span class="tsd-kind-parameter">raw</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/ops/json-reply.ts#L9">src/ops/json-reply.ts:9</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/json-reply.ts#L45">src/ops/json-reply.ts:45</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

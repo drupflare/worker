@@ -14,7 +14,7 @@
 <section class="tsd-panel">
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="sitewarmenabled"><span class="tsd-kind-call-signature">siteWarmEnabled</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/ops_cron.CronEnv.html" class="tsd-signature-type tsd-kind-interface">CronEnv</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">paid</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><a href="#sitewarmenabled" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="sitewarmenabled"><span class="tsd-kind-call-signature">siteWarmEnabled</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/ops_cron.CronEnv.html" class="tsd-signature-type tsd-kind-interface">CronEnv</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">paid</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">nowMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><a href="#sitewarmenabled" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Whether this site is configured to re-arm fast enough to stay resident.</p>
 <p>True when <code>SITE_WARM=1</code>, or when it is unset on a paid plan. Unset on free is false here because
@@ -24,10 +24,11 @@ the thermal policy decides there; see <a href="ops_cron.warmForced.html" class="
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">env</span>: <a href="../interfaces/ops_cron.CronEnv.html" class="tsd-signature-type tsd-kind-interface">CronEnv</a></span></li>
-<li><span><span class="tsd-kind-parameter">paid</span>: <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol"> = false</span></span></li></ul></div>
+<li><span><span class="tsd-kind-parameter">paid</span>: <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol"> = false</span></span></li>
+<li><span><span class="tsd-kind-parameter">nowMs</span>: <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol"> = ...</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e50c9b77fd325444e0f578fea9b9dcf93c8fbe79/src/ops/cron.ts#L441">src/ops/cron.ts:441</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/cron.ts#L453">src/ops/cron.ts:453</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

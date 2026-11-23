@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Discovery Document - Drupflare</title>
+		<meta
+			name="description"
+			content="A Drupal site answers GET /.well-known/drupflare with one JSON document that tells the dashboard what the site can do: its settings, the routes the dashboard may call, its limits and the release it..."
+		/>
+		<link
+			rel="icon"
+			href="../../drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Discovery Document - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="A Drupal site answers GET /.well-known/drupflare with one JSON document that tells the dashboard what the site can do: its settings, the routes the dashboard may call, its limits and the release it..."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			nav .menu {
+				position: relative;
+			}
+			nav .menu summary {
+				color: var(--muted);
+				font-size: 0.925rem;
+				list-style: none;
+				cursor: pointer;
+			}
+			nav .menu summary::-webkit-details-marker {
+				display: none;
+			}
+			nav .menu summary::after {
+				content: ' \25BE';
+				font-size: 0.75em;
+			}
+			nav .menu summary:hover,
+			nav .menu[open] summary,
+			nav .menu[data-current] summary {
+				color: var(--accent);
+			}
+			nav .menu .panel {
+				position: absolute;
+				z-index: 10;
+				top: 1.9rem;
+				left: -0.75rem;
+				display: flex;
+				flex-direction: column;
+				min-width: 12rem;
+				padding: 0.5rem;
+				border: 1px solid var(--line);
+				border-radius: 0.7rem;
+				background: var(--card);
+				box-shadow: 0 0.75rem 2rem var(--glow);
+			}
+			nav .menu .panel a {
+				padding: 0.4rem 0.75rem;
+				border-radius: 0.4rem;
+			}
+			nav .menu .panel a:hover {
+				background: var(--code-bg);
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="../../index.html"
+				>
+					<img
+						src="../../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<details class="menu" data-current><summary>Run</summary><div class="panel"><a href="../../getting-started/index.html">Getting Started</a><a href="../../operating/index.html">Operating</a><a href="../../configuration/index.html" aria-current="page">Configuration</a></div></details>
+				<details class="menu"><summary>Understand</summary><div class="panel"><a href="../../architecture/index.html">Architecture</a><a href="../../security/index.html">Security</a><a href="../../impact/index.html">Impact</a><a href="../../audiences/index.html">Audiences</a></div></details>
+				<details class="menu"><summary>Reference</summary><div class="panel"><a href="../../technical-report.html">Technical Report</a><a href="../../api/index.html">API</a><a href="../../php/index.html">PHP</a></div></details>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<p class="crumbs"><a href="../index.html">Configuration</a> / <a href="index.html">Operations Settings</a></p>
+<h1 id="discovery-document">Discovery Document</h1>
+<p>A Drupal site answers <code>GET /.well-known/drupflare</code> with one JSON document that tells the dashboard what the site can do: its settings, the routes the dashboard may call, its limits and the release it runs. The route takes the owner token. Without it the site answers 401, as every owner route does, and the document is never cached (<code>cache-control: no-store</code>).</p>
+<p>A site that runs WordPress answers 404, because the format has no kind for it. The dashboard reads a 404 as &quot;this site publishes no document&quot;.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#what-the-document-holds">What the Document Holds</a></li><li><a href="#settings">Settings</a></li><li><a href="#routes">Routes</a></li><li><a href="#release-schema">Release Schema</a></li></ol></nav><h2 id="what-the-document-holds">What the Document Holds</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>field</th>
+<th>value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>v</code></td>
+<td><code>1</code>, the format version</td>
+</tr>
+<tr>
+<td><code>kind</code></td>
+<td><code>drupal</code></td>
+</tr>
+<tr>
+<td><code>version</code></td>
+<td><code>null</code>; the dashboard registers a release by id, so the build states no version</td>
+</tr>
+<tr>
+<td><code>releaseId</code></td>
+<td>the platform&#39;s version id from <code>CF_VERSION_METADATA</code>, or <code>unknown</code> when the binding is absent</td>
+</tr>
+<tr>
+<td><code>schemaVersion</code></td>
+<td>the <code>schema.version</code> field of <code>package.json</code></td>
+</tr>
+<tr>
+<td><code>capabilities</code></td>
+<td>an empty list; the worker holds no capability list</td>
+</tr>
+<tr>
+<td><code>settings</code></td>
+<td><code>schema</code>, <code>values</code>, <code>provenance</code>, <code>writable</code> and <code>etag</code>, described below</td>
+</tr>
+<tr>
+<td><code>routes</code></td>
+<td>the owner routes with a stated method and class</td>
+</tr>
+<tr>
+<td><code>redirects</code></td>
+<td>an empty list; the dashboard keeps its own</td>
+</tr>
+<tr>
+<td><code>healthVocabulary</code></td>
+<td><code>ok</code>, <code>info</code>, <code>warn</code>, <code>error</code>, <code>critical</code></td>
+</tr>
+<tr>
+<td><code>limits</code></td>
+<td><code>fillQueueMax</code>, <code>edgePlanEntries</code>, <code>edgePlanBytes</code> and <code>maxUploadBytes</code></td>
+</tr>
+</tbody></table></div>
+<p><code>maxUploadBytes</code> is the effective upload ceiling, and <code>0</code> means it is off.</p>
+<h2 id="settings">Settings</h2>
+<p><code>settings</code> carries one entry for each name on <code>KV_OVERRIDABLE</code>, and nothing else. No secret, credential or deploy-time variable outside that list can appear in it.</p>
+<ul>
+<li><code>schema</code> is a JSON Schema for each lever, built from its domain: an integer with <code>minimum</code>, <code>maximum</code>, and where the lever has them <code>default</code>, <code>x-unit</code> and <code>x-marks</code>; a flag as the strings <code>0</code> and <code>1</code>; an enum with its values; any other lever as a string. Each also carries <code>title</code> (the lever name) and an <code>x-ui</code> object.</li>
+<li><code>values</code> holds the value in force. An integer lever is a number; a lever with no value is <code>null</code>.</li>
+<li><code>provenance</code> is <code>kv</code>, <code>var</code> or <code>default</code> for each lever, as <code>GET /settings</code> reports its source.</li>
+<li><code>writable</code> is <code>kv</code> for each lever when the site has a writable <code>CONFIG_KV</code> binding, and empty when it has not.</li>
+<li><code>etag</code> is the tag <code>GET /settings</code> sends, so a write can send it in <code>If-Match</code>. It changes when any lever or the plan changes.</li>
+</ul>
+<p><code>x-ui</code> always holds <code>group</code> and <code>permission</code>, which are <code>security</code> for a lever on <code>OWNER_ONLY_LEVERS</code> and <code>runtime</code> for every other. The lever type decides <code>widget</code>: an integer with marks is a <code>lever-slider</code> and a rules lever is <code>json</code>. The only hand-written hint is <code>danger</code>, set on <code>CSP_MODE</code>. These live in <code>src/ops/discovery.ts</code> beside the generator, because one entry does not justify a config file. No lever states a plan gate.</p>
+<h2 id="routes">Routes</h2>
+<p>Each entry has an <code>id</code>, a <code>method</code>, a <code>path</code>, a <code>class</code> and <code>auth</code>, which is <code>owner-token</code> for all of them. The class follows the repair table on <a href="index.html">Operations Settings</a>: <code>safe</code> changes nothing a visitor sees, <code>rebuild</code> discards derived state that returns on its own, and <code>stateful</code> changes what the site serves. A route whose methods the operations page does not state is left out of the list rather than guessed.</p>
+<h2 id="release-schema">Release Schema</h2>
+<p><code>package.json</code> carries <code>schema: { version, accepts }</code>. <code>version</code> is the data schema a release leaves a site at, and <code>accepts</code> is the oldest schema it accepts, which a rollback target must satisfy. Both are whole numbers and <code>accepts</code> cannot exceed <code>version</code>. <code>version</code> must equal the pack version that the reconcile steps end on, and a spec fails when a new step moves one without the other. Both are 7 today, which means a release accepts only sites already at its own schema.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../../render.js"
+			defer
+		></script>
+	</body>
+</html>

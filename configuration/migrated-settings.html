@@ -482,10 +482,9 @@ sample. Each address may send 60 reports a minute and an isolate takes 600, coun
 either limit the answer is still <code>204</code> and nothing is logged. Static files the asset layer answers
 (<code>/core</code>, <code>/modules</code>, <code>/themes</code>, <code>/agg</code>) carry the cache rules in <code>assets/_headers</code> and none of
 these.</p>
-<p><code>/enable</code> is not needed for a text asset a migrated module ships: a <code>.css</code>, <code>.js</code> or <code>.svg</code> file
+<p><code>/enable</code> is not needed for an asset a migrated module ships: a stylesheet, script, image or font
 stored in <code>cfw_module_file</code> is served from <code>/modules</code>, <code>/themes</code>, <code>/profiles</code> and <code>/libraries</code> when
-the pack does not hold the path. Binary assets are not served this way, because the table stores
-source as text.</p>
+the pack does not hold the path. <code>docs/architecture/modules.md</code> lists the extensions.</p>
 <p>A migrated site claims with <code>POST /firstrun</code> and a body of <code>{&quot;migrated&quot;: true}</code>. That mints the owner
 token and marks the site claimed without changing uid 1, the site name or any mail setting. It takes no
 <code>adminPass</code>, and an already claimed site answers 409.</p>

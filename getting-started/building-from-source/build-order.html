@@ -423,7 +423,16 @@ built against, so it has to come from a boot where the root is <code>/drupal</co
 <code>RENDER_PATHS</code> until the row appears, and reads back the row that boot rebuilt.</p>
 <p><code>tests/node/container-cid.spec.ts</code> compares the pack against the database and fails when they
 disagree. Run the step on its own with <code>bun run assets:container</code>, which re-chunks afterwards.</p>
-<h3 id="17-the-prefill">17, The Prefill</h3>
+<h3 id="17-the-boot-images">17, The Boot Images</h3>
+<p><code>bootimage</code> runs <code>bun run assets:bootimage</code>, which boots <code>wrangler dev</code> locally, migrates a throwaway
+site, renders <code>/</code> and <code>/user/login</code>, and publishes the heap as <code>assets/bootimage/pack/</code> and, after a
+first-run claim, <code>assets/bootimage/claimed/</code>. <code>BOOT_IMAGE</code> is on by default, and a cold object restores
+the image when its context equals the bake&#39;s: the same pack, driver, interpreter, module set, settings
+and PHP fragments. An image that matches nothing costs a plain boot and never a wrong page, which is
+also why a stale one goes unnoticed. The step is judged by its artifact: it reruns when an index names
+another interpreter than <code>.interp/php8.5.tuned.wasm</code>, and <code>tests/integration/boot-image.spec.ts</code>
+checks the whole context against a freshly migrated site.</p>
+<h3 id="18-the-prefill">18, The Prefill</h3>
 <p><code>prefill</code> produces <code>assets/prefill.json</code>, which holds the bytes the site returns for five paths. A
 prefilled path is a hit on its first ever request, so whatever is in that file is the page a
 visitor sees.</p>

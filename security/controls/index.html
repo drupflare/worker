@@ -493,7 +493,7 @@ deployed site only with the next deploy of the tuned glue.</p>
 <tr>
 <td><code>cfwQueueFetch</code>, <code>cfwParkFetch</code></td>
 <td>Any public HTTP(S) URL, with PHP&#39;s headers and body</td>
-<td>Deny-list for private and metadata hosts, applied to every redirect hop</td>
+<td>Deny-list for private and metadata hosts, applied to every redirect hop; WordPress also sets a response limit</td>
 </tr>
 <tr>
 <td><code>cfwTcp</code></td>
@@ -503,7 +503,7 @@ deployed site only with the next deploy of the tuned glue.</p>
 <tr>
 <td><code>cfwMail</code></td>
 <td>A message queued through the site&#39;s mail transport</td>
-<td>From-domain check and size caps</td>
+<td>From-domain check, size caps and a 700,000-byte attachment cap</td>
 </tr>
 <tr>
 <td><code>cfwFile*</code>, <code>cfwFilePublicBase</code></td>

@@ -150,7 +150,7 @@ export async function restoreParts(
 				if (mark !== null && label !== undefined) noteRestoreMark(sql, label, mark);
 				const named = mark === null ? {} : { mark };
 				if (!result.done) return Response.json({ ok: true, ...result, ...named });
-				await site.setAlarmAt(site.nowMs() + 1);
+				await site.setAlarmAt(site.nowMs() + 1, true);
 				return Response.json({
 					ok: true,
 					done: true,

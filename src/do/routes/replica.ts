@@ -215,7 +215,7 @@ export async function replica(
 		// nothing else arms a finished lane, so it would refuse every request while waiting for an
 		// alarm
 		if (outcome.stage === 'VERIFIED' && before !== 'VERIFIED') {
-			await site.setAlarmAt(site.nowMs() + 1);
+			await site.setAlarmAt(site.nowMs() + 1, true);
 		}
 		return Response.json(outcome, { status: outcome.ok ? 200 : 409 });
 	}

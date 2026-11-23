@@ -178,7 +178,7 @@ export async function migrateChunks(
 
 	// arm the continuation here so the first `/migrate` call finishes the job unattended
 	if (!out.done && migrationSelfDrives(site.env)) {
-		await site.setAlarmAt(site.nowMs() + 1);
+		await site.setAlarmAt(site.nowMs() + 1, true);
 		out.continuation = 'alarm armed';
 	}
 	return { ...out, engine: 'sql' };

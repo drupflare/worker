@@ -620,7 +620,7 @@ export async function ops(
 		// `drive=1` runs the first step here and leaves the rest to the alarm chain
 		if (name === 'cim' && url.searchParams.get('drive') === '1') {
 			const first = await site.opsJobStep(name, [], options);
-			if (site.opsJobActive()) await site.setAlarmAt(site.nowMs() + 1);
+			if (site.opsJobActive()) await site.setAlarmAt(site.nowMs() + 1, true);
 			return drivenReply(site, first);
 		}
 		const ran = await site.runJson(opsRun(name, [], options));
@@ -636,7 +636,7 @@ export async function ops(
 			url.searchParams.getAll('arg'),
 			limit > 0 ? { limit } : {}
 		);
-		if (site.opsJobActive()) await site.setAlarmAt(site.nowMs() + 1);
+		if (site.opsJobActive()) await site.setAlarmAt(site.nowMs() + 1, true);
 		return drivenReply(site, first);
 	}
 

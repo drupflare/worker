@@ -202,7 +202,7 @@ export type ServeDo = {
 		seq: number;
 	};
 	armFillAlarm: (delayMs?: number) => void;
-	setAlarmAt: (atMs: number) => Promise<void>;
+	setAlarmAt: (atMs: number, exact?: boolean) => Promise<void>;
 	/** an arm inside an event waits for the last event out; see `releaseArming()` */
 	holdArming: () => void;
 	releaseArming: () => void;

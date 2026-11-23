@@ -12,7 +12,9 @@ and no response header changes in any mode. No request header is read.
 | `end-sync` | No request-path move. The request ends with a commit, then one un-awaited move.                                       |
 
 `delay` floors the pull-in in the serve route, `setAlarmAt()` and `armFillAlarm()`. A longer ask is
-left alone, and a standing alarm already inside the floor is kept. `ALARM_DELAY_MS` is a whole number
+left alone, and a standing alarm already inside the floor is kept. Owner and lifecycle wakes call
+`setAlarmAt(at, true)` and keep the one-tick move in every shape: provisioning and the first migration,
+ops-job and restore drives, replica lane restores, heap-restore continuation and `/__enable`. `ALARM_DELAY_MS` is a whole number
 from 1,000 to 60,000; anything else reads as 5,000.
 
 `end-sync` drops those same three, including asks longer than one tick. At the end of the request it
@@ -64,12 +66,20 @@ count resets at isolate retirements:
 - `delay` postpones queued post-response work. The median time from a response to the next alarm
   firing was 8.2 s in the `delay` arm against 3.1 s for `head`. `end-sync` read 11.0 s because the
   request stream kept the object busy; that figure reflects the traffic as well as the shape.
-- `delay` starts a never-migrated site's first migration later: about 6 s after the first request in the
-  workers rig, against about 2 s under `head`. `setAlarmAt()` keeps a standing alarm that is already
-  inside the floor. Without that, each retry of the migrating page (every 2 s) pushed the alarm out
-  again and the migration never started; `serve-edge.spec.ts` caught it.
+- A first version of the floor moved the migration alarm to five seconds out on every retry of the
+  migrating page (every 2 s), so the migration never started; `serve-edge.spec.ts` caught it.
+  `setAlarmAt()` now keeps a standing alarm that is already inside the floor, and the provisioning wake
+  is exempt. Whether the exempt wakes can cause storage resets is not measured; each is a single owner
+  event, and none of the A/B runs drove them.
 - Some `end-sync` requests that overlapped a firing took no end move, and the A/B did not count
   how many.
+- The resets the delayed shapes keep are not the request's own alarm. Recounted on 2026-11-22 from
+  the two A/B runs' rows and tails: in the `delay` and `end-sync` arms, 2 of 1,072 requests under 4 s
+  of object `cpuTime` reset against 9 of 426 at 4 s or more. At 4 s or more, whether the request's
+  own alarm came due inside it changed nothing (2 s floor: 4 of 64 when due, 3 of 55 when not; 5 s
+  floor: 0 of 26 and 1 of 85). The tails show an alarm firing inside every reset request, but it
+  starts 0.3 to 1.0 s after the reset event ends: the restarted object running its pending alarm,
+  a consequence and not a cause. Long CPU per event is the leading candidate and is not proved.
 
 ## Changing It
 

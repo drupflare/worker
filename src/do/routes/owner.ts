@@ -129,7 +129,7 @@ export async function restore(
 		skip: isIdentityMetaStatement
 	});
 	if (mark !== null) noteRestoreMark(site.sql, stored.generation, mark);
-	await site.setAlarmAt(site.nowMs() + 1);
+	await site.setAlarmAt(site.nowMs() + 1, true);
 	return Response.json({ ok: true, ...stored, ...(mark === null ? {} : { mark }) });
 }
 

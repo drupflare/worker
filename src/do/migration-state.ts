@@ -57,7 +57,7 @@ export async function requestProvision(host: MigrationHost): Promise<void> {
 		`INSERT INTO cfw_meta (k, v) VALUES ('provision_requested', '1')
 		 ON CONFLICT(k) DO NOTHING`
 	);
-	await host.setAlarmAt(host.nowMs() + 1);
+	await host.setAlarmAt(host.nowMs() + 1, true);
 }
 
 /**

@@ -642,6 +642,45 @@ describe('alarm shape', () => {
 	);
 
 	it(
+		'an exact setAlarmAt keeps the one-tick move under delay and under end-sync',
+		async () => {
+			for (const shape of ['delay', 'end-sync']) {
+				const seen = await inObject(await provisionedSite(), async (site: ServeDo) => {
+					markProvisioned(site);
+					await clearAlarm(site);
+					return withShape(site, { shape }, async () => {
+						const before = site.nowMs();
+						await site.setAlarmAt(before + 1, true);
+						const alarm = await site.ctx.storage.getAlarm();
+						await clearAlarm(site);
+						return { alarm, before };
+					});
+				});
+				expect(seen.alarm).not.toBeNull();
+				expect(Number(seen.alarm) - seen.before).toBeLessThan(1_000);
+			}
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'a never-migrated site starts its first migration at the next tick under the default shape',
+		async () => {
+			const seen = await inObject(await provisionedSite(), async (site: ServeDo) => {
+				await clearAlarm(site);
+				const before = site.nowMs();
+				await site.requestProvision();
+				const alarm = await site.ctx.storage.getAlarm();
+				await clearAlarm(site);
+				return { alarm, before };
+			});
+			expect(seen.alarm).not.toBeNull();
+			expect(Number(seen.alarm) - seen.before).toBeLessThan(1_000);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
 		'delay keeps a standing alarm when setAlarmAt asks again, so steady requests cannot starve it',
 		async () => {
 			const seen = await inObject(await provisionedSite(), async (site: ServeDo) => {

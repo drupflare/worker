@@ -140,7 +140,7 @@ export interface FillQueueHost extends SiteStore {
 export interface MigrationHost extends SiteStore {
 	_migrator?: SqlMigrator;
 	migrated: boolean;
-	setAlarmAt(atMs: number): Promise<void>;
+	setAlarmAt(atMs: number, exact?: boolean): Promise<void>;
 }
 
 /** the stepped-job read cache the class holds */
@@ -201,7 +201,7 @@ export interface LaneHost extends SiteStore {
 	packGeneration(): string | undefined;
 	purgeAfterApply(): { pages: number; shells: number; plans: number; dynamic: number };
 	replicaStage(): ReplicaStage;
-	setAlarmAt(atMs: number): Promise<void>;
+	setAlarmAt(atMs: number, exact?: boolean): Promise<void>;
 	setReplicaStage(next: ReplicaStage): { stage: ReplicaStage; moved: boolean; reason: string };
 }
 

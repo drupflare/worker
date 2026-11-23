@@ -428,6 +428,6 @@ export async function armfill(
 	url: URL
 ): Promise<Response> {
 	const queued = site.queueDepth();
-	if (queued > 0) await site.setAlarmAt(site.nowMs() + 1);
+	if (queued > 0) await site.setAlarmAt(site.nowMs() + 1, true);
 	return Response.json({ ok: true, queued, armed: queued > 0 });
 }

@@ -5,6 +5,27 @@ reads the answer on a later invocation. `src/ops/tcp.ts` runs it between PHP inv
 [edgeport](https://github.com/gmitch215/edgeport). It shares the deferred HTTP tier's queue, cache
 and retry budget.
 
+## After an Object Reset
+
+Every queued exchange, HTTP and TCP, runs through a durable outbox (`cfw_outbox_http`): the row is
+written and flushed before the request goes out, and a successor that finds it still running knows
+the request may have been sent.
+
+- **HTTP.** The row is replayed. A POST, PUT, PATCH or DELETE carries an `Idempotency-Key` header
+  set to the outbox key, the same on every replay, for a receiver that honours it. A 4xx other than
+  408 and 429 is final: the answer is cached for PHP and the request is not asked again. A 408, 429 or 5xx is
+  asked again while the method's budget lasts (three for a GET, one for a POST), and the last
+  answer is cached.
+- **Redis, safe to repeat.** A read, `SET`, `SETEX`, `MSET`, `DEL`, `UNLINK`, `EXPIRE` and `PEXPIRE`
+  are replayed.
+- **Redis, not safe to repeat.** `INCR`, `LPUSH`, `SADD` and every other command is never run again.
+  After a reset in its window the row ends as failed, PHP reads a 503 ("delivery uncertain") from
+  the fetch cache, and `/serve-stats` lists the row under `outboxReported` with the instruction to
+  check the receiver before re-enqueueing. Syslog lines are replayed, which can duplicate a line.
+
+A reported row is final. After checking Redis, the operator re-enqueues it under a new id with
+`reenqueueReported()` in `src/ops/outbox.ts`; no owner route calls it yet.
+
 | var               | default  | what it does                                            |
 | ----------------- | -------- | ------------------------------------------------------- |
 | `REDIS_URL`       | none     | `redis://user:pass@host:6379/0`, or `rediss://` for TLS |

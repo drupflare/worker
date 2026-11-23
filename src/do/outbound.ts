@@ -10,10 +10,28 @@ import {
 } from '../ops/deferred-post';
 import { parseJsonReply } from '../ops/json-reply';
 import { fetchGuarded } from '../ops/outbound-guard';
-import { installPark, type ParkClassName, parkEnabled, type ParkInstall } from '../ops/park';
+import {
+	argsText,
+	forgetRows,
+	isReported,
+	openOutbox,
+	PermanentError,
+	REPORTED_HINT,
+	resultText,
+	trimReported,
+	type OutboxContext,
+	type OutboxSql
+} from '../ops/outbox';
+import { installPark, parkEnabled, type ParkClassName, type ParkInstall } from '../ops/park';
 import { drivePark } from '../ops/park-drive';
 import { declaredFetches, pendingDeclared } from '../ops/prefetch';
-import { isTcpUrl, resolveTcpEndpoint, runTcpExchange, type TcpResult } from '../ops/tcp';
+import {
+	isTcpUrl,
+	outboxKindFor,
+	resolveTcpEndpoint,
+	runTcpExchange,
+	type TcpResult
+} from '../ops/tcp';
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage } from '../util/errors';
 import { columnText, firstRow } from '../util/sql';
@@ -304,13 +322,90 @@ export function installedProjects(site: SitePhpDurableObject): string[] {
 	return [...names];
 }
 
+/** what an outbox row carries for one queued request */
+type HttpEnvelope = {
+	key: string;
+	url: string;
+	method: string;
+	body: string;
+	headers: Record<string, string>;
+	queuedAt: number;
+};
+
+/** the response an HTTP status says to ask for again: a timeout, a rate limit or a server fault */
+export function isTransientStatus(status: number): boolean {
+	return status === 408 || status === 429 || status >= 500;
+}
+
+/** the header an HTTP effect carries its outbox key in, so the far end can drop a repeat */
+export const IDEMPOTENCY_HEADER = 'Idempotency-Key';
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
 /**
  * Fetches everything PHP deferred, in JS, where awaiting is legal.
  *
  * Runs between PHP invocations, bounded per call so slow hosts cannot occupy the object.
+ *
+ * Each request runs through the http outbox (see `ops/outbox.ts`): a row keyed by the request key
+ * and its queue time, claimed and flushed before the fetch. The queue row stays as PHP's record of
+ * the request (`deferredStatus()` reads its attempts) until the outbox row settles. A request the
+ * method makes unsafe carries `Idempotency-Key: <outbox key>`, the same on every replay. A Redis
+ * command that is not safe to repeat is a `report` row: a reset in its window ends it as `failed`
+ * and the caller reads a 503 from the fetch cache instead of the command running twice.
  */
 export async function drainHttpQueue(site: SitePhpDurableObject, limit = 5) {
 	site.ensureHttpTables();
+	const outbox = openOutbox(
+		site.sql as unknown as OutboxSql,
+		'http',
+		async (ctx: OutboxContext) => {
+			const e = JSON.parse(argsText(ctx)) as HttpEnvelope;
+			const method = e.method;
+			const unsafe = !SAFE_METHODS.has(method.toUpperCase());
+			const outbound = unsafe ? { ...e.headers, [IDEMPOTENCY_HEADER]: ctx.key } : e.headers;
+			const tcp = isTcpUrl(e.url);
+			// every attempt is a subrequest, answered or not
+			site.countActivity('fetches', 1);
+			let res: TcpResult;
+			try {
+				res = await site.performOutbound(e.url, method, e.body, outbound);
+			} catch (error) {
+				const message = errorMessage(error).slice(0, 200);
+				// a command that may have landed is never sent again, whatever the budget says
+				if (ctx.kind === 'redis' || ctx.attempt >= attemptBudget(method)) {
+					throw new PermanentError(message, { cause: error });
+				}
+				throw new Error(message, { cause: error });
+			}
+			// a status asks for another try only on the wire; a Redis or AI exchange has answered
+			if (!tcp && isTransientStatus(res.status) && ctx.attempt < attemptBudget(method)) {
+				throw new Error(`HTTP ${res.status}`);
+			}
+			site.sql.exec(
+				`INSERT INTO cfw_http_cache (key, url, status, headers, body, fetched_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET
+             status = excluded.status, headers = excluded.headers,
+             body = excluded.body, fetched_at = excluded.fetched_at,
+             expires_at = excluded.expires_at`,
+				e.key,
+				e.url,
+				res.status,
+				JSON.stringify(res.headers),
+				res.body,
+				site.nowMs(),
+				site.nowMs() + ttlFor(method, e.url)
+			);
+			// the answer is cached for PHP to read; a client error is final, so it is not asked again
+			if (!tcp && res.status >= 400 && res.status < 500 && !isTransientStatus(res.status)) {
+				throw new PermanentError(`HTTP ${res.status}`);
+			}
+			return JSON.stringify({ status: res.status, bytes: res.body.length });
+		},
+		// six at a time (the subrequest concurrency); serial would bill N round trips of wall clock
+		{ flush: () => site.storage.sync(), width: 6 }
+	);
 	const pending = site.sql
 		.exec<
 			Row<{
@@ -320,23 +415,15 @@ export async function drainHttpQueue(site: SitePhpDurableObject, limit = 5) {
 				body: string;
 				headers: string;
 				attempts: number;
+				queued_at: number;
 			}>
 		>(
-			'SELECT key, url, method, body, headers, attempts FROM cfw_http_queue ORDER BY queued_at LIMIT ?',
+			'SELECT key, url, method, body, headers, attempts, queued_at FROM cfw_http_queue ORDER BY queued_at LIMIT ?',
 			Math.max(1, Math.min(limit, 25))
 		)
 		.toArray();
 	const done: Payload[] = [];
-	// prepared, not started: opening every URL at once buffers up to 15-25 whole responses on the
-	// JS heap against ~4 MiB of net isolate headroom
-	const prepared: Array<{
-		key: string;
-		url: string;
-		method: string;
-		sent: string;
-		outbound: Record<string, string>;
-		attempts: number;
-	}> = [];
+	const items: { id: string; kind: string; argsJson: HttpEnvelope }[] = [];
 	for (const item of pending) {
 		const key = String(item.key);
 		const url = String(item.url);
@@ -349,80 +436,91 @@ export async function drainHttpQueue(site: SitePhpDurableObject, limit = 5) {
 			continue;
 		}
 		const method = String(item.method || 'GET');
-		const sent = String(item.body ?? '');
+		const body = String(item.body ?? '');
 		// a row queued before the column existed carries '{}' (no headers)
-		let outbound: Record<string, string> = {};
+		let headers: Record<string, string> = {};
 		try {
 			const parsed: unknown = JSON.parse(String(item.headers ?? '{}'));
 			if (parsed && typeof parsed === 'object') {
-				outbound = headersToSend(parsed as Record<string, string>);
+				headers = headersToSend(parsed as Record<string, string>);
 			}
 		} catch {
-			outbound = {};
+			headers = {};
 		}
-		prepared.push({
-			key,
-			url,
-			method,
-			sent,
-			outbound,
-			attempts: Number(item.attempts ?? 0)
+		const queuedAt = Number(item.queued_at ?? 0);
+		items.push({
+			// the queue time is in the id so a request repeated a day later is a new request
+			id: `http-${key}-${queuedAt}`,
+			kind: outboxKindFor(url, body),
+			argsJson: { key, url, method, body, headers, queuedAt }
 		});
 	}
-	// six at a time (the subrequest concurrency); serial would bill N round trips of wall clock.
-	// `performOutbound` touches no SQL, which makes this safe
-	for (let i = 0; i < prepared.length; i += 6) {
-		const batch = prepared.slice(i, i + 6);
-		const settled = await Promise.allSettled(
-			batch.map((b) => site.performOutbound(b.url, b.method, b.sent, b.outbound))
-		);
-		// every attempt is a subrequest, answered or not
-		site.countActivity('fetches', batch.length);
-		for (let j = 0; j < batch.length; j++) {
-			const entry = batch[j];
-			const outcome = settled[j];
-			if (!entry || !outcome) continue;
-			const { key, url, method } = entry;
-			if (outcome.status === 'fulfilled') {
-				const res = outcome.value;
-				site.sql.exec(
-					`INSERT INTO cfw_http_cache (key, url, status, headers, body, fetched_at, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(key) DO UPDATE SET
-             status = excluded.status, headers = excluded.headers,
-             body = excluded.body, fetched_at = excluded.fetched_at,
-             expires_at = excluded.expires_at`,
+	if (items.length > 0) await outbox.enqueue(items);
+	await outbox.drain();
+
+	// settle every finished row, including ones an earlier reset left behind
+	const spent: string[] = [];
+	let reported = false;
+	for (const row of outbox.results()) {
+		const e = JSON.parse(argsText(row)) as HttpEnvelope;
+		const { key, url } = e;
+		if (row.state === 'running') continue;
+		// the queue row this outbox row was made from; PHP may have queued the key again since
+		const live =
+			site.sql
+				.exec(
+					'SELECT 1 FROM cfw_http_queue WHERE key = ? AND queued_at = ?',
 					key,
-					url,
-					res.status,
-					JSON.stringify(res.headers),
-					res.body,
-					site.nowMs(),
-					site.nowMs() + ttlFor(method, url)
-				);
-				site.sql.exec('DELETE FROM cfw_http_queue WHERE key = ?', key);
-				done.push({ url, status: res.status, bytes: res.body.length });
-				continue;
-			}
-			const attempts = entry.attempts + 1;
-			const reason = outcome.reason as { message?: unknown } | undefined;
-			const error = errorMessage(reason).slice(0, 200);
-			// the budget comes from the method: a retried POST can be refused as already redeemed
-			// after the first attempt succeeded at the far end
-			if (attempts >= attemptBudget(method)) {
-				site.sql.exec('DELETE FROM cfw_http_queue WHERE key = ?', key);
-				done.push({ url, dropped: true, error });
-			} else {
-				site.sql.exec(
-					'UPDATE cfw_http_queue SET attempts = ?, last_error = ? WHERE key = ?',
-					attempts,
-					error,
-					key
-				);
-				done.push({ url, attempts, error });
-			}
+					e.queuedAt
+				)
+				.toArray().length > 0;
+		if (!live) {
+			if (!isReported(row)) spent.push(row.id);
+			continue;
+		}
+		if (row.state === 'queued') {
+			// threw with attempts left: the queue row carries the count PHP reads
+			site.sql.exec(
+				'UPDATE cfw_http_queue SET attempts = ?, last_error = ? WHERE key = ?',
+				row.attempt,
+				row.error ?? '',
+				key
+			);
+			done.push({ url, attempts: row.attempt, error: row.error ?? '' });
+			continue;
+		}
+		site.sql.exec('DELETE FROM cfw_http_queue WHERE key = ?', key);
+		if (row.state === 'done') {
+			const result = JSON.parse(resultText(row)) as { status: number; bytes: number };
+			done.push({ url, status: result.status, bytes: result.bytes });
+			spent.push(row.id);
+		} else if (isReported(row)) {
+			// the caller reads an error from the cache rather than asking again; the row stays
+			// for the operator, see `reportedRows()`
+			site.sql.exec(
+				`INSERT INTO cfw_http_cache (key, url, status, headers, body, fetched_at, expires_at)
+           VALUES (?, ?, 503, '{}', ?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET
+             status = 503, headers = '{}', body = excluded.body,
+             fetched_at = excluded.fetched_at, expires_at = excluded.expires_at`,
+				key,
+				url,
+				`delivery uncertain: ${REPORTED_HINT}`,
+				site.nowMs(),
+				site.nowMs() + ttlFor(e.method, url)
+			);
+			done.push({ url, reported: true, error: REPORTED_HINT });
+			reported = true;
+		} else if (/^HTTP 4\d\d$/.test(row.error ?? '')) {
+			done.push({ url, status: Number(String(row.error).slice(5)) });
+			spent.push(row.id);
+		} else {
+			done.push({ url, dropped: true, error: row.error ?? '' });
+			spent.push(row.id);
 		}
 	}
+	forgetRows(site.sql as unknown as OutboxSql, 'http', spent);
+	if (reported) trimReported(site.sql as unknown as OutboxSql, 'http');
 	return {
 		drained: done,
 		remaining: Number(

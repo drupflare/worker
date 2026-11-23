@@ -195,6 +195,40 @@ export function tcpMethod(protocol: TcpProtocol, command: string): 'GET' | 'POST
 	return REDIS_READ_COMMANDS.has(command.toUpperCase()) ? 'GET' : 'POST';
 }
 
+/**
+ * Writes that leave the same state when a reset makes them run twice; every other write (`INCR`,
+ * `LPUSH`, `SADD` on a counter and the rest) does not, so an exchange carrying one is never replayed.
+ */
+export const REDIS_IDEMPOTENT_WRITES: ReadonlySet<string> = new Set([
+	'SET',
+	'SETEX',
+	'MSET',
+	'DEL',
+	'UNLINK',
+	'EXPIRE',
+	'PEXPIRE'
+]);
+
+/**
+ * The outbox kind a queued exchange runs as: `redis-idempotent` (replayed after a reset) for a read
+ * or an idempotent write, `redis` (reported, never replayed) for any other command, and `http` for
+ * everything that is not Redis, a syslog line included, where a repeat is a duplicate line.
+ */
+export function outboxKindFor(url: string, body: string): 'http' | 'redis' | 'redis-idempotent' {
+	if (tcpProtocolOf(url) !== 'redis') return 'http';
+	let args: unknown;
+	try {
+		args = JSON.parse(body || 'null');
+	} catch {
+		return 'redis';
+	}
+	if (!Array.isArray(args) || args.length === 0) return 'redis';
+	const command = String(args[0]).toUpperCase();
+	return REDIS_READ_COMMANDS.has(command) || REDIS_IDEMPOTENT_WRITES.has(command)
+		? 'redis-idempotent'
+		: 'redis';
+}
+
 // #endregion
 
 // #region the queue url

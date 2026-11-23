@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { alarmDelayMs } from '../../src/do/levers';
+import { OUTBOX_POLICIES, openOutbox } from '../../src/ops/outbox';
 import {
 	driveAlarms,
 	freshSite,
@@ -431,6 +432,228 @@ describe('what a re-drive costs, against the same fill without one', () => {
 		expect(out.redrive.fetches).toBe(1);
 		expect(out.redrive.rows).toBeGreaterThan(out.plain.rows);
 		expect(out.counted).toEqual({ renders: 3, fetches: 1 });
+	});
+});
+
+describe('each queued request runs through the http outbox', () => {
+	type Seen = { url: string; method?: string; headers: Record<string, string> };
+
+	/** records what reached the network, with the headers, per host */
+	function recordFetch(handler: (n: number) => Response | Promise<Response>) {
+		const seen: Seen[] = [];
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = typeof input === 'string' ? input : String((input as Request).url ?? input);
+			seen.push({
+				url,
+				method: init?.method,
+				headers: Object.fromEntries(new Headers(init?.headers).entries())
+			});
+			return handler(seen.length);
+		}) as typeof fetch;
+		return (host: string) => seen.filter((s) => s.url.includes(host));
+	}
+
+	const rowsOf = (
+		site: { sql: { exec: (q: string) => { toArray(): unknown[] } } },
+		table: string
+	) => site.sql.exec(`SELECT * FROM ${table}`).toArray();
+	const quiet = (site: { env: Record<string, unknown> }) => {
+		site.env = { ...site.env, HTTP_DRAIN_ON_ALARM: '0' };
+	};
+
+	/** what a predecessor left: a claimed outbox row whose lease ended, and its queue row */
+	function seedLost(site: any, kind: string, url: string, method: string, body: string) {
+		site.ensureHttpTables();
+		site.sql.exec(
+			`INSERT INTO cfw_http_queue (key, url, method, body, headers, queued_at) VALUES (?, ?, ?, ?, '{}', ?)`,
+			`k-${kind}`,
+			url,
+			method,
+			body,
+			12345
+		);
+		const id = `http-k-${kind}-12345`;
+		const outbox = openOutbox(site.sql, 'http', () => {});
+		outbox.table.enqueue(
+			id,
+			kind,
+			JSON.stringify({
+				key: `k-${kind}`,
+				url,
+				method,
+				body,
+				headers: {},
+				queuedAt: 12345
+			}),
+			kind
+		);
+		outbox.table.claim(Date.now() - 60_000, 15_000, 1, { policies: OUTBOX_POLICIES });
+		return { id, outbox };
+	}
+
+	it('sends an unsafe method with Idempotency-Key set to the outbox key, and a GET without one', async () => {
+		const stub = freshSite();
+		const seen = recordFetch(() => new Response('ok', { status: 200 }));
+		const out = await inObject(stub, async (site) => {
+			quiet(site);
+			site.queueHttp('https://idem.test/post', 'POST', 'a=1');
+			site.queueHttp('https://idem.test/get');
+			const queued = Object.fromEntries(
+				site.sql
+					.exec('SELECT url, key, queued_at FROM cfw_http_queue')
+					.toArray()
+					.map((r) => [r.url, `http-${r.key}-${r.queued_at}`])
+			);
+			await site.drainHttpQueue(5);
+			return {
+				queued,
+				outbox: rowsOf(site, 'cfw_outbox_http'),
+				queue: rowsOf(site, 'cfw_http_queue')
+			};
+		});
+		const [post, get] = [seen('idem.test/post')[0]!, seen('idem.test/get')[0]!];
+		expect(post.headers['idempotency-key']).toBe(out.queued['https://idem.test/post']);
+		expect(get.headers['idempotency-key']).toBeUndefined();
+		// settled: nothing is left in the outbox or the queue
+		expect(out.outbox).toEqual([]);
+		expect(out.queue).toEqual([]);
+	});
+
+	it('ends a client error as permanent: the answer is cached and the request is not asked again', async () => {
+		const stub = freshSite();
+		const seen = recordFetch(() => new Response('gone', { status: 404 }));
+		const out = await inObject(stub, async (site) => {
+			quiet(site);
+			site.queueHttp('https://perm.test/missing');
+			const first = await site.drainHttpQueue(5);
+			const second = await site.drainHttpQueue(5);
+			return {
+				first,
+				second,
+				cached: site.httpCacheGet('https://perm.test/missing'),
+				outbox: rowsOf(site, 'cfw_outbox_http')
+			};
+		});
+		expect(seen('perm.test')).toHaveLength(1);
+		expect(out.first.drained[0]).toMatchObject({ status: 404 });
+		expect(out.cached).toMatchObject({ status: 404, body: 'gone' });
+		expect(out.second.drained).toEqual([]);
+		expect(out.outbox).toEqual([]);
+	});
+
+	it.each([[408], [429], [503]])(
+		'asks again after a %i while the budget lasts, and caches the last answer',
+		async (status) => {
+			const stub = freshSite();
+			const seen = recordFetch(() => new Response('later', { status }));
+			const out = await inObject(stub, async (site) => {
+				quiet(site);
+				site.queueHttp(`https://transient.test/${status}`);
+				const rounds = [];
+				for (let n = 0; n < 3; n++) rounds.push(await site.drainHttpQueue(1));
+				return {
+					rounds,
+					cached: site.httpCacheGet(`https://transient.test/${status}`),
+					queue: rowsOf(site, 'cfw_http_queue')
+				};
+			});
+			// a GET has a budget of three, and the third answer is the one PHP reads
+			expect(seen('transient.test')).toHaveLength(3);
+			expect(out.rounds[0]!.drained[0]).toMatchObject({ attempts: 1 });
+			expect(String(out.rounds[0]!.drained[0]!.error)).toContain(`HTTP ${status}`);
+			expect(out.rounds[1]!.drained[0]).toMatchObject({ attempts: 2 });
+			expect(out.rounds[2]!.drained[0]).toMatchObject({ status });
+			expect(out.cached?.status).toBe(status);
+			expect(out.queue).toEqual([]);
+		}
+	);
+
+	it('gives a POST one attempt: its 503 is cached at once, never sent again', async () => {
+		const stub = freshSite();
+		const seen = recordFetch(() => new Response('busy', { status: 503 }));
+		const out = await inObject(stub, async (site) => {
+			quiet(site);
+			site.queueHttp('https://post503.test/x', 'POST', 'a=1');
+			const first = await site.drainHttpQueue(1);
+			const second = await site.drainHttpQueue(1);
+			return { first, second };
+		});
+		expect(seen('post503.test')).toHaveLength(1);
+		expect(out.first.drained[0]).toMatchObject({ status: 503 });
+		expect(out.second.drained).toEqual([]);
+	});
+
+	it('replays a resend row a reset left running, under the same key', async () => {
+		const stub = freshSite();
+		const seen = recordFetch(() => new Response('ok', { status: 200 }));
+		const out = await inObject(stub, async (site) => {
+			quiet(site);
+			const { id, outbox } = seedLost(site, 'http', 'https://replay.test/p', 'POST', 'a=1');
+			expect(outbox.results()[0]).toMatchObject({ state: 'running', attempt: 1 });
+			const drained = await site.drainHttpQueue(5);
+			return {
+				id,
+				drained,
+				outbox: rowsOf(site, 'cfw_outbox_http'),
+				queue: rowsOf(site, 'cfw_http_queue')
+			};
+		});
+		// the predecessor's send may have landed, so the replay carries the key the far end can drop
+		expect(seen('replay.test')).toHaveLength(1);
+		expect(seen('replay.test')[0]!.headers['idempotency-key']).toBe(out.id);
+		expect(out.drained.drained[0]).toMatchObject({ status: 200 });
+		expect(out.outbox).toEqual([]);
+		expect(out.queue).toEqual([]);
+	});
+
+	it('never sends a Redis command a reset may have run: the caller reads an error, the operator a report', async () => {
+		const stub = freshSite();
+		const seen = recordFetch(() => new Response('unused'));
+		const out = await inObject(stub, async (site) => {
+			quiet(site);
+			site.env = { ...site.env, OUTBOUND_GUARD: '0', REDIS_URL: 'redis://redis.test:6379/0' };
+			const { id } = seedLost(
+				site,
+				'redis',
+				'tcp+redis://redis.test:6379/',
+				'POST',
+				JSON.stringify(['INCR', 'visits'])
+			);
+			const first = await site.drainHttpQueue(5);
+			const second = await site.drainHttpQueue(5);
+			return {
+				id,
+				first,
+				second,
+				cached: site.sql
+					.exec("SELECT status, body FROM cfw_http_cache WHERE key = 'k-redis'")
+					.toArray(),
+				reported: ((await statsOf(site)) as unknown as { outboxReported: unknown[] })
+					.outboxReported,
+				row: site.sql.exec('SELECT state, error FROM cfw_outbox_http').toArray()
+			};
+		});
+		expect(seen('redis.test')).toHaveLength(0);
+		expect(out.first.drained[0]).toMatchObject({ reported: true });
+		expect(String(out.first.drained[0]!.error)).toContain(
+			'check the receiver before re-enqueueing'
+		);
+		expect(out.cached).toHaveLength(1);
+		expect(out.cached[0]).toMatchObject({ status: 503 });
+		expect(String(out.cached[0]!.body)).toContain('delivery uncertain');
+		// the second drain finds nothing new to say
+		expect(out.second.drained).toEqual([]);
+		expect(out.row).toHaveLength(1);
+		expect(out.row[0]).toMatchObject({ state: 'failed' });
+		expect(String(out.row[0]!.error)).toContain('policy report');
+		expect(out.reported).toEqual([
+			expect.objectContaining({
+				lane: 'http',
+				id: out.id,
+				kind: 'redis',
+				hint: expect.stringContaining('check the receiver before re-enqueueing')
+			})
+		]);
 	});
 });
 

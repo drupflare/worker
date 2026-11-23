@@ -2,6 +2,8 @@ import { type ConnectOptions, type CoreSocket } from 'edgeport/core';
 import { describe, expect, it } from 'vitest';
 import {
 	isTcpUrl,
+	outboxKindFor,
+	REDIS_IDEMPOTENT_WRITES,
 	REDIS_READ_COMMANDS,
 	REDIS_REFUSED_COMMANDS,
 	resolveTcpEndpoint,
@@ -131,6 +133,37 @@ describe("tcpMethod: the deferred tier's budget, borrowed rather than reinvented
 	it('keeps the read set and the refused set disjoint', () => {
 		const both = [...REDIS_READ_COMMANDS].filter((c) => REDIS_REFUSED_COMMANDS.has(c));
 		expect(both).toEqual([]);
+	});
+});
+
+describe('outboxKindFor: whether a reset may replay an exchange', () => {
+	const redisUrl = 'tcp+redis://cache.test:6379/';
+	const kindOf = (args: unknown[]) => outboxKindFor(redisUrl, JSON.stringify(args));
+
+	it('replays a read and an idempotent write, and reports every other command', () => {
+		for (const command of ['GET', 'get', 'HGETALL', 'SET', 'DEL', 'EXPIRE', 'setex']) {
+			expect(kindOf([command, 'k']), command).toBe('redis-idempotent');
+		}
+		for (const command of ['INCR', 'INCRBY', 'LPUSH', 'RPUSH', 'SADD', 'HINCRBY', 'PUBLISH']) {
+			expect(kindOf([command, 'k']), command).toBe('redis');
+		}
+	});
+
+	it('reports a body it cannot read, since an unknown command is not known to be safe', () => {
+		expect(outboxKindFor(redisUrl, '{not json')).toBe('redis');
+		expect(outboxKindFor(redisUrl, '[]')).toBe('redis');
+		expect(outboxKindFor(redisUrl, '')).toBe('redis');
+	});
+
+	it('runs every other queued request as http, a syslog line included', () => {
+		expect(outboxKindFor('https://example.test/x', '')).toBe('http');
+		expect(outboxKindFor('tcp+syslog://log.test:514/', '{"message":"x"}')).toBe('http');
+	});
+
+	it('keeps the idempotent writes out of the refused set', () => {
+		expect([...REDIS_IDEMPOTENT_WRITES].filter((c) => REDIS_REFUSED_COMMANDS.has(c))).toEqual(
+			[]
+		);
 	});
 });
 

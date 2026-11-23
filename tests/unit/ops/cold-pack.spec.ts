@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
 	coldPackCacheChunks,
 	ColdPackCorrupt,
@@ -53,20 +53,73 @@ const rowCount = (obj: ServeDo, table: string) =>
 	);
 
 describe('coldPackEnv', () => {
-	it('returns the env it was given when the flag is unset', async () => {
-		const out = await inObject(freshSite(), (obj) => {
-			const env: ColdPackEnv = { ASSETS: fakeAssets(packBytes(10)).assets };
-			return coldPackEnv(siteOf(obj, env), env) === env;
+	it('serves a source when the flag is unset', async () => {
+		const bytes = packBytes(CHUNK + 7);
+		const out = await inObject(freshSite(), async (obj) => {
+			const env: ColdPackEnv = { ASSETS: fakeAssets(bytes).assets };
+			const wrapped = coldPackEnv(siteOf(obj, env), env, { pin: pinOf(bytes) });
+			const source = await wrapped.SQL_PACK_SOURCE?.('drupal-pf');
+			return { wrapped: wrapped !== env, length: source?.length };
 		});
-		expect(out).toBe(true);
+		expect(out).toEqual({ wrapped: true, length: bytes.length });
 	});
 
-	it('returns the env it was given for any value other than 1', async () => {
+	it('returns the env it was given only when the flag is 0', async () => {
 		const out = await inObject(freshSite(), (obj) => {
 			const env: ColdPackEnv = { ASSETS: fakeAssets(packBytes(10)).assets, COLD_PACK: '0' };
 			return coldPackEnv(siteOf(obj, env), env) === env;
 		});
 		expect(out).toBe(true);
+	});
+
+	it('drops the chunks of an earlier pack once a new one is staged', async () => {
+		const first = packBytes(CHUNK * 2);
+		const second = packBytes(CHUNK * 3 + 9);
+		const out = await inObject(freshSite(), async (obj) => {
+			const stage = async (bytes: Uint8Array) => {
+				const env: ColdPackEnv = { ASSETS: fakeAssets(bytes).assets };
+				const wrapped = coldPackEnv(siteOf(obj, env), env, { pin: pinOf(bytes) });
+				await wrapped.SQL_PACK_SOURCE?.('drupal-pf');
+			};
+			await stage(first);
+			const afterFirst = rowCount(obj, 'cfw_pack_chunk');
+			await stage(second);
+			const sql = obj.sql as unknown as SqlStorage;
+			const digests = sql
+				.exec('SELECT DISTINCT digest FROM cfw_pack_chunk')
+				.toArray()
+				.map((row) => row['digest']);
+			return {
+				afterFirst,
+				chunks: rowCount(obj, 'cfw_pack_chunk'),
+				roots: rowCount(obj, 'cfw_pack_root'),
+				digests
+			};
+		});
+		expect(out).toEqual({
+			afterFirst: 2,
+			chunks: 4,
+			roots: 1,
+			digests: [pinOf(second).digest]
+		});
+	});
+
+	it('does not write a row when a second boot finds the pack staged', async () => {
+		const bytes = packBytes(CHUNK * 2);
+		const out = await inObject(freshSite(), async (obj) => {
+			const env: ColdPackEnv = { ASSETS: fakeAssets(bytes).assets };
+			const wrapped = coldPackEnv(siteOf(obj, env), env, { pin: pinOf(bytes) });
+			await wrapped.SQL_PACK_SOURCE?.('drupal-pf');
+			const sql = obj.sql as unknown as SqlStorage;
+			const spy = vi.spyOn(sql, 'exec');
+			await wrapped.SQL_PACK_SOURCE?.('drupal-pf');
+			const writes = spy.mock.calls.filter(([text]) =>
+				/^\s*(INSERT|UPDATE|DELETE)/i.test(String(text))
+			).length;
+			spy.mockRestore();
+			return writes;
+		});
+		expect(out).toBe(0);
 	});
 
 	it('serves the pack it staged, across chunk boundaries and the short last chunk', async () => {

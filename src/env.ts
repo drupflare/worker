@@ -140,7 +140,7 @@ export interface SiteEnv extends BaseSiteEnv {
 	LOOKUP_MEMO?: string;
 	/** `1` runs the claim's warm phase one unit per invocation, reported as progress */
 	CLAIM_WARM_STEPS?: string;
-	/** `1` keeps the Drupal pack in the object's storage and reads it from there, not from ASSETS */
+	/** on unless `0`; keeps the Drupal pack in the object's storage, not in the isolate */
 	COLD_PACK?: string;
 	/** how many 64 KiB chunks of that pack stay in memory; 8 unless set, at most 64 */
 	COLD_PACK_CACHE_CHUNKS?: string;

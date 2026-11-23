@@ -69,6 +69,9 @@ const LOCAL_TABLES: ReadonlySet<string> = new Set([
 	'cfw_http_cache',
 	'cfw_heap_chunk',
 	'cfw_heap_snapshot',
+	// the staged Drupal pack: 13 MB each object stages again from its own assets
+	'cfw_pack_chunk',
+	'cfw_pack_root',
 	// workerd's own storage for `ctx.storage.put` and its metadata
 	'_cf_KV',
 	'_cf_METADATA',
@@ -92,6 +95,10 @@ const DERIVED_TABLES: ReadonlySet<string> = new Set([
 const SIDE_EFFECT_TABLES: ReadonlySet<string> = new Set([
 	'cfw_http_queue',
 	'cfw_mail_queue',
+	// the outbox of each lane: the claim of an effect that may be in flight
+	'cfw_outbox_mail',
+	'cfw_outbox_http',
+	'cfw_outbox_cron',
 	'cfw_page_mirror_queue',
 	'cfw_file_mirror_queue'
 ]);

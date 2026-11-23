@@ -1,4 +1,3 @@
-import type { PackBytes } from '@drupflare/cartridge/fs';
 import { createHash } from 'node:crypto';
 import { CORE_PACK_DIGEST, CORE_PACK_LENGTH } from './generated/core-pack';
 import { digestBytes } from './module-integrity';
@@ -8,6 +7,14 @@ const CHUNK_BYTES = 65_536;
 const DEFAULT_CACHE_CHUNKS = 8;
 const MAX_CACHE_CHUNKS = 64;
 const PACK_URL = 'https://assets.local/drupal-pf/core.pf.bin';
+
+/** a layer's packed bytes, in the shape the cartridge reads them */
+export interface PackBytes {
+	length: number;
+	residentBytes?: number;
+	releaseRange?(bytes: Uint8Array): void;
+	subarray(start: number, end: number): Uint8Array;
+}
 
 export type ColdPackSource = PackBytes & { readonly residentBytes: number };
 
@@ -187,7 +194,7 @@ async function stagePack(assets: Fetcher, sql: SqlStorage, pin: Pin): Promise<vo
 
 /**
  * `env` with a `SQL_PACK_SOURCE` that serves the Drupal pack from the object's own storage when
- * `COLD_PACK` is 1, and `env` itself otherwise.
+ * `COLD_PACK` is anything but 0, and `env` itself otherwise.
  *
  * A pack that cannot be staged or does not match the pinned digest answers undefined, so the mount
  * reads it from ASSETS as it does with the flag off.
@@ -197,7 +204,7 @@ export function coldPackEnv<E extends ColdPackEnv>(
 	env: E,
 	options: { pin?: Pin; log?: (line: string) => void } = {}
 ): E {
-	if (site.env.COLD_PACK !== '1') return env;
+	if (site.env.COLD_PACK === '0') return env;
 	const pin = options.pin ?? SHIPPED_PIN;
 	const log = options.log ?? console.warn;
 	return {
@@ -216,7 +223,12 @@ export function coldPackEnv<E extends ColdPackEnv>(
 					.exec('SELECT length FROM cfw_pack_root WHERE digest = ?', pin.digest)
 					.toArray();
 				// the original binding: the one `packCachedEnv` wraps keeps the whole blob
-				if (staged.length === 0) await stagePack(site.env.ASSETS, sql, pin);
+				if (staged.length === 0) {
+					await stagePack(site.env.ASSETS, sql, pin);
+					// a pack from an earlier worker version is dead weight once the new one is staged
+					sql.exec('DELETE FROM cfw_pack_chunk WHERE digest != ?', pin.digest);
+					sql.exec('DELETE FROM cfw_pack_root WHERE digest != ?', pin.digest);
+				}
 				return sqlPackSource(sql, pin.digest, pin.length, {
 					maximum: coldPackCacheChunks(site.env.COLD_PACK_CACHE_CHUNKS),
 					release: site.env.RELEASE_EVICTED === '1'

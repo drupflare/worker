@@ -58,6 +58,8 @@ describe('which tables a restore copies', () => {
 			'cfw_plan',
 			'cfw_http_cache',
 			'cfw_heap_chunk',
+			'cfw_pack_chunk',
+			'cfw_pack_root',
 			'cache_render'
 		]);
 		expect(others.every((t) => !t.copy)).toBe(true);

@@ -106,7 +106,7 @@ import {
 	siteName
 } from './do/identity';
 import { bumpGeneration, pathsForTags, purgeForTags } from './do/invalidate';
-import { keepSpareMemory } from './do/isolate';
+import { INTERPRETER_IDENTITY, keepSpareMemory } from './do/isolate';
 import { HEAP_IMAGE_ATTEMPTS_KEY } from './do/keys';
 import {
 	applyRestoreChunk,
@@ -386,6 +386,7 @@ export {
 export type { AlarmClass, HeapRestoreCursor } from './do/alarm';
 export { cacheTagsIn, passThroughHeaders } from './do/helpers';
 export {
+	INTERPRETER_IDENTITY,
 	INTERPRETER_MEMORY,
 	isolateId,
 	isolateResidency,
@@ -790,7 +791,7 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 	trappedRuns?: number;
 	/** the last VM trap */
 	lastTrap?: { at: number; message: string };
-	/** drops taken because a run ended in `exit()`; see {@link settleReply} */
+	/** runs that ended in `exit()`, answered by the harness or, on a stale pin, by a drop */
 	exitedRuns?: number;
 	/** the last run that ended in `exit()`, with the first bytes it printed */
 	lastExit?: { at: number; partial: string };
@@ -1101,16 +1102,17 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 	}
 
 	/**
-	 * The identity a heap image is valid for: the pack plus the site's module set.
+	 * The identity a heap image is valid for: the pack, the site's module set and the interpreter.
 	 *
 	 * An install changes the container and class loader without touching the pack, so a pack-only
-	 * key restores a stale kernel (`access() on null`). Undefined when there is no pack
-	 * generation.
+	 * key restores a stale kernel (`access() on null`). A new interpreter moves its static data and
+	 * stack, so an image from the old one would restore into the wrong layout. Undefined when there
+	 * is no pack generation.
 	 */
 	heapGeneration(): string | undefined {
 		const pack = this.packGeneration();
 		if (pack === undefined) return undefined;
-		return `${pack}|${this.enabledModulesFingerprint()}`;
+		return `${pack}|${this.enabledModulesFingerprint()}|${INTERPRETER_IDENTITY}`;
 	}
 
 	/** the settings override's inputs other than the origin, which the boot image keys on */
@@ -1824,11 +1826,12 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 
 	/**
 	 * Sets an alarm and remembers when it is due, so `armFillAlarm()` never believes a +1 ms alarm
-	 * survived a 240 s re-arm.
+	 * survived a 240 s re-arm. `exact` is for owner and lifecycle wakes, which keep the one-tick
+	 * move in every alarm shape.
 	 */
-	async setAlarmAt(atMs: number): Promise<void> {
+	async setAlarmAt(atMs: number, exact = false): Promise<void> {
 		if (this.retired) return;
-		if (this.alarmDepth === 0) {
+		if (this.alarmDepth === 0 && !exact) {
 			const shape = alarmShape(this.env);
 			if (shape === 'end-sync') return;
 			if (shape === 'delay') {

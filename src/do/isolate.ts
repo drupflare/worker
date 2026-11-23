@@ -1,3 +1,4 @@
+import lock from '../../interp.lock.json';
 import type { SiteEnv } from '../env';
 
 /** globals the deleted runtime shim installed; nothing sets them now, so both read as absent */
@@ -42,6 +43,16 @@ export function takeSpareMemory(): WebAssembly.Memory | undefined {
  * (`INITIAL_PAGES` in `initial-pages.ts`). A disagreement fails every boot with a LinkError.
  */
 export const INTERPRETER_MEMORY = { initial: 1024, maximum: 65536 } as const;
+
+/**
+ * The pinned interpreter and the pages it is tuned to start with.
+ *
+ * A heap image holds the static data, the stack and every heap pointer of the binary that took it,
+ * so it is valid for that binary only; a pin bump that moves any of them must refuse old images.
+ */
+export const INTERPRETER_IDENTITY = `${(
+	lock.files.find((f) => f.path.endsWith('.wasm'))?.sha256 ?? 'unpinned'
+).slice(0, 16)}:${INTERPRETER_MEMORY.initial}`;
 
 /** @internal the bytes a dropped, still uncollected memory holds, for a spec and `/serve-stats` */
 export function spareMemoryBytes(): number {

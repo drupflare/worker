@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { driveAlarms, freshSite, inObject, type ServeDo } from '../helpers/serve-do';
+import lock from '../../interp.lock.json';
+import { INTERPRETER_IDENTITY } from '../../src/do/isolate';
+import {
+	driveAlarms,
+	freshSite,
+	inObject,
+	markProvisioned,
+	type ServeDo
+} from '../helpers/serve-do';
 
 /**
  * A heap image keyed on the PACK survives a change to the SITE, and every consequence of that is a
@@ -58,6 +66,21 @@ async function addModule(stub: DurableObjectStub, name: string): Promise<void> {
 		);
 	});
 }
+
+describe('a heap image is keyed on the interpreter as well as the pack', () => {
+	// an image holds the static data, stack and heap pointers of the binary that took it, so a pin
+	// bump that moves the stack (or anything else in the layout) must not restore an older one
+	it('names the pinned binary and its initial pages in the identity', async () => {
+		const generation = await inObject(freshSite(), (site) => {
+			markProvisioned(site, 'pack-a');
+			return (site as any).heapGeneration() as string | undefined;
+		});
+		const wasm = lock.files.find((f) => f.path.endsWith('.wasm'));
+		expect(INTERPRETER_IDENTITY.startsWith(String(wasm?.sha256).slice(0, 16))).toBe(true);
+		expect(String(generation).startsWith('pack-a|')).toBe(true);
+		expect(String(generation).endsWith(`|${INTERPRETER_IDENTITY}`)).toBe(true);
+	});
+});
 
 describe('a heap image is keyed on the site as well as the pack', () => {
 	it(

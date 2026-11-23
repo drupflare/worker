@@ -68,6 +68,8 @@ describe.skipIf(!MEASURING)('what a compiled render plan is worth in wasm, per s
 		'replays each recorded subsystem and reports its saving and whether the page survived',
 		async () => {
 			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				// the decorators install into a container no render has initialised, as a plain boot has
+				site.env = { ...site.env, BOOT_IMAGE: '0' };
 				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
 				const first = await site.fetch(
 					new Request('https://do.local/__firstrun', {
@@ -191,6 +193,8 @@ describe('the subsystem replay records and replays', () => {
 		'installs the decorators, records one render and replays it into the same page',
 		async () => {
 			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				// the decorators install into a container no render has initialised, as a plain boot has
+				site.env = { ...site.env, BOOT_IMAGE: '0' };
 				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
 				const install = (await site.runJson(INSTALL)) as {
 					install?: Record<string, string>;

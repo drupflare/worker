@@ -215,6 +215,7 @@ describe('an uploaded revision lands the way a git pull does', () => {
 	it('makes the extension lists rediscover, so a delivered extension is listed without an enable', async () => {
 		const THEME = 'cfw_probe_theme';
 		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			site.env = { ...site.env, BOOT_IMAGE: '1' };
 			const call = modify(site, await ownerToken(site));
 			const listed = async () =>
 				(
@@ -232,8 +233,17 @@ describe('an uploaded revision lands the way a git pull does', () => {
 				},
 				'theme'
 			);
-			return { before, commit: commit.body, after: await listed() };
+			return {
+				before,
+				commit: commit.body,
+				after: await listed(),
+				restored: (site as any).bootImage?.used
+			};
 		});
+		expect(
+			seen.restored,
+			'the lists have to come from a restored image; rerun `bun run assets:bootimage`'
+		).toBe(true);
 		expect(seen.before).not.toContain(THEME);
 		expect(seen.commit).toMatchObject({ ok: true, applied: true });
 		expect(seen.after).toContain(THEME);

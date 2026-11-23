@@ -25,13 +25,16 @@ if (!isset($GLOBALS['__pw_kernel'])) {
 // before anything has included one: farmOS answered Class "entity_entity_type_build" does not
 // exist, DrupalX a RequestContext built from no request. The enable fragment does the same two
 $stack = Drupal::service('request_stack');
-if ($stack->getCurrentRequest() === null) {
-	$claimRequest = Request::create('/', 'GET');
-	// a hook asks the request for its session (varbase: SessionNotFoundException); in memory, so
-	// the claim writes no session row
-	$claimRequest->setSession(new Session(new MockArraySessionStorage()));
-	$stack->push($claimRequest);
+// the claim acts for the owner token's holder, which reads as a stack with no routed request
+// and a render that ran first leaves its own behind
+while ($stack->getCurrentRequest() !== null) {
+	$stack->pop();
 }
+$claimRequest = Request::create('/', 'GET');
+// a hook asks the request for its session (varbase: SessionNotFoundException); in memory, so
+// the claim writes no session row
+$claimRequest->setSession(new Session(new MockArraySessionStorage()));
+$stack->push($claimRequest);
 Drupal::moduleHandler()->loadAll();
 // The first WRITE path anything in this project has exercised, and it found a
 // new instance of the trace-blind class immediately: SAVED_NEW / SAVED_UPDATED

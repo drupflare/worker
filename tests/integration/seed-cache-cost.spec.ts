@@ -55,6 +55,8 @@ const sum = (bins: Record<string, number>) => Object.values(bins).reduce((a, b) 
 
 async function drive(trim: boolean): Promise<Arm> {
 	return inObject(freshSite(), async (site: ServeDo) => {
+		// the cost is the first render of a plain boot
+		site.env = { ...site.env, BOOT_IMAGE: '0' };
 		await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
 		const bins = rebuildableBins(site);
 		if (trim) for (const bin of bins) site.sql.exec(`DELETE FROM ${bin}`);

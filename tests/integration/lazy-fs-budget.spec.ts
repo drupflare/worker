@@ -57,6 +57,8 @@ type MountReport = {
 const PATHS = ['/', '/node', '/user/login', '/user/password', '/filter/tips'];
 
 async function measure(site: ServeDo, budget?: number) {
+	// the demand is a plain boot's; an image boot has most of those files in its heap already
+	site.env.BOOT_IMAGE = '0';
 	if (budget !== undefined) site.env.LAZY_FS_BUDGET_BYTES = String(budget);
 	await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
 	for (const path of PATHS) {

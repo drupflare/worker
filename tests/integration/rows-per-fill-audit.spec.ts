@@ -301,6 +301,8 @@ describe.skipIf(FROM_SOURCE)(
 			'measures the same classes at the default, and prints the gap',
 			async () => {
 				const out = await inObject(freshSite(), async (site: ServeDo) => {
+					// the row counts price the first fills of a plain boot
+					site.env = { ...site.env, BOOT_IMAGE: '0' };
 					await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
 					const first = await site.fetch(
 						new Request('https://do.local/__firstrun', {

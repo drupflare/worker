@@ -192,6 +192,8 @@ describe.skipIf(FROM_SOURCE)('the dynamic_page_cache bin, held in the interprete
 			> = {};
 			for (const bins of CANDIDATES) {
 				census[bins] = await inObject(freshSite(), async (site: ServeDo) => {
+					// the row counts price a plain boot, like the audit this order comes from
+					site.env = { ...site.env, BOOT_IMAGE: '0' };
 					await armSite(site, bins);
 					// the audit's order: a first fill, a never-routed path, then the re-render
 					await site.fillOne('/user/login');

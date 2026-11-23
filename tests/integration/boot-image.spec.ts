@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { planBootImage } from '../../src/do/boot-image';
 import { BOOT_KERNEL, saveNode } from '../../src/drupal/site-php';
 import { ensureHashSalt } from '../../src/ops/site-secrets';
 import { phpScript } from '../../src/util/php';
@@ -193,6 +194,40 @@ const EDITS: Record<string, { config: boolean; code: string }> = {
 	}
 };
 
+/** a session for the boot request, which hooks that touch a temp store need when run from a script */
+const SESSION =
+	"$stack = Drupal::service('request_stack'); if (!$stack->getCurrentRequest()) { $stack->push(Symfony\\Component\\HttpFoundation\\Request::create('/')); } " +
+	'$stack->getCurrentRequest()->setSession(new Symfony\\Component\\HttpFoundation\\Session\\Session(new Symfony\\Component\\HttpFoundation\\Session\\Storage\\MockArraySessionStorage()));';
+
+const ARTICLE =
+	"Drupal\\node\\Entity\\NodeType::create(['type' => 'article', 'name' => 'Article'])->save();";
+
+/** edits to the entities and permissions a restored heap holds definitions of, with the page that shows each */
+const ENTITY_EDITS: Record<string, { config: boolean; code: string; path: string }> = {
+	'a field on a new content type': {
+		config: true,
+		path: '/field-node',
+		code:
+			SESSION +
+			ARTICLE +
+			"Drupal\\field\\Entity\\FieldStorageConfig::create(['field_name' => 'field_note', 'entity_type' => 'node', 'type' => 'string'])->save();" +
+			"Drupal\\field\\Entity\\FieldConfig::create(['field_name' => 'field_note', 'entity_type' => 'node', 'bundle' => 'article', 'label' => 'Note'])->save();" +
+			"Drupal::service('entity_display.repository')->getViewDisplay('node', 'article')->setComponent('field_note', ['type' => 'string'])->save();" +
+			"Drupal\\node\\Entity\\Node::create(['type' => 'article', 'title' => 'With a field', 'uid' => 1, 'status' => 1, 'field_note' => 'note kept by the field'])->save();" +
+			"Drupal\\path_alias\\Entity\\PathAlias::create(['path' => '/node/1', 'alias' => '/field-node'])->save();"
+	},
+	'a permission for anonymous visitors': {
+		config: true,
+		path: '/permission-node',
+		code:
+			SESSION +
+			ARTICLE +
+			"user_role_grant_permissions('anonymous', ['access user profiles']);" +
+			"Drupal\\node\\Entity\\Node::create(['type' => 'article', 'title' => 'With an author link', 'uid' => 1, 'status' => 1])->save();" +
+			"Drupal\\path_alias\\Entity\\PathAlias::create(['path' => '/node/1', 'alias' => '/permission-node'])->save();"
+	}
+};
+
 type Arm = { stub: DurableObjectStub; pages: Record<string, Awaited<ReturnType<typeof render>>> };
 
 /** one site, claimed or not, edited, then rendered on a plain boot or from an image */
@@ -201,6 +236,7 @@ async function arm(opts: {
 	edit?: string;
 	image?: Captured;
 	saveNode?: boolean;
+	paths?: string[];
 }): Promise<Arm> {
 	const stub = freshSite();
 	await migrated(stub, { RECONCILE: '0' });
@@ -208,7 +244,8 @@ async function arm(opts: {
 	await inObject(stub, (site) => site.runJson(BOOT_KERNEL));
 	// a page cached before the edit is what a stale checksum memo would wrongly keep valid
 	if (opts.edit || opts.saveNode) await inObject(stub, (site) => site.fillOne('/'));
-	if (opts.edit) await php(stub, EDITS[opts.edit]!.code + "\necho json_encode(['ok' => true]);");
+	const edit = opts.edit ? { ...EDITS, ...ENTITY_EDITS }[opts.edit] : undefined;
+	if (edit) await php(stub, edit.code + "\necho json_encode(['ok' => true]);");
 	if (opts.saveNode)
 		await inObject(stub, (site) =>
 			site.runJson(saveNode({ title: 'Edited front', body: 'hello' }))
@@ -218,7 +255,7 @@ async function arm(opts: {
 		if (opts.image) withImage(site, opts.image);
 	});
 	const pages: Arm['pages'] = {};
-	for (const path of ['/', '/user/login']) pages[path] = await render(stub, path);
+	for (const path of opts.paths ?? ['/', '/user/login']) pages[path] = await render(stub, path);
 	return { stub, pages };
 }
 
@@ -295,6 +332,87 @@ describe('a site that was edited after the bake', () => {
 	}
 });
 
+describe('a claimed site whose entities changed after the bake', () => {
+	for (const [name, edit] of Object.entries(ENTITY_EDITS)) {
+		it(
+			`renders what ${name} added, from an image or a plain boot alike`,
+			async () => {
+				const captured = await claimedImage();
+				const paths = [edit.path];
+				const plain = await arm({ claimed: `Claimed ${name}`, edit: name, paths });
+				const restored = await arm({
+					claimed: `Claimed ${name}`,
+					edit: name,
+					image: captured,
+					paths
+				});
+				expect(restored.pages[edit.path]!.bootImage?.used).toBe(true);
+				expect(plain.pages[edit.path]!.html).toContain(
+					name === 'a field on a new content type'
+						? 'note kept by the field'
+						: 'href="/user/1"'
+				);
+				expect(firstDifference(restored.pages[edit.path]!, plain.pages[edit.path]!)).toBe(
+					''
+				);
+			},
+			TIMEOUT
+		);
+	}
+
+	it(
+		'hands a later config save to the objects services loaded before the restore',
+		async () => {
+			const captured = await claimedImage();
+			const stub = freshSite();
+			await migrated(stub, { RECONCILE: '0' });
+			await claim(stub, 'Claimed holders');
+			await inObject(stub, (site) => site.runJson(BOOT_KERNEL));
+			await php(
+				stub,
+				"Drupal::configFactory()->getEditable('system.performance')->set('cache.page.max_age', 3600)->save();\necho json_encode(['ok' => true]);"
+			);
+			await inObject(stub, (site) => {
+				site.php = undefined;
+				withImage(site, captured);
+			});
+			const held = `$sub = Drupal::service('finish_response_subscriber');
+				$config = (new ReflectionProperty($sub, 'config'))->getValue($sub);
+				echo json_encode(['held' => $config->get('cache.page.max_age'), 'shared' => $config === Drupal::config('system.performance')]);`;
+			const before = await php(stub, held);
+			expect(before).toMatchObject({ held: 3600, shared: true });
+			await php(
+				stub,
+				"Drupal::configFactory()->getEditable('system.performance')->set('cache.page.max_age', 7200)->save();\necho json_encode(['ok' => true]);"
+			);
+			expect(await php(stub, held)).toMatchObject({ held: 7200, shared: true });
+		},
+		TIMEOUT
+	);
+});
+
+describe('the boot images this tree publishes', () => {
+	it(
+		'are the ones a freshly migrated site and a freshly claimed one boot from',
+		async () => {
+			// a published image keyed to anything else boots every site plain and nothing reports it,
+			// which is what a heap generation that gained the interpreter's identity did to the last bake
+			const stub = freshSite();
+			await migrated(stub, { RECONCILE: '0', BOOT_IMAGE: '1' });
+			const pack = await inObject(stub, (site) => planBootImage(site as any));
+			expect(pack.reason, 'rerun `bun run assets:bootimage`').toBe(
+				'pack image, context equal'
+			);
+			await claim(stub, 'Some Site');
+			const claimed = await inObject(stub, (site) => planBootImage(site as any));
+			expect(claimed.reason, 'rerun `bun run assets:bootimage`').toBe(
+				'claimed image, context equal, config reset'
+			);
+		},
+		TIMEOUT
+	);
+});
+
 describe('which published image a site boots from', () => {
 	it(
 		'takes the pack image for a site the pack made and the claimed image for a claimed one',
@@ -339,11 +457,12 @@ describe('which published image a site boots from', () => {
 
 describe('the shared boot image', () => {
 	it(
-		'captures a heap larger than the boot memory, named by the context of a plain site',
+		'captures the boot memory, named by the context of a plain site',
 		async () => {
 			const { index, files } = await image();
 			expect(index.chunks.length).toBeGreaterThan(0);
-			expect(index.byteLength).toBeGreaterThan(1024 * 65_536);
+			// anonymous captures no longer grow the 64 MiB start (two rebakes read 67,108,864)
+			expect(index.byteLength).toBeGreaterThanOrEqual(1024 * 65_536);
 			expect(files.size).toBe(index.chunks.length);
 			expect(String(index.context)).toMatch(
 				/^generation=.+\|driver=.+\|config=[0-9a-f]{32}\|settings=/
@@ -361,7 +480,8 @@ describe('the shared boot image', () => {
 			await migrated(restored);
 			await inObject(restored, (site) => withImage(site, captured));
 			const plain = freshSite();
-			await migrated(plain);
+			// the lever is on by default and the tree publishes an image, so the control opts out
+			await migrated(plain, { BOOT_IMAGE: '0' });
 
 			const first = await render(restored, PATHS[0]);
 			expect(first.bootImage?.used, JSON.stringify(first.bootImage)).toBe(true);

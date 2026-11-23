@@ -46,6 +46,8 @@ async function warmRender(
 	bootPath = '/'
 ): Promise<{ first: Reading; repeat: Reading; steady: Reading }> {
 	const raw = await inObject(freshSite(), async (site: ServeDo) => {
+		// the census counts the statements of a plain boot
+		site.env = { ...site.env, BOOT_IMAGE: '0' };
 		await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
 		queuePath(site, bootPath, { arm: false });
 		await site.fetch(new Request('https://do.local/__fill'));

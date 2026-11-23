@@ -33,11 +33,57 @@ async function probe(site: ServeDo, php: string): Promise<Probe> {
 
 const status = (page: FormResult) => Number(page['status']);
 
+/** the owner role as the claim left it, from a site whose first interpreter came from the given arm */
+async function ownerRoleAfterClaim(arm: 'restored' | 'rendered-first') {
+	return inObject(freshSite(), async (site: ServeDo) => {
+		site.env = { ...site.env, BOOT_IMAGE: arm === 'restored' ? '1' : '0' };
+		if (arm === 'rendered-first') {
+			await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+			await site.fillOne('/user/login');
+		}
+		await claimSite(site, PASS, 'Owner');
+		const role = await probe(
+			site,
+			`$role = \\Drupal\\user\\Entity\\Role::load('drupflare_owner');
+			$out['perms'] = $role ? $role->getPermissions() : null;
+			$out['carrying'] = \\Drupal\\drupflare\\Hook\\OwnerTier::carryingRoles();`
+		);
+		return { role, used: (site as any).bootImage?.used };
+	});
+}
+
+describe('the owner role a claim creates', () => {
+	it(
+		'keeps its owner permission when the claim runs on a restored boot image',
+		async () => {
+			const seen = await ownerRoleAfterClaim('restored');
+			expect(
+				seen.used,
+				'the claim has to run on a restored image; rerun `bun run assets:bootimage`'
+			).toBe(true);
+			expect(seen.role['perms']).toContain(OWNER);
+			expect(seen.role['carrying']).toContain('drupflare_owner');
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'keeps its owner permission when a render ran before the claim',
+		async () => {
+			const seen = await ownerRoleAfterClaim('rendered-first');
+			expect(seen.role['perms']).toContain(OWNER);
+			expect(seen.role['carrying']).toContain('drupflare_owner');
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
 describe('the three drupflare permission tiers', () => {
 	it(
 		'gives each tier its pages and keeps the owner tier from granting itself',
 		async () => {
 			const seen = await inObject(freshSite(), async (site: ServeDo) => {
+				site.env = { ...site.env, BOOT_IMAGE: '1' };
 				await claimSite(site, PASS, 'Owner');
 				site.sql.exec('DELETE FROM cache_container');
 				const claimed = await probe(

@@ -37,7 +37,8 @@ async function provisioned(): Promise<DurableObjectStub> {
 	// off while the setup runs, or a setup step images and `latest` is non-null before the subject
 	// arms anything; the default-off decision is pinned separately below
 	await inObject(stub, (site) => {
-		(site as any).env = { ...(site as any).env, HEAP_IMAGE: '0' };
+		// the boot image restores first when a site matches it, and this spec is the heap restore
+		(site as any).env = { ...(site as any).env, HEAP_IMAGE: '0', BOOT_IMAGE: '0' };
 	});
 	await inObject(stub, (site) => call(site, '/__migrate?all=1&prefill=0'));
 	await inObject(stub, (site) => (site as any).fillOne('/'));

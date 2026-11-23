@@ -292,6 +292,8 @@ describe('the bucket profiler attributes a render', () => {
 		'swaps every probe in, fills named buckets and unwinds',
 		async () => {
 			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				// the probes install before any service exists, which an image boot has already built
+				site.env = { ...site.env, BOOT_IMAGE: '0' };
 				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
 				const install = (await site.runJson(INSTALL)) as {
 					probes?: Record<string, string>;

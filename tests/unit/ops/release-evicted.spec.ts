@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { releaseEvicted } from '../../../src/ops/release-host';
+import { releaseCounts, releaseEvicted } from '../../../src/ops/release-host';
 
 /**
  * RELEASE_EVICTED: an evicted file's bytes are detached, not only dropped, when the flag is `1`.
@@ -54,5 +54,22 @@ describe('releaseEvicted', () => {
 		const contents = bytes();
 		expect(releaseEvicted({ RELEASE_EVICTED: '1' }, contents)).toBe(true);
 		expect(releaseEvicted({ RELEASE_EVICTED: '1' }, contents)).toBe(false);
+	});
+
+	it('counts the file and its bytes when the release succeeds', () => {
+		const before = { ...releaseCounts };
+		expect(releaseEvicted({ RELEASE_EVICTED: '1' }, bytes())).toBe(true);
+		expect(releaseCounts.evictedFiles - before.evictedFiles).toBe(1);
+		expect(releaseCounts.evictedBytes - before.evictedBytes).toBe(8);
+	});
+
+	it('does not count when the flag is off or the release is refused', () => {
+		const before = { ...releaseCounts };
+		releaseEvicted({}, bytes());
+		releaseEvicted({ RELEASE_EVICTED: '1' }, null);
+		const refused = bytes();
+		Object.defineProperty(refused.buffer, 'transfer', { value: undefined });
+		releaseEvicted({ RELEASE_EVICTED: '1' }, refused);
+		expect(releaseCounts).toEqual(before);
 	});
 });

@@ -81,8 +81,8 @@ describe('REUSE_MOUNT off', () => {
 	it('adds no statement to a cold boot, with or without restarts on', async () => {
 		const arms: Array<Record<string, string>> = [
 			{ REFRESH_INSTANCE: '1' },
-			{ REUSE_MOUNT: '1' },
-			{}
+			{ REUSE_MOUNT: '1', REFRESH_INSTANCE: '0' },
+			{ REFRESH_INSTANCE: '0' }
 		];
 		for (const flags of arms) {
 			const out = await inObject(freshSite(), async (site) =>

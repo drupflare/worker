@@ -9,6 +9,8 @@ export type RefreshHost = {
 	env: { REFRESH_INSTANCE?: string; MEMORY_TRACE?: string } | undefined;
 	ctx: { id: { toString(): string } };
 	restartBlocked: boolean;
+	/** linear memory when the dropped interpreter finished booting */
+	bootLinear?: number;
 	pendingRefresh?: PhpInstance;
 	instancesRefreshed?: number;
 	lastRefresh?: RefreshRecord;
@@ -28,6 +30,12 @@ function drupalOnly(env: object | undefined): boolean {
 export function parkForRefresh(host: RefreshHost, was: PhpInstance): boolean {
 	if (host.env?.REFRESH_INSTANCE !== '1' || host.restartBlocked) return false;
 	if (!was.binary || !drupalOnly(host.env)) return false;
+	// a heap that grew since its boot holds allocations a restart cannot return, and the next boot
+	// would grow it again on top
+	const memory = (was.binary as { wasmMemory?: WebAssembly.Memory }).wasmMemory;
+	if (memory && host.bootLinear !== undefined && memory.buffer.byteLength > host.bootLinear) {
+		return false;
+	}
 	// two drops with no boot between: the older one only has its memory to give
 	if (host.pendingRefresh) keepSpareMemory(host.pendingRefresh);
 	host.pendingRefresh = was;

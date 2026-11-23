@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+	releaseCounts,
 	releaseHostGraph,
 	releaseRetired,
 	type GraphNode,
@@ -189,6 +190,22 @@ describe('releaseRetired', () => {
 		expect(releaseRetired(env, { binary: t.binary }, { size: 1 })).toBeUndefined();
 		expect(t.buffers.clean!.byteLength).toBe(4);
 		expect(releaseRetired(env, { binary: t.binary }, { size: 0 })).toBeDefined();
+	});
+
+	it('counts the graph and the nodes and bytes it freed when the flag is 1', () => {
+		const before = { ...releaseCounts };
+		releaseRetired({ RELEASE_HOST_GRAPH: '1' }, { binary: tree().binary });
+		expect(releaseCounts.retiredGraphs - before.retiredGraphs).toBe(1);
+		expect(releaseCounts.retiredNodes - before.retiredNodes).toBe(6);
+		expect(releaseCounts.retiredBytes - before.retiredBytes).toBe(4);
+	});
+
+	it('does not count when nothing was released', () => {
+		const before = { ...releaseCounts };
+		releaseRetired({ RELEASE_HOST_GRAPH: '0' }, { binary: tree().binary });
+		releaseRetired({ RELEASE_HOST_GRAPH: '1' }, {});
+		releaseRetired({ RELEASE_HOST_GRAPH: '1' }, { binary: tree().binary }, { size: 1 });
+		expect(releaseCounts).toEqual(before);
 	});
 
 	it('logs one line when MEMORY_TRACE is 1', () => {

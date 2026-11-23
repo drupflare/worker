@@ -14,6 +14,15 @@ export function releaseOwnedBuffer(buffer: ArrayBuffer): boolean {
 	}
 }
 
+/** what the release flags freed since this isolate started */
+export const releaseCounts = {
+	evictedFiles: 0,
+	evictedBytes: 0,
+	retiredGraphs: 0,
+	retiredNodes: 0,
+	retiredBytes: 0
+};
+
 /** detaches an evicted file's bytes when RELEASE_EVICTED is 1, if the view covers its buffer */
 export function releaseEvicted(
 	env: { RELEASE_EVICTED?: string },
@@ -23,7 +32,13 @@ export function releaseEvicted(
 	if (!(contents.buffer instanceof ArrayBuffer)) return false;
 	if (contents.byteOffset !== 0) return false;
 	if (contents.byteLength !== contents.buffer.byteLength) return false;
-	return releaseOwnedBuffer(contents.buffer);
+	const bytes = contents.buffer.byteLength;
+	const done = releaseOwnedBuffer(contents.buffer);
+	if (done) {
+		releaseCounts.evictedFiles += 1;
+		releaseCounts.evictedBytes += bytes;
+	}
+	return done;
 }
 
 /** an Emscripten FS node, as far as the release walks it */
@@ -73,6 +88,9 @@ export function releaseRetired(
 	if (env?.RELEASE_HOST_GRAPH !== '1' || !php.binary || (sockets?.size ?? 0) > 0)
 		return undefined;
 	const stats = releaseHostGraph(php.binary);
+	releaseCounts.retiredGraphs += 1;
+	releaseCounts.retiredNodes += stats.nodes;
+	releaseCounts.retiredBytes += stats.detachedBytes;
 	if (env.MEMORY_TRACE === '1') console.log(JSON.stringify({ cfw: 'host-release', ...stats }));
 	return stats;
 }

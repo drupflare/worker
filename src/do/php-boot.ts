@@ -44,7 +44,13 @@ import {
 	type BootImagePlan
 } from './boot-image';
 import { forwardTo } from './helpers';
-import { INTERPRETER_MEMORY, isolateResidency, shimGlobals, takeSpareMemory } from './isolate';
+import {
+	INTERPRETER_MEMORY,
+	isolateResidency,
+	keepSpareMemory,
+	shimGlobals,
+	takeSpareMemory
+} from './isolate';
 import { installMysqlBridge } from './mysql-bridge';
 import { treeBootFor } from './tree-boot';
 import type { PhpOutputEvent, SiteBinary } from './types';
@@ -143,10 +149,13 @@ export async function bootPhp(
 	const bootTree = treeBootFor((site.env as { CMS?: string } | undefined)?.CMS);
 	site.encounters = recordEncounter(site.encounters, 'cold');
 	site.coldsSinceFlush = (site.coldsSinceFlush ?? 0) + 1;
+	let plan: BootImagePlan = opts.skipRestore ? { reason: 'skipped' } : await planBootImage(site);
 	// a parked interpreter restarts in place; one that fails to is only good for its memory
 	const parked = site.pendingRefresh;
 	site.pendingRefresh = undefined;
-	const reuse = parked && (await refreshParked(site, parked)) ? parked : undefined;
+	// an image restores onto a fresh heap, and a restarted one no longer has that layout
+	if (parked && plan.index) keepSpareMemory(parked);
+	const reuse = parked && !plan.index && (await refreshParked(site, parked)) ? parked : undefined;
 	// a mount built from the same inputs, and untouched since, is kept; any other is rebuilt below
 	const verdict =
 		reuse && mountReuseArmed(site.env) && site.mountInfo
@@ -162,7 +171,6 @@ export async function bootPhp(
 		site.heapsReused = (site.heapsReused ?? 0) + 1;
 		site.lastReuse = { at: site.nowMs(), bytes: spare.buffer.byteLength };
 	}
-	let plan: BootImagePlan = opts.skipRestore ? { reason: 'skipped' } : await planBootImage(site);
 	const memory = reuse
 		? reuse.binary.wasmMemory
 		: (spare ?? newInterpreterMemory(seam, planPages(plan)));
@@ -360,7 +368,7 @@ export async function bootPhp(
 		// the restore did not finish: the binary and mount survive to the next firing, and
 		// the cursor keeps the object unservable meanwhile
 		if (site.heapRestoreCursor) {
-			await site.setAlarmAt(site.nowMs() + 1);
+			await site.setAlarmAt(site.nowMs() + 1, true);
 			throw new HeapRestoreIncomplete(site.heapRestoreCursor);
 		}
 	}

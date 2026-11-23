@@ -39,6 +39,16 @@ async function armed<T>(site: ServeDo, fn: () => Promise<T>): Promise<T> {
 	}
 }
 
+/** the flag is on unless 0, so the off cases set it */
+async function disarmed<T>(site: ServeDo, fn: () => Promise<T>): Promise<T> {
+	site.env['REFRESH_INSTANCE'] = '0';
+	try {
+		return await fn();
+	} finally {
+		delete site.env['REFRESH_INSTANCE'];
+	}
+}
+
 const fakeHost = (env: RefreshHost['env']): RefreshHost => ({
 	env,
 	ctx: { id: { toString: () => 'object-under-test' } },
@@ -51,33 +61,35 @@ const instance = (memory?: WebAssembly.Memory) =>
 
 describe('REFRESH_INSTANCE off', () => {
 	it('parks nothing and boots a new interpreter', async () => {
-		const out = await inObject(freshSite(), async (site) => {
-			const first = await boot(site);
-			await site.run(SET);
-			site.dropInterpreter();
-			const parked = site.pendingRefresh;
-			const second = await boot(site);
-			return {
-				parked: parked !== undefined,
-				same: second.php === first.php,
-				refreshed: site.instancesRefreshed,
-				last: site.lastRefresh
-			};
-		});
+		const out = await inObject(freshSite(), async (site) =>
+			disarmed(site, async () => {
+				const first = await boot(site);
+				await site.run(SET);
+				site.dropInterpreter();
+				const parked = site.pendingRefresh;
+				const second = await boot(site);
+				return {
+					parked: parked !== undefined,
+					same: second.php === first.php,
+					refreshed: site.instancesRefreshed,
+					last: site.lastRefresh
+				};
+			})
+		);
 		expect(out.parked).toBe(false);
 		expect(out.same).toBe(false);
 		expect(out.refreshed).toBeUndefined();
 		expect(out.last).toBeUndefined();
 	}, 120_000);
 
-	it('parks nothing for any value other than 1', () => {
+	it('parks nothing when the flag is 0', () => {
 		const host = fakeHost({ REFRESH_INSTANCE: '0' });
 		expect(parkForRefresh(host, instance())).toBe(false);
 		expect(host.pendingRefresh).toBeUndefined();
 	});
 
 	it('leaves restartBlocked alone when a fault is recorded', () => {
-		const host = fakeHost({});
+		const host = fakeHost({ REFRESH_INSTANCE: '0' });
 		blockRefresh(host);
 		expect(host.restartBlocked).toBe(false);
 	});
@@ -231,6 +243,17 @@ describe('parkForRefresh', () => {
 		expect(
 			parkForRefresh(fakeHost({ ...on, CMS: 'drupal' } as RefreshHost['env']), instance())
 		).toBe(true);
+	});
+
+	it('refuses a heap that grew since its boot, which a restart in place would keep', () => {
+		const memory = new WebAssembly.Memory({ initial: 2 });
+		const bootSize = memory.buffer.byteLength;
+		const host = { ...fakeHost(on), bootLinear: bootSize };
+		expect(parkForRefresh(host, instance(memory))).toBe(true);
+		memory.grow(1);
+		const grown = { ...fakeHost(on), bootLinear: bootSize };
+		expect(parkForRefresh(grown, instance(memory))).toBe(false);
+		expect(grown.pendingRefresh).toBeUndefined();
 	});
 
 	it('gives the memory of an older parked interpreter to the spare slot', () => {

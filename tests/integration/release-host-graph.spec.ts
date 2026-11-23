@@ -46,10 +46,13 @@ function mount() {
 async function armed<T>(site: ServeDo, fn: () => Promise<T> | T, extra: string[] = []): Promise<T> {
 	const names = ['RELEASE_HOST_GRAPH', ...extra];
 	for (const name of names) site.env[name] = '1';
+	// a drop parks the interpreter while restarts are on, which is not a release
+	if (!extra.includes('REFRESH_INSTANCE')) site.env['REFRESH_INSTANCE'] = '0';
 	try {
 		return await fn();
 	} finally {
 		for (const name of names) delete site.env[name];
+		delete site.env['REFRESH_INSTANCE'];
 	}
 }
 
@@ -57,9 +60,11 @@ describe('the setter', () => {
 	it('releases nothing when the flag is unset', async () => {
 		const m = mount();
 		await inObject(freshSite(), (site) => {
+			site.env['REFRESH_INSTANCE'] = '0';
 			site.php = m.instance;
 			site.phpOwner = { current: site };
 			site.php = undefined;
+			delete site.env['REFRESH_INSTANCE'];
 		});
 		expect(m.released()).toBe(false);
 	});

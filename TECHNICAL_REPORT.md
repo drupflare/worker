@@ -3922,6 +3922,15 @@ would have reached users:
   Five specs still fail with it on (`enable-memory` 98.7 MiB against 85.8; four in
   `interpreter-recycle`, peaks of 224.9 and 230.0 MiB against a 134.2 MiB ceiling), and the on and off
   runs of those files are on paisley-park with the rest at 5 and 9 failures.
+- **A cold Thunder isolate now completes its heavy pages.** Thunder on Paid with this tree's fixes,
+  counted only on rounds where the isolate id changed across a redeploy: 22 of 56 attempts were cold,
+  the rest warm or failed on the network and not counted. `/admin/content` completed 6 of 6, median 2.9 s
+  wall (2.7 to 3.4) against 9 to 12 s cold before. One cache bin cleared, 6 of 6. The full cache rebuild
+  (the 11-step `/updb` chain) completed 10 of 10, and the admin render after it, with every cache empty,
+  answered 200 on 10 of 10 at a median of 3.4 s (1.6 to 5.4); one of those ten met a memory-limit reset
+  that the entry retry absorbed. The worker's own isolate total read 82 to 86 MiB on cold admin renders
+  and 112 to 117 MiB warm. The platform meter, which read 200 to 269 MiB on cold admin before, was not
+  read, so the 203 MiB line is still untested.
 - **A login on a second hostname never held.** Drupal derives the session cookie's `Domain` from the
   render host, which was always the pinned origin, so a browser on an alias refused the cookie. The
   front worker rewrites links, `Location` and the cookie `Domain` for a KV-mapped alias.

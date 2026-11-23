@@ -71,7 +71,7 @@ moves whenever the packed database does.
 `bun install` restores the interpreter from the CDN in its postinstall step. `bun run hydrate` then
 lands the packs: from the release payload when one is published, and from a source build when none
 is. [Building From Source](building-from-source/index.md) covers the two routes, the prerequisites for
-each, the seventeen build steps, and why `prefill` is the one step allowed to fail without failing
+each, the eighteen build steps, and why `prefill` is the one step allowed to fail without failing
 the build.
 
 ## Moving a Site In

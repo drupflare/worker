@@ -86,7 +86,7 @@ export const PAYLOAD_ASSETS: readonly PlanEntry[] = [
 	{ path: 'assets/drupal-pf/core.pf.bin' },
 	// the opcache layer `OPCACHE_MODE=pack` mounts; opt-in, so a build that never baked it is empty
 	{ path: 'assets/drupal-opc', dir: true, optional: true },
-	// the shared boot image `BOOT_IMAGE=1` restores; opt-in, and absent it every site boots plain
+	// the shared boot image `BOOT_IMAGE` restores by default; absent it every site boots plain
 	{ path: 'assets/bootimage', dir: true, optional: true },
 	{ path: 'assets/drupal-sql', dir: true },
 	// WordPress's pack; optional because a Drupal build never makes it

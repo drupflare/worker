@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
 	existsSync,
 	mkdirSync,
@@ -144,7 +145,22 @@ function satisfiedTree(): string {
 		join(root, 'drupal-src/sites/default/settings.php'),
 		"$settings['php_storage']['twig']['class'] = 'x';"
 	);
+	// the boot image step is satisfied by indexes naming the interpreter on disk, not by presence
+	publishBootImages(root, 'tuned interpreter');
 	return root;
+}
+
+/** writes a tuned interpreter and boot image indexes that name it */
+function publishBootImages(root: string, wasm: string): void {
+	writeFileSync(join(root, '.interp/php8.5.tuned.wasm'), wasm);
+	const interpreter = createHash('sha256').update(wasm).digest('hex');
+	for (const variant of ['pack', 'claimed']) {
+		mkdirSync(join(root, `assets/bootimage/${variant}`), { recursive: true });
+		writeFileSync(
+			join(root, `assets/bootimage/${variant}/index.json`),
+			JSON.stringify({ interpreter })
+		);
+	}
 }
 
 /** every path the pipeline produces, mapped to the step that produces it */
@@ -338,6 +354,32 @@ describe('planning is pure, so the resume decision is one testable function', ()
 		const planned = planLocalBuild(root, { skip: ['prefill'] });
 		expect(planned.find((p) => p.step.id === 'prefill')?.run).toBe(false);
 		expect(planned.find((p) => p.step.id === 'pack')?.run).toBe(true);
+	});
+
+	it('rebakes the boot images when the interpreter moved, whatever the images on disk say', () => {
+		// `BOOT_IMAGE` is on by default and an image keyed to another interpreter boots every site
+		// plain without a word, so presence cannot be the key
+		const root = satisfiedTree();
+		writeFileSync(join(root, '.interp/php8.5.tuned.wasm'), 'another interpreter');
+		const planned = planLocalBuild(root);
+		expect(planned.find((p) => p.step.id === 'bootimage')?.run).toBe(true);
+		publishBootImages(root, 'another interpreter');
+		expect(planLocalBuild(root).find((p) => p.step.id === 'bootimage')?.run).toBe(false);
+	});
+
+	it('rebakes the boot images when the php fragments changed after the bake', () => {
+		// the fragments are in the image context, so a newer generated asset file leaves the image refused
+		const root = satisfiedTree();
+		const fragments = join(root, 'src/site/generated/assets.ts');
+		mkdirSync(join(root, 'src/site/generated'), { recursive: true });
+		writeFileSync(fragments, 'export const X = 1;');
+		const later = new Date(Date.now() + 60_000);
+		utimesSync(fragments, later, later);
+		expect(planLocalBuild(root).find((p) => p.step.id === 'bootimage')?.run).toBe(true);
+		const after = new Date(later.getTime() + 1_000);
+		for (const variant of ['pack', 'claimed'])
+			utimesSync(join(root, `assets/bootimage/${variant}/index.json`), after, after);
+		expect(planLocalBuild(root).find((p) => p.step.id === 'bootimage')?.run).toBe(false);
 	});
 
 	it('still verifies the driver pack by its output after running it every time', () => {

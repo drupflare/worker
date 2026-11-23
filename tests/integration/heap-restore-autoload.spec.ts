@@ -111,7 +111,8 @@ describe('a heap image is restored only when the host sealed it', () => {
 			// a reconcile step that lands on a scheduled alarm drops every image, which would take
 			// the subject out from under a case; the producer spec settles it the long way
 			const s = site as unknown as Obj;
-			s.env = { ...s.env, RECONCILE: '0' };
+			// the shared boot image restores first when the site matches it; this spec is the site's own
+			s.env = { ...s.env, RECONCILE: '0', BOOT_IMAGE: '0' };
 			await site.fetch(new Request(`${ORIGIN}/__migrate?all=1&prefill=0`));
 		});
 	}, TIMEOUT);

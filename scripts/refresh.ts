@@ -246,13 +246,14 @@ console.error('\n[refresh] repack: every artifact downstream of the database');
 // build -- correctly, since a typo in a skip list is otherwise a silent no-op
 //
 // `container` MUST be here: a repack moves `VERSIONS_HASH`, and without the rekey the packed
-// `cache_container` row is one no site can read
+// `cache_container` row is one no site can read. `bootimage` too: the image is keyed on the pack and
+// the driver, so a stale one boots every site plain
 run('bun', [
 	'run',
 	'build:local',
 	'--',
 	'--force',
-	'--only=driver,twig,core,pack,static,agg,container,sql'
+	'--only=driver,twig,core,pack,static,agg,container,sql,bootimage'
 ]);
 
 console.error('\n[refresh] manifest: so the next install does not restore the old database');

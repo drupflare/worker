@@ -41,7 +41,18 @@ built against, so it has to come from a boot where the root is `/drupal`. The st
 `tests/node/container-cid.spec.ts` compares the pack against the database and fails when they
 disagree. Run the step on its own with `bun run assets:container`, which re-chunks afterwards.
 
-### 17, The Prefill
+### 17, The Boot Images
+
+`bootimage` runs `bun run assets:bootimage`, which boots `wrangler dev` locally, migrates a throwaway
+site, renders `/` and `/user/login`, and publishes the heap as `assets/bootimage/pack/` and, after a
+first-run claim, `assets/bootimage/claimed/`. `BOOT_IMAGE` is on by default, and a cold object restores
+the image when its context equals the bake's: the same pack, driver, interpreter, module set, settings
+and PHP fragments. An image that matches nothing costs a plain boot and never a wrong page, which is
+also why a stale one goes unnoticed. The step is judged by its artifact: it reruns when an index names
+another interpreter than `.interp/php8.5.tuned.wasm`, and `tests/integration/boot-image.spec.ts`
+checks the whole context against a freshly migrated site.
+
+### 18, The Prefill
 
 `prefill` produces `assets/prefill.json`, which holds the bytes the site returns for five paths. A
 prefilled path is a hit on its first ever request, so whatever is in that file is the page a

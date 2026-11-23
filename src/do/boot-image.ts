@@ -27,13 +27,14 @@ import { opcacheMode } from '../runtime/opcache';
 import type { SitePhpDurableObject } from '../site-do';
 import * as siteAssets from '../site/generated/assets';
 import { BOOT_IMAGE_REKEY_PHP } from '../site/generated/assets';
+import { cmsOf } from '../util/cms';
 import { errorMessage } from '../util/errors';
 import { phpRender } from '../util/php';
 import type { Payload, SiteBinary } from './types';
 
-/** whether a cold boot may restore the published boot image; off unless `1` */
+/** whether a cold boot may restore the published boot image; on unless `0` */
 export function bootImageEnabled(env?: SiteEnv): boolean {
-	return String(env?.BOOT_IMAGE ?? '0') === '1';
+	return String(env?.BOOT_IMAGE ?? '1') !== '0';
 }
 
 /** whether this object may capture a boot image of itself, which only a local bake rig sets */
@@ -131,12 +132,20 @@ export type BootImagePlan = {
  */
 export async function planBootImage(site: SitePhpDurableObject): Promise<BootImagePlan> {
 	if (!bootImageEnabled(site.env)) return { reason: 'off' };
+	if (cmsOf(site.env) !== 'drupal') return { reason: 'only a Drupal site has an image' };
 	if (site.isReplica()) return { reason: 'a replica boots plain' };
 	const assets = assetsOf(site);
 	if (!assets) return { reason: 'no ASSETS binding' };
-	const strict = siteBootContext(site);
-	if (strict === undefined) return { reason: 'not migrated yet' };
-	const reset = siteBootContext(site, CONFIG_RESET) as string;
+	let strict: string | undefined;
+	let reset: string;
+	try {
+		strict = siteBootContext(site);
+		if (strict === undefined) return { reason: 'not migrated yet' };
+		reset = siteBootContext(site, CONFIG_RESET) as string;
+	} catch (e) {
+		// a site whose tables cannot answer the context is a plain boot, never a failed one
+		return { reason: `context unreadable: ${errorMessage(e)}` };
+	}
 	let reason = 'no boot image is published';
 	for (const variant of BOOT_IMAGE_VARIANTS) {
 		const index = await loadBootImageIndex(assets, variant);

@@ -56,9 +56,9 @@ import {
  * managed plane sets for itself (`CACHE_API`, `FILE_STORE`); they are not in the canonical block,
  * so they never reach a box. The name has no loadable ending for the same reason as the manifest.
  *
- * `assets/bootimage/` is left out. `BOOT_IMAGE` is not in the canonical `vars` and reads as off
- * when absent (`bootImageEnabled` in `src/do/boot-image.ts`), and an off site never opens the
- * folder, so a box has no use for 33 MB of it.
+ * `assets/bootimage/` is left out. `BOOT_IMAGE` is on by default, so a box site asks its assets for
+ * the image index, finds none and boots plain (`planBootImage` in `src/do/boot-image.ts`, one
+ * fetch per variant per isolate); a box does not carry 80 MB to save a boot it rarely makes.
  *
  * Every refusal below is a bundle a box would take on `site add` and then fail to start. The check
  * runs here, at release time, because the box-side check can only reject what it is handed.

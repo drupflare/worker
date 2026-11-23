@@ -28,6 +28,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { drupalVersion, installedVersion } from './fetch-drupal-tree';
@@ -67,6 +68,7 @@ export type StepId =
 	| 'agg'
 	| 'container'
 	| 'sql'
+	| 'bootimage'
 	| 'prefill';
 
 /** one step of the from-source build */
@@ -269,7 +271,51 @@ function containerRowMatchesPack(root: string): boolean {
 	}
 }
 
+/** the boot image variants `assets:bootimage` publishes, each in its own directory */
+const BOOT_IMAGE_INDEXES = ['pack', 'claimed'].map((v) => `assets/bootimage/${v}/index.json`);
+
+/**
+ * Whether every published boot image names the interpreter on disk.
+ *
+ * An image's context cannot say which interpreter built its heap, and a stale image costs every site
+ * a plain boot without a word. `tests/integration/boot-image.spec.ts` checks the whole context
+ * against a freshly migrated site; this only answers whether the step has work to do.
+ */
+function bootImagesMatchInterpreter(root: string): boolean {
+	const wasm = join(root, '.interp/php8.5.tuned.wasm');
+	if (!existsSync(wasm)) return false;
+	const digest = createHash('sha256').update(readFileSync(wasm)).digest('hex');
+	return BOOT_IMAGE_INDEXES.every((path) => {
+		try {
+			const index = JSON.parse(readFileSync(join(root, path), 'utf8')) as {
+				interpreter?: string;
+			};
+			return index.interpreter === digest;
+		} catch {
+			return false;
+		}
+	});
+}
+
 /** a generated digest constant, read from the file rather than imported so a run sees its own writes */
+/** what the bake reads besides the interpreter; the php fragments are part of the image context */
+const BOOT_IMAGE_FRESH_AGAINST = [
+	'assets/driver.json',
+	'assets/drupal-pf/core.pf.bin',
+	'assets/drupal-sql/manifest.json',
+	'src/site/generated/assets.ts'
+];
+
+/** the images are current when they name this interpreter and were baked after every other input */
+function bootImagesCurrent(root: string): boolean {
+	if (!bootImagesMatchInterpreter(root)) return false;
+	return BOOT_IMAGE_INDEXES.every((out) =>
+		BOOT_IMAGE_FRESH_AGAINST.every(
+			(input) => !existsSync(join(root, input)) || newerThan(root, out, input)
+		)
+	);
+}
+
 function digestOn(root: string, file: string, name: string): string | null {
 	try {
 		const src = readFileSync(join(root, file), 'utf8');
@@ -596,6 +642,26 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		note:
 			'reads assets/drupal/site.sqlite, which `bun install` restores from the CDN -- so this ' +
 			'step alone works on a clone with nothing else built'
+	},
+	{
+		id: 'bootimage',
+		title: 'bake the shared boot images a cold object restores in place of a plain boot',
+		// `BOOT_IMAGE` is on by default, so a tree without a current image ships the lever with nothing
+		// to restore: every site boots plain and nothing reports it
+		produces: BOOT_IMAGE_INDEXES,
+		// the bake itself refuses a missing pack database or tuned interpreter, which no step declares
+		inputs: [
+			'assets/driver.json',
+			'assets/drupal-pf/core.pf.bin',
+			'assets/drupal-sql/manifest.json',
+			'.interp/php8.5.wasm.br'
+		],
+		tools: ['bun'],
+		satisfied: (root) => bootImagesCurrent(root),
+		commands: () => [['bun', 'run', 'assets:bootimage']],
+		note:
+			'boots `wrangler dev` locally three times (migrate, claim, capture) and renders `/` and ' +
+			'`/user/login`; an image keyed to another interpreter, driver or pack boots every site plain'
 	},
 	{
 		id: 'prefill',

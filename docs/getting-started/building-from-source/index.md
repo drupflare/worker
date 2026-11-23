@@ -12,7 +12,7 @@ payload exists. `--payload-only` forbids the fallback; `--from-source` skips str
 
 ## Pages
 
-- [The Steps](steps.md): the seventeen build steps, from the interpreter to the assets.
+- [The Steps](steps.md): the eighteen build steps, from the interpreter to the assets.
 - [Build Order and Caching](build-order.md): why the order is fixed, what is cached, and partial rebuilds.
 - [Upgrading Drupal Core](upgrading-core.md): the sequence for a core bump and what a patch release moves.
 
@@ -124,8 +124,7 @@ never from a walk of `assets/`. A box serves static files from its own state dir
 with none answers 503 `pack not reachable`, so `bastion` copies this folder there when it adds the
 site. `assets.manifest` at the root lists each file with its size and sha-256, and the box refuses a
 tree that differs from it. The packer fails when a required asset is missing, so a short tree never
-ships. The box bundle leaves out `assets/bootimage/`: `BOOT_IMAGE` is not in `wrangler.jsonc`, so a
-box never opens it. The archive holds about 4,600 files, 39 MB unpacked and 26 MB packed. A baked
+ships. The box bundle leaves out `assets/bootimage/`: a box site finds no image index and boots plain. The archive holds about 4,600 files, 39 MB unpacked and 26 MB packed. A baked
 boot image would add 80 MB unpacked and 24 MB packed.
 
 `box.vars` at the root holds the `vars` block of `wrangler.jsonc` as a flat json object, read when

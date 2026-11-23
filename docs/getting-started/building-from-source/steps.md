@@ -23,7 +23,8 @@ own manifest rather than against a list.
 | 14  | `agg`         | `assets/agg/`                                      | `bun`, step 5         |
 | 15  | `container`   | the packed `cache_container` row, rekeyed          | a free port, step 12  |
 | 16  | `sql`         | `assets/drupal-sql/`                               | `node`, `site.sqlite` |
-| 17  | `prefill`     | `assets/prefill.json`                              | a free port, 1-16     |
+| 17  | `bootimage`   | `assets/bootimage/{pack,claimed}/`                 | a free port, 1-16     |
+| 18  | `prefill`     | `assets/prefill.json`                              | a free port, 1-16     |
 
 ## 1-2, The Interpreter
 

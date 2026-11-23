@@ -12,6 +12,7 @@ Topic files moved out of the project CLAUDE.md. Each section is verbatim. This t
 | A DROPPED INTERPRETER'S MEMORY IS REUSED, NOT COLLECTED                                          | memory-and-isolates.md |
 | A DEPLOYED MEMORY IS CHARGED AT ITS FULL SIZE, touched or not                                    | memory-and-isolates.md |
 | A MEMORY RESET IS `overloaded`, NOT `retryable`, and a write before an await survives it         | memory-and-isolates.md |
+| CLOUDFLARE REFUSES A MESSAGE-ID, so the outbox key is a Message-ID over SMTP only                | outbox.md              |
 | A LARGE SITE'S FRESH ISOLATE HAS ALMOST NO ROOM, and placement decides who survives              | memory-and-isolates.md |
 | AN INSTALLED MODULE'S FILES CARRIED THE BOOT TIME, so every young isolate re-fetched update data | memory-and-isolates.md |
 | THE PACK BLOB IN SQLITE WAS BUILT, MEASURED AND REMOVED                                          | memory-and-isolates.md |

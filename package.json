@@ -122,6 +122,7 @@
 		"@drupflare/durabledb": "^0.1.4",
 		"@drupflare/spool": "^1.0.0",
 		"@drupflare/untarl": "^0.1.0",
+		"@gmitch215/folio": "^1.2.0",
 		"@gmitch215/tinyimg": "^1.2.0",
 		"@noble/ciphers": "^2.4.0",
 		"@noble/curves": "^2.4.0",

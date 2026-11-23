@@ -3,9 +3,11 @@ import { attributeSpend } from '../ops/cost-attribution';
 import { deploymentEnv } from '../ops/deployment-env';
 import { chunkStack, flatFields, isLengthError, type RangeReport } from '../ops/error-probe';
 import { parseFailureLedger, resolveMailTransport } from '../ops/mail';
+import { reportedRows, type OutboxSql } from '../ops/outbox';
 import { kvWriteBudget, pageKvEnabled } from '../ops/page-store';
 import { hitAnyLimit } from '../ops/platform-limits';
-import { type DemandWindow, meanWaitMs } from '../ops/replica-demand';
+import { releaseCounts } from '../ops/release-host';
+import { meanWaitMs, type DemandWindow } from '../ops/replica-demand';
 import type { SitePhpDurableObject } from '../site-do';
 import { cmsOf } from '../util/cms';
 import { errorMessage } from '../util/errors';
@@ -70,6 +72,7 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 		instancesRefreshed: site.instancesRefreshed ?? 0,
 		lastRefresh: site.lastRefresh ?? null,
 		lastMountReuse: site.lastMountReuse ?? null,
+		releaseCounts,
 		spareMemoryBytes: spareMemoryBytes(),
 		// what the last cold boot decided about the published boot image, and why
 		bootImage: site.bootImage ?? null,
@@ -205,6 +208,8 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 		mailQueue: site.countOrNull('cfw_mail_queue'),
 		// accepted, then lost at the relay or after its last retry; durable, unlike `lastMailDrain`
 		mailFailed: parseFailureLedger(site.metaGet(MAIL_FAILURES_KEY)) ?? null,
+		// effects a reset may have run, ended without running again; each carries what to do next
+		outboxReported: reportedRows(site.sql as unknown as OutboxSql),
 		// the relay a send resolves to, or null; tells a broken transport from none
 		mailTransport: (() => {
 			const plan = resolveMailTransport(site.mailEnv());

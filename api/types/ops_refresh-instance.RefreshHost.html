@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">RefreshHost</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#bootlinear">bootLinear</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#ctx">ctx</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">id</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-call-signature">toString</span><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">}</span> <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#env">env</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">MEMORY_TRACE</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">REFRESH_INSTANCE</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">}</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#instancesrefreshed">instancesRefreshed</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#lastrefresh">lastRefresh</a><span class="tsd-signature-symbol">?:</span> <a href="ops_refresh-instance.RefreshRecord.html" class="tsd-signature-type tsd-kind-type-alias">RefreshRecord</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#pendingrefresh">pendingRefresh</a><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/site-do.PhpInstance.html" class="tsd-signature-type tsd-kind-interface">PhpInstance</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#restartblocked">restartBlocked</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#nowms-1">nowMs</a><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/refresh-instance.ts#L8">src/ops/refresh-instance.ts:8</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5de5c5c00efaf7f33cb88289721be78a02801077/src/ops/refresh-instance.ts#L8">src/ops/refresh-instance.ts:8</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -45,37 +45,37 @@
 <div class="tsd-comment tsd-typography"><p>linear memory when the dropped interpreter finished booting</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/refresh-instance.ts#L13">src/ops/refresh-instance.ts:13</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5de5c5c00efaf7f33cb88289721be78a02801077/src/ops/refresh-instance.ts#L13">src/ops/refresh-instance.ts:13</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="ctx"><span>ctx</span><a href="#ctx" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">ctx</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">id</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-call-signature">toString</span><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">}</span> <span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/refresh-instance.ts#L10">src/ops/refresh-instance.ts:10</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5de5c5c00efaf7f33cb88289721be78a02801077/src/ops/refresh-instance.ts#L10">src/ops/refresh-instance.ts:10</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="env"><span>env</span><a href="#env" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">env</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">MEMORY_TRACE</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">REFRESH_INSTANCE</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">}</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/refresh-instance.ts#L9">src/ops/refresh-instance.ts:9</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5de5c5c00efaf7f33cb88289721be78a02801077/src/ops/refresh-instance.ts#L9">src/ops/refresh-instance.ts:9</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="instancesrefreshed"><code class="tsd-tag">Optional</code><span>instances<wbr/>Refreshed</span><a href="#instancesrefreshed" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">instancesRefreshed</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/refresh-instance.ts#L15">src/ops/refresh-instance.ts:15</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5de5c5c00efaf7f33cb88289721be78a02801077/src/ops/refresh-instance.ts#L15">src/ops/refresh-instance.ts:15</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="lastrefresh"><code class="tsd-tag">Optional</code><span>last<wbr/>Refresh</span><a href="#lastrefresh" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">lastRefresh</span><span class="tsd-signature-symbol">?:</span> <a href="ops_refresh-instance.RefreshRecord.html" class="tsd-signature-type tsd-kind-type-alias">RefreshRecord</a></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/refresh-instance.ts#L16">src/ops/refresh-instance.ts:16</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5de5c5c00efaf7f33cb88289721be78a02801077/src/ops/refresh-instance.ts#L16">src/ops/refresh-instance.ts:16</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="pendingrefresh"><code class="tsd-tag">Optional</code><span>pending<wbr/>Refresh</span><a href="#pendingrefresh" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">pendingRefresh</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/site-do.PhpInstance.html" class="tsd-signature-type tsd-kind-interface">PhpInstance</a></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/refresh-instance.ts#L14">src/ops/refresh-instance.ts:14</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5de5c5c00efaf7f33cb88289721be78a02801077/src/ops/refresh-instance.ts#L14">src/ops/refresh-instance.ts:14</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="restartblocked"><span>restart<wbr/>Blocked</span><a href="#restartblocked" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">restartBlocked</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/refresh-instance.ts#L11">src/ops/refresh-instance.ts:11</a></li></ul></aside></section></section></details>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5de5c5c00efaf7f33cb88289721be78a02801077/src/ops/refresh-instance.ts#L11">src/ops/refresh-instance.ts:11</a></li></ul></aside></section></section></details>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Methods"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="methods-1">Methods<a href="#methods-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
@@ -87,7 +87,7 @@
 <div class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">number</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/ops/refresh-instance.ts#L17">src/ops/refresh-instance.ts:17</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5de5c5c00efaf7f33cb88289721be78a02801077/src/ops/refresh-instance.ts#L17">src/ops/refresh-instance.ts:17</a></li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

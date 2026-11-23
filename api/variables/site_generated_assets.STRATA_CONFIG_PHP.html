@@ -13,7 +13,7 @@
 <h1>Variable STRATA_CONFIG_PHP<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">STRATA_CONFIG_PHP</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;\n// __CFW_FIBER_SHIM__\nchdir(&#39;/drupal&#39;);\n\n$out = [&#39;ok&#39; =&gt; false];\ntry {\n\t// __CFW_KERNEL_BOOT__\n\t$editable = Drupal::configFactory()-&gt;getEditable(&#39;strata.settings&#39;);\n\tif ($editable-&gt;isNew()) {\n\t\t// a save here would create a row for a module that never installed its defaults\n\t\t$out[&#39;absent&#39;] = true;\n\t} else {\n\t\t$out[&#39;before&#39;] = (bool) $editable-&gt;get(&#39;capture.statements&#39;);\n\t\t$editable-&gt;set(&#39;capture.statements&#39;, __CFW_VALUE__);\n\t\t$editable-&gt;save();\n\t\t$out[&#39;after&#39;] = (bool) Drupal::config(&#39;strata.settings&#39;)-&gt;get(&#39;capture.statements&#39;);\n\t\t$out[&#39;ok&#39;] = $out[&#39;after&#39;] === __CFW_VALUE__;\n\t}\n} catch (Throwable $e) {\n\t$out[&#39;error&#39;] = get_class($e) . &#39;: &#39; . $e-&gt;getMessage();\n\t$out[&#39;at&#39;] = $e-&gt;getFile() . &#39;:&#39; . $e-&gt;getLine();\n}\necho json_encode($out);\n&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7c8dfefb3664d63f2510c68a0e11fc042c835b98/src/site/generated/assets.ts#L253">src/site/generated/assets.ts:253</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5de5c5c00efaf7f33cb88289721be78a02801077/src/site/generated/assets.ts#L253">src/site/generated/assets.ts:253</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

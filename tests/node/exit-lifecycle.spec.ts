@@ -5,20 +5,24 @@ import { PhpBase } from 'php-wasm/PhpBase';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { INTERPRETER_MEMORY } from '../../src/do/isolate';
 import { EXIT_ERROR, endedInExit, parseJsonReply } from '../../src/ops/json-reply';
+import { EXIT_REPLY_PHP } from '../../src/site/generated/assets';
+import { phpWhen } from '../../src/util/php';
 import { artifactGate } from './helpers/artifact-gate';
 
 /**
- * What `exit()` does to the shipping interpreter, and the fallback that follows from it.
+ * What `exit()` does to the pinned interpreter, and how the harness answers from it.
  *
  * The subject is the pair `src/runtime/php-binary-raw.ts` imports, driven through php-wasm's own
- * `_run()` the way `SitePhpDurableObject.run()` drives it. An exit returns 0 and leaves an instance
- * that executes nothing and prints nothing, so the object has to drop it. The model below is the
- * object's decision (`endedInExit`) plus its drop, with a fresh instance standing in for a boot.
+ * `_run()` the way `SitePhpDurableObject.run()` drives it. The pin is built with `PIB_RUN_EXIT`, so
+ * an exit ends the script, runs the shutdown functions and leaves an instance that answers the next
+ * run. The harness reply comes from `cfw_reply_arm()` (`src/site/php/exit-reply.php`), which the
+ * render fragment calls; the cases below run the same function around small scripts.
  */
 
 const GLUE = process.env.PIB_GLUE ?? '.interp/php8.5-worker.tuned.mjs';
 const WASM = process.env.PIB_WASM ?? '.interp/php8.5.tuned.wasm';
 const skip = artifactGate([GLUE, WASM]);
+const HELPERS = phpWhen("!function_exists('cfw_reply_arm')", EXIT_REPLY_PHP);
 
 type Interpreter = {
 	run(code: string): Promise<{ ret: number; out: string }>;
@@ -84,14 +88,13 @@ const FATALS: Record<string, { code: string; ret: number }> = {
 	'an uncaught exception': { code: '<?php throw new Exception("boom");', ret: 2 }
 };
 
-describe.skipIf(skip)('exit() on the shipping interpreter', () => {
+describe.skipIf(skip)('exit() on the pinned interpreter', () => {
 	it.each(Object.entries(EXITS))(
-		'%s returns 0 and leaves an instance that prints nothing',
+		'%s returns 0 and leaves an instance that answers the next run',
 		async (_name, code) => {
 			const php = boot();
 			expect((await php.run(code)).ret).toBe(0);
-			const later = await php.run(ECHO_OK);
-			expect(later.out).toBe('');
+			expect(await php.run(ECHO_OK)).toEqual({ ret: 0, out: '{"ok":true}' });
 		}
 	);
 
@@ -111,108 +114,310 @@ describe.skipIf(skip)('exit() on the shipping interpreter', () => {
 		expect((await php.run(ECHO_OK)).out).toBe('{"ok":true}');
 	});
 
-	// what a userland wrapper could recover; none of it runs on exit, so none of it can be built on
+	it('answers each run of a series of exits', async () => {
+		const php = boot();
+		for (let i = 0; i < 5; i++) {
+			for (const code of Object.values(EXITS)) {
+				expect((await php.run(code)).ret).toBe(0);
+				expect((await php.run(ECHO_OK)).out).toBe('{"ok":true}');
+			}
+		}
+	});
+
+	it('runs shutdown functions in registration order, and one registered during shutdown last', async () => {
+		const php = boot();
+		const got = await php.run(
+			'<?php register_shutdown_function(function () { echo "A;"; register_shutdown_function(function () { echo "A2;"; }); }); register_shutdown_function(function () { echo "B;"; }); echo "main;"; exit(0);'
+		);
+		expect(got.out).toBe('main;A;B;A2;');
+	});
+
+	it('runs a shutdown function once, on the first exit after it was registered', async () => {
+		const php = boot();
+		await php.run('<?php register_shutdown_function(function () { echo "S;"; }); echo "one";');
+		expect((await php.run('<?php echo "two"; exit(0);')).out).toBe('twoS;');
+		expect((await php.run('<?php echo "three"; exit(0);')).out).toBe('three');
+	});
+
+	// the wanted behaviour, which the build cannot give until pib_run frees the user shutdown
+	// functions at the start of a run that is not a parked resume; it passes when that lands
+	it.fails('does not run a shutdown function an earlier run registered', async () => {
+		const php = boot();
+		await php.run('<?php register_shutdown_function(function () { echo "S;"; }); echo "one";');
+		expect((await php.run('<?php echo "two"; exit(0);')).out).toBe('two');
+	});
+
+	it('does not run a shutdown function after a fatal', async () => {
+		const php = boot();
+		const got = await php.run(
+			'<?php register_shutdown_function(function () { echo "S;"; }); throw new Exception("x");'
+		);
+		expect(got.ret).toBe(2);
+		expect(got.out).not.toContain('S;');
+	});
+
+	it('stops the shutdown list when a shutdown function exits', async () => {
+		const php = boot();
+		const got = await php.run(
+			'<?php register_shutdown_function(function () { echo "1;"; exit(0); }); register_shutdown_function(function () { echo "2;"; }); exit(0);'
+		);
+		expect(got.out).toBe('1;');
+		expect((await php.run(ECHO_OK)).out).toBe('{"ok":true}');
+	});
+
 	it.each([
-		[
-			'a shutdown function',
-			'<?php register_shutdown_function(function () { echo "S"; }); exit(0);',
-			''
-		],
 		[
 			'an output buffer callback',
 			'<?php ob_start(fn ($b) => "OB[" . $b . "]"); echo "x"; exit(0);',
-			'x'
+			'OB[x]'
 		],
-		['a finally block', '<?php try { exit(0); } finally { echo "F"; }', ''],
 		[
-			'a destructor',
-			'<?php class D { function __destruct() { echo "D"; } } $d = new D; exit(0);',
-			''
-		],
-		['a catch of Throwable', '<?php try { exit(0); } catch (Throwable $e) { echo "C"; }', '']
-	])('%s does not run on exit', async (_name, code, printed) => {
+			'a shutdown function and the buffer it prints into',
+			'<?php register_shutdown_function(function () { echo "S"; }); ob_start(fn ($b) => "CB(" . $b . ")"); echo "x"; exit(0);',
+			'CB(xS)'
+		]
+	])('fires %s', async (_name, code, printed) => {
 		expect((await boot().run(code)).out).toBe(printed);
 	});
 
-	it('header_register_callback fires at the first byte of output, not at exit', async () => {
+	it.each([
+		['a finally block', '<?php try { exit(0); } finally { echo "F"; }'],
+		[
+			'a destructor',
+			'<?php class D { function __destruct() { echo "D"; } } $d = new D; exit(0);'
+		],
+		['a catch of Throwable', '<?php try { exit(0); } catch (Throwable $e) { echo "C"; }']
+	])('does not run %s on exit', async (_name, code) => {
+		expect((await boot().run(code)).out).toBe('');
+	});
+
+	it('fires header_register_callback at exit, with or without output', async () => {
 		const quiet = await boot().run(
 			'<?php header_register_callback(function () { echo "H"; }); exit(0);'
 		);
-		expect(quiet.out).toBe('');
+		expect(quiet.out).toBe('H');
 		const loud = await boot().run(
 			'<?php header_register_callback(function () { echo "H"; }); echo "x"; exit(0);'
 		);
-		expect(loud.out.startsWith('Hx')).toBe(true);
+		expect(loud.out).toBe('Hx');
+	});
+
+	it('keeps headers and the response code across runs, so a harness has to clear them', async () => {
+		const php = boot();
+		await php.run('<?php ob_start(); header("X-Left: 1"); http_response_code(418); exit(0);');
+		const next = await php.run(
+			'<?php echo json_encode([http_response_code(), headers_list()]);'
+		);
+		expect(next.out).toContain('418');
+		expect(next.out).toContain('X-Left: 1');
 	});
 });
 
-/**
- * The object's side: parse the reply, ask `endedInExit`, drop and boot when it says so. One
- * "request" is one run on whichever instance is resident.
- */
-class Site {
-	php = boot();
-	drops = 0;
-
-	async serve(code: string): Promise<Record<string, unknown>> {
-		const { ret, out } = await this.php.run(code);
-		const reply = parseJsonReply(out);
-		const exited = await endedInExit(
-			ret,
-			reply,
-			async (probe) => (await this.php.run(probe)).out
-		);
-		if (!exited) return reply;
-		this.php = boot();
-		this.drops += 1;
-		return { error: EXIT_ERROR, exited: true };
-	}
+/** a script wrapped the way the render fragment is: armed first, answered last */
+function harness(
+	body: string,
+	tail = '$out["html"] = "done"; $reply(false);',
+	before = ''
+): string {
+	return (
+		'<?php\n' +
+		before +
+		HELPERS +
+		'\n$out = ["ok" => true];\n' +
+		'$reply = cfw_reply_arm(function (bool $exited) use (&$out) {\n' +
+		'\tif ($exited) { $out += cfw_exit_fields(); }\n' +
+		'\treturn $out;\n' +
+		'});\n' +
+		body +
+		'\n' +
+		tail
+	);
 }
 
-describe.skipIf(skip)('the fallback against the real interpreter', () => {
+/** the fragment's one request on one resident instance, parsed the way the host parses it */
+async function serve(php: Interpreter, body: string, tail?: string, before?: string) {
+	const { ret, out } = await php.run(harness(body, tail, before));
+	return { ret, out, reply: parseJsonReply(out) };
+}
+
+describe.skipIf(skip)('the harness reply', () => {
+	it('prints a plain reply with no mark when the script returns', async () => {
+		const got = await serve(boot(), 'echo "noise";');
+		expect(got.reply).toMatchObject({ ok: true, html: 'done' });
+		expect(got.reply['phpExit']).toBeUndefined();
+		expect(got.out).not.toContain('\x1e');
+	});
+
 	it.each(Object.entries(EXITS))(
-		'%s: the request fails with the exit error and the next one answers',
+		'%s answers what PHP printed as the body',
 		async (_name, code) => {
-			const site = new Site();
-			const failed = await site.serve(code);
-			expect(failed).toEqual({ error: EXIT_ERROR, exited: true });
-			expect(site.drops).toBe(1);
-			expect(await site.serve(ECHO_OK)).toEqual({ ok: true });
-			expect(site.drops).toBe(1);
+			const php = boot();
+			const printed = code.replace('<?php ', '');
+			const got = await serve(php, printed);
+			expect(got.ret).toBe(0);
+			expect(got.reply).toMatchObject({ ok: true, phpExit: true, status: 200 });
+			expect(got.reply['html']).toBe(
+				{ 'exit(0)': 'partial', 'die with a message': 'pmsg' }[_name] ?? 'in'
+			);
+			expect(got.reply['bytes']).toBe(String(got.reply['html']).length);
+			expect(await serve(php, '')).toMatchObject({ reply: { html: 'done' } });
 		}
 	);
 
-	it('without the drop the next request reads as an empty reply, which is the defect', async () => {
+	it('answers the status, headers and cookies PHP had set', async () => {
+		const got = await serve(
+			boot(),
+			'header("HTTP/1.1 302 Found"); header("Location: /next"); header("Cache-Control: no-store"); ' +
+				'header("X-Drupal-Test: yes"); setcookie("sid", "abc"); exit(0);'
+		);
+		expect(got.reply).toMatchObject({
+			status: 302,
+			html: '',
+			location: '/next',
+			cacheControl: 'no-store',
+			cacheTags: [],
+			setCookie: [expect.stringContaining('sid=abc')],
+			passHeaders: { 'x-drupal-test': 'yes', location: '/next' }
+		});
+	});
+
+	it("does not carry the previous run's status or headers into this one", async () => {
 		const php = boot();
-		await php.run(EXITS['exit(0)']!);
-		const next = parseJsonReply((await php.run(ECHO_OK)).out);
-		expect(next).toEqual({ error: 'no JSON in output', raw: '' });
+		await serve(php, 'header("X-Old: 1"); http_response_code(418); exit(0);');
+		const got = await serve(php, 'exit(0);');
+		expect(got.reply['status']).toBe(200);
+		// an empty PHP array is `[]` in JSON, as in the render fragment
+		expect(got.reply['passHeaders']).toEqual([]);
 	});
 
-	it.each(Object.entries(FATALS))('%s: the instance is kept', async (_name, { code }) => {
-		const site = new Site();
-		const first = site.php;
-		await site.serve(code);
-		expect(site.php).toBe(first);
-		expect(site.drops).toBe(0);
-		expect(await site.serve(ECHO_OK)).toEqual({ ok: true });
+	it('runs shutdown functions first and the reply last', async () => {
+		const got = await serve(
+			boot(),
+			'register_shutdown_function(function () { echo "S;"; }); echo "body;"; exit(0);'
+		);
+		expect(got.out.startsWith('body;S;\x1ecfw-reply\x1e{')).toBe(true);
+		expect(got.reply['html']).toBe('body;S;');
 	});
 
-	it('keeps the instance when the harness finished but printed nothing parseable', async () => {
-		const site = new Site();
-		const first = site.php;
-		const reply = await site.serve('<?php echo "no json here";');
-		expect(reply['error']).toBe('no JSON in output');
-		expect(site.php).toBe(first);
-		expect(await site.serve(ECHO_OK)).toEqual({ ok: true });
+	it('answers the body an output buffer callback produced, and the reply stays outside it', async () => {
+		const got = await serve(
+			boot(),
+			'ob_start(fn ($b) => "CB(" . $b . ")"); echo "x"; ob_start(); echo "y"; exit(0);'
+		);
+		expect(got.reply['html']).toBe('CB(xy)');
 	});
 
-	it('survives a run of exits, one fresh instance each', async () => {
-		const site = new Site();
-		for (const code of Object.values(EXITS)) {
-			expect((await site.serve(code))['exited']).toBe(true);
-			expect(await site.serve(ECHO_OK)).toEqual({ ok: true });
+	it('reads headers a header_register_callback sets at exit', async () => {
+		const got = await serve(
+			boot(),
+			'header_register_callback(function () { header("X-Late: 1"); }); ob_start(); echo "x"; exit(0);'
+		);
+		expect(got.reply).toMatchObject({ html: 'x', passHeaders: { 'x-late': '1' } });
+	});
+
+	it('reads past a body that carries more braces than the reply scan tries', async () => {
+		const body = '{"a":1} '.repeat(60);
+		const got = await serve(boot(), `echo '${body}'; exit(0);`);
+		expect(got.reply['html']).toBe(body);
+		expect(got.reply['phpExit']).toBe(true);
+	});
+
+	it('keeps what the script already filled in', async () => {
+		const got = await serve(
+			boot(),
+			'$out["status"] = 201; $out["html"] = "built"; http_response_code(500); exit(0);'
+		);
+		expect(got.reply).toMatchObject({ status: 201, html: 'built', phpExit: true });
+	});
+
+	it('prints once when the exit hook and the script both reach the reply', async () => {
+		const got = await serve(
+			boot(),
+			'register_shutdown_function(function () { global $reply; $reply(false); });',
+			'exit(0);'
+		);
+		expect(got.out.match(/\{"ok"/g)).toHaveLength(1);
+	});
+
+	it('answers an error instead of nothing when building the reply throws', async () => {
+		const php = boot();
+		const code =
+			'<?php\n' +
+			HELPERS +
+			'\n$r = cfw_reply_arm(function (bool $exited) { throw new RuntimeException("no"); });\nexit(0);';
+		const got = parseJsonReply((await php.run(code)).out);
+		expect(got).toMatchObject({ error: 'RuntimeException: no', phpExit: true });
+	});
+
+	it('leaves nothing armed after a normal return, so another script that exits answers nothing', async () => {
+		const php = boot();
+		await serve(php, '');
+		const got = await php.run('<?php echo "p"; exit(0);');
+		expect(got.out).toBe('p');
+	});
+
+	it('answers again after a fatal that skipped the reply', async () => {
+		const php = boot();
+		const fatal = await serve(php, 'throw new Exception("boom");');
+		expect(fatal.ret).toBe(2);
+		expect(fatal.reply['error']).toBe('no JSON in output');
+		expect((await serve(php, 'echo "x"; exit(0);')).reply).toMatchObject({
+			phpExit: true,
+			html: 'x'
+		});
+	});
+
+	it('answers every exit in a series, each followed by a normal run', async () => {
+		const php = boot();
+		for (let i = 0; i < 20; i++) {
+			const got = await serve(php, `echo "n${i}"; exit(0);`);
+			expect(got.reply).toMatchObject({ phpExit: true, html: `n${i}` });
+			expect((await serve(php, '')).reply['html']).toBe('done');
 		}
-		expect(site.drops).toBe(Object.keys(EXITS).length);
+	});
+
+	it('finds the hook again after a shutdown function that exits skipped it', async () => {
+		const php = boot();
+		const lost = await serve(
+			php,
+			'exit(0);',
+			undefined,
+			'register_shutdown_function(function () { exit(0); });\n'
+		);
+		expect(lost.reply['error']).toBe('no JSON in output');
+		let tries = 0;
+		let answered = false;
+		while (tries < 40 && !answered) {
+			tries += 1;
+			answered = (await serve(php, 'echo "x"; exit(0);')).reply['phpExit'] === true;
+		}
+		expect(answered).toBe(true);
+		expect(tries).toBeLessThanOrEqual(16);
+	});
+});
+
+describe('the fallback for an interpreter that is dead after exit()', () => {
+	const none = parseJsonReply('partial');
+	const dead = async () => '';
+
+	it('reads a dead instance as an exit and names it', async () => {
+		expect(await endedInExit(0, none, dead)).toBe(true);
+		expect(EXIT_ERROR).toContain('exit()');
+	});
+
+	it('leaves a live instance alone when the harness printed nothing parseable', async () => {
+		expect(await endedInExit(0, none, async () => 'cfw-alive')).toBe(false);
+	});
+
+	it('does not probe a reply that carries the exit mark', async () => {
+		let probes = 0;
+		const reply = parseJsonReply('body\x1ecfw-reply\x1e{"phpExit":true,"html":""}');
+		expect(
+			await endedInExit(0, reply, async () => {
+				probes += 1;
+				return '';
+			})
+		).toBe(false);
+		expect(probes).toBe(0);
 	});
 });

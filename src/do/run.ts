@@ -1,4 +1,4 @@
-import { EXIT_ERROR, endedInExit, parseJsonReply } from '../ops/json-reply';
+import { EXIT_ERROR, EXIT_REPLY_DISARM, endedInExit, parseJsonReply } from '../ops/json-reply';
 import { blockRefresh } from '../ops/refresh-instance';
 import { errorMessage } from '../util/errors';
 import type { RunHost } from './host';
@@ -28,6 +28,13 @@ export async function run(host: RunHost, code: string): Promise<string> {
 	try {
 		const ret = await inst.php._run(code);
 		host.lastRet = typeof ret === 'number' ? ret : undefined;
+		// a fatal skips the harness's reply and leaves it armed; the disarm is a run of its own and
+		// not a prefix, because a parked chain resumes in later runs that still need the reply
+		if (host.lastRet !== undefined && host.lastRet !== 0) {
+			const kept = host.lastRet;
+			await inst.php._run(EXIT_REPLY_DISARM);
+			host.lastRet = kept;
+		}
 	} catch (e) {
 		// name rather than instanceof alone: the pool and the worker are different realms
 		if (e instanceof WebAssembly.RuntimeError || (e as Error)?.name === 'RuntimeError') {
@@ -49,14 +56,20 @@ export async function runJson(host: RunHost, code: string): Promise<Payload> {
 }
 
 /**
- * Answers an `exit()` for a reply that carries no JSON, and drops the interpreter it left behind.
+ * Counts an `exit()` the harness answered, and answers one it could not, for a reply that carries
+ * no JSON.
  *
- * `exit()` returns 0 and leaves an instance that runs nothing and prints nothing, so every later
- * request would answer empty until something recycled it. Headers, cookies and shutdown functions
- * set before the exit are not recoverable from PHP, so the request fails rather than answering
- * without them.
+ * The pinned interpreter survives an exit and a harness prints its reply from a shutdown function
+ * (`phpExit`), so that reply goes through as it is. Only an interpreter built without the exit fix
+ * is dead afterwards: it runs nothing and prints nothing, so every later request would answer
+ * empty until something recycled it. Its request fails and the instance is dropped.
  */
 export async function settleReply(host: RunHost, reply: Payload): Promise<Payload> {
+	if (reply['phpExit'] === true) {
+		host.exitedRuns = (host.exitedRuns ?? 0) + 1;
+		host.lastExit = { at: host.nowMs(), partial: String(reply['html'] ?? '').slice(0, 200) };
+		return reply;
+	}
 	if (!(await endedInExit(host.lastRet, reply, (code) => host.run(code)))) return reply;
 	const partial = String(reply['raw'] ?? '').slice(0, 200);
 	host.exitedRuns = (host.exitedRuns ?? 0) + 1;

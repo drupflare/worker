@@ -47,6 +47,45 @@ $clock = function () {
 };
 $t0 = $clock();
 
+// Drupal's shutdown queue is drained after a render, except a 5xx one, and nothing else empties
+// it; callbacks queued by an earlier request must not run at this request's exit
+if (function_exists('drupal_register_shutdown_function')) {
+	$cfwQueue = &drupal_register_shutdown_function();
+	$cfwQueue = [];
+	unset($cfwQueue);
+}
+
+// the reply, printed once at the end or from a shutdown function when PHP ends in exit(); on an
+// exit the status, headers and cookies are what PHP had set and the body is what it printed
+$cfwReply = cfw_reply_arm(function (bool $exited) use (&$out, $clock, $t0) {
+	if ($exited) {
+		$out += cfw_exit_fields();
+	}
+	// what the between-request reset actually did, and who Drupal thinks is asking. Both are cheap
+	// reads and both were needed to find the session leak; a render that comes back as the WRONG USER
+	// is not distinguishable from a correct one by its bytes
+	$out['reset'] = $GLOBALS['__pw_reset'] ?? null;
+	try {
+		$out['uid'] = (int) Drupal::currentUser()->id();
+	} catch (Throwable $e) {
+		$out['uid'] = null;
+	}
+	// THE ROLE SET, sorted, because the edge plan key is derived from it. A plan keyed on the raw
+	// cookie is one plan per session per path, which maximises the cold-KV case it was built to avoid;
+	// keyed on roles it is one per role set. Sorted so two accounts holding the same roles in a
+	// different order produce one key rather than two
+	try {
+		$__roles = array_values(Drupal::currentUser()->getRoles());
+		sort($__roles);
+		$out['roles'] = $__roles;
+	} catch (Throwable $e) {
+		$out['roles'] = null;
+	}
+
+	$out['renderMs'] = round($clock() - $t0, 2);
+	return $out;
+});
+
 try {
 	if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
 		$GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
@@ -173,26 +212,4 @@ try {
 	$out['at'] = $e->getFile() . ':' . $e->getLine();
 }
 
-// what the between-request reset actually did, and who Drupal thinks is asking. Both are cheap
-// reads and both were needed to find the session leak; a render that comes back as the WRONG USER
-// is not distinguishable from a correct one by its bytes
-$out['reset'] = $GLOBALS['__pw_reset'] ?? null;
-try {
-	$out['uid'] = (int) Drupal::currentUser()->id();
-} catch (Throwable $e) {
-	$out['uid'] = null;
-}
-// THE ROLE SET, sorted, because the edge plan key is derived from it. A plan keyed on the raw
-// cookie is one plan per session per path, which maximises the cold-KV case it was built to avoid;
-// keyed on roles it is one per role set. Sorted so two accounts holding the same roles in a
-// different order produce one key rather than two
-try {
-	$__roles = array_values(Drupal::currentUser()->getRoles());
-	sort($__roles);
-	$out['roles'] = $__roles;
-} catch (Throwable $e) {
-	$out['roles'] = null;
-}
-
-$out['renderMs'] = round($clock() - $t0, 2);
-echo json_encode($out);
+$cfwReply(false);

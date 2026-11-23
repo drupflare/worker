@@ -12,6 +12,8 @@ import {
 	noteResident,
 	retainInterpreterEnabled
 } from '../../src/site-do';
+import { EXIT_REPLY_PHP } from '../../src/site/generated/assets';
+import { phpWhen } from '../../src/util/php';
 import {
 	freshSite,
 	inObject,
@@ -453,6 +455,8 @@ describe('the interpreter recycle', () => {
 		'drops on the isolate threshold when linear memory is still under its own',
 		async () => {
 			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				// the threshold is read against the plain boot's heap, which an image boot starts above
+				site.env = { ...site.env, BOOT_IMAGE: '0' };
 				await provision(site);
 				await site.ensurePhp();
 				const linear = await heap(site);
@@ -493,6 +497,8 @@ describe('the interpreter recycle', () => {
 		'drops an interpreter whose boot rebuilt the container, and keeps one that did not',
 		async () => {
 			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				// an image boot carries its own container, so an emptied row rebuilds nothing
+				site.env = { ...site.env, BOOT_IMAGE: '0' };
 				const jar = await provision(site);
 				site.sql.exec('DELETE FROM cache_container');
 				site.php = undefined;
@@ -1037,22 +1043,22 @@ describe('a boot after a drop instantiates into the dropped memory instead of be
 });
 
 /**
- * `exit()` ends the program before the harness echoes its JSON, and every later run on that
- * interpreter then executes nothing and prints nothing. The drop is the fallback; the real fix is
- * in the interpreter build.
+ * `exit()` on the pinned interpreter ends the script and leaves an instance that answers the next
+ * run, so a fragment that never armed a reply prints no JSON and the interpreter stays. Only a
+ * stale pin, whose instance runs nothing afterwards, is dropped.
  */
 describe('a request that ends in exit()', () => {
 	const harness = (body: string) => `<?php ${body}`;
 	const OK = harness('echo json_encode(["ok" => true]);');
 
 	it(
-		'drops the interpreter, says why, and lets the next run answer',
+		'keeps the interpreter and answers the next run when the fragment never armed a reply',
 		async () => {
 			const out = await inObject(freshSite(), async (site: ServeDo) => {
-				await site.ensurePhp();
+				const inst = await site.ensurePhp();
 				const before = Number((await stats(site)).exitedRuns ?? 0);
 				const replies: Record<string, unknown>[] = [];
-				const dropped: boolean[] = [];
+				const kept: boolean[] = [];
 				const next: unknown[] = [];
 				for (const body of [
 					'echo "partial"; exit(0);',
@@ -1061,20 +1067,76 @@ describe('a request that ends in exit()', () => {
 				]) {
 					await site.ensurePhp();
 					replies.push(await site.runJson(harness(body)));
-					dropped.push(site.php === undefined);
+					kept.push(site.php === inst);
 					next.push((await site.runJson(OK)).ok);
 				}
 				const after = await stats(site);
-				return { replies, dropped, next, counted: Number(after.exitedRuns) - before };
+				return { replies, kept, next, counted: Number(after.exitedRuns) - before };
 			});
 
 			for (const reply of out.replies) {
-				expect(String(reply.error)).toContain('exit()');
-				expect(reply.exited).toBe(true);
+				expect(reply.error).toBe('no JSON in output');
+				expect(reply.exited).toBeUndefined();
 			}
-			expect(out.dropped).toEqual([true, true, true]);
+			expect(out.kept).toEqual([true, true, true]);
 			expect(out.next).toEqual([true, true, true]);
-			expect(out.counted).toBe(3);
+			expect(out.counted).toBe(0);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'drops an interpreter that is dead after exit(), says why, and lets the next run answer',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				const inst = await site.ensurePhp();
+				const real = inst.php._run.bind(inst.php);
+				// a build without the exit fix: the run that exits works, every later one runs nothing
+				let dead = false;
+				inst.php._run = async (code: string) => {
+					if (dead) return 0;
+					const ret = await real(code);
+					dead = /exit\(/.test(code);
+					return ret;
+				};
+				const before = Number((await stats(site)).exitedRuns ?? 0);
+				const reply = await site.runJson(harness('echo "partial"; exit(0);'));
+				const dropped = site.php === undefined;
+				const next = (await site.runJson(OK)).ok;
+				const after = await stats(site);
+				return { reply, dropped, next, counted: Number(after.exitedRuns) - before };
+			});
+
+			expect(String(out.reply.error)).toContain('exit()');
+			expect(out.reply.exited).toBe(true);
+			expect(out.dropped).toBe(true);
+			expect(out.next).toBe(true);
+			expect(out.counted).toBe(1);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'does not print a reply a fatal left armed when a later fragment exits',
+		async () => {
+			const helpers = phpWhen("!function_exists('cfw_reply_arm')", EXIT_REPLY_PHP);
+			const armed = (body: string) =>
+				`<?php\n${helpers}\n$out = ["secret" => "request one", "html" => ""];\n` +
+				'$reply = cfw_reply_arm(function (bool $exited) use (&$out) { return $out; });\n' +
+				body;
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await site.ensurePhp();
+				const fatal = await site.run(armed('throw new Exception("boom");'));
+				const later = await site.run('<?php echo "page"; exit(0);');
+				const armedExit = await site.run(armed('echo "mine"; exit(0);'));
+				return { fatal, later, armedExit };
+			});
+
+			expect(out.fatal).toContain('Fatal error');
+			expect(out.later).toBe('page');
+			expect(out.later).not.toContain('request one');
+			// the disarm does not cost an armed run its own reply
+			expect(out.armedExit).toContain('request one');
 		},
 		REQUEST_TIMEOUT
 	);
@@ -1125,35 +1187,124 @@ describe('a request that ends in exit()', () => {
 });
 
 describe('a served page whose PHP ends in exit()', () => {
+	// the page's own PHP ends the request: it prints, sets a status, a header and a cookie, and exits
+	const EXITS = [
+		'header("X-Drupal-Exit: yes"); http_response_code(202);',
+		'setcookie("exit", "1"); echo "partial"; exit(0); '
+	].join(' ');
+	const patch = (php: string) =>
+		php.replace('$response = cfw_serve(', EXITS + '$response = cfw_serve(');
+
 	it(
-		'answers a 500 that names exit(), drops the interpreter and boots a working one next',
+		'answers what PHP produced, keeps the interpreter and serves the next request',
 		async () => {
 			const out = await inObject(await provisionedSite(), async (site: ServeDo) => {
 				const inst = await site.ensurePhp();
 				const real = inst.php._run.bind(inst.php);
 				// the render is the one fragment that carries the page: parked, it is base64 inside
 				// cfw_park_run(); unparked, it calls cfw_serve()
-				inst.php._run = (code: string) =>
-					real(
-						/cfw_park_run\(base64_decode|cfw_serve\(/.test(code)
-							? '<?php echo "partial"; exit(0);'
-							: code
-					);
+				inst.php._run = (code: string) => {
+					const parked = /cfw_park_run\(base64_decode\("([^"]*)"\)/.exec(code);
+					if (parked?.[1] !== undefined) {
+						const inner = patch(Buffer.from(parked[1], 'base64').toString('utf8'));
+						return real(code.replace(parked[1], Buffer.from(inner).toString('base64')));
+					}
+					return real(patch(code));
+				};
 				const served = await serveDirect(site, '/', '&inline=1&edge=0');
-				const dropped = site.php === undefined;
+				const kept = site.php === inst;
 				const exited = Number((await stats(site)).exitedRuns);
-				const recovered = await site.runJson('<?php echo json_encode(["ok" => true]);');
-				return { served, dropped, exited, recovered, fresh: site.php !== inst };
+				inst.php._run = real;
+				// this object has no database, so a render that runs to the end redirects to the installer
+				const again = await site.runJson(
+					renderPage('/', [], false, { origin: 'https://x.test' })
+				);
+				return { served, kept, exited, again, same: site.php === inst };
+			});
+
+			expect(out.served.status).toBe(202);
+			expect(out.served.body).toBe('partial');
+			expect(out.served.header('x-drupal-exit')).toBe('yes');
+			expect(out.served.header('set-cookie')).toContain('exit=1');
+			expect(out.served.header('x-cfw-cache')).not.toBe('ERROR');
+			expect(out.kept).toBe(true);
+			expect(out.exited).toBe(1);
+			expect(out.again.phpExit).toBeUndefined();
+			expect(out.again.location).toBe('/core/install.php');
+			expect(out.same).toBe(true);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'does not run a callback an earlier run queued with drupal_register_shutdown_function()',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await provision(site);
+				const inst = await site.ensurePhp();
+				await site.runJson(
+					renderPage('/filter/tips', [], false, { origin: 'https://x.test' })
+				);
+				// a request whose queue was never drained, as after a 5xx render
+				await site.run(
+					'<?php drupal_register_shutdown_function(function () { echo "STALE-QUEUE"; });'
+				);
+				const real = inst.php._run.bind(inst.php);
+				inst.php._run = (code: string) => {
+					const parked = /cfw_park_run\(base64_decode\("([^"]*)"\)/.exec(code);
+					if (parked?.[1] !== undefined) {
+						const inner = patch(Buffer.from(parked[1], 'base64').toString('utf8'));
+						return real(code.replace(parked[1], Buffer.from(inner).toString('base64')));
+					}
+					return real(patch(code));
+				};
+				return await serveDirect(site, '/filter/tips', '&inline=1&edge=0');
+			});
+
+			expect(out.status).toBe(202);
+			expect(out.body).toBe('partial');
+		},
+		REQUEST_TIMEOUT
+	);
+
+	// core's own exit: the handler for an uncaught exception prints the 500 page and ends the script
+	it(
+		'answers the 500 page Drupal prints before its own exit(), and the next page renders',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await provision(site);
+				const inst = await site.ensurePhp();
+				const real = inst.php._run.bind(inst.php);
+				let armed = true;
+				const fatal = (php: string) =>
+					php.replace(
+						'$response = cfw_serve(',
+						'_drupal_exception_handler(new Exception("cfw exit probe")); $response = cfw_serve('
+					);
+				inst.php._run = (code: string) => {
+					if (!armed) return real(code);
+					const parked = /cfw_park_run\(base64_decode\("([^"]*)"\)/.exec(code);
+					if (parked?.[1] !== undefined) {
+						const inner = fatal(Buffer.from(parked[1], 'base64').toString('utf8'));
+						return real(code.replace(parked[1], Buffer.from(inner).toString('base64')));
+					}
+					return real(fatal(code));
+				};
+				const served = await serveDirect(site, '/filter/tips', '&inline=1&edge=0');
+				armed = false;
+				const kept = site.php === inst;
+				const exited = Number((await stats(site)).exitedRuns);
+				const next = await serveDirect(site, '/filter/tips', '&inline=1&edge=0');
+				return { served, kept, exited, next, same: site.php === inst };
 			});
 
 			expect(out.served.status).toBe(500);
-			expect(out.served.body).toContain('exit()');
-			expect(out.served.body).not.toContain('partial');
-			expect(out.served.header('x-cfw-cache')).toBe('ERROR');
-			expect(out.dropped).toBe(true);
+			expect(out.served.body).toContain('The website encountered an unexpected error');
+			expect(out.kept).toBe(true);
 			expect(out.exited).toBe(1);
-			expect(out.recovered.ok).toBe(true);
-			expect(out.fresh).toBe(true);
+			expect(out.next.status).toBe(200);
+			expect(out.next.body).toContain('<html');
+			expect(out.same).toBe(true);
 		},
 		REQUEST_TIMEOUT
 	);

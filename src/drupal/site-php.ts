@@ -26,6 +26,7 @@ import {
 	DRIVER_LIVE_SUITE_PHP,
 	DRUPAL_OP_PHP,
 	DRUPAL_REQUEST_PHP,
+	EXIT_REPLY_PHP,
 	EXPORT_DATABASE_PHP,
 	FIRST_RUN_CONFIG_PHP,
 	GUZZLE_HANDLER_CHECK_PHP,
@@ -87,7 +88,9 @@ export const MIGRATE_DB = phpRender(MIGRATE_DB_PHP, { HOST_HELPERS });
  * on the first `handle()`, so later calls route against the first request's path. The fragment
  * clears the flag and drains the stack.
  */
-const PW_SERVE_INLINE = `\n${phpWhen("!function_exists('cfw_serve')", PW_SERVE_INLINE_PHP)}\n`;
+const PW_SERVE_INLINE =
+	`\n${phpWhen("!function_exists('cfw_serve')", PW_SERVE_INLINE_PHP)}\n` +
+	`${phpWhen("!function_exists('cfw_reply_arm')", EXIT_REPLY_PHP)}\n`;
 
 /**
  * Boots the Drupal kernel and stops; no request is handled.

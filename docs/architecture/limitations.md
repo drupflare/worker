@@ -9,12 +9,13 @@ Measured properties of the runtime, listed so they are known before they are hit
 - **Fibers are not available.** `new Fiber()` aborts the interpreter, because emscripten implements
   none of the context-switching calls it needs. The build rewrites core's five uses to a
   synchronous stand-in with the same surface.
-- **`exit()` in a request is not handled generically.** The serve prints its JSON result after the
-  kernel returns, and `pib_run` performs no request shutdown, so shutdown handlers never fire. A
-  request that reaches `exit` ends the program before the JSON and answers 500 with "no JSON in the
-  output", and an `exit` while an output buffer is open leaves the buffer open until the object
-  recycles. Measured with SimpleSAMLphp's own redirect. SimpleSAMLphp works through a switch for its
-  `exit`; other code that exits does not have one, and the generic handler is planned for v1.1.
+- **`exit()` ends the request and answers what PHP produced.** The interpreter survives an exit, runs
+  shutdown functions and fires output-buffer callbacks, and the page render prints its reply from a
+  shutdown function: the status, headers and cookies PHP had set, and the body it printed. The next
+  request runs on the same interpreter. A `finally` block, a destructor and a `catch` do not run on
+  exit. A page that exits is not stored in the page cache. Only the page render answers this way;
+  other internal runs that exit report "no JSON in the output". WordPress turns the exits it knows
+  into stops before they happen.
 - **Shell commands run only through a router.** `exec()`, `shell_exec()`, `proc_open()` and the rest
   serve a fixed set of programs with platform equivalents (`echo`, `date`, `file`, `zip`, `unzip`,
   `gzip`, `wget`, `curl`, checksums and a few more). Pipes, redirection and any other program fail
@@ -103,7 +104,13 @@ Measured properties of the runtime, listed so they are known before they are hit
   POST is repeated only when the object never started it: it records an attempt id before the page
   runs, so a missing record means nothing was saved. A POST it had started gets a short "Try Again
   in a Moment" page with `Retry-After: 2` instead of Cloudflare's 1101, because it may already have
-  saved.
+  saved. A GET that runs cron (`/cron/{key}`, `/admin/reports/status/run-cron`, `wp-cron.php`) is
+  treated as a POST: it is not sent again, because the first try may already have run every hook.
+- **A reset can leave one cron firing unfinished.** The alarm claims each firing in a durable
+  outbox before it runs. A firing that reached only SQL passes is replayed; one that reached a PHP
+  hook is reported in `/serve-stats` under `outboxReported`, and the cursor moves past that hook so
+  it does not run twice. Drupal's own queues stay at-least-once: an item whose worker finished
+  before its delete can run again after its lease expires.
 - **A freshly deployed site is claimable until it is provisioned.** `/firstrun` answers without a
   credential while the site has never been configured, because the owner token that `/export` takes
   is minted by that route and nowhere else; gating it would mean the only way to get your data out

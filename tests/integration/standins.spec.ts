@@ -292,8 +292,15 @@ echo json_encode($out);`);
 			const seen = await inObject(freshSite(), async (site: ServeDo) => {
 				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
 				await site.runJson(BOOT_KERNEL);
+				// queued from inside the request; a render empties what an earlier run left
 				await site.runJson(String.raw`<?php
-drupal_register_shutdown_function(function () { $GLOBALS['cfw_shutdown_ran'] = ($GLOBALS['cfw_shutdown_ran'] ?? 0) + 1; });
+\Drupal::service('event_dispatcher')->addListener('kernel.request', function () {
+	static $queued = false;
+	if (!$queued) {
+		$queued = true;
+		drupal_register_shutdown_function(function () { $GLOBALS['cfw_shutdown_ran'] = ($GLOBALS['cfw_shutdown_ran'] ?? 0) + 1; });
+	}
+}, 1000);
 echo json_encode(['queued' => true]);`);
 				const read = () =>
 					site.runJson(

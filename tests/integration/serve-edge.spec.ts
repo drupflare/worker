@@ -999,30 +999,18 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		expect(sql.status).toBe(404);
 	});
 
-	it(
-		'renders an unclaimed path as a page rather than 404ing it',
-		{ timeout: 90_000 },
-		async () => {
-			// drupal owns the url space: the worker must not refuse the path, and drupal's own 404 is a valid answer
-			// the assertion checks for the worker's refusal string (not found) rather than a status, since drupal can 404 too
-			let res = await SELF.fetch('https://cfw.local/definitely-not-a-route');
-			// the first migration starts at the alarm floor now, so wait it out rather than read the migrating page
-			for (let i = 0; i < 40 && res.headers.get('x-cfw-migrate') !== null; i++) {
-				await res.text();
-				await new Promise((resolve) => setTimeout(resolve, 2_000));
-				res = await SELF.fetch('https://cfw.local/definitely-not-a-route');
-			}
-			const body = await res.text();
-			expect(body, 'the Worker refused a path that belongs to Drupal').not.toBe(
-				'not found\n'
-			);
-			// and it reached the serving path rather than some other branch that also answers a body
-			expect(
-				res.headers.get('x-cfw-cache'),
-				'nothing on the serving path answered it'
-			).not.toBeNull();
-		}
-	);
+	it('renders an unclaimed path as a page rather than 404ing it', async () => {
+		// drupal owns the url space: the worker must not refuse the path, and drupal's own 404 is a valid answer
+		// the assertion checks for the worker's refusal string (not found) rather than a status, since drupal can 404 too
+		const res = await SELF.fetch('https://cfw.local/definitely-not-a-route');
+		const body = await res.text();
+		expect(body, 'the Worker refused a path that belongs to Drupal').not.toBe('not found\n');
+		// and it reached the serving path rather than some other branch that also answers a body
+		expect(
+			res.headers.get('x-cfw-cache'),
+			'nothing on the serving path answered it'
+		).not.toBeNull();
+	});
 });
 
 // the rewrite is asserted through a stand-in namespace: the url the object is asked for is invisible past a real hop

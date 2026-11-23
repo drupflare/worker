@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ATTEMPT_HEADER, attemptKey } from '../../../src/ops/attempt';
 import { objectResetPage, resetRecovery } from '../../../src/site';
+import { writesOnGet } from '../../../src/site/guards';
 
 /**
  * What the front worker does when the hop to a site's object throws.
@@ -22,6 +23,45 @@ describe('whether a reset request is sent again', () => {
 		expect(resetRecovery({}, 'POST', true)).toBe('refuse');
 		expect(resetRecovery({ retryable: true }, 'HEAD')).toBe('retry');
 		expect(resetRecovery(null, 'GET')).toBe('refuse');
+	});
+});
+
+describe('a GET that runs cron is not sent again on its own', () => {
+	it('names the routes that run cron on a GET', () => {
+		for (const path of [
+			'/cron/ABCDEF123',
+			'/cron/ABCDEF123/',
+			'/admin/reports/status/run-cron',
+			'/wp-cron.php'
+		]) {
+			expect(writesOnGet(path), path).toBe(true);
+		}
+		for (const path of [
+			'/',
+			'/cron',
+			'/cron/a/b',
+			'/admin/reports/status',
+			'/node/1',
+			'/crons/x'
+		]) {
+			expect(writesOnGet(path), path).toBe(false);
+		}
+	});
+
+	it('refuses a reset GET to such a route unless it carries an attempt id, as a POST is', () => {
+		expect(resetRecovery(MEMORY_RESET, 'GET', false, true)).toBe('refuse');
+		expect(resetRecovery(MEMORY_RESET, 'HEAD', false, true)).toBe('refuse');
+		expect(resetRecovery(MEMORY_RESET, 'GET', true, true)).toBe('retry');
+		// every other GET keeps its one retry
+		expect(resetRecovery(MEMORY_RESET, 'GET', false, false)).toBe('retry');
+		expect(resetRecovery(MEMORY_RESET, 'GET')).toBe('retry');
+		// and a refusal still needs a reset, writing route or not
+		expect(resetRecovery({}, 'GET', true, true)).toBe('refuse');
+	});
+
+	it('shows the "may not have been saved" page for it, since the first try may have run', async () => {
+		expect(await objectResetPage('GET', true).text()).toContain('may not have been saved');
+		expect(await objectResetPage('GET', false).text()).not.toContain('may not have been saved');
 	});
 });
 

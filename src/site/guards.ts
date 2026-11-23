@@ -83,8 +83,16 @@ export interface BodyTooLarge {
  * refuses the repeat if the first try started). An `overloaded` object is not retried unless it was
  * reset: a memory reset arrives as `overloaded` plus `durableObjectReset` with no `retryable`
  * (deployed probe, n=8).
+ *
+ * A GET that writes (`writes`, see {@link writesOnGet}) is treated as a POST: it is retried only
+ * with an attempt id, and a GET never has one, so it is not retried.
  */
-export function resetRecovery(e: unknown, method: string, attempted = false): 'retry' | 'refuse' {
+export function resetRecovery(
+	e: unknown,
+	method: string,
+	attempted = false,
+	writes = false
+): 'retry' | 'refuse' {
 	const err = e as {
 		retryable?: unknown;
 		overloaded?: unknown;
@@ -92,13 +100,32 @@ export function resetRecovery(e: unknown, method: string, attempted = false): 'r
 	} | null;
 	const reset = err?.durableObjectReset === true;
 	if (!reset && (err?.retryable !== true || err.overloaded === true)) return 'refuse';
-	return method === 'GET' || method === 'HEAD' || attempted ? 'retry' : 'refuse';
+	const safe = (method === 'GET' || method === 'HEAD') && !writes;
+	return safe || attempted ? 'retry' : 'refuse';
+}
+
+/**
+ * The GET routes that change state: they run cron, so a repeat after a reset whose first try
+ * committed runs every hook twice. Drupal's `system.run_cron` and `system.cron`
+ * (`system.routing.yml`) take no method restriction, and WordPress runs cron from `wp-cron.php`.
+ */
+const WRITING_GETS: readonly RegExp[] = [
+	/^\/admin\/reports\/status\/run-cron\/?$/,
+	/^\/cron\/[^/]+\/?$/,
+	/^\/wp-cron\.php$/i
+];
+
+/** whether a GET to `pathname` writes, so the front worker must not retry it on its own */
+export function writesOnGet(pathname: string): boolean {
+	return WRITING_GETS.some((route) => route.test(pathname));
 }
 
 /** a short page with a retry hint, in place of the platform's 1101 */
-export function objectResetPage(method: string): Response {
+export function objectResetPage(method: string, writes = false): Response {
 	const saved =
-		method === 'GET' || method === 'HEAD' ? '' : GUARDS_OBJECT_RESET_UNSAVED_HTML.trimEnd();
+		(method === 'GET' || method === 'HEAD') && !writes
+			? ''
+			: GUARDS_OBJECT_RESET_UNSAVED_HTML.trimEnd();
 	return new Response(renderTemplate(GUARDS_OBJECT_RESET_HTML, { SAVED: saved }), {
 		status: 503,
 		headers: {

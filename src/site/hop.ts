@@ -3,7 +3,7 @@ import { AUTH_REQUEST_HEADER } from '../ops/auth-budget';
 import { ABSORBED_HEADER } from '../ops/cold-encounter';
 import { shouldFailover } from '../ops/replica-routing';
 import { siteStubOptions } from '../ops/site-id';
-import { objectResetPage, resetRecovery } from './guards';
+import { objectResetPage, resetRecovery, writesOnGet } from './guards';
 import { drainAbsorbed } from './memos';
 import { DO_ROUTE } from './routes';
 import type { AuthState, FrontContext, Hop } from './types';
@@ -75,6 +75,11 @@ export async function buildHop(f: FrontContext, auth: AuthState): Promise<HopReq
 export async function sendHop(f: FrontContext, hop: HopRequest): Promise<Response | Hop> {
 	const { env, site, laneOf, stubOf } = f;
 	const { innerRequest, buffered, attempt } = hop;
+	// a GET that runs cron is retried only with an attempt id, and a GET has none
+	const writes = writesOnGet(f.url.pathname);
+	const recovery = (e: unknown) =>
+		resetRecovery(e, innerRequest.method, attempt !== undefined, writes);
+	const resetPage = () => objectResetPage(innerRequest.method, writes);
 	// built before the send (a refusing replica consumes the request); a body is rebuilt from
 	// `buffered`, never cloned: an unread tee never releases and a forwarded POST hung forever
 	const retryOnPrimary =
@@ -103,18 +108,17 @@ export async function sendHop(f: FrontContext, hop: HopRequest): Promise<Respons
 		res = await stubOf().fetch(innerRequest);
 	} catch (e) {
 		// a reset object throws out of the hop, and uncaught that is the visitor's 1101
-		if (resetRecovery(e, innerRequest.method, attempt !== undefined) !== 'retry')
-			return objectResetPage(innerRequest.method);
+		if (recovery(e) !== 'retry') return resetPage();
 		f.forgetStub();
 		retriedReset = true;
 		try {
 			res = await stubOf().fetch(rebuilt());
 		} catch {
-			return objectResetPage(innerRequest.method);
+			return resetPage();
 		}
 	}
 	// the repeat found its first try had started, so it may have been saved
-	if (res.headers.get(ATTEMPT_HEADER) === 'started') return objectResetPage(innerRequest.method);
+	if (res.headers.get(ATTEMPT_HEADER) === 'started') return resetPage();
 	if (retriedReset) {
 		res = new Response(res.body, res);
 		res.headers.set('x-cfw-retried', 'reset');
@@ -132,15 +136,13 @@ export async function sendHop(f: FrontContext, hop: HopRequest): Promise<Respons
 			res = await primary().fetch(retryOnPrimary);
 		} catch (e) {
 			// the primary can reset for memory too; this hop gets its own one retry
-			if (resetRecovery(e, innerRequest.method, attempt !== undefined) !== 'retry')
-				return objectResetPage(innerRequest.method);
+			if (recovery(e) !== 'retry') return resetPage();
 			try {
 				res = await primary().fetch(rebuilt());
 			} catch {
-				return objectResetPage(innerRequest.method);
+				return resetPage();
 			}
-			if (res.headers.get(ATTEMPT_HEADER) === 'started')
-				return objectResetPage(innerRequest.method);
+			if (res.headers.get(ATTEMPT_HEADER) === 'started') return resetPage();
 			res = new Response(res.body, res);
 			res.headers.set('x-cfw-retried', 'reset');
 		}

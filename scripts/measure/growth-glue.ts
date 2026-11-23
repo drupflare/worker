@@ -155,6 +155,8 @@ export function emitTunedGlue(root = process.cwd(), abi: Abi = null): string {
 		throw new Error(`growth site not found in ${from}; emscripten changed its emitted form`);
 	}
 	const stepped = glue.replace(STEP_SITE, `oldSize*(1+${stepFor(abi)}/cutDown)`);
+	// the wasm64 arm passes BigInt pointers through ccall and keeps the stock 32 MiB stack
+	const strings = abi === 'wasm64' ? (g: string) => g : heapStringArgs;
 	const out = resolve(root, tunedGlueFor(abi));
 	writeFileSync(
 		out,
@@ -162,13 +164,49 @@ export function emitTunedGlue(root = process.cwd(), abi: Abi = null): string {
 			provideReallocarray(
 				safeHeapSubarray(
 					recordDecodeFailure(
-						recordGrowth(plugCallableLeak(closeVrznoBridge(closeSockets(stepped))))
+						recordGrowth(
+							strings(plugCallableLeak(closeVrznoBridge(closeSockets(stepped))))
+						)
 					)
 				)
 			)
 		).source
 	);
 	return out;
+}
+
+/** the largest string argument `ccall` still copies onto the C stack; longer ones go to the heap */
+export const HEAP_STRING_MIN = 65_536;
+
+const CCALL_STRING_SITE =
+	/var toC=\{string:str=>\{var ret=0;if\(str!==null&&str!==undefined&&str!==0\)\{ret=stringToUTF8OnStack\(str\)\}return ret\}/;
+const CCALL_DONE_SITE = /function onDone\(ret\)\{if\(stack!==0\)stackRestore\(stack\);/;
+
+/**
+ * Copies a long string argument of `ccall` to the heap instead of the C stack.
+ *
+ * emscripten writes every string argument with `stringToUTF8OnStack`, so `php._run()` with code
+ * longer than the C stack writes past the stack's end; with 32 MiB that is a 32 MiB script, with a
+ * smaller guarded stack an ordinary large one traps in `stackAlloc`. A heap copy is freed when the
+ * call returns, the same lifetime the stack copy had.
+ */
+export function heapStringArgs(glue: string): string {
+	if (!CCALL_STRING_SITE.test(glue) || !CCALL_DONE_SITE.test(glue)) {
+		throw new Error(
+			'ccall string site not found in the glue; emscripten changed its emitted form'
+		);
+	}
+	return glue
+		.replace(
+			CCALL_STRING_SITE,
+			'var heapArgs=[];var toC={string:str=>{var ret=0;if(str!==null&&str!==undefined&&str!==0)' +
+				`{var n=lengthBytesUTF8(str)+1;if(n>${HEAP_STRING_MIN}){ret=_malloc(n);` +
+				'stringToUTF8(str,ret,n);heapArgs.push(ret)}else{ret=stringToUTF8OnStack(str)}}return ret}'
+		)
+		.replace(
+			CCALL_DONE_SITE,
+			'function onDone(ret){if(stack!==0)stackRestore(stack);for(var p of heapArgs)_free(p);'
+		);
 }
 
 const CALLABLE_SITE =
@@ -527,7 +565,9 @@ export function emitVariant(step: number, root = process.cwd()): string {
 			safeHeapSubarray(
 				recordDecodeFailure(
 					recordGrowth(
-						plugCallableLeak(glue.replace(STEP_SITE, `oldSize*(1+${step}/cutDown)`))
+						heapStringArgs(
+							plugCallableLeak(glue.replace(STEP_SITE, `oldSize*(1+${step}/cutDown)`))
+						)
 					)
 				)
 			)

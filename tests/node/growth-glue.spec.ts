@@ -9,6 +9,8 @@ import {
 	emitTunedGlue,
 	emitVariant,
 	growthLadder,
+	HEAP_STRING_MIN,
+	heapStringArgs,
 	plugCallableLeak,
 	provideReallocarray,
 	REALLOCARRAY,
@@ -24,6 +26,8 @@ import {
 	variantPath,
 	VRZNO_CLOSURE
 } from '../../scripts/measure/growth-glue';
+import { TUNED_WASM } from '../../scripts/measure/initial-memory';
+import { INTERPRETER_MEMORY } from '../../src/do/isolate';
 import { closedProblems, runAttempts } from '../helpers/vrzno-bridge';
 
 /**
@@ -119,7 +123,9 @@ describe.skipIf(!have)('rewriting the shipping glue', () => {
 			const source = readFileSync(resolve(process.cwd(), SHIPPING_GLUE), 'utf8');
 			expect(glue.replace('oldSize*(1+0.05/cutDown)', 'oldSize*(1+.2/cutDown)')).toBe(
 				provideReallocarray(
-					safeHeapSubarray(recordDecodeFailure(recordGrowth(plugCallableLeak(source))))
+					safeHeapSubarray(
+						recordDecodeFailure(recordGrowth(heapStringArgs(plugCallableLeak(source))))
+					)
 				)
 			);
 		} finally {
@@ -156,6 +162,71 @@ const VIEWS =
 
 const DECODE = 'x=()=>{return UTF8Decoder.decode(heapOrArray.subarray(idx,endPtr))};';
 
+/** emscripten's ccall as the shipping glue emits it, cut to the two sites the rewrite touches */
+const CCALL =
+	'var ccall=(ident,returnType,argTypes,args,opts)=>{var toC={string:str=>{var ret=0;' +
+	'if(str!==null&&str!==undefined&&str!==0){ret=stringToUTF8OnStack(str)}return ret}};' +
+	'var ret=f();function onDone(ret){if(stack!==0)stackRestore(stack);return ret}};';
+
+describe('long ccall string arguments', () => {
+	it('copies a string over the threshold to the heap and frees it when the call returns', () => {
+		const out = heapStringArgs(CCALL);
+		expect(out).toContain(`if(n>${HEAP_STRING_MIN}){ret=_malloc(n);stringToUTF8(str,ret,n)`);
+		expect(out).toContain('else{ret=stringToUTF8OnStack(str)}');
+		expect(out).toContain('stackRestore(stack);for(var p of heapArgs)_free(p);');
+	});
+
+	it('refuses a glue whose ccall it cannot find', () => {
+		expect(() => heapStringArgs('var ccall=()=>{}')).toThrow(/ccall string site not found/);
+	});
+
+	it.skipIf(!existsSync(TUNED_GLUE) || !existsSync(TUNED_WASM))(
+		'runs a script longer than the C stack on the tuned interpreter',
+		async () => {
+			// 40 MiB of code, past the 8 MiB stack: on the stack this wrote over static data
+			const g = globalThis as Record<string, unknown>;
+			g.location ??= new URL(pathToFileURL(process.cwd() + '/').href);
+			g.self ??= globalThis;
+			const { PhpBase } = await import('php-wasm/PhpBase');
+			const factory = (
+				(await import(pathToFileURL(resolve(TUNED_GLUE)).href)) as {
+					default: unknown;
+				}
+			).default;
+			const module = await WebAssembly.compile(readFileSync(TUNED_WASM));
+			const out: string[] = [];
+			const php = new PhpBase(
+				Promise.resolve({ default: factory }) as never,
+				{
+					ini: 'opcache.enable=0',
+					printErr: () => {},
+					instantiateWasm(
+						imports: WebAssembly.Imports,
+						receive: (i: WebAssembly.Instance, m: WebAssembly.Module) => void
+					) {
+						(imports.env as Record<string, unknown>).memory = new WebAssembly.Memory({
+							...INTERPRETER_MEMORY
+						});
+						WebAssembly.instantiate(module, imports).then((i) => receive(i, module));
+						return {};
+					}
+				} as never
+			) as unknown as {
+				_run(code: string): Promise<unknown>;
+				addEventListener(t: string, f: (e: Event) => void): void;
+			};
+			php.addEventListener('output', (e) => out.push(String((e as CustomEvent).detail)));
+			const bytes = 40 * 1_048_576;
+			await php._run(`<?php $s = '${'x'.repeat(bytes)}'; echo strlen($s);`);
+			expect(out.join('')).toBe(String(bytes));
+			out.length = 0;
+			await php._run('<?php echo json_encode(["ok" => true]);');
+			expect(out.join('')).toBe('{"ok":true}');
+		},
+		120_000
+	);
+});
+
 describe('a glue that already carries a step', () => {
 	// phasm's LP64 patch emits 0.05 on the wasm64 build, so an anchor on emscripten's `.2` refused it
 	it('is re-emitted at the new step', () => {
@@ -164,12 +235,12 @@ describe('a glue that already carries a step', () => {
 			mkdirSync(dirname(resolve(root, SHIPPING_GLUE)), { recursive: true });
 			writeFileSync(
 				resolve(root, SHIPPING_GLUE),
-				`a();oldSize*(1+0.05/cutDown);${GROW}${DECODE}${VIEWS}${CALLABLE}`
+				`a();oldSize*(1+0.05/cutDown);${GROW}${DECODE}${VIEWS}${CALLABLE}${CCALL}`
 			);
 			emitVariant(0.11, root);
 			const out = readFileSync(resolve(root, variantPath(0.11)), 'utf8');
 			expect(out).toBe(
-				`a();oldSize*(1+0.11/cutDown);${safeHeapSubarray(recordDecodeFailure(recordGrowth(GROW + DECODE)) + VIEWS)}${plugCallableLeak(CALLABLE)}`
+				`a();oldSize*(1+0.11/cutDown);${safeHeapSubarray(recordDecodeFailure(recordGrowth(GROW + DECODE)) + VIEWS)}${plugCallableLeak(CALLABLE)}${heapStringArgs(CCALL)}`
 			);
 		} finally {
 			rmSync(root, { recursive: true, force: true });

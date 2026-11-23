@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { SHIPPING_STEP } from '../../scripts/measure/growth-glue';
-import { INTERPRETER_MEMORY, keepSpareMemory } from '../../src/site-do';
+import { renderPage } from '../../src/drupal/site-php';
 import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-do';
+
+const AUTH_PASS = 'cfw-LinearMemory-Pass-4412';
 
 /**
  * The wasm heap's real shape on the SHIPPING interpreter, measured before anything
@@ -100,6 +102,38 @@ async function readHeap(): Promise<Reading> {
 	});
 }
 
+/** an authenticated `/` on a plain boot: the path the start and the isolate limit have to fit */
+async function readAuthHeap(): Promise<Reading> {
+	return inObject(freshSite(), async (site: ServeDo) => {
+		site.env = { ...site.env, BOOT_IMAGE: '0' };
+		await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+		// a resident migrate interpreter plus the idle boot is two interpreters in one isolate
+		site.php = undefined;
+		await site.fetch(new Request('https://do.local/__php'));
+		const bootedIdle = await heapOf(site);
+		await site.fetch(
+			new Request('https://do.local/__firstrun', {
+				method: 'POST',
+				body: JSON.stringify({ adminPass: AUTH_PASS, siteName: 'LinearMemory' }),
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+		const login = (await site.runJson(
+			renderPage('/user/login', [], false, {
+				method: 'POST',
+				body: `name=admin&pass=${encodeURIComponent(AUTH_PASS)}&form_id=user_login_form&op=Log+in`,
+				contentType: 'application/x-www-form-urlencoded',
+				cookie: ''
+			})
+		)) as Record<string, unknown>;
+		const lines = Array.isArray(login['setCookie']) ? (login['setCookie'] as string[]) : [];
+		const jar = (lines.find((l) => /^S?SESS/.test(l))?.split(';')[0] ?? '').trim();
+		site.php = undefined;
+		await site.runJson(renderPage('/', [], false, { cookie: jar }));
+		return { bootedIdle, afterRender: await heapOf(site) };
+	});
+}
+
 describe('the wasm heap on the shipping 8.5 build', () => {
 	it('starts at INITIAL_MEMORY and leaves the JS side room it also needs', async () => {
 		const heap = await readHeap();
@@ -111,49 +145,29 @@ describe('the wasm heap on the shipping 8.5 build', () => {
 		expect(heap.bootedIdle % 65_536, 'wasm pages are 64 KiB').toBe(0);
 	}, 900_000);
 
-	it('starts below what an anonymous render needs, so the start reserves nothing unused', async () => {
+	it('an anonymous render fits inside the start and does not grow it', async () => {
 		const heap = await readHeap();
-		// At 96 MiB a render fitted inside the start, and at 80 it grew exactly once. At 64 it grows
-		// in 1% rungs to the same ~87 MB, because the end size is set by demand and the step, not by
-		// the start. What the lower start removes is memory a FRESH isolate is charged for and never
-		// touches: a deployed memory is billed at its full size, and a fresh farmOS isolate read
-		// 67-71 MB after a boot and a render. The size a render lands on is bounded by the next case
-		expect(heap.afterRender).toBeGreaterThan(heap.bootedIdle);
+		// the 64 MiB start holds an anonymous render with no growth (n=5, 2026-11-23)
+		expect(heap.afterRender).toBe(heap.bootedIdle);
 		expect(heap.afterRender % 65_536).toBe(0);
 	}, 900_000);
 
-	it('lands a render within one growth step of where a larger start lands it', async () => {
-		const low = await readHeap();
-		// a start still below the render's demand, handed to the next boot as a dropped memory
-		const pages = Math.floor((low.afterRender * 0.9) / 65_536);
-		// held to the end of the case: the spare slot is weak, so an unreferenced memory is
-		// collected whenever V8 pleases and the boot then starts at the default
-		const spare = new WebAssembly.Memory({
-			initial: pages,
-			maximum: INTERPRETER_MEMORY.maximum
-		});
-		keepSpareMemory({ binary: { wasmMemory: spare } });
-		const high = await readHeap();
-		expect(spare.buffer.byteLength, 'the spare memory outlived the boot').toBeGreaterThan(0);
-		expect(high.bootedIdle, 'the boot took the larger start').toBe(pages * 65_536);
-		expect(high.afterRender).toBeGreaterThan(high.bootedIdle);
-		// both climb 1% rungs to the same demand, so they differ by less than one rung; anything the
-		// start itself reserved would show up here as a gap
-		const rung = Math.ceil(
-			(Math.max(low.afterRender, high.afterRender) * SHIPPING_STEP) / 65_536
-		);
-		expect(Math.abs(low.afterRender - high.afterRender)).toBeLessThanOrEqual(rung * 65_536);
+	it('an authenticated render grows past the start', async () => {
+		// an anonymous render fits the 8 MiB-stack start; only an authenticated one grows it
+		const heap = await readAuthHeap();
+		expect(
+			heap.afterRender,
+			'the authenticated render needs more than the start'
+		).toBeGreaterThan(heap.bootedIdle);
+		expect(heap.afterRender % 65_536).toBe(0);
 	}, 900_000);
 
 	it('leaves room an AUTHENTICATED render still has to fit into', async () => {
-		const heap = await readHeap();
+		const heap = await readAuthHeap();
 		const headroom = ISOLATE_LIMIT - heap.afterRender;
-		// 32.00 MiB from an anonymous render. NOT spare room: the lazy-FS budget is 4 MiB and the
-		// compressed layer blob ~11 MiB, both on the JS side of the SAME isolate, and an
-		// authenticated render spends another 9.88 MiB of it. The binding figure is the auth
-		// column in the table above, never this one
-		expect(headroom).toBeGreaterThan(16 * MIB);
-		expect(headroom).toBeLessThan(48 * MIB);
+		// the old pin left under 48 MiB here, so the lower bound checks the 24 MiB the 8 MiB stack freed
+		expect(headroom).toBeGreaterThan(48 * MIB);
+		expect(headroom).toBeLessThan(64 * MIB);
 	}, 900_000);
 
 	it('no longer needs the retry ladder for an ordinary growth', async () => {

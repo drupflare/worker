@@ -919,6 +919,26 @@ alignment does not matter. Dropping `/dev/urandom`'s fd throws `RandomException`
 sqlite fds gives a locking-protocol error after an 80-120 s stall, which on the edge is a hung
 request.
 
+**What the site object holds before PHP runs, measured 2026-11-22.** A headroom ladder allocates 4
+MiB `ArrayBuffer`s inside the object until the platform replaces the isolate, and reads how many
+fit. On a bare Durable Object on the paid account it reads 216 MiB (9 of 9 ladders). Inside a freshly
+installed Thunder site object it reads 156 to 160 MiB after `/recycle`, after `GET /` and after a
+logged-in admin page (3 replicates, one contaminated and shown separately in the run's results), with
+linear memory 0 on every step: those pages rendered in another object, so the site object held no
+interpreter. The worker itself therefore costs 56 to 60 MiB of the ladder's units before PHP. After a
+cache flush, which runs PHP in the site object, the ladder reads 36 MiB: about 58 for the worker, 72
+for linear memory (32 MiB of it the C stack band) and about 50 attached to the running instance (the
+pack, the file system and glue heap, and the flush's own churn). The ladder counts in `ArrayBuffer`
+steps, and a held buffer costs about 1.5 steps per MiB while wasm memory costs about 1.0, so these
+figures are on the ladder's scale and not bytes.
+
+A heap snapshot of the cold site object in local workerd, which is not the platform's accounting,
+reaches 28.8 MB: the compiled PHP module is 15.2 MB of native memory, strings 6.7 MB (the bundle's
+own source text is 3.4 MB of it), compiled JavaScript 3.2 MB, `tinyimg` and `wasm3` 1.1 MB, and
+`ArrayBuffer` backing stores 0.9 MB. No large data buffer is held before PHP boots, so the baseline is
+code and source, which no paging reaches. The gap between the local 28.8 MB and the deployed 56 to 60
+is not explained by the snapshot.
+
 ### Bundle Size
 
 **The ceiling is 67,108,864 bytes uncompressed, the same on free and paid, as of 2026-09-04.**
@@ -1600,6 +1620,38 @@ interpreter today, bounded by the coloring problem: `yield` suspends only its ow
 code written for it and cannot retrofit Predis, Guzzle or Drupal's renderer. A parked continuation
 also lives in linear memory, so `recycleIfOversized()` destroys one silently; anything built on it
 needs a terminating observation rather than a bound, for the reason `/user/password` records.
+
+**`exit()` and `die()`: the pinned build survives them, and the render harness answers from a shutdown
+function.** On the build before `PIB_RUN_EXIT`, `exit()` left an unwind-exit pending, every later run on
+the instance printed nothing, and the host probed for it and dropped the interpreter (n=10 per case,
+local and deployed agreeing). The pin is now built with `PIB_RUN_EXIT=1`: `pib_run` clears the exit, the
+instance answers the next run, and shutdown functions, output-buffer callbacks and
+`header_register_callback` fire. A finally block, a destructor and a catch of `Throwable` do not run. The
+harness echo is still skipped, so `cfw_reply_arm()` (`src/site/php/exit-reply.php`) registers a shutdown
+function and the render fragment returns its reply from there: status, headers and cookies from PHP's
+header state, and the body from what PHP printed, flushed through its own output buffers first. A
+function registered during shutdown runs after every other one, which is why the hook only queues the
+printing function. Shutdown order, buffer callbacks, header state across runs, fatals (no shutdown
+functions run, return code 1) and a shutdown function that itself exits were each probed on the pin
+before the design was fixed. Tested on the pin: 38 node cases, including 20 consecutive exits each
+answered and followed by a normal run (0 empty replies), and in the worker a served page that exits
+(status 202, header, cookie and body as PHP set them) and Drupal's own uncaught-exception handler, which
+prints its 500 page and exits. The dead-instance drop stays for a build without the fix.
+
+A live instance across exits opened two ways for one request's state to reach another, both closed
+with tests that failed first. A fatal inside an armed render left its reply queued, so a later
+fragment that exited printed the earlier request's page; the host now disarms after any run that
+returns non-zero, and not at every run start, because a parked request resumes in later runs and
+still needs its reply. Drupal's shutdown queue (lock release, `Database::commitAllOnShutdown`, batch
+and module callbacks) is drained only on a normal finish and skipped for a 5xx, so callbacks queued by
+one request fired at a later request's exit; the render now empties that queue at the start of each
+run. Callbacks registered with PHP's own `register_shutdown_function` cannot be cleared from PHP and
+still fire at the next exit. The ones the render path makes register once per interpreter (the
+logger's fatal handler, Guzzle's task queue, Symfony's error handler), so nothing found is per
+request, but a contrib module could be. Clearing them needs `pib_run` to call
+`php_free_shutdown_functions()` at run start, except while a parked request is pending; a test marked
+as expected to fail turns green when that lands. Only the page render answers an exit; the shell
+harvest, the fragment renders, `drupal/request.php` and WordPress still answer "no JSON in output".
 
 The phase ladder below is a **different workload from the 1,398 ms** and must not be subtracted from
 it. It is a first-ever fill on a fresh site, which builds and writes `cache_container`,
@@ -2513,6 +2565,24 @@ Little's Law closes at every point: 194 ms service x 6 connections = 1,164 again
 (1,411 / 1,414 at N=1), which is the settle working -- the multi-second tails every earlier run
 showed were the objects' own fill batches rather than service time.
 
+**One job spread over objects gets parallel CPU, and one spread over a service binding does not.**
+Measured 2026-11-22 on the paid account: one coordinator invocation starts k calls of a fixed wasm
+CPU kernel at once (about 0.83 s of CPU each, digests checked against a local run) and the client
+times the batch, 5 reps per cell. Each call returns a module-scope id, so co-tenancy is read rather
+than inferred.
+
+| where the k calls run | k=2 | k=4 | k=8 | k=16 | isolates |
+| --- | --- | --- | --- | --- | --- |
+| Durable Objects of one class | 1.90x | 3.77x | 5.76x | 10.97x | k distinct, every rep |
+| Durable Objects of k classes | 1.96x | 3.79x | 7.66x | | k distinct |
+| Durable Objects in k scripts | 2.08x | 4.03x | 7.63x | | k distinct |
+| a Worker through a service binding | 1.04x | 1.05x | 1.06x | 1.06x | one, in 24 of 25 |
+
+Speedup is k times one call's wall over the batch wall. Distinct object ids got distinct isolates
+whatever the class, and the batch wall stayed near one call's. The service-bound calls landed on the
+caller's isolate and ran one after another; the one cell that split across two isolates finished in
+half the time. A fan-out of render or fill work therefore goes to objects, not to a service binding.
+
 ### How a Replica Is Started, and the Value a Fresh Install Does Not Have
 
 The log carries changes and cannot carry a beginning. `planApply()` requires every record to build on
@@ -2712,8 +2782,8 @@ the share up: the direction a missing reading has to fail in.
 folio v1 (`@gmitch215/folio`) measured a baked after-render heap cutting a Drupal cold boot, on the
 copy of this host at commit `f902595cc`. Its figures are published ones, not this repository's:
 first request of a fresh matching site 3,822 to 1,035 ms of `cpuTime` (n=4 per arm, paid account,
-PHP 8.5.12), and a serve after a drop 989 to 555 ms (n=4). Wiring it in is `BOOT_IMAGE`, off by
-default. A bake takes every 64 KiB page that differs from the heap at the point a restore writes
+PHP 8.5.12), and a serve after a drop 989 to 555 ms (n=4). Wiring it in is `BOOT_IMAGE`, on by
+default since 2026-11-22 (`0` disables). A bake takes every 64 KiB page that differs from the heap at the point a restore writes
 into, the descriptors and the vrzno handles the heap names, and the object reads it back through its
 own `ASSETS` binding in 2 MiB files, checking each page against a stored hash before any byte of
 that file lands.
@@ -2772,6 +2842,85 @@ with content, installed modules or a changed theme beyond the five edit classes 
 charge of the larger boot memory on a fresh isolate (a deployed memory is charged in full, and folio
 measured the 1,322-page memory at 40 MiB less headroom than the 1,024-page one). The `docs/configuration/index.md` section carries the keys
 and the refusals.
+
+**A stale image is silent.** `heapGeneration()` gained the interpreter's identity
+(the pinned wasm's sha256 and its initial pages), so a pin bump can no longer restore a heap taken
+under another layout. That moved every published context, and the committed images would have sent
+every site to a plain boot without a word, which is the failure an image is designed to have. Two
+checks now stand in front of it. `bun run build:local` has a `bootimage` step that reruns the bake
+whenever a published index names another interpreter than `.interp/php8.5.tuned.wasm`, and
+`scripts/refresh.ts` runs it after a repack. `tests/integration/boot-image.spec.ts` plans a freshly
+migrated site and a freshly claimed one against the published indexes and fails with "rerun `bun run
+assets:bootimage`". Run against the images baked before the change, it failed with `context differs`;
+after the rebake it passes. The rebaked pack image is 782 pages (51.2 MB) asking for 1,390 pages of
+memory, and the claimed image 498 pages (32.6 MB) asking for 1,363.
+
+A site restores an image only when its module set and the rest of its context equal the bake's, so
+a site with its own modules boots plain; the images serve stock sites. A restored boot starts at the
+image's memory rather than 1,024 pages, which trades the headroom figure above for the CPU; the cost
+on a large stock site is still not measured. A self-hosted box carries no image and boots plain.
+
+**On by default; the gate found two restore defects and two false alarms.** With `BOOT_IMAGE` reading on unless `0`, the
+full gate on paisley-park (2026-11-23) failed 19 workers tests that pass on the same
+tree with the default off; locally the same 15 spec files failed 19 with it on and passed 125 of 125
+with it off. Most pin a plain boot's numbers (start memory 1,390 pages against 1,251, bridge
+crossings, rows per fill, statement counts). Four are behaviour on a claimed site restored from the
+`claimed` image, where the config-reset restore is not equal to a plain boot:
+
+- A deputy without the owner tier gave its own account the owner role through the account form and
+  through a direct save; `userPresave` in the drupflare module's `OwnerTier` did not put it back,
+  while `rolePresave` still refused the permission (`owner-tiers.spec.ts`).
+- A site that selects the GD toolkit by hand built no image derivative (`image-toolkit.spec.ts`).
+- An uploaded theme was not rediscovered (`modify-upload.spec.ts`).
+- The subsystem replay found `cache_contexts_manager` already initialised (`render-plan-arms.spec.ts`).
+
+The first was a privilege escalation, and its cause was the request stack. The restored heap kept the
+bake's last request (`/user/login`, route `user.login`) on the stack, so during the claim
+`OwnerTier::actorMayGrant()` saw a routed anonymous actor, and `rolePresave` stripped the owner
+permission from `drupflare_owner` itself. A role that carries nothing gives `userPresave` nothing to
+put back. Probed on both boots: restored, the owner role held two of its three permissions and
+`carryingRoles()` named only `administrator`; plain, all three and both roles. A plain boot did the
+same whenever a render ran before the claim in one interpreter, because `claim/boot.php` pushed its
+request only onto an empty stack. The claim now pops every request before pushing its own, and the
+rekey gained a `requests` step that leaves the stack and `router.request_context` as a plain kernel
+boot leaves them. The uploaded theme was the second defect: the restore brought back the bake's
+`extension.list.*` memos, which key on enabled modules and not on files an upload adds, so a new
+`extensions` step clears those memos without touching persisted caches. Each fix has a restored-boot
+test that asserts the image was used and fails without it (`owner-tiers.spec.ts`,
+`modify-upload.spec.ts`).
+
+The other two are not restore defects. GD saves failed on any interpreter that had rendered: once the
+stream wrappers are registered, `FileSystem::chmod('public://...')` reached
+`CfwFileStreamWrapper::stream_metadata()`, which refused every call, and Drupal treats a refused chmod
+as a failed save; a plain boot passed only because it had no wrappers yet. The wrapper now accepts
+`chmod()` and `chown()` as no-ops, since the store has no modes or owners, and `touch()` creates a
+missing file, so GD and image styles save on a warm site; the toolkit test runs on the restored boot
+again. The same unregistered wrapper made the `files.record_cap` contract vector read false on a plain
+boot, which the contract had recorded as a platform limit; the file store already splits a file into
+200,000-byte rows, so the vector now registers the wrappers itself and expects true. The subsystem
+replay forbids services that already exist, which a restored heap has by construction, so it boots
+plain, as do the specs that pin plain-boot numbers.
+
+A property diff of every initialised service then compared the restored claimed boot against two
+plain boots, the pair of plain boots serving as the noise control, over a script of 14 dump points:
+an owner adds a content type with a field, changes config, grants a permission, and renders
+anonymous and owner pages. It found four more stale states, each fixed in the rekey with a
+restored-boot test that fails without it. Entity definition memos (bundle info, field definitions
+and maps, display modes, typed data, entity handlers, the block and menu plugin managers) held the
+bake's, so a node page and `/admin/content` answered 500 with a `FieldException` on a site whose
+owner had added a field; a `definitions` step clears those memos and leaves persisted caches alone.
+`configFactory()->reset()` left services holding the bake's config objects (page `max_age` 300
+against 3,600 configured); the `config` step reloads each cached object in place from active
+storage. Every `MemoryBackend` bin, not only the drupflare ones, is cleared, because
+`cache.access_policy_memory` kept the bake's anonymous permissions. After the fixes the anonymous
+pages are byte-equal to a plain boot and the owner pages differ by one byte, as two plain boots do
+(random element ids). This is equality on what the script exercised, not a proof: config entity
+types it did not touch (views, image styles, filter formats, workflows), handlers injected at
+container build, and one read where the cached config storage still returned the bake's value are
+open, and gating the claimed image on a digest of the config entity rows would close the class. What
+is not proven is the general claim: a restored heap holds 470 initialised services against 17 after
+a plain boot, and only the state these specs touch is reset. Plugin managers, entity type and field
+definitions, the theme registry and library discovery are not compared.
 
 ### The Warm Authenticated Render, Measured on a Deployed Worker
 
@@ -3286,6 +3435,44 @@ Margin is the fourth metric and it overrules the Pareto frontier: what headroom,
 copied and spare events do not measure is how far the rung sits above a demand that moves, and the
 authenticated demand is bimodal by one page and drifting up.
 
+### A Smaller C Stack, Blocked on String Arguments
+
+php-wasm links with `-s TOTAL_STACK=32MB`, and folio measured 35 to 37 MiB of every workload's
+linear memory never touched, nearly all of it that band. The stack cannot simply shrink, because a
+wasm C stack has no guard page: an overflow writes downward over static data in silence. phasm's
+`src/stack-guard.mjs` (a binaryen pass) inserts `if (sp <u limit) unreachable` before every lowering
+of the stack pointer, 12,977 checks on the shipping binary for 1.30% more bytes, and `STACK_SIZE=` and
+`STACK_GUARD=1` in an rc file apply it in the build. On a binaryen fixture an unguarded overflow
+overwrites static data and a guarded one traps with the data intact.
+
+**Measured 2026-11-22 on paisley-park, guarded 4 MiB and 8 MiB builds of the long64 rc.** A depth
+probe recurses through `array_map` and then asks the instance for one more answer:
+
+| build | 2,500 levels | 3,000 | 4,000 and beyond | after the failure |
+| --- | --- | --- | --- | --- |
+| shipping, 32 MiB | ok | ok or V8's limit | V8 `RangeError` | the instance answers |
+| control, 32 MiB from the same tree | ok | ok | V8 `RangeError` | answers |
+| guarded 4 MiB | ok | guard trap | guard trap | answers |
+| guarded 8 MiB | ok | ok | V8 `RangeError` | answers |
+
+So V8's own native stack limit binds before 8 MiB of C stack, and 4 MiB gives up depth between 2,500
+and 3,000 levels. Against the full worker gate, with the unguarded control built from the same tree
+to separate the tree's changes from the stack's, both guarded builds fail six tests the control
+passes. Five of them, in three specs, pin the 32 MiB layout and read the saving itself: a render
+that no longer grows memory past 64 MiB, an install that starts below 80 MiB, and authenticated
+headroom above 48 MiB. The sixth is a real defect: a WordPress outbound test traps in `stackAlloc`, because emscripten's `ccall`
+copies every string argument onto the C stack, so `php._run()` with code larger than the stack
+overflows it.
+
+That defect is in the shipping build as well, only further out: a script longer than 32 MiB writes
+past the unguarded stack. A 40 MiB script on the shipping tuned interpreter ended in `memory access
+out of bounds` (local Node, 2026-11-22). The tuned glue now copies a string argument longer than
+64 KiB to the heap with `_malloc` and frees it when the call returns, the lifetime the stack copy
+had, and the same script prints its length and the instance answers the next run
+(`heapStringArgs` in `scripts/measure/growth-glue.ts`, pinned by `tests/node/growth-glue.spec.ts`).
+The wasm64 experiment keeps the stack copy, because its `ccall` passes BigInt pointers. Neither stack
+size is in the long64 rc yet; the five layout tests change with the pin that carries one.
+
 ### The Allocator and opcache
 
 **opcache is off.** `file` mode wrote 2,346 `.bin` files and 32,141,312 bytes into MEMFS while
@@ -3487,6 +3674,115 @@ fact: `nowMs()` is `Date.now()` and arms every alarm and every `expires_at`.
 
 `tests/integration/php-clock.spec.ts` pins it and `/clock` reports `absoluteS` and `jsAbsoluteMs`.
 
+### The Pin Moves to an 8 MiB Stack, 2026-11-23
+
+The pin moved from phasm artifact 12463245201 to 14793354647 (phasm 374de56, CI run 45120212983). The
+wasm sha256 went from `e723ca7b...` (14,011,458 bytes) to `199fb90d...` (14,216,032 bytes). The glue
+sha256 went from `ec6a8901...` to `fa79e319...`. The new link sets an 8 MiB C stack with the stack
+guard. The stack pointer starts at 12,805,488 and the stack end is 4,416,880, a span of exactly
+8,388,608 bytes. The guard holds 13,031 checks. The old binary has no guard section, and its stack end
+was not read, so its 32 MiB size is the phasm default and not a measurement.
+
+The shared boot image for the pack context shrank from 91,095,040 bytes (1,390 pages) to 67,108,864
+bytes (1,024 pages, 25 chunks). The generation, driver and config hashes are unchanged, so the
+interpreter identity is the only changed input. The 24 MiB stack reduction is 384 pages, and 1,390
+minus 384 is 1,006, which sits under the 1,024-page initial memory. That arithmetic matches the new
+start, but it is not what the measurements show for the authenticated path. Measured on a plain boot,
+local, n=5 fresh objects per arm:
+
+| render | linear memory after | isolate after |
+| --- | --- | --- |
+| anonymous `/`, fill | 64.00 MiB (1,024 pages), no growth on 5 of 5 | not read |
+| authenticated `/`, first render after a provisioned boot | 69.56 MiB (1,113 pages) | 87.86 MiB |
+
+So the start holds an anonymous render, and the boot image captures the start size. An authenticated
+render grows past it. An anonymous peak below 1,024 pages cannot be read here, because the start
+clamps it. Lowering `INITIAL_MEMORY` would buy nothing measurable until that peak is read below the
+start. It was not changed.
+
+The recycle sequence in `interpreter-recycle.spec.ts` (delete the container row, render, drop,
+render) reads 71.81 MiB of linear memory and 90.11 MiB of isolate after the second boot, n=5. The
+recycle thresholds are 112 MiB and 124 MiB, so the second boot is 40.2 MiB and 33.9 MiB under them.
+The container row is back after the first render on 5 of 5 objects, and the second boot does not set
+the rebuild flag. One full-file run failed the rebuild test with the second boot recycled. A later
+full-file run passed it, and so did a run of the test alone. The cause of that single failure is not
+established. Linear memory rules out the threshold.
+
+A warm heap read inside a file after earlier tests reads larger than the same test run alone.
+`enable-memory.spec.ts` read 72.94 MiB inside its file and 64 MiB isolated (n=5). The cause is not
+established. Until it is, quote the isolated reading.
+
+Test floors were re-baselined on the rebaked image: the warm-heap floor in `enable-memory.spec.ts`
+now reads the start, the boot-image capture in `boot-image.spec.ts` now reads at least the start (two
+bakes, 67,108,864 bytes each), and the anonymous-render case in `linear-memory.spec.ts` asserts no
+growth. Two `linear-memory.spec.ts` cases still fail and are open. The spare-start comparison assumes
+an anonymous render grows the start, and the authenticated headroom bound of 48 MiB was set against a
+96 MiB start. The authenticated headroom measured here is 58.44 MiB.
+
+### Outside Effects on the Outbox, 2026-11-23
+
+Mail, outbound HTTP, Redis and the cron firing now run through folio 1.2.0's `Outbox`
+(`@gmitch215/folio/workers`, `^1.2.0`), one table per lane: `cfw_outbox_mail`, `cfw_outbox_http`,
+`cfw_outbox_cron`. The wiring is `src/ops/outbox.ts`. A row is claimed and flushed
+(`storage.sync()`) before its effect runs and its completion is flushed after, so a successor that
+finds a running row with an expired lease knows the effect may have run. The policy is by kind:
+
+| lane | kind                | policy   | key use                                                                   |
+| ---- | ------------------- | -------- | ------------------------------------------------------------------------- |
+| mail | `mail`              | `resend` | SMTP `Message-ID` `<key@sender-domain>`; `X-Cfw-Outbox-Key` on API and binding |
+| http | `http`              | `resend` | `Idempotency-Key` on POST, PUT, PATCH and DELETE                          |
+| http | `redis-idempotent`  | `resend` | none; a read, `SET`, `SETEX`, `MSET`, `DEL`, `UNLINK`, `EXPIRE`, `PEXPIRE` |
+| http | `redis`             | `report` | none; every other command, never run twice                                |
+| cron | `cron-idempotent`   | `resend` | a firing that reaches SQL passes only                                     |
+| cron | `cron`              | `report` | a firing that reaches a PHP unit; the cursor moves past that unit         |
+
+What differs from the retry rules written after M1:
+
+- **Message-ID is SMTP only.** Cloudflare's header reference lists `Message-ID` as platform-controlled
+  and answers `E_HEADER_NOT_ALLOWED` for it (read 2026-11-23). The API and the `send_email` binding
+  therefore carry the key in `X-Cfw-Outbox-Key`, which is traceable and not deduplicated. Over those
+  two transports a reset between the relay accepting a message and the completion flush can still
+  deliver it twice; the outbox narrows the window and names the key, it does not close it.
+- **The queue tables stay.** `cfw_mail_queue` and `cfw_http_queue` remain PHP's intake and its
+  record (`deferredStatus()` reads the attempts), so every reader of them is unchanged. The drain
+  copies a row into the outbox and the outbox owns the send. A mail row is parked at
+  `retry_at = MAIL_IN_OUTBOX` meanwhile; an http row is matched by key and queue time.
+- **The cron claim follows the stamp.** `cronLastRunMs` is written and awaited before discovery
+  boots a kernel, as before, and the claim row follows it. The spec asked for one commit; the
+  order used keeps the failure direction safe (a reset between the two skips an interval, it never
+  repeats a firing) and keeps the stamp ahead of discovery, which can kill the isolate.
+- **HTTP retries on the wire status now.** A 408, 429 or 5xx is asked again while the budget lasts
+  (three for a GET, one for a POST); before, any answer was cached and final. A 4xx is cached and
+  final.
+- **Retry rule 1.** `resetRecovery()` takes a `writes` flag and `writesOnGet()` names
+  `/cron/{key}`, `/admin/reports/status/run-cron` and `/wp-cron.php`; a reset GET to one is not
+  retried unless it carries an attempt id, and a GET never does.
+
+Cost: a mail or http row now writes an outbox insert, a claim update, a completion update and a
+delete beside the queue's own writes, and flushes three times. The rows meter moves by that much
+per outbound fetch.
+
+A reported row stays in its table (newest 50 per lane) and is listed under `outboxReported` in
+`/serve-stats` with the instruction to check the receiver before re-enqueueing. `reenqueueReported()`
+re-enqueues it under a new id; no owner route calls it yet.
+
+Not changed, and still open: Drupal queues stay at-least-once by design (rule 6); stepped ops jobs
+(rule 7), the POST attempt-id holes (rule 8) and the retry timing (rule 9) are not touched here.
+
+### The Site Database Drift and Its Repair
+
+The committed manifest named `assets/drupal/site.sqlite` at `9457d450...` (5,832,704 bytes), as set by
+commit 0b0fcdd81e on 2026-11-15. The bucket held different bytes of the same size (`0f95160e...`), last
+uploaded on 2026-11-08. A `bun install` restore would have failed its sha256 check. The
+`backup:cdn --upload` run on 2026-11-23 archived the bucket object to
+`snapshots/site.sqlite.0f95160e9998` and put the committed bytes. `backup:verify` then read 63 keys over
+HTTPS, and all of them matched. The archive is recoverable.
+
+The two long64 mirror entries were archived the same way, to `snapshots/php8.5-worker.mjs.wasm.e723ca7bf0a2`
+and `snapshots/php8.5-worker.mjs.ec6a890146d4`. The manifest's mirror entries now name the new bytes.
+Boot images are not backed-up keys (the manifest covers `vendor/` and `assets/drupal/site.sqlite`), so
+the boot-image rebake needs no upload.
+
 ---
 
 ## Real Workloads
@@ -3549,6 +3845,16 @@ would have reached users:
   before the reset is committed, which a retried claim answering 409 showed. The hop to the primary
   after a lane refuses had no retry at all, so a primary resetting at that moment answered 500; it gets
   the same one retry now.
+- **What a reset and its retry cost a visitor, measured 2026-11-23 on Paid.** One stock claimed site,
+  client wall from one laptop, n=8 per arm, median (range): warm GET 821 ms (572 to 1,016); cold first
+  GET 3,216 ms (2,924 to 5,352) with the boot image and 3,605 ms (2,599 to 4,311) plain; a GET whose
+  object was reset mid-request and retried 2,389 ms (1,997 to 3,118) with the boot image and 2,504 ms
+  (2,273 to 2,674) plain. The reset was `ctx.abort()` after the request's first await, through a probe
+  route in a test build; the hop saw `durableObjectReset` with no `retryable` and retried all 16, each
+  answering 200 with `x-cfw-retried: reset`. Of the retried wall, about 720 ms is outside the object (as
+  for a warm GET), the failed attempt 0.5 ms, the successor 1,524 ms of wall and 897 ms of CPU, and the
+  gap plus the second hop about 140 ms. The successor kept the same isolate and interpreter in all 16,
+  so this reset kind does not pay a cold boot; a storage or memory reset may, and is not measured here.
 - **The 2026-09-29 memory work, checked on a stock site.** Three paired deploys of the shipping config, the tree
   before tonight against the tree after, both arms of each pair together: failed requests 28 -> 0, distinct
   memory-reset events 53 -> 0, object exceptions 105 -> 0; every control run failed the live lane and every
@@ -3598,6 +3904,24 @@ would have reached users:
   Thunder's admin pages can still reset a fresh isolate, and its lane read 11 of 13 on one deploy; a GET
   that meets the reset is retried once. Most of that heap is compiled PHP: a warm stock admin heap holds
   2,520 files and 40.7 MiB of opcodes.
+- **The pack in storage is back as `COLD_PACK`, on by default.** The ladder inside a booted Thunder
+  object puts the resident pack at about 14 to 21 MiB of a flush's budget (n=3, Paid), which is the new
+  mechanism the removal note asked for; the reset rate with it on is not measured. Per object (local
+  row meters, one pass; Paid prices from list rates): 403 rows written to stage and 13,148,160 bytes
+  stored, 7 rows read at a cold boot, 387 for a cold page with 8 chunks cached and 157 with 64, 0 to 1
+  for a warm page. That is 0.4% of the Free day's rows written once, 0.26% of Free storage per object,
+  $0.0004 to stage and $0.0026 per month on Paid, so the default is not plan-aware. A cold page took
+  256 ms against 230 ms resident (one pass, inside the spread). The state inventory had no verdict for
+  the two tables, so a replica restore would have copied 13 MB of blobs; both are local now, and a new
+  pack deletes the earlier pack's rows once it is staged. It stays inert until the worker depends on
+  a cartridge that reads `SQL_PACK_SOURCE` (0.3.1 does not).
+- **`REFRESH_INSTANCE` stays off.** Flipping it exposed two faults, both fixed: a boot that restores
+  the shared boot image restarted a dropped interpreter whose heap no longer had the image's layout
+  (13 `boot-image` failures, `rekey failed`, `memory access out of bounds`), and a heap that had grown
+  since its boot was kept and grew again (231.5 MiB after an install against 98.1 MiB with it off).
+  Five specs still fail with it on (`enable-memory` 98.7 MiB against 85.8; four in
+  `interpreter-recycle`, peaks of 224.9 and 230.0 MiB against a 134.2 MiB ceiling), and the on and off
+  runs of those files are on paisley-park with the rest at 5 and 9 failures.
 - **A login on a second hostname never held.** Drupal derives the session cookie's `Domain` from the
   render host, which was always the pinned origin, so a browser on an alias refused the cookie. The
   front worker rewrites links, `Location` and the cookie `Domain` for a KV-mapped alias.

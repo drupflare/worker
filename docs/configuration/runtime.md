@@ -17,6 +17,9 @@ Settings for cron, warming, the interpreter lifecycle, replica mode, boot and st
 | `CACHE_DATA_MAX_ROWS`   | 5,000     | row cap on `cache_data`                                                 |
 | `WATCHDOG_ROW_LIMIT`    | unset     | row cap on `watchdog`; unset reads `dblog.settings` from the site       |
 
+A firing is claimed in `cfw_outbox_cron` before it runs. After an object reset a firing that ran
+only SQL passes replays; one that reached a PHP hook is reported under `outboxReported` and not run again.
+
 `CRON_INTERVAL_MS` is what makes the per-firing budget a budget. The alarm is not a clock, since it re-arms at +1 ms while a fill queue is draining, so "once per alarm" during an active fill is once per page, each one costing an interpreter unit and up to `CRON_MAX_ROWS` writes. At 15 minutes the worst case is 96 firings/day, so a site that hit the row cap every time spends 48,000 of the 100,000 daily rows. Lowering it is the fastest way to burn the meter that binds regeneration.
 
 Cron renders against the site's origin, so links in mail it sends point at the site. See [`SITE_ORIGIN`](site-identity.md#site_origin).
@@ -121,11 +124,15 @@ A replica refuses a request it may not answer with 421 and `x-cfw-requires-prima
 | ------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `HEAP_SNAPSHOT`                 | on                                    | restore a stored wasm heap instead of booting the kernel; `0` disables                            |
 | `HEAP_IMAGE`                    | off                                   | take that heap image in the first place; `1` enables. A restore costs more than a boot            |
-| `BOOT_IMAGE`                    | off                                   | boot a cold object from the published boot image when the site matches it; `1` enables            |
+| `BOOT_IMAGE`                    | on                                    | boot a cold object from the published boot image when the site matches it; `0` disables           |
 | `BOOT_IMAGE_BAKE`               | off                                   | lets an object capture its own boot image; only the local bake rig sets it                        |
 | `HEAP_RESTORE_CHUNKS`           | all at once                           | chunks of a snapshot one invocation may apply                                                     |
 | `LAZY_MOUNT`                    | `1` in the canonical config           | stream the pack per file instead of inflating it whole                                            |
 | `LAZY_FS_BUDGET_BYTES`          | 20 MiB, 4 MiB in the canonical config | resident bytes the lazy filesystem keeps before evicting                                          |
+| `COLD_PACK`                     | on                                    | keep the Drupal pack in the object's own storage, not the isolate; `0` disables                   |
+| `COLD_PACK_CACHE_CHUNKS`        | 8, at most 64                         | 64 KiB chunks of that pack held in memory                                                         |
+| `REFRESH_INSTANCE`              | off                                   | `1` restarts PHP inside a dropped interpreter instead of building a new one                       |
+| `REUSE_MOUNT`                   | off                                   | `1` also keeps the restarted interpreter's mount when nothing it was built from changed           |
 | `SITE_DB_PREFIX`                | the packed default                    | which database pack an object mounts                                                              |
 | `SQL_CHUNK_PREFIX`              | `drupal-sql`                          | which asset directory the migration chunks are read from                                          |
 | `MIGRATE_ENGINE`                | `sql`                                 | `sql` replays chunks in JavaScript; `php` needs a `pdo_sqlite` the shipping binary does not carry |
@@ -186,9 +193,15 @@ The image is taken before the first render. Byte-identical anonymous output does
 
 ### The shared boot image
 
-`BOOT_IMAGE=1` boots a cold object from a heap image published with the worker, where a plain boot builds that heap from the database. It is off by default, because no real site's cold-boot share has been measured against it. `bun run assets:bootimage` bakes it into `assets/bootimage/`.
+`BOOT_IMAGE` boots a cold object from a heap image published with the worker, where a plain boot builds that heap from the database. It is on by default; `BOOT_IMAGE=0` turns it off. On a deployed claimed site a cold round took 1,105 ms of object CPU from the image against 2,527 ms plain (n=7 per arm, 2026-10-23). `bun run assets:bootimage` bakes it into `assets/bootimage/`, and `bun run build:local` runs that step whenever a published index names another interpreter than the one on disk.
+
+When a site matches the image, the image restores before the site's own stored heap (`HEAP_SNAPSHOT`) is tried, so a site that keeps its own heap image boots from the shared one unless `BOOT_IMAGE=0`. A WordPress or Joomla site, a replica and a site that has not finished migrating always boot plain.
+
+A restored boot starts with the memory the image was baked in (about 1,375 pages for the pack image, against 1,024 for a plain boot), so it gives up headroom on a fresh isolate in return for the CPU. Only sites that match the bake restore it, which means stock module sets; a site with its own modules boots plain.
 
 A boot restores an image only when the site equals what the image was baked from: the pack generation and enabled modules, the driver digest, a digest of the `config` rows, and a digest of the settings and PHP fragments the heap was built under. Any difference boots plain, which is always correct, so a stale image costs a plain boot. Two images are published. The `pack` image is for a site the pack made. The `claimed` image is for a claimed site and carries `config=reset` in place of the digest, because every claimed site has its own name, mail and timezone; its restore also resets the config factory and the entity memory cache.
+
+A claimed site restored from the `claimed` image does not yet behave like a plain boot, so set `BOOT_IMAGE=0` on a claimed site until that is fixed: an account without the owner tier could give itself the owner role, a site that selects the GD toolkit by hand built no image derivatives, and an uploaded theme was not rediscovered.
 
 After the pages land, the restore runs `src/site/php/boot-image/rekey.php`: it reads `settings.php` again (the site's salt and origin), flushes `cache.memory` and every memory bin, resets every cache collector (State's private key, and anything the bake computed but had not persisted) and reseeds `mt_rand`. A replica or pool lane never boots from the image.
 
@@ -208,5 +221,37 @@ What is not measured: the share of real cold boots that match an image, the pack
 What replaces this as the number to watch is the cold-encounter share, not the cold-boot duration. `src/ops/cold-encounter.ts` classifies every request the object handles and `/serve-stats` reports `coldOfPhp`, `coldOfObject` and `coldOfTraffic`. 1,264 ms is the floor for an object `thermal.ts` decided not to keep warm, and that policy already ships.
 
 Read `coldOfTraffic`, not `coldOfObject`. A plan hit, an isolate memo hit, a `caches.default` hit and a KV page read all return from the front worker, so the object's own denominator is the leftovers and a share taken against it reads several times high. The front worker reports what it absorbed on the next request that hops anyway, under `x-cfw-absorbed`, and `coldOfTraffic` is null until it has, because a worker too old to report and a site with nothing absorbed are otherwise the same reading.
+
+### The pack in the object's storage
+
+`COLD_PACK` is on unless `0`. On the first mount an object copies the 13,012,361-byte Drupal pack from its assets into its own storage as 199 rows of 64 KiB (`cfw_pack_chunk`, one `cfw_pack_root` row), refusing a copy that is not the pinned digest, and the lazy mount then reads files from those rows and keeps `COLD_PACK_CACHE_CHUNKS` of them (8; at most 64) in memory. The pack stops being resident in the isolate. Headroom measured on Thunder's flush path is about 14 to 21 MiB (n=3 on Paid).
+
+Rows are keyed by the pack digest. A worker with a new pack stages its own rows on the next mount and then deletes the earlier pack's rows, so an upgrade leaves one copy. A chunk that fails its hash on read drops the root row, and the next mount stages again. A pack that cannot be staged mounts from assets as before.
+
+The mount only reads the source when the cartridge supports it. `@drupflare/cartridge` 0.3.1 ignores it, so a deploy built against that version stages nothing and behaves as `COLD_PACK=0` until the cartridge release that reads `SQL_PACK_SOURCE` is the one the worker depends on.
+
+| per object (local row meters, n=1 per arm; Paid prices from the list rates) | value                                                                                      |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| rows written to stage                                                       | 403 (199 chunks at 2 rows each, plus the table and root rows)                              |
+| bytes stored                                                                | +13,148,160 (12.5 MiB)                                                                     |
+| rows read at a cold boot                                                    | 7                                                                                          |
+| rows read by the first page after a staging mount                           | 696 (271 with 64 chunks cached)                                                            |
+| rows read by a cold page after a drop                                       | 387 (157 with 64 chunks cached)                                                            |
+| rows read by a warm page                                                    | 0 to 1                                                                                     |
+| Free: rows written per day (limit 100,000)                                  | 0.4% once per object                                                                       |
+| Free: storage (limit 5 GB per account)                                      | 0.26% per object, about 380 objects                                                        |
+| Paid: staging                                                               | $0.0004 once (at $1.00 per million rows written)                                           |
+| Paid: storage                                                               | $0.0026 per object-month (13.15 MB at $0.20 per GB-month, before the 5 GB-month allowance) |
+| Paid: a cold page                                                           | $0.0000004 (at $0.001 per million rows read)                                               |
+
+A replica lane stages its own copy, so 32 lanes hold 32 copies (about $0.08 per month on Paid). The staged tables are local to each object and are never copied by a replica restore. A cold page costs no measurable time: 256 ms against 230 ms with the pack resident on one paired pass, inside the run-to-run spread. The boot image is unaffected, since the image restores a heap and the mount underneath it reads bytes either way.
+
+An earlier build kept the pack in storage and was removed because it did not move Thunder's memory resets (three paired deploys per arm, 29 reset retries against 9, spread 0 to 19). This default is for the memory headroom above; the reset rate with it on is not measured on a deployed site.
+
+### Restarting a dropped interpreter
+
+`REFRESH_INSTANCE` is off by default. With `1`, a dropped interpreter is kept and the next boot restarts PHP inside it (`pib_refresh`) instead of building a second one. A seven-arm Thunder run read 0 of 18 reset pages on flush and cron with it and 17 of 18 without, and a second-object run read 2 of 24 with it against 3 of 24 without, so the effect did not replicate.
+
+Two interactions are handled: an interpreter that grew since its boot is not kept, and a boot that will restore the shared boot image does not restart in place, because the image needs a fresh heap. With both handled and the flag on, 5 specs still fail on the shipping binary: `enable-memory` "costs at most ONE grow event" (98.7 MiB against 85.8), and four in `interpreter-recycle` (a cold replica's first authenticated request peaks at 224.9 MiB and a mixed chain at 230.0 MiB against the 134.2 MiB ceiling; the memory-reuse case and the dead-after-exit case read different values). A restarted heap carries the allocations the shutdown did not return, so work after a restart peaks higher than work in a new instance. Until that is bounded the flag stays opt-in.
 
 **Changing `LAZY_MOUNT`, `MIGRATE_ENGINE` or `SITE_DB_PREFIX` in a deploying config means changing `assets/.assetsignore` too.** The shipping asset set is derived from the canonical values of those three; `tests/unit/runtime/assets-ignore.spec.ts` fails when the two disagree.

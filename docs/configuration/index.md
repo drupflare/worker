@@ -123,11 +123,15 @@ Every variable and binding on the configuration pages, once each.
 | `RETAIN_INTERPRETER`            | on                                    | [Runtime](runtime.md)                                    |
 | `HEAP_SNAPSHOT`                 | on                                    | [Runtime](runtime.md)                                    |
 | `HEAP_IMAGE`                    | off                                   | [Runtime](runtime.md)                                    |
-| `BOOT_IMAGE`                    | off                                   | [Runtime](runtime.md)                                    |
+| `BOOT_IMAGE`                    | on                                    | [Runtime](runtime.md)                                    |
 | `BOOT_IMAGE_BAKE`               | off                                   | [Runtime](runtime.md)                                    |
 | `HEAP_RESTORE_CHUNKS`           | all at once                           | [Runtime](runtime.md)                                    |
 | `LAZY_MOUNT`                    | `1` in the canonical config           | [Runtime](runtime.md)                                    |
 | `LAZY_FS_BUDGET_BYTES`          | 20 MiB, 4 MiB in the canonical config | [Runtime](runtime.md)                                    |
+| `COLD_PACK`                     | on                                    | [Runtime](runtime.md)                                    |
+| `COLD_PACK_CACHE_CHUNKS`        | 8, at most 64                         | [Runtime](runtime.md)                                    |
+| `REFRESH_INSTANCE`              | off                                   | [Runtime](runtime.md)                                    |
+| `REUSE_MOUNT`                   | off                                   | [Runtime](runtime.md)                                    |
 | `SITE_DB_PREFIX`                | the packed default                    | [Runtime](runtime.md)                                    |
 | `SQL_CHUNK_PREFIX`              | `drupal-sql`                          | [Runtime](runtime.md)                                    |
 | `MIGRATE_ENGINE`                | `sql`                                 | [Runtime](runtime.md)                                    |

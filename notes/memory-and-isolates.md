@@ -176,6 +176,19 @@ copies the member out of SQLite where the resident blob hands out a view. cartri
 `LayerSpec.store` option it needed in v0.3.0 and removed it in v0.3.1. Do not re-propose it for headroom
 without a new mechanism and a paired measurement.
 
+**Update 2026-11-23: it is back as `COLD_PACK`, on by default.** The new mechanism is the resident
+pack's share of a flush's budget (about 14 to 21 MiB inside a booted Thunder object, n=3 on Paid). No
+paired reset measurement exists for it yet. A pack costs one object 403 rows written, 13.1 MB stored
+and about 400 rows read per cold page (local meters, one pass), which fits Free (0.4% of the day's
+rows written once, 0.26% of the storage). It does nothing until the cartridge the worker depends on
+reads `SQL_PACK_SOURCE`.
+
+**`REFRESH_INSTANCE` keeps the heap it restarts.** A restart in place does not return what shutdown
+leaves in the wasm heap, so work after one peaks higher than in a new instance: an install then a boot
+read 231.5 MiB restarted and 98.1 MiB new. A dropped interpreter that grew since its boot is no longer
+parked, and a boot that restores the boot image never restarts in place. With both, five specs still
+fail with the flag on, so it is off by default.
+
 ## BACKGROUND PHP WAITS A MINUTE AFTER A BOOT, and `wrangler tail` blames the alarm for the visitor
 
 Measured 2026-09-30 on deployed farmOS: every memory reset in a demo drive was on an isolate 0-10 s after
@@ -559,10 +572,17 @@ speed.
 
 ## A restored heap carries a warm interpreter's pending writes, and a tag counter cannot see them
 
-`BOOT_IMAGE=1` restores a shared after-render heap (`src/do/boot-image.ts`, folio v1's technique;
-`docs/configuration/runtime.md` has the keys). Off by default. Measured deployed 2026-10-23 on a claimed
-site: a cold round cost 2,527 ms of object `cpuTime` plain and 1,105 ms from the image (n=7 per arm,
-one worker each); the report has the table and its limits.
+`BOOT_IMAGE` restores a shared after-render heap (`src/do/boot-image.ts`, folio v1's technique;
+`docs/configuration/runtime.md` has the keys). On by default, `0` disables. The 2026-11-23 worker gate found four behaviour failures on a restored
+claimed site, one an owner-role escalation (the report has the list). Measured
+deployed 2026-10-23 on a claimed site: a cold round cost 2,527 ms of object `cpuTime` plain and
+1,105 ms from the image (n=7 per arm, one worker each); the report has the table and its limits.
+
+**A stale image is silent.** On 2026-11-22 `heapGeneration()` gained the interpreter's identity, so
+every published context moved and every site would have booted plain with nothing reporting it.
+`tests/integration/boot-image.spec.ts` ("the boot images this tree publishes") now plans a freshly
+migrated and a freshly claimed site against the published indexes and fails with "rerun
+`bun run assets:bootimage`"; `build:local` reruns the bake when an index names another interpreter.
 
 **A cold request's CPU lands on the ALARM event it queued behind**, and the same-timestamp fetch
 event reads small (580 against 1,765 ms plain, 17 against 1,082 from the image). Read the fetch
@@ -592,22 +612,65 @@ it is a step to add before the lever defaults on.
 
 ## `exit()` under `pib_run`
 
-`pib_run` runs no request startup or shutdown, so `exit()` and `die()` end the script before the
-harness echoes its JSON. The run returns 0 with the partial output, and every later run on that
-instance executes nothing and prints nothing. A fatal (ret 1) or an uncaught exception (ret 2)
-leaves the instance alive. Measured on the shipping interpreter, n=10 per case, local and deployed
-agreeing, then pinned by `tests/node/exit-lifecycle.spec.ts`. The cause is php-src, not a hang:
-`exit` leaves an unwind-exit in `EG(exception)`, `pib_run` skips the call that clears it, and
-`zend_execute()` returns at once while one is pending.
+`pib_run` runs no request startup or shutdown. On the build before `PIB_RUN_EXIT`, `exit()` and
+`die()` ended the script before the harness echoed its JSON, the run returned 0 with the partial
+output, and every later run on that instance executed nothing and printed nothing. A fatal (ret 1) or
+an uncaught exception (ret 2) left the instance alive. Measured n=10 per case, local and deployed
+agreeing. The cause is php-src: `exit` leaves an unwind-exit in `EG(exception)`, `pib_run` skipped the
+call that clears it, and `zend_execute()` returns at once while one is pending.
 
-The host fallback is `settleReply()` in `src/site-do.ts`. An exit is a return code of 0, a reply with
-no JSON, and a probe run that prints nothing. It drops the interpreter, answers a 500 that names
-`exit()`, and counts `exitedRuns` in `/serve-stats`. A fill whose render exited is recorded
-unstorable and not retried, and no live miss or purge queues it. Headers, cookies and shutdown
-functions set before the exit are not recoverable from PHP.
+The pin is phasm `long64` built with `PIB_RUN_EXIT=1`. `pib_run` clears the exit, the next run answers,
+and shutdown functions, output-buffer callbacks and `header_register_callback` fire. Probed on it:
 
-A fixed interpreter exists as a build only: phasm `long64` with `PIB_RUN_EXIT=1`, built on
-paisley-park 2026-11-17 and kept in `.interp/` as `php8.5-pibfix1*`. On it the next run answers after an exit, and shutdown functions, output-buffer
-callbacks and `header_register_callback` all fire. The reply still has no JSON, because the harness
-echo does not run, so the harness has to emit it from a shutdown function before the fallback can
-go. Its glue is 23% larger than the shipping glue, so it is a different pin and not a drop-in.
+- Shutdown functions run in registration order, and one registered during shutdown runs after all the
+  others. A shutdown function that exits skips the rest of the list.
+- A shutdown function registered in a run that returned normally stays queued and fires at the next
+  exit, in whichever run that is. A fatal (ret 1) or an uncaught exception (ret 2) runs none.
+- Output-buffer callbacks run after the shutdown functions, over everything the shutdown functions
+  printed. A reply echoed from a shutdown function lands inside the buffer unless the buffers are
+  flushed first.
+- Headers and the response code outlive the run, so a harness clears them first.
+- `finally`, destructors and `catch (Throwable)` do not run on exit.
+
+The harness answer is `cfw_reply_arm()` in `src/site/php/exit-reply.php`, included in every fragment
+that carries `PW_SERVE_INLINE` and called by `render/page.php` (the fill and served-page render). It
+keeps the closure in a global and registers a named hook once per 16 arms until one has fired, so a
+render that returns normally leaves no closure behind. On exit the hook queues the printing function
+(last in the list), which flushes every buffer above the harness's own level, prints
+`EXIT_REPLY_MARK` and then the reply JSON. The reply has the page shape: status, headers and cookies
+from `http_response_code()` and `headers_list()`, `cacheTags` empty (so the fill never stores it), an
+empty `html` and `phpExit: true`. `parseJsonReply()` reads from the mark and gives an empty `html` the
+text printed before it, which is what PHP sent as the body. Braces in that text cannot reach the
+candidate scan.
+
+`settleReply()` in `src/do/run.ts` counts a `phpExit` reply in `exitedRuns` and records `lastExit`.
+`endedInExit()` stays for a build without the fix: a return code of 0, no JSON and a probe that prints
+nothing drops the interpreter and answers a 500 that names `exit()`, and a fill whose render exited
+is recorded unstorable and not retried. Only `render/page.php` is armed; harvest-shell, fragments and
+the WordPress harness still print no JSON on an exit (the WordPress harness turns the exits it knows
+into stops).
+
+Two cross-request leaks, both found by the exit work:
+
+- **A fatal inside an armed render left its closure in the global**, so a later fragment that exited
+  printed that request's reply. `run()` now runs `EXIT_REPLY_DISARM` after any run that returns
+  non-zero. The disarm is a run of its own and not a prefix on every run, because a parked chain
+  resumes in later runs and an exit in a resumed segment still needs the reply.
+- **Shutdown functions pile up, since a normal `pib_run` never runs them.** Drupal's own queue
+  (`drupal_register_shutdown_function`) is drained by `Terminate::drain()` after a render, except a 5xx
+  one, so `render/page.php` empties it at the start of each run. The PHP table is out of reach from
+  userland: any `register_shutdown_function` from an earlier run (the logger's fatal handler, Guzzle's
+  task queue, Symfony's error handler registered at boot) fires at the next exit under another
+  request. `tests/node/exit-lifecycle.spec.ts` carries the wanted behaviour as `it.fails`.
+
+What clearing the PHP table takes: `php_free_shutdown_functions()` (ext/standard/basic_functions.c,
+already called by `pib_settle_exit()` in `phasm/src/patch-pib-run.sh`) at the start of `pib_run`,
+one more `EDITS` pair next to `int output_level = php_output_get_level();`, plus a `--verify` check
+and a rebuild and re-pin. Calling it at the start of every run is wrong: a parked resume is its own
+`pib_run`, and it would drop the hook and anything the chain's first segment registered. It has to
+skip a run while `ext/cfwpark` holds a pending chain. Boot-time registrations (Symfony's handler)
+would also go at the first run, so the hooks that must live are re-registered by their owners or the
+clear is limited to functions registered after boot. Not changed in phasm.
+
+Still open: a shutdown function registered before the harness that itself exits loses the hook for up
+to 16 requests.

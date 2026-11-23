@@ -53,7 +53,8 @@ export async function drainsPhase({ site }: AlarmContext): Promise<void> {
 				const drained = await drainMailQueue(site.sql, plan.transport, {
 					limit: mailDrainLimit(site.env ?? {}),
 					plan: isPaid(site.env) ? 'paid' : 'free',
-					nowMs: site.nowMs()
+					nowMs: site.nowMs(),
+					flush: () => site.storage.sync()
 				});
 				if (drained.sent.length > 0) {
 					site.lastMailDrain = { at: Date.now(), value: drained as unknown as Payload };

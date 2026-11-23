@@ -115,7 +115,23 @@ never fires first.
 
 A failure after commit is only visible on `/serve-stats`, under `mailQueue`, `lastMailDrain` and
 `lastMailDrainAt`. A failed send is not retried: a send is not idempotent, and a password reset
-delivered twice with two different one-time links is worse than one that did not arrive.
+delivered twice with two different one-time links is worse than one that did not arrive. The only
+retry is for a failure that left the relay without the message (an API 429 or 503, an SMTP
+connection that never opened), and only for a message that asked for more attempts.
+
+## Delivery After a Reset
+
+Each send runs through a durable outbox (`cfw_outbox_mail`). The drain writes the outbox row,
+flushes it, sends, writes the completion and flushes again. The queued row stays in `cfw_mail_queue`
+until the send settles, so `mailQueue` still counts it.
+
+If the object is reset after the relay took the message and before the completion was saved, the
+next drain sends it again under the same outbox key. Over SMTP that key is the `Message-ID`
+(`<mail-12-0@your-domain>`), so a relay that drops duplicate message ids drops the repeat. The
+Cloudflare API and the `send_email` binding refuse a `Message-ID` header (`E_HEADER_NOT_ALLOWED`),
+so those sends carry the key in `X-Cfw-Outbox-Key` instead. Cloudflare does not drop duplicates by
+it, so over those two transports a reset in that window can deliver one message twice. A reset
+before the claim was saved sends nothing and loses nothing.
 
 Mail sent through the `send_email` binding shows as dropped in the Email Routing summary even
 when it was delivered. Read Email Sending metrics instead.

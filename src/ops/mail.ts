@@ -13,6 +13,15 @@ import { _sessionFromSocket, type Mail, type SmtpConnectOptions } from 'edgeport
 import { base64ToBytes } from '../db/file-store';
 import { errorMessage } from '../util/errors';
 import { firstRow } from '../util/sql';
+import {
+	argsText,
+	forgetRows,
+	openOutbox,
+	PermanentError,
+	resultText,
+	type OutboxContext,
+	type OutboxSql
+} from './outbox';
 
 // #region shapes
 
@@ -506,7 +515,8 @@ export function mailQueueDepth(sql: MailSql): number {
 /** the Cloudflare send body, built here so a spec can assert it */
 export function cloudflareSendBody(
 	transport: { from: string },
-	message: MailMessage
+	message: MailMessage,
+	key?: string
 ): Record<string, unknown> {
 	const headers = message.headers ?? {};
 	const threading: Record<string, string> = {};
@@ -514,6 +524,9 @@ export function cloudflareSendBody(
 		const value = str(headers[name]);
 		if (value) threading[name] = value;
 	}
+	// Cloudflare sets Message-ID itself and refuses the header (E_HEADER_NOT_ALLOWED), so the key
+	// rides in an X- header an operator can match against the outbox row
+	if (key) threading[OUTBOX_KEY_HEADER] = key;
 	const cc = splitAddresses(str(headers.Cc));
 	const bcc = splitAddresses(str(headers.Bcc));
 	const replyTo = str(message.replyTo);
@@ -548,13 +561,26 @@ export function cloudflareSendUrl(accountId: string): string {
 	return CF_SEND_ENDPOINT.replace('{account}', encodeURIComponent(accountId));
 }
 
+/** the header that carries the outbox key where the transport refuses a `Message-ID` */
+export const OUTBOX_KEY_HEADER = 'X-Cfw-Outbox-Key';
+
+/**
+ * The `Message-ID` an SMTP send carries: the outbox key at the sender's domain, so a resend after
+ * a reset repeats the same id and a relay that drops duplicates can drop it.
+ */
+export function messageIdFor(key: string, sender: string): string {
+	const domain = /@([^>\s]+)>?\s*$/.exec(sender)?.[1] ?? 'localhost';
+	return `<${key}@${domain}>`;
+}
+
 /** the edgeport message; `Reply-To` rides as a header because `Mail` has no field for it */
-export function smtpMail(transport: { from: string }, message: MailMessage): Mail {
+export function smtpMail(transport: { from: string }, message: MailMessage, key?: string): Mail {
 	const headers: Record<string, string> = {};
 	for (const name of ['In-Reply-To', 'References']) {
 		const value = str(message.headers?.[name]);
 		if (value) headers[name] = value;
 	}
+	if (key) headers['Message-ID'] = messageIdFor(key, senderFor(transport, message));
 	const replyTo = str(message.replyTo);
 	if (replyTo) headers['Reply-To'] = replyTo;
 	const cc = splitAddresses(str(message.headers?.Cc));
@@ -642,7 +668,8 @@ export async function sendViaApi(
 	transport: Extract<MailTransport, { kind: 'api' }>,
 	message: MailMessage,
 	deps: MailDeps = DEFAULT_MAIL_DEPS,
-	plan?: string
+	plan?: string,
+	key?: string
 ): Promise<string> {
 	const res = await deps.fetch(cloudflareSendUrl(transport.accountId), {
 		method: 'POST',
@@ -650,7 +677,7 @@ export async function sendViaApi(
 			Authorization: `Bearer ${transport.token}`,
 			'Content-Type': 'application/json'
 		},
-		body: JSON.stringify(cloudflareSendBody(transport, message))
+		body: JSON.stringify(cloudflareSendBody(transport, message, key))
 	});
 	if (!res.ok) {
 		const detail = await res.text().catch(() => '');
@@ -668,9 +695,10 @@ export async function sendViaApi(
 export async function sendViaBinding(
 	transport: Extract<MailTransport, { kind: 'binding' }>,
 	message: MailMessage,
-	plan?: string
+	plan?: string,
+	key?: string
 ): Promise<string> {
-	const body = cloudflareSendBody(transport, message);
+	const body = cloudflareSendBody(transport, message, key);
 	try {
 		const result = (await transport.binding.send(body)) as { messageId?: string } | undefined;
 		return `binding ${str(result?.messageId) || 'accepted'}`;
@@ -689,7 +717,8 @@ export async function sendViaBinding(
 export async function sendViaSmtp(
 	transport: Extract<MailTransport, { kind: 'smtp' }>,
 	message: MailMessage,
-	deps: MailDeps = DEFAULT_MAIL_DEPS
+	deps: MailDeps = DEFAULT_MAIL_DEPS,
+	key?: string
 ): Promise<string> {
 	const opts: SmtpConnectOptions = {
 		hostname: transport.hostname,
@@ -710,7 +739,7 @@ export async function sendViaSmtp(
 		throw new MailSendError(errorMessage(e), true);
 	}
 	try {
-		const result = await session.send(smtpMail(transport, message));
+		const result = await session.send(smtpMail(transport, message, key));
 		return `smtp ${result.accepted.length} accepted`;
 	} finally {
 		await session.close();
@@ -722,26 +751,51 @@ export function sendMail(
 	transport: MailTransport,
 	message: MailMessage,
 	deps: MailDeps = DEFAULT_MAIL_DEPS,
-	plan?: string
+	plan?: string,
+	key?: string
 ): Promise<string> {
-	if (transport.kind === 'binding') return sendViaBinding(transport, message, plan);
-	if (transport.kind === 'api') return sendViaApi(transport, message, deps, plan);
-	return sendViaSmtp(transport, message, deps);
+	if (transport.kind === 'binding') return sendViaBinding(transport, message, plan, key);
+	if (transport.kind === 'api') return sendViaApi(transport, message, deps, plan, key);
+	return sendViaSmtp(transport, message, deps, key);
 }
 
 // #endregion
 
 // #region the drain
 
+/** the `retry_at` of a row the outbox holds, so no drain picks the message up a second time */
+export const MAIL_IN_OUTBOX = Number.MAX_SAFE_INTEGER;
+
+/** what an outbox row carries for one send of one queued message */
+type MailEnvelope = { id: number; to: string; attempts: number; payload: string };
+
+/** how a send ended, as the effect writes it into the row's result */
+type MailResult = { ok: true; detail: string } | { ok: false; retry: true; error: string };
+
 /**
  * Sends what `cfwMail` queued, between PHP runs and bounded per call. A row leaves the queue
  * after its attempts are spent ({@link MAIL_ATTEMPT_BUDGET} unless the message asked for more and
  * the failure was a retryable one); failures return in {@link MailDrain.sent}.
+ *
+ * Each send runs through the mail outbox (see `outbox.ts`). The queued row stays as the message's
+ * record until the send settles, parked at {@link MAIL_IN_OUTBOX}; the outbox row, keyed by the
+ * queue id and the failed attempts so far, owns the send. A reset after the send and before its
+ * completion replays the same key, so the `Message-ID` repeats; one that loses the claim replays
+ * nothing. A failure the relay may have kept (anything but the retryable ones) is permanent.
  */
 export async function drainMailQueue(
 	sql: MailSql,
 	transport: MailTransport,
-	options: { limit?: number; deps?: MailDeps; plan?: string; nowMs?: number } = {}
+	options: {
+		limit?: number;
+		deps?: MailDeps;
+		plan?: string;
+		nowMs?: number;
+		/** where the outbox table lives; the queue's own handle by default */
+		outboxSql?: OutboxSql;
+		/** `() => ctx.storage.sync()` in the object, so a claim survives a reset */
+		flush?: () => Promise<void>;
+	} = {}
 ): Promise<MailDrain> {
 	ensureMailTable(sql);
 	const nowMs = options.nowMs ?? Date.now();
@@ -749,6 +803,38 @@ export async function drainMailQueue(
 		1,
 		Math.min(options.limit ?? DEFAULT_MAIL_DRAIN_LIMIT, MAX_MAIL_DRAIN_LIMIT)
 	);
+	const outbox = openOutbox(
+		options.outboxSql ?? (sql as unknown as OutboxSql),
+		'mail',
+		async (ctx: OutboxContext) => {
+			const envelope = JSON.parse(argsText(ctx)) as MailEnvelope;
+			let message: MailMessage;
+			try {
+				message = JSON.parse(envelope.payload) as MailMessage;
+			} catch {
+				throw new PermanentError('unreadable payload');
+			}
+			try {
+				const detail = await sendMail(
+					transport,
+					message,
+					options.deps,
+					options.plan,
+					ctx.key
+				);
+				return JSON.stringify({ ok: true, detail } satisfies MailResult);
+			} catch (e: unknown) {
+				const error = errorMessage(e).slice(0, 200);
+				const retryable = e instanceof MailSendError && e.retryable;
+				if (!retryable || envelope.attempts + 1 >= clampAttempts(message?.maxAttempts)) {
+					throw new PermanentError(error, { cause: e });
+				}
+				return JSON.stringify({ ok: false, retry: true, error } satisfies MailResult);
+			}
+		},
+		{ flush: options.flush }
+	);
+
 	const pending = sql
 		.exec(
 			`SELECT id, recipient, payload, attempts FROM ${MAIL_TABLE}
@@ -759,12 +845,12 @@ export async function drainMailQueue(
 		.toArray();
 
 	const sent: MailAttempt[] = [];
+	const items: { id: string; kind: string; argsJson: MailEnvelope }[] = [];
 	for (const row of pending) {
 		const id = Number(row.id);
 		const to = String(row.recipient ?? '');
-		let message: MailMessage;
 		try {
-			message = JSON.parse(String(row.payload)) as MailMessage;
+			JSON.parse(String(row.payload));
 		} catch {
 			// an unparseable row can never be sent, so it leaves rather than blocking the head
 			sql.exec(`DELETE FROM ${MAIL_TABLE} WHERE id = ?`, id);
@@ -778,38 +864,86 @@ export async function drainMailQueue(
 			});
 			continue;
 		}
+		const attempts = Number(row.attempts ?? 0);
+		items.push({
+			id: `mail-${id}-${attempts}`,
+			kind: 'mail',
+			argsJson: { id, to, attempts, payload: String(row.payload) }
+		});
+	}
 
-		try {
-			const detail = await sendMail(transport, message, options.deps, options.plan);
+	// the outbox rows and the park of their queue rows share one synchronous span, so a reset
+	// leaves a message in the queue or in the outbox, never in neither
+	const enqueued = items.length > 0 ? outbox.enqueue(items) : undefined;
+	for (const item of items) {
+		const { id, attempts } = item.argsJson;
+		sql.exec(
+			`UPDATE ${MAIL_TABLE} SET attempts = ?, last_error = ?, retry_at = ? WHERE id = ?`,
+			attempts,
+			null,
+			MAIL_IN_OUTBOX,
+			id
+		);
+	}
+	await enqueued;
+	await outbox.drain();
+
+	// settle every finished row, including ones an earlier reset left behind
+	const finished: { at: number; attempt: MailAttempt }[] = [];
+	const spent: string[] = [];
+	for (const row of outbox.results()) {
+		if (row.state !== 'done' && row.state !== 'failed') continue;
+		const envelope = JSON.parse(argsText(row)) as MailEnvelope;
+		const { id, to } = envelope;
+		const kind = transport.kind;
+		spent.push(row.id);
+		if (row.state === 'failed') {
 			sql.exec(`DELETE FROM ${MAIL_TABLE} WHERE id = ?`, id);
-			sent.push({ id, to, transport: transport.kind, ok: true, detail });
-		} catch (e: unknown) {
-			const error = errorMessage(e).slice(0, 200);
-			const attempts = Number(row.attempts ?? 0) + 1;
-			const retryable = e instanceof MailSendError && e.retryable;
-			if (!retryable || attempts >= clampAttempts(message?.maxAttempts)) {
-				sql.exec(`DELETE FROM ${MAIL_TABLE} WHERE id = ?`, id);
-				sent.push({ id, to, transport: transport.kind, ok: false, error, final: true });
-			} else {
-				const wait = MAIL_RETRY_BACKOFF_MS[attempts - 1] ?? MAIL_RETRY_BACKOFF_MS.at(-1)!;
-				sql.exec(
-					`UPDATE ${MAIL_TABLE} SET attempts = ?, last_error = ?, retry_at = ? WHERE id = ?`,
-					attempts,
-					error,
-					nowMs + wait,
-					id
-				);
-				sent.push({
+			finished.push({
+				at: id,
+				attempt: {
 					id,
 					to,
-					transport: transport.kind,
+					transport: kind,
 					ok: false,
-					error,
-					retryAt: nowMs + wait
-				});
-			}
+					error: row.error ?? 'failed',
+					final: true
+				}
+			});
+			continue;
 		}
+		const result = JSON.parse(resultText(row)) as MailResult;
+		if (result.ok) {
+			sql.exec(`DELETE FROM ${MAIL_TABLE} WHERE id = ?`, id);
+			finished.push({
+				at: id,
+				attempt: { id, to, transport: kind, ok: true, detail: result.detail }
+			});
+			continue;
+		}
+		const attempts = envelope.attempts + 1;
+		const wait = MAIL_RETRY_BACKOFF_MS[attempts - 1] ?? MAIL_RETRY_BACKOFF_MS.at(-1)!;
+		sql.exec(
+			`UPDATE ${MAIL_TABLE} SET attempts = ?, last_error = ?, retry_at = ? WHERE id = ?`,
+			attempts,
+			result.error,
+			nowMs + wait,
+			id
+		);
+		finished.push({
+			at: id,
+			attempt: {
+				id,
+				to,
+				transport: kind,
+				ok: false,
+				error: result.error,
+				retryAt: nowMs + wait
+			}
+		});
 	}
+	forgetRows(options.outboxSql ?? (sql as unknown as OutboxSql), 'mail', spent);
+	sent.push(...finished.sort((a, b) => a.at - b.at).map((f) => f.attempt));
 
 	return { sent, remaining: mailQueueDepth(sql) };
 }

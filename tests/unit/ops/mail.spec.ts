@@ -1,3 +1,5 @@
+import { runInDurableObject } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
 import { describe, expect, it } from 'vitest';
 import {
 	BLOCKED_SMTP_PORT,
@@ -5,6 +7,7 @@ import {
 	DEFAULT_MAIL_DRAIN_LIMIT,
 	MAIL_ATTEMPT_BUDGET,
 	MAIL_DRAIN_BUDGET_MS,
+	MAIL_IN_OUTBOX,
 	MAIL_RETRY_BACKOFF_MS,
 	MAIL_SEND_BUDGET_MS,
 	MAIL_TABLE,
@@ -14,12 +17,13 @@ import {
 	MAX_MAIL_DRAIN_LIMIT,
 	MAX_RECIPIENTS,
 	MAX_SUBJECT_CHARS,
+	OUTBOX_KEY_HEADER,
 	clampAttempts,
 	cloudflareFailureHint,
 	cloudflareSendBody,
 	cloudflareSendUrl,
 	defaultSmtpPort,
-	drainMailQueue,
+	drainMailQueue as drainThroughOutbox,
 	ensureMailTable,
 	mailDrainEnabled,
 	mailDrainLimit,
@@ -43,9 +47,29 @@ import {
 	type MailSql,
 	type MailTransport
 } from '../../../src/ops/mail';
+import { OUTBOX_POLICIES, openOutbox, type OutboxSql } from '../../../src/ops/outbox';
 import { smtpServer } from '../../helpers/mock-socket';
 
 // #region stand-ins
+
+/**
+ * A real Durable Object SQLite handle for the outbox. The statement double below stands in for the
+ * queue's five statements; the outbox runs folio's own SQL, which only a real database answers.
+ */
+async function withOutboxSql<T>(fn: (sql: OutboxSql) => Promise<T>): Promise<T> {
+	const stub = env.SITE.get(env.SITE.newUniqueId());
+	return runInDurableObject(stub, (instance: unknown) =>
+		fn((instance as { ctx: { storage: { sql: OutboxSql } } }).ctx.storage.sql)
+	);
+}
+
+/** the drain with its outbox on a fresh real database, unless the call brings its own */
+const drainMailQueue: typeof drainThroughOutbox = (sql, transport, options = {}) =>
+	options.outboxSql
+		? drainThroughOutbox(sql, transport, options)
+		: withOutboxSql((outboxSql) =>
+				drainThroughOutbox(sql, transport, { ...options, outboxSql })
+			);
 
 /**
  * The defect these exist for: `binary.cfwMail` pushed the message onto an in-memory array and
@@ -925,6 +949,160 @@ describe('drupal/smtp: the module installs, its socket never runs, and its setti
 			hostname: 'relay.example',
 			port: 2525,
 			tls: 'starttls'
+		});
+	});
+});
+
+describe('the mail drain runs each send through the outbox', () => {
+	const BASE = 1_000_000;
+
+	/** the receiver: drops a key it has seen, so deliveries are counted by key */
+	function dedupingRelay() {
+		const keys = new Set<string>();
+		const sends: string[] = [];
+		const fetchStub: MailDeps['fetch'] = async (_url, init) => {
+			const headers = (JSON.parse(init.body) as { headers?: Record<string, string> }).headers;
+			const key = headers?.[OUTBOX_KEY_HEADER] ?? '';
+			sends.push(key);
+			keys.add(key);
+			return { ok: true, status: 200, statusText: 'ok', text: async () => '' };
+		};
+		return { keys, sends, deps: { ...DEFAULT_MAIL_DEPS, fetch: fetchStub } satisfies MailDeps };
+	}
+
+	it('keys a Cloudflare send in an X- header, since Cloudflare refuses a Message-ID', async () => {
+		const sql = memorySql();
+		queueMail(sql, message(), API, 1);
+		const { sends, deps } = dedupingRelay();
+		await drainMailQueue(sql, API, { deps });
+		expect(sends).toEqual(['mail-1-0']);
+		// Cloudflare answers E_HEADER_NOT_ALLOWED for Message-ID, so only the X- header goes out
+		expect(
+			Object.keys(cloudflareSendBody(API, message(), 'mail-1-0').headers as object)
+		).toEqual([OUTBOX_KEY_HEADER]);
+		expect(cloudflareSendBody(API, message())).not.toHaveProperty('headers');
+	});
+
+	it('gives an SMTP send a Message-ID built from the key at the sender domain', async () => {
+		const sql = memorySql();
+		queueMail(sql, message(), SMTP, 1);
+		const { connect, script } = smtpServer();
+		await drainMailQueue(sql, SMTP, { deps: { ...DEFAULT_MAIL_DEPS, connect } });
+		expect(script.body).toContain('Message-ID: <mail-1-0@example.com>');
+		expect(smtpMail(SMTP, message()).headers).toBeUndefined();
+	});
+
+	it('sends exactly once after a reset: the successor replays the same key and the relay drops it', async () => {
+		const sql = memorySql();
+		queueMail(sql, message(), API, 1);
+		const relay = dedupingRelay();
+		await withOutboxSql(async (outboxSql) => {
+			// what the predecessor left: its send went out, its completion was lost with the reset
+			const left = openOutbox(outboxSql, 'mail', () => {});
+			left.table.enqueue(
+				'mail-1-0',
+				'mail',
+				JSON.stringify({
+					id: 1,
+					to: 'visitor@example.org',
+					attempts: 0,
+					payload: String(sql.rows[0]!.payload)
+				}),
+				'mail'
+			);
+			left.table.claim(Date.now() - 60_000, 15_000, 1, { policies: OUTBOX_POLICIES });
+			relay.keys.add('mail-1-0');
+			sql.rows[0]!.retry_at = MAIL_IN_OUTBOX;
+			expect(left.results()[0]).toMatchObject({ state: 'running', attempt: 1 });
+
+			const out = await drainThroughOutbox(sql, API, { deps: relay.deps, outboxSql });
+			expect(out.sent).toHaveLength(1);
+			expect(out.sent[0]).toMatchObject({ id: 1, ok: true });
+			expect(out.remaining).toBe(0);
+			// settled: neither the queue nor the outbox holds the message any more
+			expect(left.results()).toEqual([]);
+		});
+		// the replay sent again, under the key the predecessor used; the relay kept one
+		expect(relay.sends).toEqual(['mail-1-0']);
+		expect(relay.keys.size).toBe(1);
+	});
+
+	it('never replays a message the queue has parked for a drain that is still running', async () => {
+		const sql = memorySql();
+		queueMail(sql, message(), API, 1);
+		const { sends, deps } = dedupingRelay();
+		await withOutboxSql(async (outboxSql) => {
+			const held = openOutbox(outboxSql, 'mail', () => {});
+			held.table.enqueue(
+				'mail-1-0',
+				'mail',
+				JSON.stringify({ id: 1, to: 'a@x.test', attempts: 0, payload: '{}' }),
+				'mail'
+			);
+			// a live lease: another drain is in the middle of this send
+			held.table.claim(Date.now(), 15_000, 1, { policies: OUTBOX_POLICIES });
+			sql.rows[0]!.retry_at = MAIL_IN_OUTBOX;
+			const out = await drainThroughOutbox(sql, API, { deps, outboxSql });
+			expect(out.sent).toEqual([]);
+			expect(out.remaining).toBe(1);
+		});
+		expect(sends).toEqual([]);
+	});
+
+	it('parks the queued row while the outbox owns the send, so a second drain cannot take it', async () => {
+		const sql = memorySql();
+		queueMail(sql, message(), API, 1);
+		let parked: unknown;
+		const deps: MailDeps = {
+			...DEFAULT_MAIL_DEPS,
+			fetch: async () => {
+				parked = sql.rows[0]?.retry_at;
+				return { ok: true, status: 200, statusText: 'ok', text: async () => '' };
+			}
+		};
+		await drainMailQueue(sql, API, { deps });
+		expect(parked).toBe(MAIL_IN_OUTBOX);
+		expect(sql.rows).toHaveLength(0);
+	});
+
+	it('ends a permanent failure failed, settles it and does not send it twice', async () => {
+		const sql = memorySql();
+		queueMail(sql, message({ maxAttempts: 5 }), API, 1);
+		const { calls, deps } = recordingFetch({ ok: false, status: 403, body: 'not onboarded' });
+		await withOutboxSql(async (outboxSql) => {
+			const out = await drainThroughOutbox(sql, API, { deps, outboxSql, nowMs: BASE });
+			expect(out.sent[0]).toMatchObject({ ok: false, final: true });
+			expect(String(out.sent[0]!.error)).toContain('403');
+			expect(openOutbox(outboxSql, 'mail', () => {}).results()).toEqual([]);
+			const again = await drainThroughOutbox(sql, API, {
+				deps,
+				outboxSql,
+				nowMs: BASE + 3_600_000
+			});
+			expect(again.sent).toEqual([]);
+		});
+		expect(calls).toHaveLength(1);
+	});
+
+	it('gives a retried message a new key, since the relay never took the first', async () => {
+		const sql = memorySql();
+		queueMail(sql, message({ maxAttempts: 2 }), API, 1);
+		await withOutboxSql(async (outboxSql) => {
+			const busy = recordingFetch({ ok: false, status: 503, body: 'busy' });
+			const first = await drainThroughOutbox(sql, API, {
+				deps: busy.deps,
+				outboxSql,
+				nowMs: BASE
+			});
+			expect(first.sent[0]).toMatchObject({ ok: false, retryAt: BASE + 60_000 });
+			expect(sql.rows[0]).toMatchObject({ attempts: 1, retry_at: BASE + 60_000 });
+			expect(JSON.parse(busy.calls[0]!.init.body).headers[OUTBOX_KEY_HEADER]).toBe(
+				'mail-1-0'
+			);
+
+			const ok = recordingFetch({ ok: true, status: 200 });
+			await drainThroughOutbox(sql, API, { deps: ok.deps, outboxSql, nowMs: BASE + 60_000 });
+			expect(JSON.parse(ok.calls[0]!.init.body).headers[OUTBOX_KEY_HEADER]).toBe('mail-1-1');
 		});
 	});
 });

@@ -1,5 +1,5 @@
 import { idleRearmMs } from '../../ops/cron';
-import { mailDrainEnabled } from '../../ops/mail';
+import { MAIL_IN_OUTBOX, mailDrainEnabled } from '../../ops/mail';
 import { isPaid } from '../../ops/plan';
 import { isQuarantined, parseState } from '../../ops/repair';
 import { alarmRearmDelayMs, classifyAlarmOutcome } from '../alarm';
@@ -11,8 +11,9 @@ import type { AlarmContext } from './context';
 function nextMailRetryMs(site: AlarmContext['site']): number | undefined {
 	const row = site.sql
 		.exec<{ at: number | null }>(
-			'SELECT MIN(retry_at) AS at FROM cfw_mail_queue WHERE retry_at > ?',
-			site.nowMs()
+			'SELECT MIN(retry_at) AS at FROM cfw_mail_queue WHERE retry_at > ? AND retry_at < ?',
+			site.nowMs(),
+			MAIL_IN_OUTBOX
 		)
 		.toArray()[0];
 	return row?.at === null || row?.at === undefined ? undefined : Number(row.at);

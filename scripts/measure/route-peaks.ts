@@ -8,6 +8,7 @@
  * bun scripts/measure/route-peaks.ts --cms=wordpress --dry
  * bun scripts/measure/route-peaks.ts --cms=drupal --local --n=3
  * CENSUS_OWNER_TOKEN=... bun scripts/measure/route-peaks.ts --cms=drupal --base=https://site.example --n=5
+ * CENSUS_OWNER_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_API_TOKEN=... bun scripts/measure/route-peaks.ts --cms=drupal --base=https://site.example --meter --name=cfw-e2e-x --n=5
  * bun scripts/measure/route-peaks.ts --cms=wordpress --deployed --account=paid --name=cfw-wp-0a1b2c3d --n=5
  * ```
  *
@@ -15,6 +16,9 @@
  * share; with them it prints the arithmetic and no verdict word. A local peak is the object's own
  * linear-memory reading, not the platform meter, and the local base of that probe is not calibrated,
  * so no local reading is compared with the 203 MiB line.
+ *
+ * `CENSUS_GAP_MS` sets the gap between drives in ms (default 65000). `CENSUS_ROWS_OUT` writes the
+ * raw meter rows and the run window to a JSON file when `--meter` is set.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -23,6 +27,7 @@ import { dirname, join, resolve } from 'node:path';
 import { classifyLimit } from '../../src/ops/platform-limits';
 import { OBSERVABILITY_INGEST_LAG_MS } from './bench';
 import {
+	paidCredentials,
 	queryEventsRaw,
 	redact,
 	redactDump,
@@ -64,7 +69,7 @@ export const AFTER_READ_WAIT_MS = 3000;
 export const METER_ROW_MS = 60_000;
 
 /** the gap between drives that lets a meter row belong to one drive */
-export const METER_GAP_MS = 65_000;
+export const METER_GAP_MS = Number(process.env.CENSUS_GAP_MS) || 65_000;
 
 /** the counters the object keeps in memory per incarnation; a drop in any of them says it restarted */
 export const INCARNATION_COUNTERS = [
@@ -300,9 +305,11 @@ export type Drive = {
 	/** the object's estimate of the whole isolate after the route */
 	isolateTotalBytes?: number;
 	meterBytes?: number;
+	meterExceeded?: number;
 	meterShared?: boolean;
 	cpuMs?: number;
 	note?: string;
+	responseHead?: { reset?: string; bodyBytes: number; head: string };
 };
 
 /** the demand entries the census's own stats and recycle reads leave behind; they are not the route */
@@ -582,6 +589,7 @@ export type CensusOptions = {
 	claim: boolean;
 	jsonOut: string | undefined;
 	ingestMin: number | undefined;
+	meter: boolean;
 };
 
 /** the core modules a Drupal module-enable drive takes in turn, one per drive */
@@ -625,7 +633,8 @@ export function parseCensusOptions(argv: readonly string[]): CensusOptions {
 		modules: DEFAULT_MODULES,
 		claim: false,
 		jsonOut: undefined,
-		ingestMin: undefined
+		ingestMin: undefined,
+		meter: false
 	};
 	let cms: string | undefined;
 	const modes = new Set<string>();
@@ -688,6 +697,9 @@ export function parseCensusOptions(argv: readonly string[]): CensusOptions {
 				if (val === '') throw new Error('--json-out needs a path');
 				o.jsonOut = val;
 				break;
+			case '--meter':
+				o.meter = true;
+				break;
 			case '--ingest-min':
 				o.ingestMin = intFlag('--ingest-min', val, 1, 60);
 				break;
@@ -720,6 +732,8 @@ export function parseCensusOptions(argv: readonly string[]): CensusOptions {
 	) {
 		throw new Error('--account belongs to --deployed');
 	}
+	if (o.meter && o.mode !== 'base') throw new Error('--meter belongs to --base');
+	if (o.meter && o.name === '') throw new Error('--meter needs --name=<worker name>');
 	if (o.name === '') o.name = freshName(o.cms);
 	if (o.mode === 'local') o.claim = true;
 	if (o.mode === 'deployed') o.claim = true;
@@ -1218,6 +1232,17 @@ export type RunOptions = {
 	gapMs: number;
 };
 
+/** the reset header, body length and first 120 bytes of a reply that is not 2xx or 3xx; none otherwise */
+export function responseHeadOf(r: Reply): Drive['responseHead'] {
+	if (r.status >= 200 && r.status < 400) return undefined;
+	const bytes = new TextEncoder().encode(r.text);
+	return {
+		reset: r.headers?.get('x-cfw-object-reset') ?? undefined,
+		bodyBytes: bytes.length,
+		head: new TextDecoder().decode(bytes.subarray(0, 120))
+	};
+}
+
 /** drives one route n times from the cold step the options name; never throws on a failed drive */
 export async function driveRoute(s: Session, route: RouteSpec, o: RunOptions): Promise<Drive[]> {
 	const drives: Drive[] = [];
@@ -1282,6 +1307,7 @@ export async function driveRoute(s: Session, route: RouteSpec, o: RunOptions): P
 				replyOk = undefined;
 			}
 		}
+		const responseHead = responseHeadOf(r);
 		const d: Drive = {
 			route: route.id,
 			i,
@@ -1302,6 +1328,7 @@ export async function driveRoute(s: Session, route: RouteSpec, o: RunOptions): P
 			...(peak?.ambiguous ? { demandAmbiguous: true } : {}),
 			...(peak?.reused ? { peakReused: true } : {}),
 			...(replyOk === undefined ? {} : { replyOk }),
+			...(responseHead === undefined ? {} : { responseHead }),
 			...(ready.note === undefined ? {} : { note: ready.note })
 		};
 		drives.push(d);
@@ -1439,6 +1466,7 @@ export function attributeMeter(drives: readonly Drive[], rows: readonly MeterRow
 		return {
 			...d,
 			meterBytes: peak,
+			meterExceeded: hit.reduce((s, r) => s + r.exceededMemoryErrors, 0),
 			...(hit.length > 1 || neighbours.length > 0 ? { meterShared: true } : {})
 		};
 	});
@@ -1490,7 +1518,11 @@ export const METER_QUERY = `
 	}
 `;
 
-async function readMeter(ctx: RunContext, from: number, to: number): Promise<MeterRow[]> {
+async function readMeter(
+	ctx: Pick<RunContext, 'name' | 'creds'> & { deps: Pick<Deps, 'fetch'> },
+	from: number,
+	to: number
+): Promise<MeterRow[]> {
 	const list = await ctx.deps.fetch(
 		`${API}/accounts/${ctx.creds.id}/workers/durable_objects/namespaces?per_page=100`,
 		{
@@ -1776,10 +1808,59 @@ if (import.meta.main) {
 	});
 	if (opts.mode === 'base') {
 		const s = newSession(opts.base, opts.cms, process.env, opts.modules);
-		const secrets = [s.owner, s.adminPass];
+		const creds = opts.meter ? paidCredentials(process.env) : undefined;
+		const secrets = [s.owner, s.adminPass, ...(creds ? [creds.id, creds.token] : [])];
 		s.log = (l) => console.log(redact(l, secrets));
-		const run = await runCensus(s, routes, runOpts);
-		const rep = base(run, 'existing site (no meter, no cpuTime)');
+		const startedAt = Date.now();
+		const run = await runCensus(s, routes, {
+			...runOpts,
+			gapMs: creds !== undefined && opts.cold === 'recycle' ? METER_GAP_MS : 0
+		});
+		const endedAt = Date.now();
+		let rep: CensusReport;
+		if (creds === undefined) {
+			rep = base(run, 'existing site (no meter, no cpuTime)');
+		} else {
+			const ingestMs =
+				opts.ingestMin === undefined
+					? OBSERVABILITY_INGEST_LAG_MS
+					: opts.ingestMin * 60_000;
+			console.log(`waiting ${ingestMs / 60_000} min for ingest`);
+			await new Promise((r) => setTimeout(r, ingestMs));
+			let drives = run.drives;
+			const notes = [...run.notes];
+			try {
+				const rows = await readMeter(
+					{ name: opts.name, creds, deps: { fetch } },
+					startedAt - 120_000,
+					endedAt + 120_000
+				);
+				notes.push(
+					`meter rows read: ${rows.length}; a drive that overlaps none is counted as a missing row`
+				);
+				if (process.env.CENSUS_ROWS_OUT) {
+					writeFileSync(
+						process.env.CENSUS_ROWS_OUT,
+						JSON.stringify({ startedAt, endedAt, rows })
+					);
+				}
+				drives = attributeMeter(drives, rows);
+			} catch (e) {
+				notes.push(
+					`the meter read failed: ${(e as Error).message}; every drive's meter cell is empty`
+				);
+			}
+			const summaries = run.summaries.map((r) =>
+				r.skipped !== undefined
+					? r
+					: summariseRoute(
+							r.route,
+							r.label,
+							drives.filter((d) => d.route === r.route)
+						)
+			);
+			rep = base({ summaries, drives, notes }, 'existing site (meter, no cpuTime)');
+		}
 		report(rep, (l) => console.log(redact(l, secrets)));
 		write(rep, secrets);
 	} else if (opts.mode === 'local') {

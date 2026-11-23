@@ -20,6 +20,7 @@ import {
 	parseSnapshot,
 	peakOf,
 	planLines,
+	responseHeadOf,
 	routesFor,
 	runCensus,
 	sharesOf,
@@ -28,6 +29,7 @@ import {
 	WORDPRESS_ROUTES,
 	type DemandEntry,
 	type Drive,
+	type Reply,
 	type RouteSummary,
 	type Snapshot
 } from '../../scripts/measure/route-peaks';
@@ -453,6 +455,38 @@ describe('the command line', () => {
 		);
 	});
 
+	it('takes --meter only with --base and needs the worker name for it', () => {
+		const m = parseCensusOptions([
+			'--cms=drupal',
+			'--base=https://x.example',
+			'--meter',
+			'--name=cfw-e2e-thunder-x'
+		]);
+		expect([m.meter, m.name]).toEqual([true, 'cfw-e2e-thunder-x']);
+		expect(parseCensusOptions(['--cms=drupal', '--base=https://x.example']).meter).toBe(false);
+		expect(() =>
+			parseCensusOptions(['--cms=drupal', '--base=https://x.example', '--meter'])
+		).toThrow(/--meter needs --name/);
+		expect(() =>
+			parseCensusOptions(['--cms=drupal', '--dry', '--meter', '--name=cfw-e2e-thunder-x'])
+		).toThrow(/--meter belongs to --base/);
+	});
+
+	it('keeps the reset header, the body length and the first 120 bytes of a failed reply only', () => {
+		const reply = (status: number, headers: Headers | undefined, text: string): Reply => ({
+			status,
+			headers,
+			text,
+			ms: 0
+		});
+		expect(
+			responseHeadOf(reply(503, new Headers({ 'x-cfw-object-reset': '1' }), 'x'.repeat(199)))
+		).toEqual({ reset: '1', bodyBytes: 199, head: 'x'.repeat(120) });
+		expect(responseHeadOf(reply(0, undefined, ''))).toEqual({ bodyBytes: 0, head: '' });
+		expect(responseHeadOf(reply(200, new Headers(), 'ok'))).toBeUndefined();
+		expect(responseHeadOf(reply(302, new Headers(), ''))).toBeUndefined();
+	});
+
 	it('plans without a network and names a pending route', () => {
 		const lines = planLines(parseCensusOptions(['--cms=drupal', '--dry']));
 		expect(lines.join('\n')).toMatch(/update: database update \(pending/);
@@ -575,6 +609,29 @@ describe('the platform meter and cpuTime', () => {
 			rows
 		);
 		expect(out.every((d) => d.meterShared === true)).toBe(true);
+	});
+
+	it('sums the exceeded-memory errors of every row a drive overlaps', () => {
+		const two = [
+			{ at: t0 - 60_000, maxMemoryBytes: 100 * MIB, exceededMemoryErrors: 2 },
+			{ at: t0, maxMemoryBytes: 120 * MIB, exceededMemoryErrors: 3 }
+		];
+		const [d] = attributeMeter([drive({ startedAt: t0, endedAt: t0 + 5000 })], two);
+		expect(d?.meterExceeded).toBe(5);
+	});
+
+	it('counts no exceeded-memory errors for a drive with one clean row', () => {
+		const [d] = attributeMeter([drive({ startedAt: t0, endedAt: t0 + 5000 })], rows);
+		expect(d?.meterExceeded).toBe(0);
+	});
+
+	it('keeps no meter cell for a drive with no row', () => {
+		const [d] = attributeMeter(
+			[drive({ startedAt: t0 + 120_000, endedAt: t0 + 125_000 })],
+			rows
+		);
+		expect(d).not.toHaveProperty('meterBytes');
+		expect(d).not.toHaveProperty('meterExceeded');
 	});
 
 	it('joins cpuTime by tag and leaves an unjoined drive empty', () => {

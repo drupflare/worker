@@ -18,6 +18,11 @@
  * file alone. With `--anachron` the library at that checkout is delivered first, the Drupal 10 refusal is
  * lifted, `config/corpus-anachron.yml` overrides apply, and results go to `docs/compatibility-anachron.json`
  * alone.
+ *
+ * With `ACCESS_FILE` set (`CODEX_ACCESS_FILE` is read too), each administrator login writes
+ * the owner token, password and session cookie there as JSON, mode 0600. Every login
+ * overwrites the file, so it holds the last repository logged into. Nothing is written
+ * when neither variable is set.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -699,6 +704,11 @@ export async function claimOwner(
 		await new Promise((r) => setTimeout(r, 2000 * (tries + 1)));
 	}
 	return '';
+}
+
+/** what the access file holds: the owner token, admin password and session cookie */
+export function accessFileBody(owner: string, pass: string, cookie: string): string {
+	return JSON.stringify({ owner, pass, cookie });
 }
 
 /** an attribute by its own name; a bare `type="` also matches `data-paragraphs-split-text-type="` */
@@ -2382,6 +2392,10 @@ async function driveRepo(
 			op: 'Log in'
 		});
 		site.cookie = sessionFrom(login.res.headers.getSetCookie()) ?? '';
+		// rigs still pass the older CODEX_ACCESS_FILE name
+		const accessFile = process.env.ACCESS_FILE ?? process.env.CODEX_ACCESS_FILE;
+		if (accessFile)
+			writeFileSync(accessFile, accessFileBody(owner, pass, site.cookie), { mode: 0o600 });
 		// every authenticated row fails after a login that set no session, so say why once
 		const noSession =
 			site.cookie === ''

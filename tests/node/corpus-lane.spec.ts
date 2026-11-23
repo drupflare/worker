@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { deployArgs } from '../../scripts/e2e/corpus-deploy';
 import {
+	accessFileBody,
 	agreementFields,
 	agreementForm,
 	anachronDir,
@@ -907,6 +908,16 @@ describe('reading what a repository replaces', () => {
 		);
 		expect([...composerReplaces(root)]).toEqual(['drupal/openy_activity_finder']);
 		rmSync(root, { recursive: true });
+	});
+});
+
+describe('the access file a lane run leaves for a later census', () => {
+	it('holds the owner token, admin password and session cookie as JSON', () => {
+		expect(JSON.parse(accessFileBody('tok', 'pw', 'SESS=1'))).toEqual({
+			owner: 'tok',
+			pass: 'pw',
+			cookie: 'SESS=1'
+		});
 	});
 });
 

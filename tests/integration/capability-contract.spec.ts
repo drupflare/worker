@@ -42,6 +42,8 @@ async function runVectors(): Promise<Answers> {
 	if (cached) return cached;
 	const probes = Object.fromEntries(VECTORS.map((v) => [v.id, v.probe]));
 	const out = await inObject(freshSite(), async (site: ServeDo) => {
+		// the wrapper vectors read a boot where no stream wrapper is registered yet, as a plain boot is
+		site.env = { ...site.env, BOOT_IMAGE: '0' };
 		await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
 		return (await site.runJson(capabilityVectors(probes))) as unknown as Answers;
 	});

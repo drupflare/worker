@@ -160,10 +160,11 @@ export const VECTORS: readonly Vector[] = [
 		group: 'FILES',
 		kind: 'executed',
 		claim: 'a single file larger than one Durable Object record',
-		probe: "(function () { $uri = 'public://cfw_probe_big.bin'; $big = str_repeat('x', 2400000); $wrote = @file_put_contents($uri, $big) !== false; $back = $wrote ? (int) @filesize($uri) : 0; @unlink($uri); return $wrote && $back === strlen($big); })()",
-		expected: false,
-		blocker: 'platform',
-		evidence: 'a record caps at 2,199,995 bytes; a larger file has to be chunked by the caller'
+		probe: "(function () { \\Drupal::service('stream_wrapper_manager')->register(); $uri = 'public://cfw_probe_big.bin'; $big = str_repeat('x', 2400000); $wrote = @file_put_contents($uri, $big) !== false; $back = $wrote ? (int) @filesize($uri) : 0; @unlink($uri); return $wrote && $back === strlen($big); })()",
+		expected: true,
+		blocker: null,
+		evidence:
+			'a record caps at 2,199,995 bytes, and `src/db/file-store.ts` stores a file as 200,000-byte chunk rows, so a 2.4 MB file writes and reads back'
 	},
 	// #endregion
 

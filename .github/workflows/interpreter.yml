@@ -191,7 +191,7 @@ jobs:
           if [ -n "$ARTIFACT_ID" ]; then
             ARGS+=("$ARTIFACT_ID")
           fi
-          bun scripts/fetch-interpreter.ts "${ARGS[@]}" --pin | tee /tmp/fetch.txt
+          bun scripts/fetch/interpreter.ts "${ARGS[@]}" --pin | tee /tmp/fetch.txt
 
       - name: Verify the Interpreter Attestation
         if: ${{ !env.SKIPPED }}

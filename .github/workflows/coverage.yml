@@ -37,7 +37,7 @@ jobs:
       - name: Resolve Drupal Version
         id: drupalver
         run: |
-          version=$(bun scripts/fetch-drupal-tree.ts --print-version)
+          version=$(bun scripts/fetch/drupal-tree.ts --print-version)
           test -n "$version" || { echo "::error::no Drupal version resolved" >&2; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Cache Drupal Tree
@@ -117,7 +117,7 @@ jobs:
       - name: Resolve Drupal Version
         id: drupalver
         run: |
-          version=$(bun scripts/fetch-drupal-tree.ts --print-version)
+          version=$(bun scripts/fetch/drupal-tree.ts --print-version)
           test -n "$version" || { echo "::error::no Drupal version resolved" >&2; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Cache Drupal Tree

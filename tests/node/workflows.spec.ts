@@ -197,7 +197,7 @@ describe('the interpreter lane', () => {
 /**
  * The two lanes that publish a payload to the CDN.
  *
- * WHAT THIS EXISTS TO CATCH IS A PREFIX THAT DRIFTS. The resolver in `scripts/hydrate.ts` derives
+ * WHAT THIS EXISTS TO CATCH IS A PREFIX THAT DRIFTS. The resolver in `scripts/hydrate/run.ts` derives
  * its candidate URLs from `scripts/payload-cdn.ts`; if a workflow ever grows its own
  * `wrangler r2 object put payloads/...` line, the two can disagree and the symptom is a deploy that
  * silently falls through to a source build. So the workflows are asserted to go through the script
@@ -209,15 +209,15 @@ describe('the payload publishing lanes', () => {
 	it('publishes from both lanes through the shared script, never a hand-spelled key', () => {
 		for (const file of ['build.yml', 'release.yml']) {
 			const text = readFileSync(join(DIR, file), 'utf8');
-			expect(text, `${file} should publish`).toContain('publish-payload.ts');
+			expect(text, `${file} should publish`).toContain('publish/payload.ts');
 			// a literal key here is the drift this guard exists for
 			expect(text, `${file} spells a key`).not.toMatch(/r2 object put/);
 		}
 	});
 
 	it('gives each lane its own line: a release is versioned, a push is the branch tip', () => {
-		expect(runs(byFile('release.yml'))).toContain('publish-payload.ts --release');
-		expect(runs(byFile('build.yml'))).toContain('publish-payload.ts --dev');
+		expect(runs(byFile('release.yml'))).toContain('publish/payload.ts --release');
+		expect(runs(byFile('build.yml'))).toContain('publish/payload.ts --dev');
 	});
 
 	it('never publishes a branch payload from a pull request, which has no branch line', () => {
@@ -235,7 +235,7 @@ describe('the payload publishing lanes', () => {
 		for (const file of ['build.yml', 'release.yml']) {
 			const text = readFileSync(join(DIR, file), 'utf8');
 			const check = text.indexOf('sha256sum -c SHA256SUMS');
-			const publish = text.indexOf('publish-payload.ts');
+			const publish = text.indexOf('publish/payload.ts');
 			expect(check, `${file} checks sums`).toBeGreaterThanOrEqual(0);
 			expect(publish, `${file} publishes after checking`).toBeGreaterThan(check);
 		}
@@ -255,7 +255,7 @@ describe('the payload publishing lanes', () => {
 	 */
 	it('publishes a release payload only after every hydrated-tree check has run', () => {
 		const text = readFileSync(join(DIR, 'release.yml'), 'utf8');
-		const publish = text.indexOf('publish-payload.ts');
+		const publish = text.indexOf('publish/payload.ts');
 		expect(publish).toBeGreaterThan(0);
 		for (const check of ['release:check', 'release:smoke']) {
 			const at = text.indexOf(check);
@@ -280,7 +280,7 @@ describe('the payload publishing lanes', () => {
 		for (const file of ['build.yml', 'release.yml']) {
 			const step = Object.values(byFile(file).jobs)
 				.flatMap((job) => job.steps ?? [])
-				.find((s) => (s.run ?? '').includes('publish-payload.ts'));
+				.find((s) => (s.run ?? '').includes('publish/payload.ts'));
 			expect(step?.env?.['CLOUDFLARE_ACCOUNT_ID'], file).toBeDefined();
 			expect(step?.env?.['CLOUDFLARE_API_TOKEN'], file).toBeDefined();
 		}
@@ -293,15 +293,15 @@ describe('the payload publishing lanes', () => {
 	it('builds the managed bundle from the hydrated tree and publishes it after the payload', () => {
 		const text = readFileSync(join(DIR, 'release.yml'), 'utf8');
 		const smoke = text.indexOf('release:smoke');
-		const build = text.indexOf('build-managed-bundle.ts');
-		const payload = text.indexOf('publish-payload.ts');
-		const bundle = text.indexOf('publish-bundle.ts');
+		const build = text.indexOf('build/managed-bundle.ts');
+		const payload = text.indexOf('publish/payload.ts');
+		const bundle = text.indexOf('publish/bundle.ts');
 		expect(build, 'builds after the smoke').toBeGreaterThan(smoke);
 		expect(payload, 'the payload publishes after the bundle is summed').toBeGreaterThan(build);
 		expect(bundle, 'the bundle publishes after the payload').toBeGreaterThan(payload);
 		const step = Object.values(byFile('release.yml').jobs)
 			.flatMap((job) => job.steps ?? [])
-			.find((s) => (s.run ?? '').includes('publish-bundle.ts'));
+			.find((s) => (s.run ?? '').includes('publish/bundle.ts'));
 		expect(step?.env?.['CLOUDFLARE_ACCOUNT_ID']).toBeDefined();
 		expect(step?.env?.['CLOUDFLARE_R2_KEY_ID']).toBeDefined();
 		expect(step?.env?.['CLOUDFLARE_R2_SECRET_ACCESS_KEY']).toBeDefined();
@@ -334,13 +334,13 @@ describe('the box bundle on the release', () => {
 	it('packs the canonical dry-run that release:check keeps, with no wrangler build of its own', () => {
 		const payload = steps('payload');
 		const pack = payload[at(payload, 'Pack the Box Bundle')]?.run ?? '';
-		expect(pack).toContain('scripts/build-box-bundle.ts');
+		expect(pack).toContain('scripts/build/box-bundle.ts');
 		expect(pack).toContain('--outdir=dist/dry-run/wrangler');
 		expect(pack).not.toContain('wrangler deploy');
 		expect(at(payload, 'Pack the Box Bundle')).toBeGreaterThan(
 			payload.findIndex((s) => (s.run ?? '').includes('release:check'))
 		);
-		const release = readFileSync(join(ROOT, 'scripts/release-payload.ts'), 'utf8');
+		const release = readFileSync(join(ROOT, 'scripts/release/payload.ts'), 'utf8');
 		expect(release).toContain("join(root, 'dist/dry-run', config.replace(/\\.jsonc$/, ''))");
 	});
 
@@ -358,7 +358,7 @@ describe('the box bundle on the release', () => {
 	it('packs before anything is published, so a refused bundle stops the release', () => {
 		const payload = steps('payload');
 		const pack = at(payload, 'Pack the Box Bundle');
-		const publish = payload.findIndex((s) => (s.run ?? '').includes('publish-payload.ts'));
+		const publish = payload.findIndex((s) => (s.run ?? '').includes('publish/payload.ts'));
 		expect(pack).toBeGreaterThan(0);
 		expect(publish).toBeGreaterThan(pack);
 	});
@@ -416,9 +416,9 @@ describe('the release manifest and the release announcement', () => {
 	it('writes the manifest after the box bundle is summed and before anything is published', () => {
 		const payload = steps('payload');
 		const manifest = at(payload, 'Write the Release Manifest');
-		expect(payload[manifest]?.run).toContain('scripts/release-event.ts manifest');
+		expect(payload[manifest]?.run).toContain('scripts/release/event.ts manifest');
 		expect(manifest).toBeGreaterThan(at(payload, 'Pack the Box Bundle'));
-		const publish = payload.findIndex((s) => (s.run ?? '').includes('publish-payload.ts'));
+		const publish = payload.findIndex((s) => (s.run ?? '').includes('publish/payload.ts'));
 		expect(publish).toBeGreaterThan(manifest);
 	});
 
@@ -439,7 +439,7 @@ describe('the release manifest and the release announcement', () => {
 		expect(job.needs).toBe('publish');
 		expect(job.if).toContain("github.ref_name == 'master'");
 		expect(job.permissions).toEqual({ contents: 'read' });
-		const post = job.steps.find((s) => (s.run ?? '').includes('scripts/release-event.ts post'));
+		const post = job.steps.find((s) => (s.run ?? '').includes('scripts/release/event.ts post'));
 		expect(post).toBeDefined();
 		expect(job.steps.indexOf(post!)).toBe(job.steps.length - 1);
 	});
@@ -464,7 +464,7 @@ describe('the release manifest and the release announcement', () => {
 		for (const { file, doc: other } of workflows()) {
 			if (file === 'release.yml') continue;
 			expect(JSON.stringify(other), file).not.toContain('DASHBOARD_RELEASE');
-			expect(runs(other), file).not.toContain('release-event.ts');
+			expect(runs(other), file).not.toContain('release/event.ts');
 		}
 	});
 
@@ -655,12 +655,21 @@ describe('the contrib job', () => {
 	});
 });
 
-describe('the pack suites lane', () => {
-	type Job = {
-		needs?: string[];
-		strategy?: { 'fail-fast'?: boolean; matrix?: { shard?: number[] } };
-		steps: NonNullable<Workflow['jobs'][string]['steps']>;
+type Job = {
+	needs?: string | string[];
+	if?: string;
+	'timeout-minutes'?: number | string;
+	permissions?: Record<string, string>;
+	concurrency?: { group: string; 'cancel-in-progress': boolean };
+	strategy?: {
+		'fail-fast'?: boolean;
+		'max-parallel'?: number;
+		matrix?: { shard?: number[]; include?: { fixture: string; timeout: number }[] };
 	};
+	steps: NonNullable<Workflow['jobs'][string]['steps']>;
+};
+
+describe('the pack suites lane', () => {
 	const jobs = () =>
 		(parse(readFileSync(join(DIR, 'e2e.yml'), 'utf8')) as { jobs: Record<string, Job> }).jobs;
 	const step = (job: Job | undefined, name: string) => job?.steps.find((s) => s.name === name);
@@ -697,5 +706,148 @@ describe('the pack suites lane', () => {
 		expect(lane?.needs).toBeUndefined();
 		expect(step(lane, 'Run the e2e Lane')?.run).toContain('test:e2e');
 		expect(step(jobs().gate, 'Run the e2e Lane')).toBeUndefined();
+	});
+});
+
+const CERTIFY_CRON = '23 3 * * *';
+
+describe('the certification workflow', () => {
+	const e2e = () =>
+		parse(readFileSync(join(DIR, 'e2e.yml'), 'utf8')) as {
+			on: { schedule?: { cron: string }[] };
+			jobs: Record<string, Job>;
+		};
+	const doc = () =>
+		parse(readFileSync(join(DIR, 'certify.yml'), 'utf8')) as {
+			on: {
+				schedule?: { cron: string }[];
+				workflow_dispatch?: {
+					inputs?: Record<string, { type?: string; default?: unknown }>;
+				};
+			};
+			jobs: Record<string, Job>;
+		};
+	const certify = () => doc().jobs.certify as Job;
+	const publish = () => doc().jobs['publish-certified'] as Job;
+	const crons = () => (doc().on.schedule ?? []).map((s) => s.cron);
+
+	it('runs on the certification cron and carries no other schedule', () => {
+		expect(crons()).toEqual([CERTIFY_CRON]);
+	});
+
+	it('takes a paid switch, off, and a window on manual dispatch', () => {
+		const inputs = doc().on.workflow_dispatch?.inputs ?? {};
+		expect(inputs.certify_paid).toMatchObject({ type: 'boolean', default: false });
+		expect(inputs.window_days).toMatchObject({ type: 'number', default: 7 });
+		expect(inputs.certify).toBeUndefined();
+	});
+
+	it('leaves the pack suites workflow with its weekly cron and none of the certification jobs', () => {
+		expect((e2e().on.schedule ?? []).map((s) => s.cron)).toEqual(['17 6 * * 1']);
+		for (const name of ['plan-certify', 'certify', 'publish-certified'])
+			expect(e2e().jobs[name], name).toBeUndefined();
+	});
+
+	it('keeps the original conditions on live-deploy and pack-suites', () => {
+		expect(e2e().jobs['live-deploy']?.if).toContain("github.event_name != 'pull_request'");
+		expect(e2e().jobs['pack-suites']?.if).toContain('!cancelled()');
+	});
+
+	it('picks its fixtures in a planning job that every certify job follows', () => {
+		const plan = doc().jobs['plan-certify'] as Job;
+		expect(plan.needs).toBeUndefined();
+		expect(plan.if).toBeUndefined();
+		expect(certify().needs).toBe('plan-certify');
+		expect(JSON.stringify(certify().strategy?.matrix)).toContain(
+			'needs.plan-certify.outputs.matrix'
+		);
+	});
+
+	it('leaves paid fixtures to a named variable or input that defaults off', () => {
+		const pick = (doc().jobs['plan-certify'] as Job).steps.find(
+			(x) => x.name === "Pick Today's Fixtures"
+		);
+		const text = JSON.stringify(pick);
+		expect(text).toContain('vars.CERTIFY_PAID');
+		expect(text).toContain('inputs.certify_paid');
+		expect(text).toContain("'false'");
+	});
+
+	it('keeps running the other fixtures when one fails', () => {
+		expect(certify().strategy?.['fail-fast']).toBe(false);
+	});
+
+	it('takes each job timeout from its matrix entry', () => {
+		expect(certify()['timeout-minutes']).toBe('${{ matrix.timeout }}');
+	});
+
+	it('lists each fixture once, and every fixture is a corpus entry', () => {
+		const cfg = parse(readFileSync(join(ROOT, 'config/corpus-certify.yml'), 'utf8')) as {
+			fixtures: string[];
+			profileFixtures: string[];
+			paidFixtures?: string[];
+		};
+		expect(cfg.fixtures.length).toBeGreaterThan(0);
+		expect(new Set(cfg.fixtures).size).toBe(cfg.fixtures.length);
+		const corpus = parse(readFileSync(join(ROOT, 'config/corpus.yml'), 'utf8')) as {
+			repos: { id: string }[];
+		};
+		const known = new Set(corpus.repos.map((r) => r.id));
+		for (const id of cfg.fixtures) expect(known.has(id), id).toBe(true);
+		for (const id of [...cfg.profileFixtures, ...(cfg.paidFixtures ?? [])])
+			expect(cfg.fixtures, id).toContain(id);
+	});
+
+	it('queues each fixture in its own group and never cancels a run in progress', () => {
+		expect(certify().concurrency?.group).toMatch(/^certify-drupflare-account-/);
+		expect(certify().concurrency?.group).toContain('matrix.fixture');
+		expect(certify().concurrency?.['cancel-in-progress']).toBe(false);
+	});
+
+	it('runs a free fixture on the DRUPFLARE account and uses the paid secrets only for a paid one', () => {
+		const text = JSON.stringify(certify());
+		expect(text).toContain('secrets.DRUPFLARE_CLOUDFLARE_ACCOUNT_ID');
+		expect(text).toContain('secrets.DRUPFLARE_CLOUDFLARE_API_TOKEN');
+		expect(text).not.toContain('secrets.FREE_');
+		expect(text).not.toContain('secrets.STUDENT_');
+		for (const ref of text.match(/\$\{\{[^}]*secrets\.CLOUDFLARE_[^}]*\}\}/g) ?? [])
+			expect(ref).toContain("matrix.plan == 'paid'");
+		expect(text).toContain('--plan=${{ matrix.plan }}');
+	});
+
+	it('runs the teardown whatever the certify step did', () => {
+		const teardown = certify().steps.find((s) => s.name === 'Tear Down the Throwaway');
+		expect(teardown?.if).toContain('always()');
+	});
+
+	it('treats an exhausted budget as a warning rather than a failure', () => {
+		const run = certify().steps.find((s) => s.name === 'Certify the Fixture')?.run ?? '';
+		expect(run).toContain('= 3');
+		expect(run).toContain('::warning::');
+	});
+
+	it('publishes only after the certify matrix, from its own job', () => {
+		expect(publish().needs).toEqual(['plan-certify', 'certify']);
+		expect(publish().if).toContain("needs.certify.result != 'skipped'");
+	});
+
+	it('uploads the history before the status, so a status never names a record the history lacks', () => {
+		const run = publish().steps.find((s) => s.name === 'Publish to the CDN')?.run ?? '';
+		expect(run.indexOf('certified/history.json')).toBeGreaterThanOrEqual(0);
+		expect(run.indexOf('certified/history.json')).toBeLessThan(
+			run.indexOf('certified/status.json')
+		);
+	});
+
+	it('attests the status file before it is published, with attestations write', () => {
+		const steps = publish().steps;
+		const attest = steps.find((s) => s.name === 'Attest the Status');
+		expect(attest?.uses).toMatch(/^actions\/attest-build-provenance@v\d+$/);
+		expect(attest?.with?.['subject-path']).toBe('status.json');
+		const names = steps.map((s) => s.name);
+		expect(names.indexOf('Attest the Status')).toBeLessThan(
+			names.indexOf('Publish to the CDN')
+		);
+		expect(publish().permissions?.attestations).toBe('write');
 	});
 });

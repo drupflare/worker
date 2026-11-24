@@ -37,5 +37,11 @@ jobs:
         run: bun run docs:php
       - name: Build Documentation
         run: bun run docs:build
+      - name: Check Documentation
+        run: bun run docs:check
+      - name: Install Browser
+        run: bunx playwright install --with-deps chromium
+      - name: Browse Documentation
+        run: bun run docs:browse
       - name: Deploy Documentation
         run: bash typedoc.sh "${GITHUB_SHA::7}"

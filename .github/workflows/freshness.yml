@@ -91,7 +91,7 @@ jobs:
     name: Compare Shipped Core Against drupal.org
     if: >-
       github.event_name != 'push' ||
-      contains(toJSON(github.event.commits.*.modified), 'src/ops/shipped-lock.ts') ||
+      contains(toJSON(github.event.commits.*.modified), 'src/ops/composer/shipped-lock.ts') ||
       contains(toJSON(github.event.commits.*.modified), 'scripts/qa/core-freshness.ts') ||
       contains(toJSON(github.event.commits.*.modified), '.github/workflows/freshness.yml')
     runs-on: ubuntu-latest

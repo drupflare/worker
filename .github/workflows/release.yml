@@ -115,7 +115,7 @@ jobs:
       - name: Resolve Drupal Version
         id: drupalver
         run: |
-          version=$(bun scripts/fetch-drupal-tree.ts --print-version)
+          version=$(bun scripts/fetch/drupal-tree.ts --print-version)
           test -n "$version" || { echo "::error::no Drupal version resolved" >&2; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Cache Drupal Tree
@@ -134,7 +134,7 @@ jobs:
         # present, so hydrate takes its "already hydrated; nothing to do" exit and the smoke then
         # runs against the BUILT tree rather than the payload -- a check passing against a copy the
         # artifact does not contain. --force reaches the payload route, which overwrites.
-        run: bun scripts/hydrate.ts --force --from="dist/$PAYLOAD"
+        run: bun scripts/hydrate/run.ts --force --from="dist/$PAYLOAD"
       - name: Price the Bundle Against the Free Ceiling
         run: |
           set -o pipefail
@@ -149,18 +149,18 @@ jobs:
           DRUPFLARE_HYDRATING: '1'
         run: |
           ./node_modules/.bin/wrangler deploy --dry-run --outdir=/tmp/managed -c wrangler.managed.jsonc
-          bun scripts/build-managed-bundle.ts --outdir=/tmp/managed --release="$TAG" --commit="$GITHUB_SHA" --out=/tmp/bundle
+          bun scripts/build/managed-bundle.ts --outdir=/tmp/managed --release="$TAG" --commit="$GITHUB_SHA" --out=/tmp/bundle
           tar -czf "dist/$BUNDLE" -C /tmp/bundle "releases/$TAG"
           cd dist
           sha256sum "$BUNDLE" >> SHA256SUMS
           sha256sum -c SHA256SUMS
       - name: Pack the Box Bundle
         run: |
-          bun scripts/build-box-bundle.ts --outdir=dist/dry-run/wrangler --out=dist --version="$VERSION" --sums=dist/SHA256SUMS
+          bun scripts/build/box-bundle.ts --outdir=dist/dry-run/wrangler --out=dist --version="$VERSION" --sums=dist/SHA256SUMS
           cd dist
           sha256sum -c SHA256SUMS
       - name: Write the Release Manifest
-        run: bun scripts/release-event.ts manifest --dist=dist --tag="$TAG" --repo="$GITHUB_REPOSITORY"
+        run: bun scripts/release/event.ts manifest --dist=dist --tag="$TAG" --repo="$GITHUB_REPOSITORY"
       # AFTER the checks, not before them. A release prefix is what `hydrate` prefers over the
       # GitHub release, so publishing it early would leave a resolvable `payloads/v<version>/` for
       # a version whose checks then failed and which no release ever carried
@@ -168,7 +168,7 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: bun scripts/publish-payload.ts --release --tag="$TAG"
+        run: bun scripts/publish/payload.ts --release --tag="$TAG"
       # the S3 pair makes the 4,346 objects a minute's work; without it the step falls back to
       # `wrangler r2 bulk put`, which measured 1.7 objects a second
       - name: Publish the Managed Bundle to the CDN
@@ -177,7 +177,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_R2_KEY_ID: ${{ secrets.CLOUDFLARE_R2_KEY_ID }}
           CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-        run: bun scripts/publish-bundle.ts --out=/tmp/bundle --release="$TAG"
+        run: bun scripts/publish/bundle.ts --out=/tmp/bundle --release="$TAG"
       - name: Payload to Job Summary
         if: ${{ !cancelled() }}
         run: |
@@ -297,7 +297,7 @@ jobs:
           SUFFIX: ${{ github.event.inputs.suffix }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          bun scripts/release-event.ts post --dist=dist --tag="v${VERSION}${SUFFIX}" --repo="$GITHUB_REPOSITORY"
+          bun scripts/release/event.ts post --dist=dist --tag="v${VERSION}${SUFFIX}" --repo="$GITHUB_REPOSITORY"
 
   deploy-path:
     name: Verify the Published Deploy Path

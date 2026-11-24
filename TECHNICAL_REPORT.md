@@ -1,8 +1,8 @@
-# Technical Report: Drupal on Cloudflare Workers
+# Technical Report: Drupal and WordPress on Cloudflare Workers
 
-Drupal 11.4.7 runs on Cloudflare Workers with PHP 8.5 executing as WebAssembly inside a Durable
-Object, using that object's own SQLite as the database. This document is the engineering reference
-for that system: how it is put together, which platform limits shape it, what each operation costs,
+Drupal 11.4.7 and WordPress 7.1.4 run on Cloudflare Workers with PHP 8.5 executing as WebAssembly
+inside a Durable Object, using that object's own SQLite as the database. Joomla has local proofs
+and no running site. This document is the engineering reference for that system: how it is put together, which platform limits shape it, what each operation costs,
 and which classes of defect it has produced.
 
 Every figure here is measured. The instrument is named in each table, because a local wall clock and
@@ -36,8 +36,21 @@ project shipped before it is gone from the path.
 | Re-render against a real VPS, tag-invalidated page | **30 ms against 24 ms**, 1.21x, server clocks, n=25 | `docker/vps.yml`, same machine |
 | Re-render against a real VPS, dynamic page cache hit | **22 ms against 24 ms** | the shape a save leaves on every page it did not invalidate |
 | Anonymous cached against the same VPS | **2 ms p50 / 4 ms p95** against 3 / 49 | same rig |
+| WordPress uncached front page, object CPU | **about 1.0 to 2.0 s**; two runs (n=10 and n=5) differ 2x, cause unknown | Workers Observability `cpuTime`, student free account, 2026-11-18 |
+| WordPress uncached front page, wall | **1,125 to 2,250 ms**; run one p50 2,250 (1,830-3,061, n=10) | `x-worker-ms`, same runs |
+| WordPress fill, five routes | **median 2,324 ms wall**, 1,956 to 3,481 (n=1 per route); 2.0 to 3.5 s | `x-worker-ms`, paid throwaway, 2026-11-23 |
+| WordPress route `cpuTime`, twelve routes | **1,083 to 3,106 ms p50** (n=3 per route) | Workers Observability, paid, 2026-11-23, see the route census |
+| WordPress cached hit | **0 ms object CPU**, wall median 4 ms (n=9, student free); p50 3 to 78 ms by route (n=10, paid) | Observability and `x-worker-ms` |
+| WordPress route-peak memory | **64.0 MiB linear** (cron 64.7), meter p50 109.9 to 134.8 MiB, highest 149.8 against the 203 line (34 drives) | route census, paid, 2026-11-23 |
+| WordPress translator | **2,372 of 2,372** statements replay against pinned MySQL; **0 unexplained** differences over 1,849 | local replay and differential |
+| WordPress page cache soak | two 4,400-operation soaks, **no stale content**; one stale `/feed/` unexplained | local `wrangler dev`, 2026-11-22 |
+| WordPress publish until fresh | local **3.7 to 5.6 s** (median 4.5, n=10); deployed **13.9 to 21.1 s** against an 8 s bound, so deployed is not met | local and paid, 2026-11-22 and 2026-11-23 |
+| WordPress regeneration ceiling, free | **45,138 renders/day**, duration-bound at 2.25 s a fill; rows allow 89,104; weights assumed | `free-envelope.ts` model, `derived` |
+| WordPress cold boot, share of requests meeting one, wasm penalty against native, VPS comparison, joules | **not yet read** | no instrument has been run on WordPress |
 
 The bundle figure moves whenever `src/` does. Run the command rather than carrying a number.
+
+The WordPress rows are not comparable to the Drupal rows above them unless the instrument and plan match. The Drupal render rows are `cpuTime` on a deployed paid worker with both bins emptied; the WordPress render rows are one-run readings on a student free account and a paid throwaway. A WordPress interpreter is dropped after every render, so there is no warm render to set beside Drupal's 38 to 60 ms. The default for the WordPress page cache is on in code; the deployed write-to-fresh bound is the open item.
 
 ### The Two Ceilings
 
@@ -353,7 +366,7 @@ does not move it.
 ### First-Run Migration
 
 A pre-built site is shipped and replayed rather than installed. `assets/drupal-sql/` holds the
-chunked SQL; `src/db/migrate-sql.ts` replays it as a JavaScript loop with a cursor in DO storage.
+chunked SQL; `src/db/dump/migrate.ts` replays it as a JavaScript loop with a cursor in DO storage.
 
 The manifest records **75 chunks / 1,370 rows / 1,669 statements**; it moves with the packed
 database, so read `assets/drupal-sql/manifest.json` rather than this line. A live
@@ -475,7 +488,7 @@ emits the same file when it is missing.
 
 ### Modules on the Edge
 
-Composer never runs on the edge, so `assets/driver.json` is what executes. `scripts/gen-driver-assets.ts`
+Composer never runs on the edge, so `assets/driver.json` is what executes. `scripts/gen/driver-assets.ts`
 packs it directly from the sibling checkouts `../drupflare`, `../rom` and `../stream-http`, reading an
 allow-list (`src`, `.info.yml`, `.install`, `.module`, `.services.yml`) rather than walking a checkout
 wholesale. The machine name comes from the mount, not the directory.
@@ -484,11 +497,11 @@ A composer `require` ships nothing: the packed tree is the vendor directory. `dr
 `drupflare/stream-http` and its `HttpsStreamWrapper` extends the packaged class, so the packer mounts
 `../stream-http/src` at `libraries/drupflare-stream-http/src` and the PSR-4 root is registered in
 both autoloader sites -- `src/site/php/settings-override.php` and the boot fragment in
-`src/drupal/site-php.ts`.
+`src/drupal/php/site.ts`.
 
 `tests/node/driver-pack.spec.ts` asserts the pack matches the modules on disk byte for byte.
 
-`moduleTable()` in `src/ops/module-table.ts` is the contrib census. It has exactly three states:
+`moduleTable()` in `src/ops/module/table.ts` is the contrib census. It has exactly three states:
 
 - **verified** -- a gated run enabled the module against a real site and asserted an observable it
   owns.
@@ -902,7 +915,8 @@ included. Each was checked against a build with the guard removed.
 
 `getHeapMax()` returns 4,294,901,760, so the module declares no maximum: the 128 MiB ceiling is
 workerd's, enforced by `grow()` throwing. Emscripten catches that and retries with `cutDown = 1,2,4`,
-so a growth from the shipping peak degrades rather than aborting.
+so a growth from the shipping peak degrades rather than aborting. Since 2026-11-23 a governor wraps
+`grow()` and can refuse it below that limit; see The Growth Governor below.
 
 **`memory_limit` is not enforced.** `USE_ZEND_ALLOC=0` is baked into the binary by upstream php-wasm,
 and two symptoms follow from that one flag: `memory_get_usage()` reads 0, and an 8M cap holds 38 MB with
@@ -913,6 +927,12 @@ collected, and calling `gc_collect_cycles()` after every render left linear memo
 availability rather than accounting: a runaway allocation does not stop at a catchable fatal that
 loses one request, it grows linear memory to the ceiling and takes the whole object with every
 session on it. `tests/integration/php-allocator.spec.ts` pins both symptoms and the collector running.
+
+**Superseded in part, 2026-11-23.** A runaway allocation on a governed request no longer takes the
+object with it. The growth governor below refuses the grow, the run ends, and the visitor gets a 503
+for that request alone. `memory_limit` is still not enforced, and the governor does not apply to
+owner routes, provisioning or alarm firings, where a runaway allocation still grows to the platform's
+limit.
 
 **Heap restore requires reproducing the open file-descriptor table at the same fd numbers.** Inode
 alignment does not matter. Dropping `/dev/urandom`'s fd throws `RandomException`; dropping the three
@@ -938,6 +958,488 @@ own source text is 3.4 MB of it), compiled JavaScript 3.2 MB, `tinyimg` and `was
 `ArrayBuffer` backing stores 0.9 MB. No large data buffer is held before PHP boots, so the baseline is
 code and source, which no paging reaches. The gap between the local 28.8 MB and the deployed 56 to 60
 is not explained by the snapshot.
+
+### The Growth Governor, 2026-11-23
+
+A grow of the interpreter's linear memory that would pass a cap is refused, so a request that would
+have taken the isolate past the platform's kill line fails alone and the object survives with every
+other request on it. The governor is on by default. `GROWTH_GOVERNOR=0` turns it off, and
+`GROWTH_CAP_BYTES` sets a cap directly and wins over both. The code is `src/do/growth/cap.ts`, which
+wraps `grow()` through folio's `governGrowth`.
+
+The cap is `max(boot + headroom + (JS side at the measurement - JS side now) - margin, boot)`:
+
+| constant | value | source |
+| --- | --- | --- |
+| boot | 64 MiB | `INTERPRETER_MEMORY.initial`, 1,024 pages |
+| headroom, `GROWTH_HEADROOM_BYTES` | 36 MiB (37,748,736) | headroom ladder on a deployed paid worker, 2026-11-23, interpreter resident at 64 MiB: stock Drupal after an admin page or a flush read 36 in 8 of 9 readings at a 240 s settle; Thunder after a flush read 36 (n=3, zero spread) |
+| JS side at the measurement | 19,187,577 bytes | mount blob 13,012,361 and merged pack index 1,980,912 measured, plus 4 MiB of resident files taken from the earlier estimate |
+| margin, `GROWTH_MARGIN_BYTES` | 4 MiB (4,194,304) | assumed |
+
+On stock Drupal that is 96 MiB. A staged cold pack takes the blob and index out of the ledger and
+raises the cap by 14,993,273 bytes, and a larger resident set lowers it byte for byte. The cap is
+applied once the interpreter has started, so it never refuses the boot itself, and a cap below what
+the memory already holds is lifted to that size.
+
+A refused grow makes the allocator fail. PHP prints `[error] Out of memory` and the run ends in
+`exit(1)` without PHP's `catch` running. The object counts the run as governed only when the refusal
+counter moved during it, so an `exit(1)` with no refusal passes through unchanged. It drops that
+interpreter and answers 503 with `x-cfw-growth-refused: 1` and `retry-after: 2`. The front worker
+repeats a GET or HEAD once and marks the reply `x-cfw-retried: growth`. A POST repeats only when the
+object proves nothing was saved and nothing left it (`x-cfw-rolled-back: all` and `x-cfw-effects:
+none`), the body is one buffer of 1 MiB or less, and `GROWTH_RETRY` is not `0`; it carries a new
+attempt id. Every such repeat, and the repeat after a fresh-first abort, runs under the fresh-attempt
+allowance: the cap plus 8 MiB, never above 104 MiB (`src/do/growth/retry.ts`, `GROWTH_RETRY_ALLOWANCE_BYTES`
+and `GROWTH_RETRY_CEILING_BYTES` override). The allowance rests on a deployed Thunder configuration
+export that a 109,051,904 byte (104 MiB) cap refused when it grew from 108,920,832 to 109,248,512
+bytes, which the code's own comment says then ran without a platform kill, and on a fresh boot having
+more room than a warm one; the 8 MiB figure itself is a default, not a measured optimum.
+
+The cap does not apply to every phase. Every object route except a page render, a render carrying the
+owner phase header `x-cfw-phase`, and every alarm firing run with it lifted, because provisioning, a
+claim or a module enable legitimately grows past a serving cap and a refusal there would be a flow
+that never completes. `/serve-stats` reports `growthCap`, `growthRefusals`, `governedRuns`,
+`rolledBackRuns`, `lastGoverned` and `growthExempt`.
+
+**Deployed readings, 2026-11-23, one paid throwaway, six deploys of one build (`PLAN=paid`, no route),
+all labelled measured from `/serve-stats` and response headers.**
+
+| reading | result | n |
+| --- | --- | --- |
+| ordinary renders (anonymous `/`, `/user/password`, signed-in `/admin/content`, `/admin/modules`, status report) | 200, refusals 0, governed runs 0, cap 96.0 to 96.03 MiB | 3 rounds, 18 requests |
+| cache flush at the default cap | 303, counters 0 | 3 |
+| at cap 72 MiB: a site information form post, and four exempt calls (a modify commit, an uninstall, the enable of two modules) | all answered, refusals unchanged at 30 | 1 and 4 |
+| forced refusal at cap 72 MiB, one PHP allocation of 100 MiB in a signed-in GET | 503, `x-cfw-growth-refused: 1`, `x-cfw-retried: growth`, `retry-after: 2`, object alive, `/user/login` 200 after | 1 |
+| the same allocation of 20 MiB | first try refused, the repeat answered 200 on a fresh heap | 1 |
+| the same allocation as a POST | 503, `x-cfw-growth-refused: 1`, no `x-cfw-retried` | 1 |
+| `GROWTH_GOVERNOR=0` | `growthCap` null, the 100 MiB allocation answered 200 | 1 |
+| counters after the forced runs | each failed run adds 6 refusals (the allocator retries smaller sizes); a refused GET adds 2 governed runs, a refused POST 1 | 5 runs |
+
+Stock pages did not exercise the cap. Five admin pages on a fresh isolate stayed at 64 MiB of linear
+memory with the cap at 72 MiB, so refusal was forced with a probe controller. After provisioning and
+a claim the spare memory held 87.31 MiB (n=1 claim), below the 96 MiB cap, so the cap was not lifted
+to the spare. A redeploy with a changed variable does not restart a running object: the alarm chain
+keeps the old instance and its old environment until the isolate is replaced, so a variable reading
+needs a forced replacement first.
+
+**Two windows where the default does not protect, both read on the same build.**
+
+1. *The booting request.* The ledger counted the mount blob only after the mount loaded, so a fresh
+   isolate read a cap of 119,850,873 bytes (114.3 MiB) before its first governed render (6 fresh
+   isolates, all the same). An allocation of 75 MiB made by the booting request reset the object twice
+   (n=2, no growth-refused header). `growthLedger()` now returns the measurement-time ledger while
+   the mount is not loaded, so the formula's 96 MiB applies; that change was made after this reading
+   and has no deployed reading yet.
+2. *Right after a render.* The 36 MiB headroom is a settled figure and the cap allows 32 MiB of
+   growth the moment a render ends. The ladder with no settle read 28, 16 and 36 MiB after an admin
+   page and 16, 16 and 48 after a flush (n=3 each), and 36, 36, 36 and 36, 100, 36 after a 240 s
+   settle. With the cap at 96 MiB and the interpreter at 64 MiB after an admin render, one allocation
+   of 50 MiB and one of 60 MiB reset the object (n=1 each, no governor header), and allocations of 30
+   and 40 MiB answered 200 and the isolate was replaced afterwards (n=1 each). The probe is one PHP
+   allocation, not a stock page. A cap of about 76 MiB would hold at 16 MiB of headroom (derived: 64 +
+   16 - 4); it is not built, and it would refuse real renders that grow 12 to 32 MiB.
+
+Enabling `jsonapi`, an exempt phase, answered with `x-cfw-retried: reset` once (n=1): an object reset
+inside an exempt phase is the exemption working as designed and still a reset. Not read: a completed
+config import under the governor (the single-import form answered 200 and the next POST got
+`ECONNRESET`, which is inconclusive), Thunder and WordPress under the governor. WordPress has no
+ladder reading, so its headroom is assumed to be at least Drupal's; its smaller pack blob (7.07 MiB
+read locally against 12.41) gives it a higher cap by the formula.
+
+### Slice Rollback, Tier 0, 2026-11-23
+
+A governed run is one `transactionSync`, so a refused grow rolls back what the run wrote
+(`src/do/slice.ts`). It is on by default and `GROWTH_ROLLBACK=0` returns to partial writes. The
+interpreter's `pib_run` is synchronous in this build (the glue's `ccall` ignores `async`, and there is
+no Asyncify or JSPI), so one run can sit inside one transaction.
+
+A request with no park point is one slice and rolls back whole. The 503 says "Nothing it did was
+saved" and carries `x-cfw-rolled-back: all`. A parked request (Redis, outbound HTTP, an external
+database) commits each slice at its park. A refusal in a later slice undoes only that slice, answers
+`x-cfw-rolled-back: slice` and says the earlier steps were saved. A wasm trap rolls the slice back too
+and still propagates its own message, so a trapped run no longer commits what it wrote, and a pool
+lane's forward buffer is restored with it (`isTrap()` in `src/do/run.ts`; a trapped governed run
+committed before that change). The governed path calls `binary.ccall('pib_run')` inside
+`transactionSync` and never `_run()`, so a spec that injects a fault by stubbing `_run` does not
+reach it; the five specs that did read as a production defect and were a seam error. A PHP `exit()`
+is not a trap: the pinned interpreter survives it, the harness prints its
+reply from a shutdown function, and the slice commits its writes and returns the page. A fatal that is
+not a trap still commits what the run wrote, as an unwrapped run did. The one effect that leaves the object without
+being a row, the settings write to KV, waits for the slice to commit and is dropped on rollback.
+Exempt phases are not wrapped: a cap-lifted run does not refuse, and a module enable writes about
+20,533 rows that would then sit in one transaction for up to 31 s.
+
+**Deployed, paid, one stock site, 2026-11-23.** A probe module wrote two `key_value` rows and then
+allocated. With the cap at 72 MiB and an allocation of 100 MiB, 10 of 10 POSTs answered 503 with
+`x-cfw-growth-refused: 1` and `x-cfw-rolled-back: all`, and the row count read before and after was 409
+both times on every one. With `GROWTH_ROLLBACK=0` and the same cap the count rose by 2 on each of 3
+POSTs (the second was not refused, since the heap was in a different state after the first refusal).
+A 32 MiB allocation did not refuse in 10 of 10 POSTs: it fits inside the 64 MiB the interpreter
+already holds, so the cap never grows. That is one site, one cap and one POST size, with no spread
+over cap sizes. It shows the platform undoes the slice's writes. It does not isolate whether a nested
+`cfwSqlTxn` inside the slice composes on the platform; locally it does, as a savepoint.
+
+**The cost of the wrapper did not resolve.** Four arms interleaved on one deployed worker, each on a
+fresh isolate with 60 unique anonymous `/user/login` renders, `cpuTime` from Workers Observability
+at 1 ms granularity:
+
+| arm | n | `cpuTime` median / p90 / max (ms) | rows per request |
+| --- | --- | --- | --- |
+| rollback on | 60 | 7 / 18 / 45 | 6.40 |
+| rollback off | 60 | 8 / 18 / 37 | 6.46 |
+| rollback on (A/A) | 60 | 8 / 22 / 31 | 6.35 |
+| rollback off (A/A) | 60 | 9 / 21 / 39 | 6.40 |
+
+The on-minus-off median gap is 1 ms in both pairs and the A/A gaps are 1 ms, so the run cannot
+separate on from off, and a cost below the meter's resolution is not excluded. A first run at n=20
+per arm read 11 ms on, 9 off and 8 for the A/A arm. Locally (workerd, `performance.now()`, a wall
+figure, n=20 interleaved, `/user/login` with the page and dynamic page cache bins emptied) the medians
+were 29 ms on, 31 off and 30 for the A/A arm, with 0 rows written per render in every sample. A
+write-bearing run charges the same rows with the transaction on and off (asserted equal, n=1,
+deterministic). The commit latency of a long slice holding thousands of rows is not measured.
+
+### Stepped Operations, Tier 1, 2026-11-23
+
+A module enable too big for one invocation runs one module per slice (`src/do/stepper.ts`). Each step
+runs through `run(code, after)`, and the checkpoint hook runs inside the slice's transaction, so a
+step's writes and its cursor commit together or not at all. An interrupted step repeats whole and a
+finished one never repeats. The enable route answers 202 with `done: false`, `next`, `total` and a poll
+URL that is the same URL, and the last call answers 200 with the body a single run gives.
+
+The planner is on by default. `STEPPED_OPS` unset or `1` steps an enable only when the modules it must
+install, times `STEP_MODULE_COST_MS`, exceed `STEP_BUDGET_MS`. `always` steps every enable and `0`
+turns stepping off. `STEP_BUDGET_MS` defaults to 20,000 ms of PHP time, which is the design line of
+25 s less a margin and is assumed. `STEP_MODULE_COST_MS` defaults to 12,000, the middle of the deployed `cpuTime` of four
+one-module invocations on a module site, boot included (11.9, 12.5, 14.1 and 15.9 s; a smaller site read
+5.2 to 6.2 s), so it overstates a module and errs toward stepping. It read 6,810 when this section was
+written, and the planner now steps any enable of two or more modules (2 x 12,000 passes the 20,000 ms
+budget), where it used to step three or more. `STEP_FLOOR_MS` (default 20,000) is the least a step is
+charged against the budget, so an invocation runs one step unless a client lowers it: the host-call
+estimate does not separate sites (two modules with the same call count ran 3.5 s and 11 s of `cpuTime`,
+and a module install of 72,575 calls, estimated at 9.4 s, ran 35.9 s), and two steps in one call took
+23.9 s of `cpuTime` and 30.3 s of wall time against a kill line between 30.3 and 32.4 s. The enable
+route is an owner phase and its steps keep that phase, so they run without the serving cap.
+
+What it bounds is the largest step. It does not divide a single module's own install, and it adds a
+fixed cost per step. Locally (workerd, wall time, 3 fresh sites), enabling `migrate_drupal_ui`, which
+installs 3 modules, took 3,217, 3,297 and 3,239 ms and 7,872 rows as one call. Stepped, each of the
+three invocations took 2.9 to 3.3 s and 3,943 to 4,902 rows, so the three together cost 5,016 more
+rows (+64%) and about 3 times the wall time. The boot floor is about 3 s per step locally.
+
+**mantle2 enable, deployed, paid, 2026-11-23, n=1 run.** The enable ended with the old single
+invocation at 31,507 ms of CPU and 35,655 ms of wall time, outcome `exceededWallTime`, with
+`limits.cpu_ms` read back as 300,000 from the deployed script (so the ceiling that killed it was not
+`cpu_ms`). With the planner defaults it completed in two invocations: `cpuTime` 16,117 ms (wall 17,112)
+and 22,033 ms (wall 23,571), 38.1 s in all, outcomes ok and ok. Across the run's 209 Observability
+events, 208 were ok and 1 was canceled, none `exceededWallTime` or `exceededCpu`; the next largest
+invocation was the claim at 7,404 ms. The margin from the 22.0 s peak to the 31 s kill is 9 s.
+The step count was not read, because the response bodies were not kept. The second invocation spent
+22.0 s against its 20 s budget, since the budget counts host calls times the virtual clock's
+per-call constant and a step that burns CPU between calls is undercounted, so a heavier step could
+cross the line. Whether any single module is over the limit is not shown. The first deployed attempt
+failed on a defect in the stepper, which re-imposed the serving cap on a step the route exempts: the
+kernel boot and the plan alone held 95.8 MiB of a 96 MiB cap, and the first step's grow was refused.
+Steps now keep the phase of their caller.
+
+**Open: mantle2's install is one step of 23.8 to 35.9 s of CPU, and the report cannot say why.** Two
+deployed runs of the same build read 23.8 and 35.9 s (n=1 each, call counts not kept). The planner's
+counter charges every host call 0.13 ms (`kappa` in `src/runtime/virtual-clock.ts`), and mantle2's
+small steps match it within 10% at 0.133 to 0.144 ms per call (five steps, deployed). Its install
+makes 72,572 calls locally at 0.137 ms each, 9.9 s, so 14 to 26 s of the deployed figure is unaccounted
+for: more calls, heavier calls, or compile (derived by subtraction). Writes explain little, since the
+twelve largest tables hold at least 6,878 statements and about 90% of the calls are not row writes;
+their kind is unmeasured. A serialization step on another site read 14,068 ms with its calls unread,
+0.37 ms per call if it made mantle2's count, 2.7 times the rate. The causes below are hypotheses, in
+the order they look likely, and none is tested: (1) the call mix, with syscalls or heavier SQL than the
+single `kappa` assumes; (2) compiling every included PHP file, because opcache is compiled in and
+disabled; (3) first-touch reads through the lazy pack; (4) router rebuilds, which are 5,928 of the
+14,737 rows the install wrote locally; (5) a container rebuild per one-module step; (6) platform
+variance, which two runs cannot separate from the rest. Nothing measured here shows an install under
+15 s. Batching modules that share a container group into one `install()` call would save the extra
+rebuilds, and its size is unmeasured; precomputed module info and a class map, or opcache for module
+code, are the two ideas that could reach 15 s and only if the call mix or compile dominates. The
+cheapest way to settle it is to keep each step's reply (calls, trace, driver counts, `inflateStats`,
+router dumps) and split the call count by import name in one local run, then repeat deployed at n of 5
+or more.
+
+**Config import, deployed, paid, 2026-11-23.** The `cim` job runs the importer in beats of at most 10
+operations over a fresh importer, with its state in Drupal's `state` table and its cursor committed
+inside the step's transaction. On a stock site (178 config objects, 213,026 bytes of payload, 87 labels
+changed) the third deployed attempt processed 87 of 87 operations in 9 beats of 10, 10, 10, 10, 10,
+10, 10, 10 and 9. `cpuTime` for the 7 beats read was 3,110 ms at most (the first carries the kernel
+boot), with wall time at most 3,726 ms, 0 growth refusals, and 3,771 rows written by the whole run. The
+first two attempts each found a defect no local spec could see, because the specs stub PHP: a booted
+kernel had not loaded the legacy includes (`Undefined constant ...SAVED_UPDATED`) and no `.module` file
+was loaded (`Call to undefined function Drupal\views\Entity\views_invalidate_cache()`). Not shown: a
+reset between two beats on the platform, an import that installs extensions (an install costs a whole
+beat), and the 202 contract for `cim`, whose poll answers 200 with `done: false`.
+
+### Fresh-First Routes, 2026-11-23
+
+An interpreter that has served pages holds every class it compiled, and PHP never unloads one, so a
+cache flush rebuilds the container and the router on top of that code and peaks higher on a warm
+interpreter. A request on the `FRESH_FIRST_ROUTES` list, with an interpreter resident, makes the
+object abort itself with `ctx.abort()` before any PHP runs, and the front worker repeats the request
+once with `x-cfw-retried: abort` (`src/do/fresh/first.ts`, `src/do/fresh/first-run.ts`, the repeat in
+`src/site/hop.ts`). Abort is the default: with the variable unset the list is
+`POST /admin/config/development/performance`, the form whose Clear all caches button is the flush;
+saving the same form matches too and pays the same boot. `abort` alone means the same, `0` or an empty
+value turns it off, and a comma list of `METHOD /path` entries replaces the built-in one. The abort
+happens before anything has run, so the repeat is safe for any method. The repeat runs under the
+fresh-attempt allowance, which lets it grow the cap by 8 MiB up to a ceiling of 104 MiB
+(`src/do/growth/retry.ts`). The object writes a durable record before it aborts and the repeat
+completes it, so `/serve-stats` `freshFirst` shows the count and the last record.
+
+**Status of the mode.** Two earlier forms are deleted: dropping the interpreter inside the request,
+which had an unconditional form and a conditional one, and the diagnostics built around it (the
+transition lock, the event trace and the probe route). A deployed probe on 2026-11-23 showed why the
+in-request drop could not carry the flush: a gate that waited for the dropped interpreter's host graph
+to be collected before the next boot did not stop the deaths that followed (in all 13 gated runs the
+first attempt still died on a platform reset, 11 of them 78 to 150 ms in, and both plain controls
+answered 503; n=15 runs in all). Abort is the default on the strength of a deployed Thunder chain of three runs on one
+frozen worker state, 13 of 13 rows each, with the abort exercised in two of them (the third had an
+alarm reset replace the isolate before the POST, so no interpreter was resident). Those were
+experiment runs and count toward no certification. The abort removes the platform reset on the flush
+POST and does not remove the peak: in an earlier single abort run on Thunder the repeat still hit the
+cap and was refused at 100,466,688 to 100,728,832 bytes against a 100,671,478 byte cap, the same step
+as a run with no abort. In the third chain run the repeat reached 106,823,680 bytes of linear memory,
+above the 100,667,119 byte default cap, so the allowance was in use. Whether the repeat lands on a
+fresh isolate is not
+established, because `ctx.abort()` resets the object and does not always replace the isolate (see What
+Holds the Bytes below). Every deployed figure in the next two tables is of the in-request drop, the
+deleted mode, and is kept as the measurement that closed it.
+
+Local, stock Drupal, workers pool, heap break read from the allocator's chunk chain (n=2 per arm unless
+stated, readings identical to 0.05 MiB):
+
+| operation | warm interpreter | fresh interpreter |
+| --- | --- | --- |
+| cache flush (the fresh arm served one anonymous page first) | 76.51 to 76.52 MiB (n=4 across runs) | 54.69 MiB |
+| config import, 111 objects | 66.49 to 66.50 MiB | 46.14 MiB |
+| update-database flush unit | 76.54, 76.71 MiB | 50.24, 50.24 MiB |
+
+Config import and update-database are not on the list. The stock import runs as batch steps and the
+update-database slices run on owner routes, so neither is one page request a list entry can match, and
+both stay under the cap on a warm interpreter.
+
+Deployed, paid, stock Drupal, governor default, five interleaved rounds per arm (an admin page pair,
+then the performance form's Clear all caches), one site per arm. The "list on" arm is the in-request
+drop, the form this section started with and has since deleted; it is kept as the measurement that
+priced it:
+
+| reading | list on, drop (n=5) | list off (n=5) |
+| --- | --- | --- |
+| flush POST `cpuTime`, ms | 9,409, 8,710, 8,351, 8,586, 8,710 (median 8,710) | 1,966, 1,382, 1,816, 1,343, 1,600 (median 1,600) |
+| flush POST `x-worker-ms`, ms | 9,620 to 11,026 | 1,412 to 2,147 |
+| linear memory after each flush, MiB | 87.31 five times | 87.31, 93.81, 95.81, 95.81, 95.81 |
+| refusals / governed runs after round 5 | 0 / 0 | 6 / 1 |
+
+No flush POST was refused in either arm (10 of 10 answered 303). The one refusal in the off arm was a
+`GET /admin/content` in round 3 at 95.81 MiB against a 96.0 MiB cap, repeated by the front worker and
+answered 200. So on stock Drupal the drop did not keep the flush alive. It kept the interpreter low
+afterwards. The price was +7.1 s of `cpuTime` at the median per flush and 9.6 to 11.0 s of wall time
+against 1.4 to 2.1 s, plus a second cold compile on the next admin page (5,886 to 6,464 ms, four
+readings). A site whose flush fits under the cap on a resident interpreter paid this for nothing.
+
+The abort default pays a boot as well, and only one deployed reading of its price exists. In the
+Thunder chain above the aborted first invocation cost 35 and 57 ms of `cpuTime`, and the repeat cost
+7,912 and 13,681 ms (wall 8,930 and 15,532 ms), against 15,541 ms for the third run's flush, which
+ran on a fresh isolate and did not abort. These are three single runs on a different fixture from the
+table, so they say the repeat is a full flush on a cold object and nothing about a stock-Drupal
+median. By construction the abort fires on every flush that meets a resident interpreter, so a site
+whose flush fits under the cap on a resident interpreter pays the boot and the repeat for nothing, as
+the drop did; that cost is derived and was not measured on stock Drupal.
+
+**Open, and not closed by the abort.** The alarm after a flush: in all three chain runs the isolate was
+replaced again after the flush by an alarm that started right after it (an alarm reset line 5 ms after
+the repeat ended in one run, and about 7 s after in another). A transition lock held across the
+render, since deleted, did not stop it. With the lock on, 3 of 10 runs took the reset and 2 of 2
+hot-start runs did, and the trace shows the alarm entering after the render released the lock while
+the POST's response was still finishing. Only two hot-start runs could be produced, so that is thin
+evidence, and the reading of two events in one isolate comes from the traces and was not tested
+directly. The reset family after a flush stays open. A second open item is the shipped boot image: the
+images under `assets/bootimage/` carry driver digest `b4e7e1570fab955b` and the tree's
+`src/ops/driver-digest.ts` reads `a011f5da5d86a529`, so every site reads "context differs" and boots
+plain until `bun run assets:bootimage` is rerun on the build machine, and `bun run check:bootimage`
+fails on exactly that difference. A flush does not refuse the image: a local run with a matching image
+used it before the flush, inside the flush POST and after it (n=1).
+
+### What Holds the Bytes at the Flush Peak, 2026-11-23
+
+Measured locally on the pinned interpreter (8 MiB stack), stock Drupal, workers pool. This build has
+no Zend allocator (`USE_ZEND_ALLOC=0`), so `memory_get_usage()` reads 0. The instrument is a walker
+over dlmalloc's chunk chain, started at the stack base, which reports bytes in use, free bytes and the
+heap end (`brk`). Two back-to-back reads differ by 0 bytes (n=2), and the chain walks clean on 8
+independent fresh sites. `linear`, which the governor and the platform meter see, is `brk` rounded up
+by the growth rung, not demand: `brk` 60.6 MiB reads as 73.3 linear and 76.5 as 89.1, a slack of
+12.6 MiB.
+
+The start state is deterministic: 57.51 to 57.53 MiB in use and `brk` 60.55 to 60.63 across 8 fresh
+sites. `drupal_flush_all_caches()` on that warm interpreter adds 15.3 MiB in use (`brk` +15.96): the
+container rebuild +11.23 (445 files, 1.76 MB of source), the router rebuild +4.41 (225 files), the
+rest under 1. A second flush adds 5.4 and a third 0.3. Declared classes never fell in any step, and
+the count was monotonic over 40 or more samples.
+
+| what holds the 57.5 MiB warm heap | MiB | method |
+| --- | --- | --- |
+| compiled code for 2,217 files (12.38 MB of source) | 36.2 (band 21.3 to 39.3) | derived: 3.07 bytes per source byte, from 481 unloaded core files in 30 batches of 15 (batch min 1.80, max 9.34), applied to the loaded source; the calibration files are comment-heavy, so the band is wide |
+| all 517 initialised services | 1.95 | measured, the retained size of the services array |
+| largest single service (`plugin.manager.views.join`) | 1.01 | measured |
+| container definitions (787) | 0.49 | measured |
+| class static properties (54) | 1.24 | `serialize()` length, a lower bound |
+| named object state, total | about 3.8 | derived, the sum of the rows above |
+| unattributed remainder | about 17.5 (band 14.4 to 32.4) | derived by subtraction; interned strings, plugin definition arrays and allocator headers are a hypothesis |
+
+Compiled code is not evictable at object level and is most of the heap; named object state is about 3.8
+MiB, under 5% of the 76.5 MiB flush peak. No structure passes 5 MiB, so no object pager was built. The
+conclusion survives the whole compiled-code band, and the exact split does not. A flush run on a fresh
+interpreter peaked at `brk` 49.49 MiB against 76.53 warm, 27.0 MiB (35%) lower (n=1 per arm, both
+deterministic across their runs); enable slices on a fresh interpreter peaked at 57.8 (`token`) and 65.1
+MiB (`jsonapi`).
+
+Two further findings. Freed memory is reused: after a free, allocations of 4.4 MB of small strings and
+several larger ones added 0 to `brk`, so evicting before a peak allocation would lower the high-water
+mark, and fragmentation costs show in the first allocation after a long run (3 of 6.4 MiB free was not
+usable for a 4 MiB request). And the old container survives a flush: a `WeakReference` to it is alive
+after the flush and a collection (n=2), and the next render frees about 5.3 MiB. A search from the
+roots found three holders, each cleared before the next search: `$GLOBALS['middleware']`, set at script
+scope before the flush; `Symfony\Component\Mime\MimeTypes::$default`, whose guesser holds a closure
+bound to the old container; and `Renderer::$contextCollection`, which keeps the POST's `Request`, whose
+`exception` attribute holds the form builder. The freed bytes are reused by the next request before its
+own peak, so releasing the holders earlier changes no peak and was not done. `gc_collect_cycles()` after
+each flush step lowered `brk` from 76.54 to 75.17 MiB (n=1 each). Thunder, a heavy config import and a
+deployed reading were not run, and every figure here is local with no CPU claim.
+
+**What holds a dropped interpreter's bytes, deployed, 2026-11-23.** Read on a deployed probe worker
+with a stock pack, with sentinels on the dropped interpreter's graph (n=15 gated runs plus the
+calibration calls). Three platform facts came out of it. A `FinalizationRegistry` runs its callbacks
+only while the registry itself is reachable, so a registry made per call was collected and never fired,
+and the first two attempts proved nothing for that reason. A major collection in workerd came from
+about 8 to 16 MiB of external `ArrayBuffer` pressure (20 to 32 MiB on a tiny worker), not from JS heap
+garbage and not from waiting 10 s idle. And `ctx.abort()` resets the object and sometimes keeps the
+isolate: 10 of 10 aborts of a lone object in a tiny worker came back with the same isolate token, an
+abort of one object in a two-object isolate left the co-tenant alone, and in the Drupal chains the
+isolate id changed in 2 of 3 govcms runs and 2 of 3 Thunder runs. Without `RELEASE_HOST_GRAPH` a
+dropped interpreter's `Module`, `FS` and file tree were never collected although collections ran, and
+what holds the `Module` is not named; with it the root and the large file buffers were collected within
+one nudge. Same-class objects shared an isolate in 7 of 80 (8.75%) on the tiny worker, and none across
+two classes.
+
+### The Route Census, Deployed, 2026-11-23
+
+Measured on a deployed paid worker with the governor at its default and `MEMORY_TRACE=1`, one deploy
+per CMS, n=3 drives per route, cold step through a recycle. Linear is the object's own reading; meter
+is the platform's row MiB; `cpuTime` is from Workers Observability on the paid plan, which cannot show
+a refusal against the free 10 ms cap.
+
+| stock Drupal route | linear MiB min / p50 / max | meter MiB min / p50 / max | `cpuTime` ms min / p50 / max |
+| --- | --- | --- | --- |
+| front | 64.0 / 69.6 / 73.3 | 118.7 / 149.4 / 165.0 | 13 / 3,179 / 3,413 |
+| auth-front | 64.0 / 64.0 / 64.0 | 141.1 / 141.1 / 150.8 | 4,552 / 5,226 / 6,600 |
+| admin | 64.0 / 64.0 / 64.0 | 140.7 / 140.8 / 153.9 | 4,541 / 5,793 / 8,356 |
+| flush | 64.0 / 64.0 / 64.0 | 162.1 / 162.9 / 170.9 | 1,573 / 2,606 / 3,715 |
+| cron | 64.0 / 64.0 / 64.0 | 173.1 / 173.7 / 174.0 | 2,830 / 2,940 / 3,609 |
+| module-enable | not read | 132.2 / 152.6 / 169.5 | 3,126 / 13,775 / 14,684 |
+
+| stock WordPress route | n | linear MiB max | meter MiB p50 | `cpuTime` ms p50 |
+| --- | --- | --- | --- | --- |
+| front | 3 | 64.0 | 111.4 | 1,715 |
+| post | 3 | 64.0 | 128.5 | not read |
+| login-get | 3 | 64.0 | 112.1 | 1,083 |
+| login-post | 3 | 64.0 | 109.9 | 3,106 |
+| admin | 3 | 64.0 | 113.3 | 1,791 |
+| post-new | 3 | 64.0 | 118.8 | 2,214 |
+| heartbeat | 3 | 64.0 | 110.1 | 1,135 |
+| rest-posts | 3 | 64.0 | 112.0 | 1,124 |
+| rest-me | 3 | 64.0 | 112.1 | 1,110 |
+| cron | 3 | 64.7 | 112.2 | 1,276 |
+| plugin-activate | 1 | 64.0 | 149.8 | 807 |
+| media-upload | 3 | 64.0 | 134.8 | 1,533 |
+
+Across the 18 Drupal drives and the 34 WordPress drives read, the highest linear reading is 73.3 MiB
+(Drupal front, drive 2), so no drive passed 76 MiB and none was refused (verdicts empty, interpreter
+incarnation unchanged on every drive that has a verdict). The smallest margin under 76 MiB is 2.7 MiB.
+WordPress drops its interpreter after every render, so its linear figure is per render, and only cron
+grew past 64 MiB (to 64.7). The highest meter reading is 174.0 MiB (Drupal cron), under the 203 MiB kill
+line.
+
+Caveats that bound the claim. `recycled` is false on 9 of 18 Drupal drives (admin all 3, module-enable
+all 3, auth-front 2 of 3, front 1 of 3), so those drives may not have started on a fresh isolate and
+their 64.0 readings may be warm, and the WordPress table does not report the flag. WordPress
+plugin-activate ran one drive in three because the page offered no inactive plugin for the other two,
+so that row is n=1. Module enable reports no linear figure (its demand record was empty). The WordPress
+post route has no `cpuTime` join and the instrument did not say why. Routes the script does not drive
+(login, config sync and export, node create, config import, admin modules) are not measured here. The
+cost of the census on the account meter was not read. The instrument had four gaps, none of them a
+source defect: it deploys `PLAN=free` unless the overlay adds `PLAN=paid`, it writes no JSON for a
+deployed run, its account-wide inventory diff exits 1 when another job touches the account, and its
+table omits `recycled`.
+
+### The Elastic Interpreter, Tier 2, 2026-11-23
+
+Tier 2 would have replayed a refused page request on an interpreter whose memory is paged, so a
+request that needs more than the cap completes at a higher CPU cost. It is closed, and the reason is
+structural. The memory limit and the wall limit are one budget on this platform, and the translation
+spends the second to buy the first: the translated build adds 30.4 MB of module and costs 2.2 to 4.4
+times the CPU, one invocation is ended at about 30 s of wall time whatever `limits.cpu_ms` says, and no
+byte of one isolate can be shared with another, so paging to SQLite is the only elasticity there is.
+The seam (`src/do/elastic.ts`, `ELASTIC_EXECUTOR`, the `x-cfw-escalated` and `x-cfw-tier` headers and
+their specs) is deleted. The build and probe stay under `experiments/elastic-tier/`, and
+`notes/elastic-interpreter.md` holds the deployed runs, the five structural reasons and what would
+reopen it. The objective stays open: finish a route that needs more linear memory than the platform
+allows. What does that work today is the governor, the slice rollback, the stepped enable, the repeat
+on a fresh interpreter and the abort that starts one.
+
+**The mechanism, built and measured once.** A Binaryen pass rewrites an existing wasm so each
+non-exempt load and store goes through a 64 KiB page table, with a host pager that owns the table. It
+was run over the shipped `php8.5.tuned.wasm` (14,216,041 bytes), so no PHP rebuild is needed. It lives
+in folio's research scripts, which the published package does not carry. The module has 1,245,222
+memory accesses (842,508 loads and 402,714 stores), of which 62.1% are exempt (stack and constant low
+addresses) and 472,522 are checked.
+
+| module | bytes | growth over native |
+| --- | ---: | ---: |
+| native | 14,216,041 | |
+| call shape, exempt | 18,607,583 | +4,391,542 |
+| inline, exempt, dirty write table | 44,590,928 | +30,374,887 |
+
+All of the growth is in the Code section. The 44.6 MB module fits the 64 MiB bundle with 3,555,043
+bytes to spare (94.7%) against a baseline of 18,962,893.
+
+**Speed.** Locally (workerd, `performance.now()` around the render, a wall figure, page and dynamic
+page cache bins emptied), the elastic module took 2.5 to 3.2 times the native render at 4,096 and 512
+frames and 6.7 to 11 times at 256 frames (native n=4, elastic n=3 per route; for `/` the medians were
+55 ms native and 153, 118 and 367 ms elastic). The deployed `cpuTime` readings on a Thunder object ran
+2.2 to 4.4 times native, n=1 each, in `notes/elastic-interpreter.md`. Folio's earlier per-access
+overhead of 0.78 to 1.58 reads as a ratio of 1.78 to 2.58, so the deployed ratios start inside that
+range and run well above it, and n=1 readings do not narrow it. Equality with native is proven for 2
+of 5 routes (the 403 and 404 pages, after normalising form ids); the other three differ only at the
+first mismatch offset, where native also differs from itself, and were not compared past it.
+
+**What the second research write-up concludes.** Gregory's second memory write-up
+(`.remember/memory/problem_2/Memory Problem 2, Answered_ Page the Code, Not the Data.md`) takes the
+heap attribution above as its premise: data is about 7% of the warm heap and compiled code about 63%,
+so it pages function bodies, not arrays. The mechanism is paging a function's opcodes at the call
+boundary, folded into the run-time-cache NULL test that every call path already makes, so a resident
+call gains no instruction. It derives 10 to 22 MiB recoverable on the warm heap (central about 15) and
+projects the 76.5 MiB flush peak at 50 to 67 MiB with the container fix, and it moves the translated
+build off the request path. What it proves is exactness of its own model under three stated lemmas
+(frames are the only holders of code pointers, aliases are registered, run-time caches are parked):
+3,000 of 3,000 generated programs exact over 77,970 evictions and 68,427 refaults, against controls
+that fail on 471 (no alias registry) and 2,621 (evicting live frames). An explicit entry test cost 2.4
+to 7.6 ns per call on its sandbox kernel against 0.4 to 3.0 merged into the existing test. All of it is
+local, on hand-built wasm kernels and JavaScript models, one vCPU, and none of it is PHP. What it leaves
+open: no PHP build exists, the 63% share rests on a calibration band of 37 to 68%, every recoverable
+figure is derived, whether each entry path in the pinned source tests the run-time cache for NULL is
+unread (its own confidence is 0.70), and its seven pre-registered gates are unrun. Its stated
+confidence that the warm flush peak reaches 64 MiB or less is 0.50. `notes/elastic-interpreter.md`
+records that evicting function bodies and doc comments recovered 6.4 to 9.1 MiB against a 10 MiB bar,
+below the 10 to 22 MiB this write-up derives; whether that run is the same mechanism is not stated
+there, so the derived figure is neither confirmed nor refuted.
+
+A platform survey read the same day, labelled as summaries of fetched pages and not full text, found
+`memory.discard` at Phase 1 of the WebAssembly process with no V8 implementation located, and linear
+memory that cannot shrink under the specification. Neither was verified against workerd.
 
 ### Bundle Size
 
@@ -1318,7 +1820,7 @@ figure, not one observed as a refusal.
 A zone Cache Rule is NOT one of them: a Worker route runs the Worker before the cache is consulted.
 The Workers Caching feature does skip the Worker on a hit, but bills the request anyway -- and its
 cache key omits the host, which for a host serving many sites at `/` is a cross-tenant leak rather
-than a saving. `tests/node/cache-partition.spec.ts` refuses it in a shipping config.
+than a saving. `tests/node/cache/partition.spec.ts` refuses it in a shipping config.
 
 ## Measured Costs
 
@@ -1388,7 +1890,7 @@ implementing the backend means adopting the transform already refused above.
 
 The premise was true of the wrong primitive. A **generator** copies `execute_data` and the VM stack to
 the heap; a **fiber** switches a real C stack. This project had already found the difference the hard
-way -- `FIBER_SHIM` / `PhpWasmSyncFiber` exists in `src/drupal/site-php.ts` and
+way -- `FIBER_SHIM` / `PhpWasmSyncFiber` exists in `src/drupal/php/site.ts` and
 `scripts/patch-drupal.mjs` rewrites Drupal core's five `new \Fiber(` sites onto it, so core's own
 fiber use is excised from the shipping tree.
 
@@ -1902,7 +2404,7 @@ same replay counts.** rom's `dependencyIndexesUpTo()` sends a replay only the st
 table the asked-about statement touches, falling back to the whole buffer on any failure, so a
 revision's nine passes no longer re-send every earlier statement. What remains is index maintenance:
 `node_field_data` charges 11 rows per stored row, and it and `node` carry 41 of a revision's 56
-locally counted rows. `tests/integration/write-amplification.spec.ts` prints the per-table split.
+locally counted rows. `tests/integration/write/amplification.spec.ts` prints the per-table split.
 
 **A user create is 478 ms and ten times a node create on CPU while writing a third of the rows.**
 That is the password hash, and it makes an account-creation burst a CPU problem where every other
@@ -1934,7 +2436,7 @@ rows of 12 KB html cost +0.32% on disk. The cheapest class benefits most -- `war
 
 **The same shape was worth more on drupal's own cache bins.** Every bin `DatabaseBackend` creates
 keys on a TEXT `cid`, and `scripts/measure/index-audit.ts` reports 13 of the 14 with NO secondary
-index at all -- so the autoindex WAS their entire index cost. `scripts/pack-sql.ts` now emits the 14
+index at all -- so the autoindex WAS their entire index cost. `scripts/pack/sql.ts` now emits the 14
 bins `WITHOUT ROWID`, and `Schema::createTableSql()` in the `cfw_do_sqlite` driver does the same for
 a bin a module adds at runtime, which the packer never sees. Verified through Drupal's own installer.
 Measured on a steady-state render at **8 charged rows -> 6**, bins' index
@@ -2436,7 +2938,7 @@ No `sessions` row, no `users_field_data.access`, no `flood`, no form state. Core
 `UserRequestSubscriber` to `KernelEvents::TERMINATE` and throttles the access write by
 `session_write_interval`, so on a stock host it is periodic; here it does not happen at all, because
 this SAPI never dispatches terminate. No design decision rests on it, so
-`tests/integration/replica-invariant.spec.ts` is its only guard.
+`tests/integration/replica/invariant.spec.ts` is its only guard.
 
 **Replica-safety is a property of the REQUEST, not of the route**, and the status report is what
 showed it. Measured against a dev server whose fetch cache was warm it wrote only `key_value`; measured
@@ -2452,7 +2954,7 @@ others reject. So the private key must arrive by replication or at seeding and m
 on a replica, while the rest of the same table can be dropped -- a per-table verdict is wrong in
 whichever direction it is set.
 
-This is why the guard in `src/ops/replica.ts` is effect-based rather than a route list. It walks the
+This is why the guard in `src/ops/replica/policy.ts` is effect-based rather than a route list. It walks the
 capabilities INSTALLED on the PHP module instead of a known list, classifies each SQL statement
 against the tables a replica may own, and refuses anything it does not recognise. Two capabilities
 had already drifted out of `CROSSING_NAMES` -- `cfwOidcClaims`, which deletes a durable ticket, and
@@ -2736,7 +3238,7 @@ flush. The inline comments read "folded in the same firing, so the counter costs
 The folding saved the ALARM. Nothing folded the rows, so a flush on a trafficked site wrote **four**,
 and rows written is the meter the counters exist to count.
 
-`src/ops/day-meters.ts` packs all four into one dated row, the way `writeRenderWindow()` already
+`src/ops/meters/day-meters.ts` packs all four into one dated row, the way `writeRenderWindow()` already
 packs its two values. An idle warming tick's flush goes **2 rows -> 1** and a trafficked site's
 **4 -> 1**, which is what moves `FREE_QUOTAS.rowsPerMeterFlush` to 1 and takes a warmed site from
 13,680 rows/day to **12,240**, and to **10,896** once the checkpoint left its flat 60 s clock. `serveTotal` stays a lifetime figure inside the daily row and carries
@@ -3044,7 +3546,7 @@ cost 1,398 ms of `cpuTime`. These durations therefore count host crossings and n
 understate by all the pure compute between them. The honest absolutes remain the client's own clock
 and `cpuTime` from a tail, which is why the 1->2->4 curve is measured end-to-end from outside.
 
-`tests/integration/lane-timing.spec.ts` asserts the counts and does NOT assert the
+`tests/integration/replica/lane-timing.spec.ts` asserts the counts and does NOT assert the
 durations are positive: `serviceMs > 0` would be asserting that the render did I/O, not that it took
 time, and would pass for the wrong reason.
 
@@ -3483,7 +3985,7 @@ of `file` at n=5 and frees 5,046,272 bytes of linear memory plus 32,141,312 of M
 is the seam and is KV-overridable.
 
 **A cache baked at pack time is read, and it cuts CPU but not reliably wall.** `pack` mounts a layer
-`scripts/bake-opcache.ts` captures from the `file` arm: 1,839 scripts, 8,581,446 bytes. Measured
+`scripts/bake/opcache.ts` captures from the `file` arm: 1,839 scripts, 8,581,446 bytes. Measured
 2026-09-25 on two deployed paid workers, one cold first render per minute, then with the levers
 swapped between the two deploys:
 
@@ -3673,6 +4175,51 @@ timestamp is correct and a duration taken from two readings is not. The host dep
 fact: `nowMs()` is `Date.now()` and arms every alarm and every `expires_at`.
 
 `tests/integration/php-clock.spec.ts` pins it and `/clock` reports `absoluteS` and `jsAbsoluteMs`.
+
+**The virtual clock, 2026-11-23.** The platform clock above is unchanged, and PHP's view of it is not.
+A virtual clock is on by default (`src/runtime/virtual-clock.ts`). Inside one synchronous run it
+returns `max(platform, base + calls * kappa, last + 1 microsecond)`, capped at the platform clock
+plus 60,000 ms, where `calls` counts the glue's host-call imports (SQL bridge, file system calls),
+`base` is the platform clock at the start of the run, and each run starts again from the platform
+clock. `VIRTUAL_CLOCK` unset or `1` is the virtual clock, `0` or `off` is the platform clock, `frozen`
+holds PHP's clock still for a run as the platform does, and `simulated` is the virtual clock over a
+platform clock that is held still, which makes a local run repeatable. `VIRTUAL_CLOCK_KAPPA_MS` sets
+the milliseconds charged per host call and defaults to 0.13, the median of nine warm Drupal renders on
+a local workerd (range 0.085 to 0.164), taken as elapsed time over counted calls.
+
+The reason is every loop that waits for a deadline. Core's queue loop in `Cron::processQueue()` ends
+when `time()` passes its 15 second lease, so on a frozen clock a queue drains whatever its size, and
+the Batch API's `Timer::read()` test against 1,000 ms never fires, leaving only the pack's
+20-operation cap to end a progressive request.
+
+**Deployed readings, paid throwaway, 2026-11-23.** A probe route ran one synchronous loop of 1,000,000
+iterations, each reading `microtime(true)`, `time()` and `hrtime(true)`:
+
+| `VIRTUAL_CLOCK` | `microtime` delta | distinct values | `time` delta | `hrtime` delta | n |
+| --- | --- | --- | --- | --- | --- |
+| unset (the build's default before the change) | 0 s | 0 changes | 0 s | 0 ns | 6 |
+| `1`, default kappa | 1.953125 s | 1,000,000 | 2 s | 976,562,500 ns | 3, identical |
+
+The first row is the premise holding on the platform: the clock does not advance across a synchronous
+`php._run()`. The flag adds about 0.22 microseconds of CPU per read (derived from warm object
+`cpuTime` of 2,141 against 1,481 ms over 3,000,000 reads).
+
+| workload (n=1 each) | clock off | clock on |
+| --- | --- | --- |
+| core's queue loop, 1,200 items of 400 `file_exists` calls, 15 s lease | 1,200 processed, PHP time delta 0 s, `cpuTime` 18,644 ms, wall 21,507 ms | 281 processed, 919 left, PHP time delta 14.795 s, `cpuTime` 3,487 ms, wall about 4.0 s |
+| progressive batch, 200 operations of 2,500 host calls | 20 operations per request, 10 requests | 4 per request, 50 requests |
+
+The queue drained 281 against about 280 predicted locally. The per-call constant overstates the
+platform: the default 0.13 ms turned 3.49 s of CPU into 14.8 s of virtual time, about 4 times too
+much for this probe (derived from one queue run). The default was calibrated on a local workerd. The
+overstatement decides what a lease or a step budget means in wall terms, and a deployed
+recalibration is owed.
+
+What this changes about reading numbers: durations PHP computes in-process, such as `renderMs` and the
+`x-cfw-render-ms` header, are modelled from call counts and are never a CPU measurement. Work that
+makes no host calls does not advance the clock, so a worker that burns CPU in pure PHP between calls
+is undercounted and the frozen behaviour returns for it. A row written while the clock runs ahead
+carries the later time, by up to 60 seconds. An absolute CPU figure still comes only from `cpuTime`.
 
 ### The Pin Moves to an 8 MiB Stack, 2026-11-23
 
@@ -3915,13 +4462,21 @@ would have reached users:
   the two tables, so a replica restore would have copied 13 MB of blobs; both are local now, and a new
   pack deletes the earlier pack's rows once it is staged. It stays inert until the worker depends on
   a cartridge that reads `SQL_PACK_SOURCE` (0.3.1 does not).
-- **`REFRESH_INSTANCE` stays off.** Flipping it exposed two faults, both fixed: a boot that restores
-  the shared boot image restarted a dropped interpreter whose heap no longer had the image's layout
-  (13 `boot-image` failures, `rekey failed`, `memory access out of bounds`), and a heap that had grown
-  since its boot was kept and grew again (231.5 MiB after an install against 98.1 MiB with it off).
-  Five specs still fail with it on (`enable-memory` 98.7 MiB against 85.8; four in
-  `interpreter-recycle`, peaks of 224.9 and 230.0 MiB against a 134.2 MiB ceiling), and the on and off
-  runs of those files are on paisley-park with the rest at 5 and 9 failures.
+- **`REFRESH_INSTANCE` is deleted, with `RELEASE_EVICTED` and `REUSE_MOUNT`.** Flipping it had exposed
+  two faults, both fixed: a boot that restores the shared boot image restarted a dropped interpreter
+  whose heap no longer had the image's layout (13 `boot-image` failures, `rekey failed`, `memory access
+  out of bounds`), and a heap that had grown since its boot was kept and grew again (231.5 MiB after an
+  install against 98.1 MiB with it off). Five specs still failed with it on (`enable-memory` 98.7 MiB
+  against 85.8; four in `interpreter-recycle`, peaks of 224.9 and 230.0 MiB against a 134.2 MiB
+  ceiling). A reset-rate comparison read 0 of 18 against 17 of 18, and a repeat of it read 2 of 24
+  against 3 of 24, so the first did not replicate. `REUSE_MOUNT` needed `REFRESH_INSTANCE` and was
+  never shown to reach a flush drop. `RELEASE_EVICTED` rested on one reading, 5 of 6 resets against 6
+  of 6, with no run that measured an evicted buffer. `RELEASE_HOST_GRAPH` is the one that stays, and it
+  is on by default (`=0` turns it off): a deployed probe read the dropped interpreter's root and large
+  file buffers collected within one nudge of 28 MiB or less with it, and never collected without it.
+  What it moves is memory freed, not the reset rate: a local reset-rate arm read 6 of 6 resets with it
+  on, n=3 per route, and showed no reset benefit. The objective, a lower flush-time memory peak, stays
+  open; only these three mechanisms are closed.
 - **A cold Thunder isolate now completes its heavy pages.** Thunder on Paid with this tree's fixes,
   counted only on rounds where the isolate id changed across a redeploy: 22 of 56 attempts were cold,
   the rest warm or failed on the network and not counted. `/admin/content` completed 6 of 6, median 2.9 s
@@ -3946,11 +4501,158 @@ would have reached users:
   files; `runJson()` took the first `{` in output a notice had prefixed; composer plugins were fetched
   as runtime packages; drangler measured upload batches in UTF-16 units.
 
+### Certification, 2026-11-23
+
+A fixture is Certified on a plan after three consecutive deployed runs on that plan, at the pinned
+commit, that passed every row (`certificationState()` in `scripts/e2e/certification.ts`, `REQUIRED_STREAK`
+3). A row passes when its state is `inline`, `parked` or `degraded`, so a fixture whose install row
+reads `degraded` (patches skipped, a package not enabled) still counts as passing, and the note on that
+row says what was not stock. Once earned, the badge is kept while at least three of the newest four
+runs passed every row and the newest run passed (`KEEP_PASSES` 3 of `KEEP_WINDOW` 4, `holds()`). One
+failed run therefore shows Deployed until the next pass brings the window back, and a row that fails
+twice in the window does not hold, because a defect repeats on its row and a blip does not. The badge
+also lapses when no run has passed for twice the window (14 days at the default), and the three passes
+are earned again. A run made with a worker variable changed on purpose is an experiment and never
+counts. A deploy that fails still writes a record, with every row unknown, because a failed run is the
+evidence that demotes a fixture; only a run whose account had no budget left writes none (exit 3). The
+plan reported is the cheapest on which the fixture is Certified, free before paid, and a pass on one
+plan is no evidence on another.
+
+The scheduled job is `.github/workflows/certify.yml`, which has its own cron and its own manual
+dispatch and leaves the pack suites workflow alone. Its pool, `fixtures` in `config/corpus-certify.yml`,
+starts with the fixtures that already earned Certified in a local pass (six on 2026-11-24: farmOS,
+Thunder, GovCMS, LocalGov Microsites, Simple OAuth 21 and Lagoon Cache Backend), and a fixture joins it
+once a local pass certifies it. The first status and history were published to
+`cdn.drupflare.com/certified/` from that local pass on 2026-11-24, and the job folds its own records into
+them from then on.
+
+What a record carries: the pinned commit of the fixture, the worker build as `HEAD` plus a digest of
+the working-tree diff at clone time (`5de5c5c00e+<12 hex>`), the plan, the CPU ceiling read back from
+the deployed script (300,000 ms on every paid run), the rows written by the site's own meter, and a
+`skipped` field with the composer patches that did not apply, the advisory blocking turned off, the
+constraints relaxed and the packages resolved off the project's own lock. The caveat that bounds every
+streak below: each run deployed a copy-on-write clone of a working tree that was not committed, and
+the tree changed between runs, so three passes are three different builds. They share a release label
+and no commit.
+
+Read on 2026-11-23 from the run records. Every row is a single deployed run per entry on the paid
+account unless marked, and runs made after the read are not included.
+
+| fixture, pin | runs | rows passing | what the failing rows say |
+| --- | --- | --- | --- |
+| farmos, `414a6713` | r5, r6, r7, builds `+1dae347ae252`, `+cf0f9576eea8`, `+5fe03e67926a` | 13 of 13 each | none. Status: Certified on paid, streak 3, expires 2026-12-07. Install reads `degraded` (7 composer patches not applied; blocking off for SA-CORE-2026-017 and SA-CORE-2026-018). r1 to r4 failed in the native install before any deploy |
+| thunder, `50686db3` | r2, r3, r4, r5, r6 | 13, 11, 11, 13, 11 | `update` and `cache rebuild` fail in r3, r4 and r6. r3 shows two isolate memory resets and four storage resets and no headers; r4's one 5xx carried `x-cfw-growth-refused`; r6's one 5xx carried the object-reset page and no governor header. Streak 0 after r6 |
+| govcms, `b68803ff` | r1, r2 | 12, 13 | r1's `cache rebuild` answered 503 with 13 isolate memory resets on a build that predates the default-on governor; r2 passed |
+| varbase, `4431d589` | r1, r2 | 2 and 2 | every render after the container build answers 503 or "site restarted"; r2 recorded 15 5xx answers, 1 with the growth-refused header, 13 with the object-reset page and 1 with neither |
+| simple_oauth_21, `f2b73148`, free | three runs, 18:02, 18:07 and 18:11 UTC | 13 of 13 each | none. Certified on free, streak 3. Rows written per run 20,420, 20,434 and 9,432 |
+| mantle2, paid | one run after tier 1 | 13 of 13 | the `/enable` that ended at 31.5 s of CPU as one invocation completes in two (see Stepped Operations) |
+| lagoon_cachebackend, free | one run | 12 of 13 | `queue cron` hit an isolate memory reset; a second run is owed |
+| activity_finder, paid | three attempts | 0 of 13 | the claim over its migrated 312-module database cannot stay inside the 128 MB isolate: 21 resets on `/firstrun`, 5 `exceededMemory` invocations. Deferred |
+
+strawberryfield is parked. Its pin moved to the `v2.1.0` tag (`340a02c0`), which fixes the DataType and
+proxy return-type fatals, and a rig run (n=1, no Cloudflare rows) then refused to enable on the
+module's own data: five `search_api_solr.solr_field_type.dense_vector_field_*` files whose ids lack the
+`_9_0_0` their file names carry, which core refuses on stock Drupal too. Drupal 7 fixtures are
+covered below.
+
+### Anachron, 2026-11-23
+
+Anachron is the layer that runs legacy module code on a current core. Four additions this day.
+
+**Return types.** A module written before core typed a method fatals on load when it extends a core
+class: `ItemList::offsetExists($offset): bool` against a child with no return type. A tokenizer pass
+adds the return type core declares to each overriding method, from a table verified against the
+installed core by reflection (85 typed methods under `core/lib/Drupal`, 28 of them `__toString`, which
+PHP adds itself; the table lists each class's exact type, such as `getIterator(): \ArrayIterator` for `ItemList` and `Map`, where `\Traversable`
+would still be a fatal). It narrows a declared type that is wider than core's, such as a `normalize()`
+returning `ArrayObject|array|string|int|float|bool|null` where core declares `array`, only when every
+return in the method is provably core's type. It refuses by name a bare `return`, a literal of
+another type, a body that can end without returning and a different parameter count, and `static`
+and already-typed methods are skipped. The five strawberryfield DataType classes that fataled load on
+php 8.5.7 against Drupal 11.4.11. Loading all 107 classes of the module one per process (local
+source, n=107) went from 86 ok and 21 failing to 91 and 16, and the remaining 16 are missing Drush and
+Search API packages plus a generated proxy the rewriter refuses by name. The first build of the PHP
+class had 93 rewriter tests, and with `rewrite()` returning its input 87 of them failed.
+
+The rewrite also runs where module files are stored, in `changeModuleFiles()`, through a TypeScript
+port (`src/ops/return-types.ts`), because the PHP rewriter cannot run inside a synchronous
+transaction and `/install` boots no interpreter. It is on unless `ANACHRON_RETURN_TYPES` is `off`, and
+it leaves `vendor/` and `libraries/` alone. The port is byte-equal to the PHP class on 43 recorded cases and
+on 8,056 files of mutated core, vendor and module code (53 MB), with 0 differences. Local wall time on
+node, median of 7 against median of 5: 32 ms against 459 ms for the module's 110 files, and 212 ms
+against 4,252 ms for 990 files. The `/install` receipt, a `/modify` commit and a `/git` pull carry
+`returnTypes` (`files`, `methods`, `refused` and the first 25 refusals), and the integrity record holds
+the digest of the stored bytes, since those run. A second identical commit writes no row.
+
+**A Drupal 7 install path.** The Drupal 7 fixtures cannot be migrated, because the worker lands a
+Drupal 11 SQLite database. The lane builds the distribution natively as its own packaging does
+(`drush make`, then `drush site-install`, in a PHP 7.4.33 and Drush 8.4.12 container with MariaDB,
+since the SQLite driver cannot install Panopoly's serial column in a composite key), converts the
+tree's `.info` files to `.info.yml`, and delivers the enabled modules through anachron. The native
+control is Panopoly 7.82, 97 modules, and its front page and four admin pages answered 200 (n=1).
+Through anachron, 75 modules were delivered after leaving out the 21 Drupal 7 core modules and the
+modules whose names collide with Drupal 11 core (`views`, `media`, `link`). Panopoly passes 0 of 13 rows:
+the site answers 500 after the enables (n=1 per round, local `wrangler dev`). Bisecting the 500 named
+gaps one at a time and fixed these: an include-time `drupal_get_path()` and `module_load_include()`
+that ran before the container existed, a `hook_info` answer Drupal 11 cannot index, a CSS file added
+three times that turned every option into a list, a missing `entity_get_info()`, `field_info_instances()`
+and `drupal_get_schema_unprocessed()`, and the `{system}` table, which 25 of 30 uses in the scanned
+modules write a weight to (a real table is kept from the discovered extensions and a weight write is
+applied to `core.extension`). Open: `hook_menu_local_tasks_alter` arrives with Drupal 11's arguments (a
+route name and a cacheability object) where Drupal 7 passed a router item, so `apps.module:216` throws
+and `/` answers 500 once `apps` is enabled; and `defaultconfig` declares a serial `oid` in a composite
+primary key, which SQLite refuses on Drupal 7's driver and on the worker. Two cells that read `inline`
+(container build, module workflow) were scored by the enable step and not by a render; they are scored
+by the first render now. The 13 rows were not rerun after the last fixes, since each would read the same
+500.
+
+**Legacy cache tags.** Output built from legacy cache and database calls is tagged so core's page cache
+and the host's purge by tag keep working. A request-scoped collector takes tags from the cache API,
+variables, entity loads and database reads, and a subscriber at response priority 200 adds them to any
+cacheable response. A write invalidates the tag it touches and `legacy:all`. The policy fails closed:
+a query whose tables cannot be parsed gets `legacy:all`, a read of a core-owned table that maps to no
+entity gets max-age 0, and `user_access()` adds `user.permissions`. Nothing makes a response cacheable
+that core did not. It is built and tested (14 query-shape cases and 11 kernel cases, 3 failing with
+invalidation removed) and not measured: no hit rate or fills per write exist, since no fixture renders.
+
+**The claims contract.** `docs/retrofit/claims.md` states three columns. What runs is limited to
+behaviors a test or a measured run showed. What a module inherits is the PHP 8.5 engine, core's
+security fixes on code paths that go through core, platform isolation, the host's deny-by-default
+guards, and the rule that an access callback anachron cannot translate is a deny. What it does not
+inherit or fix is the module's own logic and vulnerabilities, contrib advisories after Drupal 7 ended
+(5 January 2025, `drupal.org/about/drupal-7`, read 2026-11-23), bundled third-party libraries, and
+performance, for which no figure is claimed. Over the 75 delivered Panopoly modules, PHPCompatibility
+with `testVersion 8.5-` reported 234 findings in 1,943 files: 0 removed functions or syntax, 134 changed
+semantics (all one sniff, `trim()` with no character list) and 100 deprecations. It cannot see
+string-to-number comparison, `null` to an internal parameter or array access on `null`, so those are
+unmeasured and not zero. A token scan of the same tree counted 15 query strings built by concatenation or
+interpolation, 18 `eval`, 95 `unserialize`, 4 `extract`, 2 shell commands and 388 direct reads of
+request input, as counts for review.
+
+**Open gaps, 2026-11-24.** Two fixtures stay open and neither is fixed by what follows. *webcms:* a tar
+dist installs now, core 11.4.12's removal of the `action` module is handled in the corpus project, a
+module kept outside a `custom` directory is picked up, and Group 1.x's `MemoryCache` constructor is
+met, and after those every enable on the rig answers `no JSON in output` (531 of 577) and the run hit
+its 3,600 s timeout. The cause is not read: the lane truncates the render error at 300 characters, so
+a circular reference path that ends in `cache_tags.invalidator` cannot be read from a result, and a
+missing `group_role` entity type is not investigated. *Panopoly:* later fixes (a field storage copied
+per entity type, `db_merge()` with `key(array)`, the theme registry and 14 schema functions, declared
+entity types that list and load) took a rerun to 56 of 71 and left 15 refusals. The first errors named
+for them are `menu_link_save()`, `filter_format_save()`, a Drupal 7 `role_permission` table and
+`drupal_parse_info_file()` at boot from `panopoly_core_apps_servers_info()`. An `entity_create()` on a
+declared type loads but saving is not covered, and the next error there is `Class "SearchApiIndex" not
+found`. The `apps.module` hook-argument gap and the `defaultconfig` serial key above were not rechecked
+by that run. Both fixtures are open.
+
 ## Defect Classes
 
 These shapes account for most of what has gone wrong here. Each has a guard that fails on the shape
 rather than on one instance. Count them off the list rather than quoting a total; this line said six
 against seven entries.
+
+The internal bug ledger for the work from 2026-11-23 counts 137 bugs fixed in all, 88 of them with a
+test that fails without the fix, and 112 reported and still open. That is internal tracking, read on
+2026-11-24 at 547 lines of the ledger.
 
 **Built, tested, and read by nobody.** A module is imported by its unit test and by nothing under
 `src/`, so it is green on every commit and absent from every deployed site. `bun run check:reachability`
@@ -4119,7 +4821,7 @@ request's headers and clears the previous request's from `$_SERVER`. A request c
 renders per caller and never reads or writes the stored page, the KV tier or the edge cache, and the
 deployment's own owner token is dropped before PHP sees it. Guards:
 `tests/unit/ops/forwarded-headers.spec.ts`, `tests/integration/forwarded-headers.spec.ts` (a real
-kernel) and the chain cases in `tests/integration/serve-chain.spec.ts`. Any check that calls a copy
+kernel) and the chain cases in `tests/integration/serve/chain.spec.ts`. Any check that calls a copy
 working has to make an authenticated call, not only anonymous GETs.
 
 **A whole number bound as a REAL.** `ctx.storage.sql.exec()` binds every JavaScript number as a REAL,
@@ -4146,7 +4848,7 @@ there, and the first pull refused because the carried files belonged to another 
 name a `mount`, a path inside `modules`, `themes` or `profiles` that is checked on `add` and again on
 every pull, and files carried from another host (`migrated/<dir>`) are taken over by the first pull that
 provides them. `vendor/` is still never delivered by git, so a module that bundles its dependencies
-keeps the ones it came with. Guard: `tests/unit/ops/git-sync.spec.ts`.
+keeps the ones it came with. Guard: `tests/unit/ops/git/sync.spec.ts`.
 
 **A `$settings` value only `settings.php` could carry.** `DRUPAL_CONFIG` reached `$config` and nothing
 reached `$settings`, so a site whose modules read `$settings['...']` had no way to set one on a Worker.
@@ -4171,7 +4873,7 @@ memory (workerd peaks near 320 MB), disk, the replay, the alarm code. `package.j
 `tests/node/deploy-build.spec.ts`.
 
 **A platform limit written down from memory.** A replay of 1,486 chunks in one invocation on a paid
-plan was flagged as past the 1,000 subrequests a comment in `src/db/migrate-sql.ts` gave for paid.
+plan was flagged as past the 1,000 subrequests a comment in `src/db/dump/migrate.ts` gave for paid.
 Cloudflare's limits page lists 10,000 per invocation for paid (read 2026-10-16), and a throwaway worker
 made 1,500 `ASSETS.fetch` calls in one object invocation on a paid account without an error (69 s in
 all, about 46 ms each), and 1,100 plain `fetch` calls the same way. The comment is corrected and the
@@ -4182,11 +4884,97 @@ paid replay stays one invocation.
 on two of the first five runs and the boot started at the default size. The case now holds the memory until
 its assertions have run.
 
-**A bake that trusted the constants it had just written.** `bake-container.ts` skipped the rebake when
+**A bake that trusted the constants it had just written.** `scripts/bake/container.ts` skipped the rebake when
 `PACKED_CONTAINER_DIGEST` equalled `DRIVER_DIGEST`, and it writes the first from the second, so a
 `site.sqlite` put back to an older bake read as current while its `cfw_packed_container` row still
 named the older driver. `bakeIsCurrent()` in `scripts/container-current.ts` now reads the driver the
 database records. Guard: `tests/node/container-cid.spec.ts`.
+
+**A value from outside spliced into a double-quoted PHP literal.** Request bodies, cookies, headers,
+origins and client addresses went into PHP as `json_decode(` plus `JSON.stringify(JSON.stringify(x))`
+plus `)`. The outer `stringify` makes a PHP double-quoted literal, and JSON escapes neither `$` nor
+`{`, while PHP evaluates `${expr}` and `{$expr}` inside double quotes. With php 8.5.7 locally, a body
+of `x${phpversion()}y` made `json_decode("\"x${phpversion()}y\"")` call `phpversion()` (the run
+printed `Undefined variable $8.5.7`), so a visitor could run PHP function calls, limited by
+`disable_functions`. The same shape sat in the module enable route (`module`, `with`, `stop`), the
+files route (`op`, `uri`, `body`, owner-gated) and the config import payload, which an operator
+supplies. The fix is two helpers in `src/util/php.ts`: `phpSingle`, a single-quoted literal with `\`
+and `'` escaped, and `phpDouble`, which escapes the `$` that `JSON.stringify` leaves. `phpDouble` has
+43 call sites across `src/drupal/{site,cron,strata,reconcile,extension}-php.ts` and `src/do/fill.ts`,
+the enable and files routes use `phpSingle`, and the enable route and the stepper also validate module
+names (`/^[a-z][a-z0-9_]*$/`, 50 characters at most) and answer 400 before any PHP runs. No
+`JSON.stringify(JSON.stringify(` remains under `src/` or `scripts/`. The regression spec is
+`tests/node/php-literals.spec.ts`, which runs real php over seven hostile values (`${strtoupper(chr(97))}`,
+`{$GLOBALS["x"]}`, quotes, backslashes, newlines, multibyte) and requires each to round-trip through
+both forms unevaluated. Its control is in the spec: the old double `stringify` form is evaluated and
+does not return the value. `stepped-ops.spec.ts` sends eight hostile module names and asserts 400 with
+`site.run` never called. The control for the validation was not run by deleting it; the literal-level
+control stands in. Probe ids still go into a PHP array key through `JSON.stringify` in
+`src/drupal/php/site.ts`; they come from the worker's own table, so that is safe only while they stay
+constants.
+
+**A cap derived from a ledger that was empty when it was read.** The growth cap subtracts the JS-side
+bytes the ledger counts now from the ones it counted at the headroom measurement. The booting request
+chooses its cap before the mount loads, so the ledger held no blob and the subtraction raised the cap
+by 18.3 MiB. A fresh isolate read 119,850,873 bytes (114.3 MiB) against the formula's 96 MiB (6 fresh
+isolates), and a 75 MiB allocation by the booting request reset the object twice. `growthLedger()`
+returns the measurement-time ledger while no mount is known, so an unread blob cannot lift the cap. The
+shape to look for is a correction term whose absence reads as a large favourable value.
+
+**A calibration taken in one state and applied in another.** The 36 MiB headroom is what the ladder
+reads after the object has settled, and the cap permits 32 MiB of growth the moment a render ends.
+Read with no settle, the ladder gave 28, 16 and 36 MiB after an admin page and 16, 16 and 48 after a
+flush (n=3 each), so 4 of 6 readings were below 36. An allocation of 50 MiB right after an admin render
+reset the object with no governor header. Closing it needs a cap that follows settling or a lower
+constant, and neither is built.
+
+**A refusal that surfaces as `exit(1)`.** A refused grow fails the allocator, PHP prints
+`[error] Out of memory` and ends in `exit(1)`, and PHP's `catch` never runs, so the PHP side cannot
+report a refusal. Counting every `exit(1)` as a refusal would also misreport a script that exits 1 on
+purpose. The run is classed as governed only when `ExitStatus` is 1 and the refusal counter moved during
+it. Guard: `tests/integration/growth-cap.spec.ts`.
+
+**A step that put back the guard its route had lifted.** The stepper wrapped each module install in the
+serving phase, so on a large module site the kernel boot and the plan alone held 95.8 MiB of the 96
+MiB cap, and the first step's grow was refused with "nothing it did was saved". The enable route is an
+owner phase, which is exempt by design, and the step re-imposed what the route exempts. Found by the
+first deployed mantle2 run; steps keep their caller's phase now. `stepped-ops.spec.ts` asks for 16 MiB
+past the cap inside an exempt phase and expects `done`. The refusing arm is the existing cap test with
+the phase not exempt, and the control was not run by removing the fix.
+
+**A spec that stubs the layer the defect lives in.** `ops-drive.spec.ts` stubs PHP, so the config import
+step had never imported an entity on a real kernel. The first deployed run died on
+`Undefined constant ...SAVED_UPDATED` (the legacy includes were not loaded) and the second, with them
+loaded, on a call to a function in a `.module` file nothing had loaded. `ops-config-import.spec.ts`
+now imports all 87 labelled entities of a migrated site on the real interpreter, and each missing call
+makes it fail with `phase: failed`. The related trap is a control that can pass with nothing loaded:
+a fatal inside an op reads the same as an op that never ran, so the class-load test first runs a
+kernel op that reports the module enabled.
+
+**A planner that compares bytes the pipeline has already changed.** `changeModuleFiles()` rewrites a
+module file as it stores it (the Fiber port, the generated-proxy stub, the return types), so the
+planners compared the client's bytes with a row that differed by construction and called every
+transformed file modified. A second identical commit of a tree with 5 return-type files, a proxy and a
+Fiber file read `modified 7, unchanged 0`; it reads `modified 0, unchanged 7, rowsWritten 0` now, in the
+plan action and in the commit. Guard: the "plans a second identical commit as unchanged for every
+transform" case in `modify-upload.spec.ts`, which fails with the commit planned on the raw bytes.
+
+**A derived artifact left behind by a changed input.** Repacking the driver after a sibling change
+moved `assets/driver.json` and `src/ops/driver-digest.ts` and left `drupal-src` holding the old module
+bytes, so `driver-pack.spec.ts` read 36 of 37 (the one failing case compares the pack with
+`drupal-src`). The baked `cache_container` row then named the old driver, which the reconcile step
+`container-driver-digest` drops, so the first boot rebuilds it: a cost in speed. A regenerated pack also
+left the boot image stale, and `modify-upload.spec.ts` "makes the extension lists rediscover" failed
+with "rerun `bun run assets:bootimage`" with the governor on and with it off, so the cause was the
+image and not the governor. Each recovery is a rebuild step (`build:local --only=... --force`,
+`assets:bootimage`), and the specs that compare an artifact with its input are what name the drift.
+
+**State shared across tests by one object.** `site.env` is one object for every site in a workers-pool
+spec file, so `Object.assign(site.env, vars)` leaks a variable into every later test in the file. A
+control arm read as off for that reason because the clock was still installed, and `STEPPED_OPS` made a
+control answer 202. The specs that touch these variables name them on every run and restore them;
+`boot-golden.spec.ts` does not restore `ARGON2`, `MEMORY_CACHE_BINS`, `DRUPAL_ENV_GREETING` or
+`PW_DIAGNOSTICS`.
 
 ---
 
@@ -4273,6 +5061,44 @@ database records. Guard: `tests/node/container-cid.spec.ts`.
     question is arithmetic -- can N keys cover M buckets -- compute it against the real hash instead
     of inferring it; that took twenty lines and settled it.
 
+18. **An on-off gap inside the A/A gap is an unresolved cost, and it is not a zero.** The slice
+    rollback comparison ran 60 renders per arm with an A/A arm for each side, and `cpuTime` medians read
+    7, 8, 8 and 9 ms. The on-minus-off gap was 1 ms in both pairs and the A/A gap was 1 ms, so the run
+    could not separate the arms, and a cost below the 1 ms meter is not excluded. Run the A/A arm with
+    every comparison, and quote the gap against it.
+19. **A 200, or a body equal to native's, does not show PHP ran.** Four cases from one day. A single
+    request through the full route returned a body equal to native's and was a `cfw_page` hit. A fresh
+    interpreter that only called the kernel boot read 6.1 MiB in use with no Drupal loaded and failed the
+    next call on undefined legacy constants. A control for a class-load test passed with nothing loaded,
+    because a fatal inside the op reads the same as an op that never ran. A site that answered 500 after
+    its modules enabled had passed every enable call on the old container. Each needs a witness that the
+    code under test executed: a row, a header, a counter that moved.
+20. **A probe has to force the mechanism it tests, and a counter says whether it did.** A 32 MiB
+    allocation never refused, 10 of 10, because it fit inside the 64 MiB the interpreter already held and
+    never grew linear memory. A refusal needed 100 MiB. A stock admin page did not reach a 72 MiB cap
+    either, so the refusal was forced with a probe controller. Read `growthRefusals` or the response
+    header before concluding anything from a request that answered normally.
+21. **Record the response headers and the page marker of every 5xx.** A Thunder run's `cache rebuild`
+    answered 503 and the record could not say whether the governor refused it or the platform reset the
+    object: the headers were not kept, and the refusal log exists only under `MEMORY_TRACE=1`. The run
+    record now counts each run's 5xx answers by cause (growth-refused header, object-reset page, neither).
+22. **Identify a deployed run by the commit and a digest of the working tree.** A streak of three
+    passes is three passes of one build only if the build did not change. Three farmos passes ran on
+    three different uncommitted trees that shared one release label. The record carries
+    `HEAD+<digest of the diff>`, the patches that did not apply, the advisories blocked off and the
+    constraints relaxed, so a pass reads as what it was.
+23. **Quantities named memory are not interchangeable.** `brk` is the heap end, demand. `linear` is `brk`
+    rounded up by the growth rung, which added 12.6 MiB of slack to a 60.6 MiB `brk`. The meter is the
+    platform's per-invocation row. On the Drupal census linear peaked at 73.3 MiB while the meter read up
+    to 174.0 MiB. State which one a figure is, and compare a meter only to a meter.
+24. **A redeploy with a changed variable does not restart a running object.** The alarm chain keeps the
+    old instance and its old environment, so a cap deploy read the old cap until the isolate was
+    replaced. Replace the isolate and read the variable back from `/serve-stats` before measuring.
+25. **A duration computed in PHP is modelled once the virtual clock is on.** `renderMs`, a lease, a
+    batch's time test and the stepper's budget all read the clock that advances by calls times a
+    constant, 0.13 ms by default. On one deployed queue run that constant turned 3.49 s of CPU into 14.8 s of
+    virtual time, about 4 times too much. Quote CPU from `cpuTime` and call a PHP duration modelled.
+
 Suspect the instrument first. Most moved verdicts in this project moved because the instrument was
 wrong, not the system.
 
@@ -4311,7 +5137,7 @@ var and binding.
 rewriting one might.
 
 **Two artifacts have no producer in this repository.** `assets/drupal/site.sqlite` is hand-trimmed --
-`pack-sql.ts` consumes it and nothing writes it, and the build input is 14.4 MB against its 6.6 MB.
+`scripts/pack/sql.ts` consumes it and nothing writes it, and the build input is 14.4 MB against its 6.6 MB.
 To change a row, read it out of the build input, insert it, and re-run `bun run assets:sql`.
 `assets/drupal-pf` and `assets/drupal-sql` need a native PHP Drupal bake, so they arrive only through
 `bun run hydrate` from a published release payload. Until one exists, `ARTIFACT_SPECS` in
@@ -4319,13 +5145,37 @@ To change a row, read it out of the build input, insert it, and re-run `bun run 
 
 **Correction, 2026-10-02 (v1.0.3).** Five statements in this section no longer hold; the table and
 paragraph above are left as written. `src/drupal/*-php.ts` still holds a few `String.raw` blocks, but
-the PHP fragments are real files under `src/site/php/`, packed by `scripts/gen-assets.ts` into
+the PHP fragments are real files under `src/site/php/`, packed by `scripts/gen/assets.ts` into
 `src/site/generated/assets.ts`. `src/site-do.ts` was split by concern into `src/do/` and the front
-worker into `src/site/`. The build has no decoder step (`LOCAL_STEPS` in `scripts/build-local.ts` has 17 steps, none of them a decoder).
+worker into `src/site/`. The build has no decoder step (`LOCAL_STEPS` in `scripts/build/local.ts` has 17 steps, none of them a decoder).
 `assets/drupal/site.sqlite` has a producer, `scripts/drupal/install-site-db.php` (`bun run
 build:site-db`, `docs/architecture/database.md`), and is 5,832,704 bytes. The rig in Verifying the Tree below is
 nine services, not seven: GreenMail, Postgres, MySQL, Redis, syslog, Gitea, Forgejo, Keycloak and
 GitLab CE (`docker/compose.yml`).
+
+**Correction, 2026-11-23.** Files added since that correction: `src/do/growth/cap.ts` (the cap and
+governor), `src/do/growth/retry.ts` (the repeat of a refused request and its allowance),
+`src/do/slice.ts` (the transaction around a governed run), `src/do/stepper.ts` (the stepped enable),
+`src/do/fresh/first.ts` (the routes that abort the object so they run on a new boot),
+`src/runtime/virtual-clock.ts` (PHP's clock), and `src/ops/php-tokens.ts` and `src/ops/return-types.ts`
+(the lexer and the return type rewrite run when module files are stored). `src/util/php.ts` gained
+`phpSingle`, `phpDouble` and `isModuleName`. `experiments/elastic-tier/` holds the closed tier 2 build
+and probe; the seam in `src/do/` is deleted. `src/drupal/standin-fix.ts` is gone from the tree, and the
+stand-in fragment is `src/site/shims/standin-fix.ts`. `drupal-src/` holds Drupal 11.4.11, and the first
+paragraph of this report, which says 11.4.7, was written against an older tree.
+
+**Correction, 2026-11-24 (layout).** 242 files moved into feature folders, with the prefix dropped from
+the name. The table above predates the move, and the sections below name files at their new paths. In
+`src/ops/` the groups are `module/`, `replica/` (the replica policy, admission, demand, routing, restore, the
+replication log, state fingerprint and inventory, write forwarding), `git/`, `page/`, `site/`,
+`image/`, `owner/`, `composer/` (the lock, the constraint, packagist, repositories and
+`package-install.ts`), `meters/` and `warm/`. In `src/do/` they are `growth/`, `fresh/`, `git/` (with
+`git.ts` now `git/handler.ts`), `boot/` (`php-boot.ts` is `boot/php.ts`, `tree-boot.ts` is
+`boot/tree.ts`) and `replica/`. `src/db/` gained `dump/`, `src/site/` gained `edge/`, and the
+`src/drupal/*-php.ts` fragments are `src/drupal/php/*.ts`. In `scripts/`, 49 prefixed files moved into
+`pack/`, `gen/`, `bake/`, `build/`, `release/`, `fetch/`, `publish/`, `lift/`, `contrib/`, `check/` and
+`hydrate/` (`hydrate.ts` is `hydrate/run.ts`). Specs moved the same way under `tests/`. `LOCAL_STEPS`
+in `scripts/build/local.ts` has 18 steps now, where the 2026-10-02 correction counted 17.
 
 ---
 
@@ -4454,7 +5304,7 @@ An unbounded snapshot table is the watchdog lesson repeated at 40 MB a row: the 
 grew to 46% of the database before it was capped. Chunks go first so a crash between the two
 deletes leaves orphaned metadata rather than orphaned megabytes.
 
-### `src/db/migrate-sql.ts`
+### `src/db/dump/migrate.ts`
 
 #### `chunksPerInvocation()`
 
@@ -4462,7 +5312,7 @@ deletes leaves orphaned metadata rather than orphaned megabytes.
  * **FREE WAS 1, AND THE REASON IT GAVE WAS THE 10 ms CAP.** That premise is retracted in writing
  * one file over: a single invocation reading 1,882 ms of `cpuTime` completed on a deployed free
  * worker, so the cap does not bind an object invocation, which is where migration runs -- see
- * `FREE_PROFILE` in `src/ops/plan-profile.ts`. At 1, a shipped pack of 75 chunks provisions a site
+ * `FREE_PROFILE` in `src/ops/meters/plan-profile.ts`. At 1, a shipped pack of 75 chunks provisions a site
  * over **75 separate
  * Durable Object invocations**, each paying an alarm turnaround, a `setAlarm` row and a cursor row,
  * while the new owner watches the `migrating` page refresh itself.
@@ -4817,7 +5667,29 @@ firing, ~25x fewer fills on free.
 the window exists to keep. A non-hibernatable object is billed for duration, so the window is
 scoped to a drain and closed.
 
-### `src/do/git.ts`
+### `src/do/fresh/first.ts`
+
+#### `freshFirstAbortDue`
+
+Owns the list of routes that start on a new boot and the test for whether a request makes the object
+abort itself. The list is `METHOD /path` entries matched on method and path with the query ignored, a
+leading language prefix dropped and repeated slashes folded, and the default is the performance page's
+POST, which is the cache flush.
+
+The invariant is that nothing has run when the answer is true: the abort comes before `fillOne()`, so
+the front worker's repeat is safe for any method, and the repeat carries `x-cfw-retried: abort`, which
+is the only thing that keeps the pair from looping. The answer is true only in abort mode, only for a
+registered route, and only with an interpreter resident, so a cold object does not abort. Unset or
+`abort` is abort mode on the built-in route, `0` or an empty value is off, and a list replaces the
+route. The variable is `FRESH_FIRST_ROUTES`. `src/do/fresh/first-run.ts` writes the durable record and
+syncs it before `ctx.abort()`, and completes it on the repeat whether the repeat answers or is refused.
+Pinned by `tests/integration/fresh-first.spec.ts`: the modes and the match rule, an abort only for a
+registered route with an interpreter and no repeat header, the record written before anything runs and
+the repeat not aborting, the record completed for a refusal and for another error, the stats read after
+a restart, an abort under a default environment, and the control with the registry off. The in-request
+drop this replaced is deleted, and the cost of that drop is under Fresh-First Routes.
+
+### `src/do/git/handler.ts`
 
 #### `handleGit` case 'unpin'
 
@@ -4831,6 +5703,26 @@ indefinitely.
 Releasing without a sync leaves the site serving the request's files, which is what it was already
 serving. What changes is that the poller owns the branch again, so the NEXT successful poll
 converges it. Degraded rather than immediate, and it is the half that works with no network at all.
+
+### `src/do/growth/cap.ts`
+
+#### `growthCapBytes`
+
+Owns the cap on the interpreter's linear memory, the governor installed on its `WebAssembly.Memory`,
+the exempt-phase counter, and the refusal's header and error. The cap is a pure function of the
+variables and a ledger of the JS-side bytes, so it can be recomputed at boot, at the start of every
+governed request and at every phase change (`syncGrowthCap`).
+
+Invariants. A cap below the memory the interpreter already holds is lifted to that size, because
+growth is refused and nothing shrinks. Installing a governor first releases any already on the memory,
+so a reused or spare memory never carries two. A dropped interpreter's memory is released
+(`releaseGrowthCap`) so it holds no closure. While no mount is known the ledger is the
+measurement-time one, so an unread blob cannot raise the cap. A phase counts exempt through a depth
+counter, so an alarm overlapping a request keeps the cap lifted until both end. The variables are
+`GROWTH_GOVERNOR` (`0` is off), `GROWTH_CAP_BYTES`, `GROWTH_HEADROOM_BYTES` and
+`GROWTH_MARGIN_BYTES`. Pinned by `tests/integration/growth-cap.spec.ts`: the default-on cases, the
+ledger arithmetic, the exempt phases, the refusal path, and a script that calls `exit(1)` with no
+refused grow being left alone. The constants and their sources are under The Growth Governor.
 
 ### `src/do/health.ts`
 
@@ -4855,7 +5747,7 @@ three of those is a durable condition whatever its severity label says. `warn` i
 budget pressure and a memory trend are things to watch at the next quiet moment, and striking on them
 would quarantine a healthy busy site.
 
-### `src/do/heap-image.ts`
+### `src/do/boot/heap-image.ts`
 
 #### `snapshotStep`
 
@@ -5315,7 +6207,7 @@ A step that ran ALWAYS drops the interpreter and the heap image. A restored kern
 whatever the step just changed, which is the shape of BUG 1, and making it unconditional means
 no future step's author can get the flag wrong.
 
-### `src/do/replication.ts`
+### `src/do/replica/replication.ts`
 
 #### sealGeneration, branch `generation <= buffer.parent`
 
@@ -5431,6 +6323,25 @@ The FILENAME is load-bearing. The shipped `settings.php` already appends this ex
 unconditionally, and `getContainerCacheKey()` folds in the raw setting while `addServiceFiles()`
 filters to files that exist -- so creating it changes the container without moving the cache key.
 
+### `src/do/slice.ts`
+
+#### `pibRun` and `deferEffect`
+
+Owns one synchronous `pib_run` called straight through the Module so it can sit inside one
+`transactionSync`, and the queue of effects that leave the object and are not rows. php-wasm's `_run`
+wraps the same call in a promise, but the shipped glue's `ccall` ignores `async`, so the call is
+synchronous.
+
+Invariants. An effect queued during a slice runs after the slice commits and is dropped on rollback;
+outside a slice it runs at once. Only a refusal rolls back: a trap or a fatal commits what the run
+wrote and rethrows. A slice runs only where the binary has `ccall` and the storage has
+`transactionSync` (`canRunSlice`), and every other run keeps `_run`. A nested `cfwSqlTxn` composes as a
+savepoint under workerd locally, and a speculative replay inside a slice does not take it down.
+Exempt phases are not wrapped. The variable is `GROWTH_ROLLBACK` (`0` turns the transaction off).
+Pinned by `tests/integration/slice-rollback.spec.ts` (15 cases): a refused run leaves 0 rows, with
+`GROWTH_ROLLBACK=0` as the control that leaves the first row, and the exempt case asserts
+`transactionSync` is called 0 times for an exempt run and once for a governed one.
+
 ### `src/do/stats.ts`
 
 #### `noteLaneTiming()`
@@ -5482,6 +6393,28 @@ filters to files that exist -- so creating it changes the container without movi
 // therefore complete. The first is kept because measurements are pinned to
 // it; the second is the one a quota decision should use.
 ```
+
+### `src/do/stepper.ts`
+
+#### `advanceStepJob`
+
+Owns the stepped enable: a PHP plan that lists the uninstalled dependencies first and then one step per
+module, a job cursor, and the stop rule for one invocation. Each step runs through `run(code, after)`
+and the checkpoint hook runs inside the slice's transaction, so the step's writes and its cursor
+commit together or not at all.
+
+Invariants. A step keeps the phase of its caller; the enable route is an owner phase, and a step that
+put the serving cap back refused the first deployed mantle2 enable at 95.8 MiB of 96. After at least
+one step the invocation stops when PHP time reaches the budget or `oversized()` is true, and in the
+second case the interpreter is dropped and the next invocation starts fresh, since a drop and a boot
+cannot share an invocation. A step that fails or is refused drops the interpreter, because the database
+rolled back under a PHP that did not. Module names are validated before any PHP runs (`isModuleName`,
+a 400 on a hostile name) and again for every planned step and every stored job. The planner steps an
+enable only when modules times `STEP_MODULE_COST_MS` exceeds `STEP_BUDGET_MS`. The variables are
+`STEPPED_OPS`, `STEP_BUDGET_MS` and `STEP_MODULE_COST_MS`. Pinned by
+`tests/integration/stepped-ops.spec.ts` (16 cases, including the control that commits a step with no
+checkpoint and repeats it, rows `a, a, b`) and `tests/integration/ops/drive.spec.ts`. The budget counts
+host calls times the clock's per-call constant, so a step that burns CPU between calls is undercounted.
 
 ### `src/do/types.ts`
 
@@ -5719,7 +6652,7 @@ league/oauth2-server type against them, so a PEM string where an object belongs 
 function still accepts a PEM string, a `file://` path or the older two-key array wherever ext-openssl
 accepts a key.
 
-### `src/drupal/reconcile-php.ts`
+### `src/drupal/php/reconcile.ts`
 
 #### `reconcileRouterPhp`
 
@@ -5749,7 +6682,7 @@ what makes the render caches downstream of it stale. State keeps a static cache 
 `cache_bootstrap` copy and `State::set()` knows about both. A host re-deriving either list gets it
 wrong, and the copy it forgets is the one that made the original fix inert.
 
-### `src/drupal/site-php.ts`
+### `src/drupal/php/site.ts`
 
 #### `renderPage`
 
@@ -5979,7 +6912,7 @@ function, and none of the three runs while a page is being served.
 not something ext-zlib provides at any version, so a capability declared under that guard would have
 been a function nothing could ever reach.
 
-### `src/ops/admin-session.ts`
+### `src/ops/owner/admin-session.ts`
 
 #### Module overview
 
@@ -6070,7 +7003,7 @@ Short and weighted toward embeddings: at 1,075 neurons per 1M input tokens, inde
 500 tokens each is 538 neurons, about 5% of a day. A `llama-3.3-70b` completion is 129 neurons, so the
 same allocation buys 77 of them.
 
-### `src/ops/auth-budget.ts`
+### `src/ops/meters/auth-budget.ts`
 
 #### Module overview
 
@@ -6242,7 +7175,7 @@ entirely its own escaping
  * would refuse every cron module on a site where cron demonstrably runs.
 ```
 
-### `src/ops/cf-oauth.ts`
+### `src/ops/owner/cf-oauth.ts`
 
 #### Module overview
 
@@ -6282,7 +7215,7 @@ logo on Cloudflare's own consent page and approve it. That is a phishing surface
 
 So it is stored in the object's own `cfw_meta` and set through the owner-authenticated setup
 route, which gives the same no-redeploy property behind a credential the operator holds.
-`tests/unit/ops/cf-oauth.spec.ts` asserts it stays off `KV_OVERRIDABLE`.
+`tests/unit/ops/owner/cf-oauth.spec.ts` asserts it stays off `KV_OVERRIDABLE`.
 
 #### `CF_SCOPES`
 
@@ -6557,7 +7490,7 @@ the page row at fill time and compared at serve time, it replaces a WRITE per af
 a READ per served page -- and the free plan allows 5,000,000 rows read a day against 100,000
 written.
 
-### `src/ops/image-transform.ts`
+### `src/ops/image/transform.ts`
 
 #### Module overview
 
@@ -6690,7 +7623,7 @@ An existing record whose content DIFFERS is an update rather than a second creat
 second SPF TXT on one name is not a duplicate that gets ignored; it is two SPF records, which is a
 permerror under RFC 7208 and fails mail delivery for the whole domain.
 
-### `src/ops/module-rev.ts`
+### `src/ops/module/rev.ts`
 
 #### `dropRevision()`
 
@@ -6703,7 +7636,7 @@ are the truth; the cost is a scan of a table with at most `REVISION_RETENTION` r
 Refuses to drop the ACTIVE revision: that would leave the mounted tree with no record of where it
 came from, which is the state this table exists to prevent.
 
-### `src/ops/module-table.ts`
+### `src/ops/module/table.ts`
 
 #### `VERIFIED_BEHAVIOURS`
 
@@ -6730,7 +7663,7 @@ It claimed the spec "fails when README.md disagrees"; the spec compared this map
 FILES, so a `verified` row needed a run behind it and the published table needed nothing. Three
 rows were edited by hand on the strength of the guard described here. The comparison exists now.
 
-### `src/ops/package-install.ts`
+### `src/ops/composer/package-install.ts`
 
 #### Module overview
 
@@ -6742,6 +7675,16 @@ Resolving a package name to source, and turning that source into files the mount
 four steps: resolve a name to an archive URL, fetch it, filter what comes out, and write the files
 where the boot mount reads them. Building three of those would produce three sets of bugs, so this
 is the one, and the SOURCE is the only thing that differs.
+
+##### Tarballs go through untarl
+
+A `tar` dist type is read by `unpackTar()`, which gunzips when the archive starts with `1f 8b` (npm
+serves `.tgz`) and parses it with `@drupflare/untarl` (`parseTar`, `tarEntryTree`, one leading path
+segment stripped). `unpackArchive()` is the entry both archive kinds go through, and it refuses a whole
+archive when a member's path leaves the mount, whether untarl raises `TarPathError` or a path holds a
+`..` component, so a hostile member gets the same answer from a zip and from a tarball. Before this,
+`installPackage` refused every dist that was not a zip with "ships a tar", which stopped webcms. The
+change has tests with controls; whether a tar-shipped package installs on a deployed site is not shown.
 
 ##### Why the host does this and not PHP
 
@@ -6784,7 +7727,7 @@ time; a package installed later was never rewritten, and Varbase's `revolt/event
 every page. Qualified references become `\PhpWasmSyncFiber`, and `use Fiber;` becomes an alias
 so unqualified ones follow. Code that needs a real suspension now fails as an ordinary error.
 
-### `src/ops/packagist.ts`
+### `src/ops/composer/packagist.ts`
 
 #### `DRUPAL_METADATA_URL`
 
@@ -6817,7 +7760,7 @@ opcache's optimizer carries a `func_info` table naming functions across every bu
 here on 2026-09-08 when the long64 build carried the real extension (`--enable-mbstring
 --disable-mbregex`; `mb_ereg*` still absent, needs oniguruma, core calls none of it).
 
-### `src/ops/page-memo.ts`
+### `src/ops/page/memo.ts`
 
 #### Module overview
 
@@ -6883,7 +7826,7 @@ and the caller must not be able to mutate what the memo holds (it is handed a cl
  */
 ```
 
-### `src/ops/plan-profile.ts`
+### `src/ops/meters/plan-profile.ts`
 
 #### Module overview
 
@@ -7037,7 +7980,7 @@ One key rather than one per lever: a single read is atomic, costs one of the 100
 reads instead of one per lever, and gives an operator one place to see every override in
 force. Counted nowhere in prose: this docblock said seven while the list held eighteen.
 
-### `src/ops/platform-limits.ts`
+### `src/ops/meters/platform-limits.ts`
 
 #### Module overview
 
@@ -7071,7 +8014,7 @@ Bracketing between the first and last difference produces ONE region, so a page 
 values hands the recognisers 4.6 KB of markup with a dom id at one end and a build id at the
 other -- opaque, and every form page carrying a view has that shape.
 
-### `src/ops/replica-routing.ts`
+### `src/ops/replica/routing.ts`
 
 #### `affinityKey`
 
@@ -7154,7 +8097,7 @@ other -- opaque, and every form page carrying a view has that shape.
 	 */
 ```
 
-### `src/ops/replica.ts`
+### `src/ops/replica/policy.ts`
 
 #### `enforceReadOnly()`, exec write
 
@@ -7193,7 +8136,7 @@ other -- opaque, and every form page carrying a view has that shape.
  * deletes a durable ticket, and `cfwTcp`, which queues an outbound exchange. Both mutate.
 ```
 
-### `src/ops/replication-log.ts`
+### `src/ops/replica/replication-log.ts`
 
 #### Module overview
 
@@ -7364,7 +8307,7 @@ The render already computes this, so carrying it out is free. Anything not a lis
 yields nothing rather than a guess: a partial role set would compile a plan for the wrong
 audience, which is strictly worse than compiling none.
 
-### `src/ops/site-id.ts`
+### `src/ops/site/id.ts`
 
 #### Module overview
 
@@ -7454,7 +8397,7 @@ measurement deploy in this repo sets `PW_DIAGNOSTICS=1` and calls `/serve?site=X
 A THROWN READ IS NOT MEMOISED. A KV blip must cost the next request a retry rather than pin
 derivation for a minute.
 
-### `src/ops/site-origin.ts`
+### `src/ops/site/origin.ts`
 
 #### Module overview
 
@@ -7498,7 +8441,7 @@ which a browser refuses from any other host -- so a login on an alias never held
 NAME stays the canonical one, which is what the next render looks for, so one session works on every
 alias. The body is rewritten as a stream, so a BigPipe response still arrives progressively.
 
-### `src/ops/site-secrets.ts`
+### `src/ops/site/secrets.ts`
 
 #### Module overview
 
@@ -7537,7 +8480,7 @@ operation, not a diagnostic, and it needs a credential rather than a mode.
 
 Same mint and same storage as {@link ensureHashSalt}: per site, persisted, never in the payload.
 
-### `src/ops/state-fingerprint.ts`
+### `src/ops/replica/state-fingerprint.ts`
 
 #### Module overview
 
@@ -7577,7 +8520,7 @@ it is most often asked about. A missing table is reported rather than swallowed:
 table is empty and zero rows because it does not exist are different facts, and only the caller knows
 which of them should refuse.
 
-### `src/ops/state-inventory.ts`
+### `src/ops/replica/state-inventory.ts`
 
 #### Module overview
 
@@ -7632,7 +8575,7 @@ have used. It is not: it answers false for AUTHORITATIVE, which is every content
 lane id partition exists precisely so a lane CAN mint into those safely under a disjoint stride.
 Wiring it would have refused the feature it appeared to protect.
 
-`replicaMayServe()` is a DENY-list over statuses, and `src/ops/replica.ts` is deliberately two
+`replicaMayServe()` is a DENY-list over statuses, and `src/ops/replica/policy.ts` is deliberately two
 allow-lists and no deny-list, because an unknown effect has to fail closed by being absent from
 an allow-list rather than by being absent from a deny-list.
 
@@ -8207,7 +9150,7 @@ The step function owns no transport, no alarm and no env of its own, exactly lik
 `cronStep()`, so the same chain runs off an alarm, off a WebSocket message, or off
 one HTTP poke per beat in a test.
 
-### `src/ops/write-forwarding.ts`
+### `src/ops/replica/write-forwarding.ts`
 
 #### `ID_PARTITION_LANES`
 
@@ -8310,7 +9253,7 @@ What that buys, on `wrangler deploy --dry-run` gzip figures:
 
 A previous note here said the zstd frame header carries the inflated length and the decompressor
 pre-sizes from it. Brotli has no such field and `brotliDecompressSync` sizes its own output, so
-nothing is lost; `scripts/pack-wasm-brotli.ts` records why its cache key changed to match.
+nothing is lost; `scripts/pack/wasm-brotli.ts` records why its cache key changed to match.
 
 NO `inflatedSize` cross-check, unlike the 8.3 seam. That binary is pinned in
 `vendor/` and never changes, so a hardcoded size is a real guard there. This one is fetched from
@@ -8350,6 +9293,25 @@ the real workload. Base ext-pdo IS present, so the class constants core's sqlite
 
 Selected by aliasing `./php-binary.js` to this file; see the docblock there for why the
 alias cannot target the `.wasm` import directly.
+
+### `src/runtime/virtual-clock.ts`
+
+#### `PhpClock`
+
+Owns the clock PHP reads. Inside one synchronous run the platform's `Date.now()` and
+`performance.now()` hold still, so the clock returns `max(real, base + calls * kappa, last + step)`,
+capped at the real clock plus 60,000 ms, where `calls` counts the glue's host-call imports and `step` is
+one microsecond.
+
+Invariants. A read never goes back inside a run. Each run takes a new base from the real clock, so one
+run's lead does not hide the next run's work; across runs the clock returns to the platform's, stepping
+back only by the last run's overshoot. A read always advances by at least a microsecond, so a loop that
+waits for the clock to move finishes. When the site's variables name the clock explicitly and the glue
+imports no time function, building it throws. The variables are `VIRTUAL_CLOCK` (unset or `1` virtual,
+`0` or `off` platform, `frozen` and `simulated` for measurement) and `VIRTUAL_CLOCK_KAPPA_MS` (0.13).
+Pinned by `tests/integration/php-clock.spec.ts`, including the case that a run's lead is not carried
+into the next and the three arms over a queue, a batch and a poll for a new microsecond. The default
+constant is a local figure and overstates a deployed probe about 4 times (see The Clock).
 
 ### `src/site-do.ts`
 
@@ -8545,7 +9507,7 @@ safe: the fast lane is one indexed `cfw_page` read and consults no lever.
 Called from `alarm()` too, which is not optional -- the fill chain reads several of them and an
 alarm never passes through `handle()`.
 
-### `src/site/edge-cache.ts`
+### `src/site/edge/cache.ts`
 
 #### `GEN_BUCKET_MS`
 
@@ -8764,6 +9726,25 @@ with ZERO DO cost. That is the only version of this that protects the meter rath
 	// `window.prompt('Owner token')` was accepted without being checked against anything
 	...ADMIN_PAGES.map((p) => p.path)
 ```
+
+### `src/util/php.ts`
+
+#### `phpSingle` and `phpDouble`
+
+Own the two ways a value gets into PHP source. `phpSingle` is a single-quoted literal with `\` and `'`
+escaped, and `phpDouble` is `JSON.stringify` with the `$` escaped, for the templates that already sit in
+a double-quoted context. Beside them are `phpSingleList`, `isModuleName`, `phpWhen`, `hoistUses`,
+`phpScript` and `phpRender`.
+
+The invariant is that no value from a visitor, a request header, an owner route or a config payload
+reaches PHP through a plain `JSON.stringify`, because JSON escapes neither `$` nor `{` and PHP runs
+`${expr}` and `{$expr}` inside double quotes. `phpWhen` binds declarations at run time and a guard that
+tests whether the function or class exists belongs inside it, since a fragment can run twice and a
+redeclare is fatal. `hoistUses` lifts `use Name;` lines at column 0 into one deduplicated block, because
+a `use` cannot sit inside an `if` or a `try`. Pinned by `tests/node/php-literals.spec.ts` (real php over
+seven hostile values through both literal forms, a request body byte for byte, the config import
+payload, and the control that the old double `stringify` form is evaluated). The history is under
+Defect Classes.
 
 ### `src/vendor.d.ts`
 

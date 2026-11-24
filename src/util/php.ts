@@ -1,6 +1,33 @@
 import { renderTemplate } from './template';
 
 /**
+ * A PHP single-quoted string literal. PHP interpolates `$var` and `{$expr}` inside double quotes,
+ * which `JSON.stringify` does not escape, so a value from outside never goes into PHP that way.
+ */
+export function phpSingle(value: string): string {
+	return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
+/**
+ * A PHP double-quoted string literal of a string, for the templates that already sit in a double
+ * quoted context. `JSON.stringify` escapes the quote and the backslash but not `$`, and PHP runs
+ * `${expr}` and `{$expr}` inside double quotes, so the `$` is escaped here.
+ */
+export function phpDouble(value: string): string {
+	return JSON.stringify(value).replace(/\$/g, '\\$');
+}
+
+/** a PHP list of single-quoted strings */
+export function phpSingleList(values: readonly string[]): string {
+	return `[${values.map(phpSingle).join(', ')}]`;
+}
+
+/** Drupal's machine name for a module: lowercase letters, digits and underscores, 50 at most */
+export function isModuleName(value: unknown): value is string {
+	return typeof value === 'string' && value.length <= 50 && /^[a-z][a-z0-9_]*$/.test(value);
+}
+
+/**
  * Wraps PHP declarations in an `if` block, so they bind at run time. Keep the `function_exists`
  * or `class_exists` half of a guard: a fragment can run twice and a redeclare is fatal.
  */

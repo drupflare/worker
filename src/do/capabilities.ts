@@ -13,7 +13,7 @@ import {
 	statFile
 } from '../db/file-store';
 import { requestHeaders } from '../ops/deferred-post';
-import { engineFeatures } from '../ops/image-runtime';
+import { engineFeatures } from '../ops/image/runtime';
 import {
 	imageEngine,
 	imagesDeliveryUrl,
@@ -22,7 +22,7 @@ import {
 	supportedExtensions,
 	transformIsLarge,
 	transformPath
-} from '../ops/image-transform';
+} from '../ops/image/transform';
 import { phpLogCeiling, phpLogPasses } from '../ops/log-level';
 import {
 	mailDrainEnabled,
@@ -32,7 +32,7 @@ import {
 	senderFor
 } from '../ops/mail';
 import { senderDomainVerdict } from '../ops/mail-onboard';
-import { activeRevision, listRevisions } from '../ops/module-rev';
+import { activeRevision, listRevisions } from '../ops/module/rev';
 import { type ClaimsTicket, ticketRedeemable } from '../ops/oidc';
 import {
 	canWriteKv,
@@ -58,6 +58,7 @@ import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage } from '../util/errors';
 import { trimMails } from './helpers';
 import { MAIL_SENDING_DOMAIN_KEY, OIDC_TICKET_KEY, SITE_SMTP_KEY } from './keys';
+import { deferEffect } from './slice';
 import type { Payload, SiteBinary } from './types';
 
 /**
@@ -278,14 +279,17 @@ export function installCapabilities(site: SitePhpDurableObject, binary: SiteBina
 			else invalid.push({ name, reason });
 		}
 		if (Object.keys(accepted).length > 0) {
-			site.ctx.waitUntil(
-				// scoped to this site; a deployment-wide write would reach every site
-				writeSettings(kv, accepted, site.siteName())
-					.then(() => {
-						// else this object serves a stale copy for the memo window
-						resetSettingsMemo();
-					})
-					.catch(() => {})
+			// held until the slice commits: a refused run must not change what the site reads
+			deferEffect(() =>
+				site.ctx.waitUntil(
+					// scoped to this site; a deployment-wide write would reach every site
+					writeSettings(kv, accepted, site.siteName())
+						.then(() => {
+							// else this object serves a stale copy for the memo window
+							resetSettingsMemo();
+						})
+						.catch(() => {})
+				)
 			);
 		}
 		return reply({ ok: true, accepted: Object.keys(accepted), refused, invalid });

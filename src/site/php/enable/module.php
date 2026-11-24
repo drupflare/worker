@@ -245,6 +245,18 @@ $meter = static function (): array {
 };
 $before = $meter();
 
+// what a failed install must put back: tables, config objects and the extension list
+$snapshot = null;
+try {
+	$snapshot = [
+		'tables' => array_values(Drupal::database()->schema()->findTables('%')),
+		'config' => Drupal::configFactory()->listAll(),
+		'modules' => Drupal::configFactory()->get('core.extension')->get('module') ?? [],
+	];
+} catch (Throwable $e) {
+	$out['snapshotError'] = $e->getMessage();
+}
+
 // THE ATTEMPT. Wrapped tightly and reporting class + file:line, because the interesting outcome is
 // the failure: this call has never been made in this runtime and a bare message would not say which
 // of the four steps (config write, schema, container rebuild, router rebuild) died.
@@ -260,6 +272,48 @@ try {
 	$out['throwMessage'] = $e->getMessage();
 	$out['throwAt'] = $e->getFile() . ':' . $e->getLine();
 	$out['ok'] = false;
+	if ($snapshot !== null) {
+		$undone = ['tables' => [], 'config' => [], 'modules' => [], 'errors' => []];
+		try {
+			$editable = Drupal::configFactory()->getEditable('core.extension');
+			$undone['modules'] = array_values(
+				array_diff(
+					array_keys($editable->get('module') ?? []),
+					array_keys($snapshot['modules']),
+				),
+			);
+			$editable->set('module', $snapshot['modules'])->save();
+			foreach ($undone['modules'] as $added) {
+				Drupal::keyValue('system.schema')->delete($added);
+			}
+		} catch (Throwable $e2) {
+			$undone['errors'][] = 'extension list: ' . $e2->getMessage();
+		}
+		try {
+			foreach (
+				array_diff(Drupal::configFactory()->listAll(), $snapshot['config'])
+				as $config
+			) {
+				Drupal::configFactory()->getEditable($config)->delete();
+				$undone['config'][] = $config;
+			}
+		} catch (Throwable $e2) {
+			$undone['errors'][] = 'config: ' . $e2->getMessage();
+		}
+		try {
+			$schema = Drupal::database()->schema();
+			foreach (
+				array_diff(array_values($schema->findTables('%')), $snapshot['tables'])
+				as $table
+			) {
+				$schema->dropTable($table);
+				$undone['tables'][] = $table;
+			}
+		} catch (Throwable $e2) {
+			$undone['errors'][] = 'tables: ' . $e2->getMessage();
+		}
+		$out['rolledBack'] = $undone;
+	}
 }
 
 $after = $meter();

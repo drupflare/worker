@@ -2,7 +2,7 @@
  *   bun scripts/measure/free-envelope.ts [--visits=3000000] [--dynamic=0.01] [--warmth=realRender]
  */
 
-import { meterFlushBudget } from '../../src/ops/day-meters';
+import { meterFlushBudget } from '../../src/ops/meters/day-meters';
 import { COLD_BOOT_MS } from '../economics/measured';
 import { DURABLE_OBJECTS } from '../economics/rates';
 import { GENERATED_FREE_QUOTAS } from '../generated/quotas';
@@ -1123,7 +1123,7 @@ if (import.meta.main) {
 			`dynamic_page_cache and menu in memory, priced on the warmth mix at ${SHIPPING_ROWS_PER_FILL.toFixed(2)} rows/fill`
 	);
 
-	// WordPress at its shipping rule (`WORDPRESS_PAGE_CACHE=1`), priced the same way as the line above
+	// WordPress at its shipping rule (`WORDPRESS_PAGE_CACHE` unset, which is on), priced the same way as the line above
 	const wordpress = envelope(DEFAULT_MIX, {
 		rowsPerFill: WORDPRESS_ROWS_PER_FILL,
 		renderSeconds: WORDPRESS_RENDER_SECONDS.p50

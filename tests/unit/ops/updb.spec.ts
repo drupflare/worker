@@ -1,6 +1,6 @@
 import { env, runInDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { UPDB_VERIFY, updbPlan, updbUnit } from '../../../src/drupal/updb-php';
+import { UPDB_VERIFY, updbPlan, updbUnit } from '../../../src/drupal/php/updb';
 import {
 	UPDB_FLUSH_STEPS,
 	UPDB_SCHEMA_VERSION,
@@ -218,6 +218,7 @@ type Run = {
 };
 
 type Unit = {
+	entered: number;
 	seq: number;
 	kind: string;
 	fn: string | null;
@@ -326,6 +327,7 @@ type Deps = {
 	txn: (fn: () => void) => void;
 	nowMs: () => number;
 	meters: () => Meters;
+	sync?: () => Promise<void>;
 };
 
 const runOf = (sql: Sql) => readRun(sql) as unknown as Run;
@@ -487,7 +489,12 @@ function effectfulRespond(
 function driver(
 	site: Site,
 	respond: Respond,
-	opts: { tokens?: Holder; phpReady?: () => boolean; txn?: (fn: () => void) => void } = {}
+	opts: {
+		tokens?: Holder;
+		phpReady?: () => boolean;
+		txn?: (fn: () => void) => void;
+		durable?: boolean;
+	} = {}
 ) {
 	const tokens = opts.tokens ?? holder();
 	let clock = START_MS;
@@ -499,7 +506,8 @@ function driver(
 		phpReady: opts.phpReady ?? (() => true),
 		txn: opts.txn ?? site.txn,
 		nowMs: () => (clock += 1),
-		meters: () => ({ ...meters })
+		meters: () => ({ ...meters }),
+		...(opts.durable ? { sync: () => Promise.resolve() } : {})
 	};
 	return { deps, tokens, meters };
 }
@@ -2109,5 +2117,126 @@ describe('the fixture can fail', () => {
 		});
 		// one row plus whatever the primary key index costs; the number is the host's
 		expect(written).toBeGreaterThanOrEqual(1);
+	});
+});
+
+describe('an eviction before the interpreter was entered resumes; a kill inside the unit halts', () => {
+	it('resumes the claimed unit when no entry record exists, and finishes the run', async () => {
+		const out = await withSite(async (site) => {
+			const sql = site.sql;
+			seedSite(sql);
+			const respond = effectfulRespond(sql);
+			const d = driver(site, respond, { durable: true });
+			const runId = prepare(d.deps).run.id;
+			await beat(d.deps); // claim 0
+			const claimed = unitOf(sql, runId, 0);
+			// the object is evicted between the claim beat and the run beat: the token is gone
+			const resumed = driver(site, respond, { tokens: holder(), durable: true });
+			const chain = await chainTo(resumed.deps, 60);
+			return { claimed, chain, run: runOf(sql), unit: unitOf(sql, runId, 0) };
+		});
+		expect(out.claimed.state).toBe('claimed');
+		expect(out.claimed.entered).toBe(0);
+		expect(out.run.phase).toBe('complete');
+		expect(out.run.haltReason ?? null).toBeNull();
+		expect(out.unit.state).toBe('done');
+		expect(out.unit.entered).toBe(1);
+	});
+
+	it('writes the entry record before PHP runs, in the attempt that runs it', async () => {
+		const out = await withSite(async (site) => {
+			const sql = site.sql;
+			seedSite(sql);
+			const seen: number[] = [];
+			const respond = effectfulRespond(
+				sql,
+				{},
+				{
+					update: async () => {
+						const run = runOf(sql);
+						seen.push(unitOf(sql, run.id, run.cursorSeq).entered);
+						return undefined;
+					}
+				}
+			);
+			const d = driver(site, respond, { durable: true });
+			prepare(d.deps);
+			await chainTo(d.deps, 60);
+			return seen;
+		});
+		expect(out.length).toBeGreaterThan(0);
+		expect(out.every((entered) => entered === 1)).toBe(true);
+	});
+
+	it('still halts as unverifiable when the unit was entered and never returned', async () => {
+		const out = await withSite(async (site) => {
+			const sql = site.sql;
+			seedSite(sql);
+			let stuck = 0;
+			const respond = effectfulRespond(
+				sql,
+				{},
+				{
+					update: () => {
+						stuck++;
+						// the invocation dies inside the unit: this call never returns
+						return new Promise<undefined>(() => {});
+					}
+				}
+			);
+			const d = driver(site, respond, { durable: true });
+			const runId = prepare(d.deps).run.id;
+			let guard = 0;
+			// beats up to the update unit's claim, then its run beat enters and hangs
+			while (stuck === 0 && guard++ < 30) {
+				const pending = beat(d.deps);
+				const settled = await Promise.race([
+					pending.then(() => true),
+					new Promise<boolean>((r) => setTimeout(() => r(false), 25))
+				]);
+				if (!settled) break;
+			}
+			const seq = runOf(sql).cursorSeq;
+			const entered = unitOf(sql, runId, seq);
+			const survivor = driver(site, respond, { tokens: holder(), durable: true });
+			const after = await beat(survivor.deps);
+			return { entered, after, run: runOf(sql), unit: unitOf(sql, runId, seq), stuck };
+		});
+		expect(out.stuck).toBe(1);
+		expect(out.entered.kind).toBe('update');
+		expect(out.entered.state).toBe('claimed');
+		expect(out.entered.entered).toBe(out.entered.attempts);
+		expect(out.after.ran).toBe(false);
+		expect(out.run.phase).toBe('halted');
+		expect(out.run.haltReason).toBe('unit-unverifiable');
+		expect(out.unit.passes).toBe(0);
+	});
+
+	it('adds the column to a table made without it, once, and leaves a current table alone', async () => {
+		const out = await withSite(async (site) => {
+			const sql = site.sql;
+			sql.exec(
+				`CREATE TABLE cfw_updb_unit (run_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL,
+          fn TEXT, module TEXT, number INTEGER, step TEXT, dep_map TEXT NOT NULL DEFAULT '[]',
+          expect_schema INTEGER, seed_schema INTEGER, maint_target INTEGER NOT NULL DEFAULT 0,
+          state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+          passes INTEGER NOT NULL DEFAULT 0, finished REAL NOT NULL DEFAULT 0, sandbox TEXT,
+          message TEXT, error TEXT, rows_written INTEGER NOT NULL DEFAULT 0,
+          statements INTEGER NOT NULL DEFAULT 0, claimed_at INTEGER, ended_at INTEGER,
+          PRIMARY KEY (run_id, seq))`
+			);
+			const cols = () =>
+				sql
+					.exec(
+						"SELECT name FROM pragma_table_info('cfw_updb_unit') WHERE name = 'entered'"
+					)
+					.toArray().length;
+			const before = cols();
+			ensureUpdbTables(sql);
+			const after = cols();
+			ensureUpdbTables(sql);
+			return { before, after, again: cols() };
+		});
+		expect(out).toEqual({ before: 0, after: 1, again: 1 });
 	});
 });

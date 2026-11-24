@@ -39,6 +39,9 @@ export const HEAP_IMAGE_KEY = 'heap_image_gen';
 /** the stepped operation the alarm is carrying, as JSON */
 export const OPS_JOB_KEY = 'ops_job';
 
+/** the stored plan and cursor of a module enable that runs a step at a time */
+export const STEP_JOB_KEY = 'step_job';
+
 /** the tag set an invocation has invalidated and not yet purged; see {@link notePendingTags} */
 export const PENDING_TAGS_KEY = 'pending_tags';
 
@@ -51,7 +54,7 @@ export const UNSTORABLE_KEY = 'unstorable_paths';
 export const HEAP_IMAGE_ATTEMPTS_KEY = 'heap_image_attempts';
 /** the discovered cron hooks and the module set they were discovered against */
 export const CRON_HOOKS_KEY = 'cron_hooks';
-/** the contention history autoscaling decides from; see `src/ops/replica-demand.ts` */
+/** the contention history autoscaling decides from; see `src/ops/replica/demand.ts` */
 export const DEMAND_WINDOWS_KEY = 'demand_windows';
 /** the high-water mark of lane numbers copied so far */
 export const LANES_PROVISIONED_KEY = 'lanes_provisioned';

@@ -31,9 +31,16 @@ try {
 		$kernel->boot();
 		$GLOBALS['__pw_kernel'] = $kernel;
 	}
+	// a booted kernel has not loaded the legacy includes that define SAVED_NEW and SAVED_UPDATED,
+	// which a config entity save reads
+	if (method_exists($GLOBALS['__pw_kernel'], 'loadLegacyIncludes')) {
+		$GLOBALS['__pw_kernel']->loadLegacyIncludes();
+	}
 	// several operations reach a service that reads the current request; a fragment pushes none
 	if (Drupal::hasContainer()) {
 		Drupal::service('request_stack')->push(Request::create('/', 'GET'));
+		// an entity's hooks call functions in .module files, which a bare boot has not loaded
+		Drupal::moduleHandler()->loadAll();
 	}
 
 	$path = '/drupal/modules/custom/drupflare/src/Ops/OpsRunner.php';

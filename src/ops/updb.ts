@@ -13,10 +13,14 @@
  * rollback is the R2 export (`requireExport` can demand it). Copy-and-swap was rejected: a
  * written row per row, no table prefixes in the driver, and DDL dirties `sqlite_master`.
  *
- * Crash detection is a single-use in-memory token. A unit found `claimed` with no token halts
- * the run (`unit-unverifiable`, maintenance left on): fail closed, with one false positive if
- * the object is evicted between beats. Whether a killed event's writes are discarded is
- * unmeasured, so `retryPolicy: "core"` is opt-in. A cold interpreter is refused
+ * Crash detection is a single-use in-memory token plus a durable entry record. The run beat
+ * writes `entered` and waits for the write to be durable before it enters PHP. A unit found
+ * `claimed` with no token and an entry record for that attempt halts the run
+ * (`unit-unverifiable`, maintenance left on): the invocation died inside the unit and its writes
+ * are not known. A claim with no token and no entry record never reached PHP, so the object was
+ * evicted between the beats and the unit resumes. Without a durable sync (`deps.sync`) the record
+ * cannot be trusted and every claim with no token halts, as before. Whether a killed event's
+ * writes are discarded is unmeasured, so `retryPolicy: "core"` is opt-in. A cold interpreter is refused
  * (`cold-interpreter`, bounded by `maxColdWaits`) only for a caller passing `phpReady`.
  *
  * Preconditions are checked in JS before PHP, so a refusal costs ~0 ms: the run's `code_id` (a
@@ -26,7 +30,7 @@
  * @module
  */
 
-import { UPDB_FLUSH_STEPS, UPDB_VERIFY, updbPlan, updbUnit } from '../drupal/updb-php';
+import { UPDB_FLUSH_STEPS, UPDB_VERIFY, updbPlan, updbUnit } from '../drupal/php/updb';
 import { errorMessage } from '../util/errors';
 import { firstRow } from '../util/sql';
 
@@ -129,6 +133,8 @@ export interface UpdbUnit {
 	statements: number;
 	claimedAt: number | null;
 	endedAt: number | null;
+	/** the attempt whose run beat entered the interpreter, written durably first; 0 when none did */
+	entered: number;
 }
 
 /**
@@ -234,6 +240,12 @@ export interface UpdbDeps {
 	nowMs?: () => number;
 	meters?: () => { rowsWritten: number; statements: number };
 	tokens?: TokenHolder;
+	/**
+	 * Resolves once every pending write is durable. With it, a run beat records that it entered
+	 * the interpreter before it does, so a claim with no token and no such record is an eviction
+	 * between beats and the unit resumes; without it the old rule holds and the run halts.
+	 */
+	sync?: () => Promise<void>;
 }
 
 /** bumped when the row shape changes; a run from an older shape is refused, not migrated */
@@ -544,9 +556,17 @@ export function ensureUpdbTables(sql: UpdbSql): boolean {
       statements INTEGER NOT NULL DEFAULT 0,
       claimed_at INTEGER,
       ended_at INTEGER,
+      entered INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (run_id, seq)
     )`
 	);
+	// a table made before the column existed gets it once, after a look at the table's columns
+	const hasEntered = sql
+		.exec("SELECT name FROM pragma_table_info('cfw_updb_unit') WHERE name = 'entered'")
+		.toArray();
+	if (hasEntered.length === 0) {
+		sql.exec('ALTER TABLE cfw_updb_unit ADD COLUMN entered INTEGER NOT NULL DEFAULT 0');
+	}
 	return true;
 }
 
@@ -623,7 +643,8 @@ export function readUnit(sql: UpdbSql, runId: unknown, seq: unknown): UpdbUnit |
 		rowsWritten: Number(row.rows_written),
 		statements: Number(row.statements),
 		claimedAt: row.claimed_at === null ? null : Number(row.claimed_at),
-		endedAt: row.ended_at === null ? null : Number(row.ended_at)
+		endedAt: row.ended_at === null ? null : Number(row.ended_at),
+		entered: Number(row.entered ?? 0)
 	};
 }
 
@@ -1159,7 +1180,11 @@ export async function updbStep(deps: UpdbDeps, options: UpdbOptions = {}): Promi
 	// a claim with no matching token: the run beat was killed after consuming it, or the object
 	// was evicted between beats; storage cannot tell which, so this fails closed
 	const token = tokens.get();
-	if (!tokenMatches(token, run, unit)) {
+	// the run beat records its entry durably before it enters PHP, so a claim from this attempt
+	// with no such record never reached PHP: the object was evicted between the beats, and the
+	// unit resumes. Without a durable sync the record cannot be trusted and the check stays shut.
+	const neverEntered = deps.sync !== undefined && unit.entered < unit.attempts;
+	if (!tokenMatches(token, run, unit) && !neverEntered) {
 		const policy = String(run.options?.retryPolicy ?? 'halt');
 		if (policy !== 'core') {
 			const h = updbHalt(
@@ -1306,6 +1331,18 @@ export async function updbStep(deps: UpdbDeps, options: UpdbOptions = {}): Promi
 			fn: unit.fn,
 			reason: 'cold-interpreter'
 		};
+	}
+
+	// the entry record: written and made durable before anything in this unit can run, and it is
+	// what a later beat reads to tell a kill inside the unit from an eviction before it
+	if (deps.sync) {
+		sql.exec(
+			'UPDATE cfw_updb_unit SET entered = ? WHERE run_id = ? AND seq = ?',
+			unit.attempts,
+			run.id,
+			unit.seq
+		);
+		await deps.sync();
 	}
 
 	const before = deps.meters ? deps.meters() : null;

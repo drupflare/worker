@@ -6,24 +6,35 @@ import {
 	rankTally,
 	routerRebuilds
 } from '../../db/write-tally';
-import { ENABLE_MODULE, ENABLE_VERIFY } from '../../drupal/enable-php';
-import { FILES_PROBE } from '../../drupal/files-php';
-import { BOOT_KERNEL } from '../../drupal/site-php';
-import { hasApi, readHookEvent, verifyHook } from '../../ops/git-provider';
-import { sourceBytes } from '../../ops/module-bytes';
-import type { Registry } from '../../ops/package-install';
-import { derivativeUri } from '../../ops/render-lane';
+import { ENABLE_MODULE, ENABLE_VERIFY } from '../../drupal/php/enable';
+import { FILES_PROBE } from '../../drupal/php/files';
+import { BOOT_KERNEL } from '../../drupal/php/site';
+import { ignoresCore, type Registry } from '../../ops/composer/package-install';
+import { parseRepositories } from '../../ops/composer/repositories';
+import { SHIPPED_CORE_VERSION } from '../../ops/composer/shipped-lock';
+import { hasApi, readHookEvent, verifyHook } from '../../ops/git/provider';
+import { derivativeUri } from '../../ops/image/render-lane';
+import { sourceBytes } from '../../ops/module/bytes';
 import { maySafelyRepair } from '../../ops/repair';
-import { SHIPPED_CORE_VERSION } from '../../ops/shipped-lock';
-import { bearerToken, ownerTokenIsSet, ownerTokenMatches } from '../../ops/site-secrets';
+import { bearerToken, ownerTokenIsSet, ownerTokenMatches } from '../../ops/site/secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
+import { isModuleName, phpSingle, phpSingleList } from '../../util/php';
 import { jsonError } from '../../util/reply';
 import { firstRow } from '../../util/sql';
-import { GIT_TOKEN_HEADER } from '../git';
+import { GIT_TOKEN_HEADER } from '../git/handler';
+import { GROWTH_REFUSED_HEADER } from '../growth/cap';
 import { installLockPost, installLockRollback } from '../install-lock';
 import { lazyMountBytes } from '../lazy-mount';
-import type { Row } from '../types';
+import {
+	ENABLE_PLAN_PHP,
+	advanceStepJob,
+	clearStepJob,
+	plannedOverBudget,
+	readStepJob,
+	stepMode
+} from '../stepper';
+import type { Payload, Row } from '../types';
 
 // #region the git tier
 
@@ -204,8 +215,8 @@ export async function installable(
  * skips it only when every conflict names one of those packages in `requires`, so a caller that
  * showed the owner one conflict does not also waive another it did not show. A package in `accept`
  * that is not among the current conflicts answers 400, so an old preflight cannot accept more than
- * it showed. `?ignore_core=1`
- * lets version resolution take a release that declares an older core. Neither skips the archive
+ * it showed. `?ignore_core=1` lets version resolution take a release that declares an older core;
+ * a site holding the anachron package does so unless `?ignore_core=0` says otherwise. Neither skips the archive
  * digest check, which sits in `installPackage()`. Installing does not enable; both
  * routes are owner-gated because they write code the site did not ship with.
  */
@@ -228,7 +239,12 @@ export async function install(
 	);
 	// a site that bypasses core's version gate (anachron) takes a release that declares an older
 	// core when none admits this one
-	const ignoreCore = url.searchParams.get('ignore_core') === '1';
+	const ignoreCore = ignoresCore(
+		url.searchParams.get('ignore_core'),
+		site.packageAutoloads().flatMap((p) => (p.name ? [p.name] : []))
+	);
+	// the project's own composer repositories, as `type|url`
+	const repositories = parseRepositories(url.searchParams.getAll('repository'));
 	// the packages whose conflicts the owner has seen and accepts; any other conflict still refuses
 	const accepted = new Set(
 		(url.searchParams.get('accept') ?? '')
@@ -286,13 +302,21 @@ export async function install(
 			constraint,
 			undefined,
 			stability,
-			ignoreCore
+			ignoreCore,
+			repositories
 		);
 		site.php = undefined;
 		const ok = installed.every((one) => one['ok'] === true);
 		return Response.json({ ok, name, installed }, { status: ok ? 200 : 502 });
 	}
-	const out = await site.installPackage(registry, name, constraint, stability, ignoreCore);
+	const out = await site.installPackage(
+		registry,
+		name,
+		constraint,
+		stability,
+		ignoreCore,
+		repositories
+	);
 	// the interpreter mounts new files at boot
 	site.php = undefined;
 	return Response.json(out, { status: out.ok === false ? 502 : 200 });
@@ -415,9 +439,9 @@ export async function files(
 	const body = url.searchParams.get('body') ?? 'durable';
 	// set through globals, since a quote in a filename would close the PHP literal
 	const preamble =
-		`<?php $GLOBALS['__cfw_files_op'] = ${JSON.stringify(op)};` +
-		` $GLOBALS['__cfw_files_uri'] = ${JSON.stringify(uri)};` +
-		` $GLOBALS['__cfw_files_body'] = ${JSON.stringify(body)};`;
+		`<?php $GLOBALS['__cfw_files_op'] = ${phpSingle(op)};` +
+		` $GLOBALS['__cfw_files_uri'] = ${phpSingle(uri)};` +
+		` $GLOBALS['__cfw_files_body'] = ${phpSingle(body)};`;
 	// strip the probe's own `<?php`; no `?>` between them, or the rest of the fragment emits as
 	// literal text
 	const reply = await site.runJson(`${preamble}\n${FILES_PROBE.replace(/^<\?php\n/, '')}`);
@@ -439,6 +463,19 @@ export async function enable(
 	url: URL
 ): Promise<Response> {
 	const wantVerify = url.searchParams.get('verify') === '1';
+	// checked before any PHP runs: these values go into a script
+	const name = (url.searchParams.get('module') ?? '').trim();
+	const withModules = (url.searchParams.get('with') ?? '').split(',').filter((m) => m !== '');
+	const stopAt = url.searchParams.get('stop') ?? '';
+	if (!wantVerify && name !== '' && !isModuleName(name)) {
+		return jsonError('invalid module name: a machine name is a-z, 0-9 and _, 50 at most', 400);
+	}
+	if (!wantVerify && !withModules.every(isModuleName)) {
+		return jsonError('invalid module name in with', 400);
+	}
+	if (!wantVerify && !/^[a-z_]*$/.test(stopAt)) {
+		return jsonError('invalid stop stage', 400);
+	}
 	// an install runs on a fresh interpreter: linear memory only grows, and an enable ends at 92.2
 	// MB fresh against 110.6 MB after four renders (`keep=1` reproduces the failing order)
 	const keepInterpreter = url.searchParams.get('keep') === '1';
@@ -465,21 +502,16 @@ export async function enable(
 		return Response.json(verified ?? { ok: false, error: 'no reply' });
 	}
 	// no default module; every other write route refuses a missing argument
-	const name = (url.searchParams.get('module') ?? '').trim();
 	if (name === '') {
 		return jsonError('name the module to enable', 400);
 	}
 	const dry = url.searchParams.get('dry') === '1';
-	const stopAt = url.searchParams.get('stop') ?? '';
 	// modules installed in the same call, for two whose config each depends on the other
-	const withModules = (url.searchParams.get('with') ?? '')
-		.split(',')
-		.filter((m) => /^[a-z][a-z0-9_]*$/.test(m));
 	const preamble =
-		`<?php $GLOBALS['__cfw_enable_module'] = ${JSON.stringify(name)};` +
-		` $GLOBALS['__cfw_enable_with'] = ${JSON.stringify(withModules)};` +
+		`<?php $GLOBALS['__cfw_enable_module'] = ${phpSingle(name)};` +
+		` $GLOBALS['__cfw_enable_with'] = ${phpSingleList(withModules)};` +
 		` $GLOBALS['__cfw_enable_dry'] = ${dry ? 'true' : 'false'};` +
-		` $GLOBALS['__cfw_enable_stop'] = ${JSON.stringify(stopAt)};`;
+		` $GLOBALS['__cfw_enable_stop'] = ${phpSingle(stopAt)};`;
 	site.writeTally = emptyTally();
 	// the wasm heap from the host; `memory_get_peak_usage()` returns 0 in this build
 	const heapBefore = site.php ? (site.heapBytes(site.php.binary)?.length ?? 0) : 0;
@@ -488,8 +520,90 @@ export async function enable(
 	// and the reset rolls the install back (0/6 landed inline, 12/12 suppressed)
 	const priorSuppress = site.suppressBump;
 	site.suppressBump = true;
-	const reply = await site.runJson(`${preamble}\n${ENABLE_MODULE.replace(/^<\?php\n/, '')}`);
-	site.suppressBump = priorSuppress;
+	const body = ENABLE_MODULE.replace(/^<\?php\n/, '');
+	let reply: Payload | undefined;
+	const mode = stepMode(site.env);
+	let steps: string[] | undefined;
+	// a job already stored is finished first; otherwise the planner decides from the module count
+	if (mode !== 'off' && !dry && stopAt === '' && !readStepJob(site, name)) {
+		const planned = await site.runJson(
+			`${preamble}\n${ENABLE_PLAN_PHP.replace(/^<\?php\n/, '')}`
+		);
+		const plan = Array.isArray(planned?.plan) ? (planned.plan as string[]) : [];
+		if (!plan.every(isModuleName)) return jsonError('the plan named an invalid module', 400);
+		steps = plan.length > 0 ? plan : [name];
+	}
+	const stepIt =
+		mode !== 'off' &&
+		!dry &&
+		stopAt === '' &&
+		(steps === undefined || mode === 'always' || plannedOverBudget(steps.length, site.env));
+	if (stepIt) {
+		// a dependency or the module per slice, each with its own checkpoint
+		const stepped = await advanceStepJob(
+			site,
+			name,
+			async () => steps ?? [name],
+			(m) =>
+				`<?php $GLOBALS['__cfw_enable_module'] = ${phpSingle(m)}; $GLOBALS['__cfw_enable_with'] = []; $GLOBALS['__cfw_enable_dry'] = false; $GLOBALS['__cfw_enable_stop'] = '';\n${body}`
+		);
+		site.suppressBump = priorSuppress;
+		if (stepped.state === 'done') {
+			clearStepJob(site);
+			// the last step reports what it added; the whole job added the union
+			// a job whose last step committed before the answer left has no reply to give
+			reply = {
+				...(stepped.reply ?? { ok: true, module: name, nowEnabled: true, resumed: true }),
+				added: stepped.job.added ?? []
+			};
+		} else {
+			site.php = undefined;
+			const pollUrl = `/__enable?module=${encodeURIComponent(name)}`;
+			if (stepped.state === 'more') {
+				return Response.json(
+					{
+						ok: true,
+						done: false,
+						job: name,
+						next: stepped.job.next,
+						total: stepped.job.plan.length,
+						why: stepped.why,
+						poll: pollUrl
+					},
+					{ status: 202, headers: { 'retry-after': '1' } }
+				);
+			}
+			if (stepped.state === 'refused') {
+				return Response.json(
+					{
+						ok: false,
+						job: name,
+						step: stepped.step,
+						next: stepped.job.next,
+						total: stepped.job.plan.length,
+						error: 'the step needs more memory than the site is allowed; nothing it did was saved',
+						rolledBack: stepped.error.rolledBack
+					},
+					{ status: 503, headers: { [GROWTH_REFUSED_HEADER]: '1' } }
+				);
+			}
+			if (stepped.reply?.rolledBack !== undefined) site.dropCompiledContainer();
+			return Response.json(
+				{
+					...stepped.reply,
+					job: name,
+					next: stepped.job.next,
+					total: stepped.job.plan.length
+				},
+				{ status: 500 }
+			);
+		}
+	} else {
+		reply = await site.runJson(`${preamble}\n${body}`);
+		site.suppressBump = priorSuppress;
+		// the failed install's container named a module the list no longer holds
+		if (reply?.rolledBack !== undefined) site.dropCompiledContainer();
+	}
 	const heapAfter = site.php ? (site.heapBytes(site.php.binary)?.length ?? 0) : 0;
 	// dropped again afterwards: the install rebuilt the container, so the resident interpreter
 	// holds a stale module list and service graph

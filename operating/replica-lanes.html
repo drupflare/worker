@@ -14,6 +14,33 @@
 		<link
 			rel="icon"
 			href="../drupflare.ico"
+			sizes="any"
+		/>
+		<link
+			rel="icon"
+			type="image/png"
+			sizes="128x128"
+			href="../drupflare_128.png"
+		/>
+		<link
+			rel="apple-touch-icon"
+			href="../drupflare_128.png"
+		/>
+		<link
+			rel="canonical"
+			href="https://docs.drupflare.com/operating/replica-lanes.html"
+		/>
+		<meta
+			property="og:type"
+			content="website"
+		/>
+		<meta
+			property="og:site_name"
+			content="Drupflare"
+		/>
+		<meta
+			property="og:url"
+			content="https://docs.drupflare.com/operating/replica-lanes.html"
 		/>
 		<meta
 			property="og:title"
@@ -71,24 +98,56 @@
 					Roboto,
 					sans-serif;
 			}
-			main,
-			nav .bar,
+			.layout,
+			.site .bar,
 			footer {
-				max-width: 52rem;
+				max-width: 78rem;
 				margin: 0 auto;
 			}
-			nav {
+			main {
+				min-width: 0;
+				max-width: 52rem;
+			}
+			main:focus {
+				outline: none;
+			}
+			.docs-skip {
+				position: absolute;
+				left: 1rem;
+				top: -4rem;
+				z-index: 30;
+				padding: 0.5rem 1rem;
+				border-radius: 0.5rem;
+				background: var(--card);
+				color: var(--accent);
+			}
+			.docs-skip:focus {
+				top: 0.5rem;
+			}
+			.docs-sr {
+				position: absolute;
+				width: 1px;
+				height: 1px;
+				overflow: hidden;
+				clip-path: inset(50%);
+				white-space: nowrap;
+			}
+			:focus-visible {
+				outline: 2px solid var(--accent);
+				outline-offset: 2px;
+			}
+			.site {
 				margin: 0 -1.5rem 3rem;
 				padding: 0.75rem 1.5rem;
 				border-bottom: 1px solid var(--line);
 			}
-			nav .bar {
+			.site .bar {
 				display: flex;
 				flex-wrap: wrap;
 				align-items: center;
 				gap: 0.25rem 1.25rem;
 			}
-			nav .brand {
+			.site .brand {
 				display: flex;
 				align-items: center;
 				gap: 0.5rem;
@@ -96,45 +155,45 @@
 				font-weight: 700;
 				letter-spacing: -0.01em;
 			}
-			nav .brand img {
+			.site .brand img {
 				width: 1.75rem;
 				height: 1.75rem;
 			}
-			nav a {
+			.site a {
 				color: var(--muted);
 				font-size: 0.925rem;
 				text-decoration: none;
 			}
-			nav a:hover,
-			nav a[aria-current] {
+			.site a:hover,
+			.site a[aria-current] {
 				color: var(--accent);
 			}
-			nav a.brand {
+			.site a.brand {
 				color: var(--fg);
 				font-size: 1.05rem;
 			}
-			nav .menu {
+			.site .menu {
 				position: relative;
 			}
-			nav .menu summary {
+			.site .menu summary {
 				color: var(--muted);
 				font-size: 0.925rem;
 				list-style: none;
 				cursor: pointer;
 			}
-			nav .menu summary::-webkit-details-marker {
+			.site .menu summary::-webkit-details-marker {
 				display: none;
 			}
-			nav .menu summary::after {
+			.site .menu summary::after {
 				content: ' \25BE';
 				font-size: 0.75em;
 			}
-			nav .menu summary:hover,
-			nav .menu[open] summary,
-			nav .menu[data-current] summary {
+			.site .menu summary:hover,
+			.site .menu[open] summary,
+			.site .menu[data-current] summary {
 				color: var(--accent);
 			}
-			nav .menu .panel {
+			.site .menu .panel {
 				position: absolute;
 				z-index: 10;
 				top: 1.9rem;
@@ -148,12 +207,206 @@
 				background: var(--card);
 				box-shadow: 0 0.75rem 2rem var(--glow);
 			}
-			nav .menu .panel a {
+			.site .menu .panel a {
 				padding: 0.4rem 0.75rem;
 				border-radius: 0.4rem;
 			}
-			nav .menu .panel a:hover {
+			.site .menu .panel a:hover {
 				background: var(--code-bg);
+			}
+			.docs-menu,
+			.docs-close {
+				padding: 0.3rem 0.8rem;
+				border: 1px solid var(--line);
+				border-radius: 0.5rem;
+				background: var(--card);
+				color: var(--fg);
+				font: inherit;
+				font-size: 0.9rem;
+				cursor: pointer;
+			}
+			.docs-sidebar {
+				inset: 0 auto 0 0;
+				width: min(22rem, 88vw);
+				height: 100%;
+				max-height: none;
+				margin: 0;
+				padding: 1rem 1.25rem 2rem;
+				border: 0;
+				border-right: 1px solid var(--line);
+				overflow-y: auto;
+				background: var(--card);
+				color: var(--fg);
+			}
+			.docs-sidebar::backdrop {
+				background: rgb(0 0 0 / 0.45);
+			}
+			.docs-sidebar-head {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				margin-bottom: 1rem;
+				font-weight: 700;
+			}
+			.docs-nav details {
+				margin: 0;
+			}
+			.docs-nav summary {
+				padding: 0.35rem 0;
+				list-style: none;
+				cursor: pointer;
+			}
+			.docs-nav summary::-webkit-details-marker {
+				display: none;
+			}
+			.docs-nav summary::before {
+				content: '\25B8';
+				display: inline-block;
+				width: 1rem;
+				color: var(--muted);
+				font-size: 0.8rem;
+			}
+			.docs-nav details[open] > summary::before {
+				content: '\25BE';
+			}
+			.docs-group > summary {
+				margin-top: 0.5rem;
+				color: var(--muted);
+				font-size: 0.8rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			.docs-section {
+				margin-left: 0.75rem;
+			}
+			.docs-section > summary {
+				font-size: 0.9rem;
+				font-weight: 600;
+			}
+			.docs-nav ul {
+				margin: 0 0 0.5rem;
+				padding: 0 0 0 1rem;
+				list-style: none;
+			}
+			.docs-nav li {
+				margin: 0;
+			}
+			.docs-nav li a {
+				display: block;
+				padding: 0.25rem 0.6rem;
+				border-left: 2px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+				line-height: 1.4;
+				text-decoration: none;
+			}
+			.docs-nav li a:hover {
+				color: var(--accent);
+			}
+			.docs-nav li a[aria-current] {
+				border-left-color: var(--accent-strong);
+				color: var(--accent);
+				font-weight: 600;
+			}
+			.docs-nav .docs-ext::after {
+				content: ' \2197';
+				font-size: 0.8em;
+			}
+			.docs-desc {
+				display: block;
+				padding: 0 0.6rem 0.4rem;
+				border-left: 2px solid var(--line);
+				color: var(--muted);
+				font-size: 0.78rem;
+				line-height: 1.4;
+			}
+			@media (min-width: 64rem) {
+				.layout {
+					display: grid;
+					grid-template-columns: 17rem minmax(0, 1fr);
+					gap: 3rem;
+				}
+				.docs-menu,
+				.docs-close {
+					display: none;
+				}
+				.docs-sidebar {
+					position: sticky;
+					top: 1.5rem;
+					display: block;
+					inset: auto;
+					align-self: start;
+					width: auto;
+					height: auto;
+					max-height: calc(100vh - 3rem);
+					padding: 0 0.5rem 1rem 0;
+					border: 0;
+					background: transparent;
+				}
+				.docs-sidebar-head {
+					display: none;
+				}
+			}
+			@media (prefers-reduced-motion: no-preference) and (max-width: 63.99rem) {
+				.docs-sidebar {
+					transform: translateX(-100%);
+					transition:
+						transform 0.2s ease,
+						overlay 0.2s allow-discrete,
+						display 0.2s allow-discrete;
+				}
+				.docs-sidebar:popover-open {
+					transform: none;
+				}
+				@starting-style {
+					.docs-sidebar:popover-open {
+						transform: translateX(-100%);
+					}
+				}
+			}
+			@media (prefers-reduced-motion: reduce) {
+				* {
+					transition: none !important;
+					animation: none !important;
+				}
+			}
+			.docs-pager {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+				gap: 0.85rem;
+				margin: 3rem 0 0;
+			}
+			.docs-pager a {
+				display: block;
+				padding: 0.85rem 1.1rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+			}
+			.docs-pager a:hover {
+				border-color: var(--accent-strong);
+			}
+			.docs-pager-next {
+				text-align: right;
+			}
+			.docs-pager .docs-pager-label {
+				display: block;
+				color: var(--accent);
+				font-size: 0.78rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			.docs-pager strong {
+				display: block;
+			}
+			.docs-pager a > span:last-child {
+				color: var(--muted);
+				font-size: 0.85rem;
+				line-height: 1.45;
 			}
 			h1 {
 				margin: 0 0 0.5rem;
@@ -209,6 +462,9 @@
 				line-height: 1.5;
 			}
 
+			.readme {
+				overflow-wrap: break-word;
+			}
 			.readme h1 {
 				margin: 0 0 1.25rem;
 			}
@@ -366,8 +622,20 @@
 		</style>
 	</head>
 	<body>
-		<nav>
+		<a
+			class="docs-skip"
+			href="#docs-main"
+			>Skip to content</a
+		>
+		<header class="site">
 			<div class="bar">
+				<button
+					type="button"
+					class="docs-menu"
+					popovertarget="docs-sidebar"
+				>
+					Menu
+				</button>
 				<a
 					class="brand"
 					href="../index.html"
@@ -378,21 +646,29 @@
 					/>
 					Drupflare
 				</a>
-				<details class="menu" data-current><summary>Run</summary><div class="panel"><a href="../getting-started/index.html">Getting Started</a><a href="../operating/index.html" aria-current="page">Operating</a><a href="../configuration/index.html">Configuration</a></div></details>
+				<details class="menu" data-current><summary>Run</summary><div class="panel"><a href="../getting-started/index.html">Getting Started</a><a href="index.html">Operating</a><a href="../configuration/index.html">Configuration</a></div></details>
 				<details class="menu"><summary>Understand</summary><div class="panel"><a href="../architecture/index.html">Architecture</a><a href="../security/index.html">Security</a><a href="../impact/index.html">Impact</a><a href="../audiences/index.html">Audiences</a></div></details>
-				<details class="menu"><summary>Reference</summary><div class="panel"><a href="../technical-report.html">Technical Report</a><a href="../api/index.html">API</a><a href="../php/index.html">PHP</a></div></details>
+				<details class="menu"><summary>Reference</summary><div class="panel"><a href="../technical-report.html">Technical Report</a><a href="../api/index.html">API Reference</a><a href="../php/index.html">PHP Reference</a></div></details>
 				<a href="https://github.com/drupflare/worker">GitHub</a>
 			</div>
-		</nav>
-		<main>
-			
-			<div class="readme">
-				<p class="crumbs"><a href="index.html">Operating</a></p>
+		</header>
+		<div class="layout">
+			<div class="docs-sidebar" id="docs-sidebar" popover>
+<div class="docs-sidebar-head"><span>Documentation</span><button type="button" class="docs-close" popovertarget="docs-sidebar" popovertargetaction="hide">Close</button></div>
+<nav class="docs-nav" aria-label="Documentation"><details class="docs-group"><summary>Getting Started</summary><ul><li><a href="../index.html">Overview</a></li><li><a href="../getting-started/index.html">Getting Started</a></li><li><a href="../getting-started/claim-and-log-in.html">Claiming and Managing a Site</a></li><li><a href="../getting-started/updating.html">Updating a Site</a></li><li><a href="../getting-started/testing.html">Testing</a></li><li><a href="../getting-started/reproduce-panopoly.html">Reproducing Panopoly</a></li><li><a href="../getting-started/reproduce-thunder.html">Reproducing Thunder</a></li></ul><details class="docs-section"><summary>Building From Source</summary><ul><li><a href="../getting-started/building-from-source/index.html">Building From Source</a></li><li><a href="../getting-started/building-from-source/steps.html">The Steps</a></li><li><a href="../getting-started/building-from-source/build-order.html">Build Order and Caching</a></li><li><a href="../getting-started/building-from-source/upgrading-core.html">Upgrading Drupal Core</a></li></ul></details><details class="docs-section"><summary>Repository Layout</summary><ul><li><a href="../getting-started/repository-layout/index.html">Repository Layout</a></li><li><a href="../getting-started/repository-layout/paths.html">Tracked and Generated Paths</a></li><li><a href="../getting-started/repository-layout/automation.html">Scripts and Automation</a></li></ul></details></details><details class="docs-group" open><summary>Operating</summary><ul><li><a href="index.html">Operating</a></li><li><a href="administration.html">Administration</a></li><li><a href="recovery.html">Recovery</a></li><li><a href="git-remotes.html">Git Remotes</a></li><li><a href="replica-lanes.html" aria-current="page">Replica Lanes</a><span class="docs-desc">Read replicas for a site, each a separate Durable Object filled from the primary.</span></li></ul><details class="docs-section"><summary>External Databases</summary><ul><li><a href="external-database/index.html">External Databases and Hyperdrive</a></li><li><a href="external-database/why-not-default.html">Why the Default Is Not External</a></li></ul></details><details class="docs-section"><summary>PHP Interpreter Updates</summary><ul><li><a href="php-update-delivery/index.html">PHP Interpreter Update Delivery</a></li><li><a href="php-update-delivery/verification.html">Verification and Output</a></li><li><a href="php-update-delivery/rollback.html">Rollback and Staged Rollout</a></li><li><a href="php-update-delivery/trust-and-cost.html">Trust, Cost and Scope</a></li></ul></details></details><details class="docs-group"><summary>Architecture</summary><ul><li><a href="../architecture/index.html">Architecture</a></li><li><a href="../architecture/database.html">The Site Database</a></li><li><a href="../architecture/measurement-classes.html">Measurement Classes</a></li><li><a href="../architecture/wordpress.html">WordPress</a></li><li><a href="../architecture/compatibility.html">Compatibility</a></li><li><a href="../architecture/modules.html">Modules</a></li><li><a href="../architecture/limitations.html">Limitations</a></li></ul></details><details class="docs-group"><summary>Configuration</summary><ul><li><a href="../configuration/index.html">Configuration</a></li><li><a href="../configuration/site-identity.html">Site Identity and Origin</a></li><li><a href="../configuration/runtime.html">Runtime Settings</a></li><li><a href="../configuration/replicas.html">Replica Settings</a></li><li><a href="../configuration/plan-and-routes.html">Plan and Extensibility Routes</a></li><li><a href="../configuration/diagnostics.html">Diagnostics</a></li><li><a href="../configuration/migrated-settings.html">Migrated Project Settings</a></li></ul><details class="docs-section"><summary>Serving and Caching</summary><ul><li><a href="../configuration/serving/index.html">Serving and Caching Settings</a></li><li><a href="../configuration/serving/page-cache.html">Page Cache Settings</a></li><li><a href="../configuration/serving/static-assets.html">Static Asset Settings</a></li><li><a href="../configuration/serving/files-and-images.html">Files, Images and Prefill</a></li><li><a href="../configuration/serving/r2-page-origin.html">R2 Page Origin Caching</a></li><li><a href="../configuration/serving/request-limits.html">Request Limits</a></li></ul></details><details class="docs-section"><summary>Operations</summary><ul><li><a href="../configuration/operations/index.html">Operations Settings</a></li><li><a href="../configuration/operations/overrides.html">Runtime Overrides</a></li><li><a href="../configuration/operations/owner-access.html">Owner Access and Audit</a></li><li><a href="../configuration/operations/updates.html">Updates and Reconciliation</a></li><li><a href="../configuration/operations/discovery.html">Discovery Document</a></li><li><a href="../configuration/operations/wordpress-packages.html">WordPress Packages</a></li></ul></details><details class="docs-section"><summary>Integrations</summary><ul><li><a href="../configuration/integrations/index.html">Integration Settings</a></li><li><a href="../configuration/integrations/mail.html">Outbound Mail</a></li><li><a href="../configuration/integrations/tcp.html">Outbound TCP</a></li><li><a href="../configuration/integrations/workers-ai.html">Workers AI</a></li><li><a href="../configuration/integrations/oidc-login.html">OIDC Login</a></li><li><a href="../configuration/integrations/spool.html">Spool</a></li></ul></details></details><details class="docs-group"><summary>Security</summary><ul><li><a href="../security/index.html">Security</a></li><li><a href="../security/how-much-safer.html">How Much Safer</a></li><li><a href="../security/not-removed.html">What It Does Not Remove</a></li><li><a href="../security/incidents.html">Security Incidents and Planned Work</a></li></ul><details class="docs-section"><summary>Controls</summary><ul><li><a href="../security/controls/index.html">Security Controls</a></li><li><a href="../security/controls/requests.html">Request Controls</a></li><li><a href="../security/controls/credentials.html">Credentials and Persistence</a></li><li><a href="../security/controls/build-and-patching.html">Build and Patching Controls</a></li></ul></details></details><details class="docs-group"><summary>Impact</summary><ul><li><a href="../impact/index.html">Impact</a></li><li><a href="../impact/limits.html">What This Does Not Claim</a></li><li><a href="../impact/carbon.html">Carbon</a></li><li><a href="../impact/water.html">Water</a></li><li><a href="../impact/embodied.html">Embodied Carbon</a></li><li><a href="../impact/reproducing.html">Reproducing the Numbers</a></li><li><a href="../impact/references.html">References</a></li></ul><details class="docs-section"><summary>Energy</summary><ul><li><a href="../impact/energy/index.html">Energy</a></li><li><a href="../impact/energy/per-request.html">Energy Per Request</a></li><li><a href="../impact/energy/views.html">Energy Per View</a></li><li><a href="../impact/energy/inputs.html">Where the Figures Come From</a></li><li><a href="../impact/energy/operating-states.html">Operating States</a></li><li><a href="../impact/energy/production-baseline.html">Production Baseline</a></li><li><a href="../impact/energy/fleet.html">Fleet Energy</a></li></ul></details><details class="docs-section"><summary>Economics</summary><ul><li><a href="../impact/economics/index.html">Economics</a></li><li><a href="../impact/economics/bills.html">The Shape of the Bills</a></li><li><a href="../impact/economics/conventional-hosts.html">Conventional Hosts</a></li><li><a href="../impact/economics/vps-comparison.html">Drupflare vs a Traditional VPS</a></li><li><a href="../impact/economics/free-plan-and-warming.html">The Free Plan and Warming</a></li></ul></details><details class="docs-section"><summary>Free vs Paid</summary><ul><li><a href="../impact/economics/free-vs-paid/index.html">Free vs Paid</a></li><li><a href="../impact/economics/free-vs-paid/off-worker-arms.html">The Off-Worker Arms</a></li></ul></details></details><details class="docs-group"><summary>Audiences</summary><ul><li><a href="../audiences/index.html">Audiences</a></li><li><a href="../audiences/government.html">Federal Sites</a></li></ul></details><details class="docs-group"><summary>Reference</summary><ul><li><a href="../technical-report.html">Technical Report</a></li><li><a href="../api/index.html">API Reference</a><span class="docs-desc">The TypeScript modules under src/, generated by TypeDoc.</span></li><li><a href="../php/index.html">PHP Reference</a><span class="docs-desc">The PHP the interpreter runs, under src/site/php/, generated by phpDocumentor.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/releases" rel="noopener">Releases<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Published versions of the worker, with their notes.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/issues" rel="noopener">Issues<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Open and closed issues for the worker.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/blob/master/SECURITY.md" rel="noopener">Security Policy<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The supported versions, and how to report a vulnerability privately.</span></li><li><a class="docs-ext" href="https://drupflare.com" rel="noopener">Website<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Drupflare project site.</span></li></ul></details><details class="docs-group"><summary>On GitHub</summary><ul><li><a class="docs-ext" href="https://github.com/drupflare/worker" rel="noopener">worker<span class="docs-sr"> (external link)</span></a><span class="docs-desc">This repository: the deployable worker, its build and these docs.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/drupflare" rel="noopener">drupflare<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Cloudflare Workers compatibility layer plugin for the CMS.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/rom" rel="noopener">rom<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The database driver that stores a CMS in Durable Objects SQLite.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/phasm" rel="noopener">phasm<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The PHP WebAssembly interpreter for the workerd runtime.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/anachron" rel="noopener">anachron<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The backwards compatibility layer for older CMS versions.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/stream-http" rel="noopener">stream-http<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The HTTP stream wrapper for PHP.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/spool" rel="noopener">spool<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Client-side page rendering and execution framework.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/drangler" rel="noopener">drangler<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The command line tool for handling and maintaining Drupflare workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/bastion" rel="noopener">bastion<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Self-hostable Drupflare workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/dashboard" rel="noopener">dashboard<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Drupflare control plane.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/workforce" rel="noopener">workforce<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Management and fleet library for Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/burrow" rel="noopener">burrow<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Parallelism and arbitrary codegen on Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/cartridge" rel="noopener">cartridge<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Universal runtime for language interpreters inside a Durable Object.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/durabledb" rel="noopener">durabledb<span class="docs-sr"> (external link)</span></a><span class="docs-desc">SQLite for Durable Objects.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/untarl" rel="noopener">untarl<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Tar extraction library for Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/website" rel="noopener">website<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Source of the static project site.</span></li></ul></details></nav>
+</div>
+			<main
+				id="docs-main"
+				tabindex="-1"
+			>
+				
+				<div class="readme">
+					<p class="crumbs"><a href="index.html">Operating</a></p>
 <h1 id="replica-lanes">Replica Lanes</h1>
 <p>Read replicas for a site, each a separate Durable Object filled from the primary.</p>
 <p>A Durable Object runs one request at a time, and a PHP render holds it for the whole render. A site is not confined to one object. A namespace holds unlimited objects, so a site spreads its serving path across lanes, each a separate object named <code>&lt;site&gt;#r&lt;n&gt;</code>. Only <code>/serve</code> spreads. Owner and diagnostic routes pin to the primary, so <code>/export</code> cannot answer from a lane&#39;s copy.</p>
 <p>A lane removes queueing, not service time. A cached page is answered from the edge cache or the object&#39;s own SQLite without booting PHP, so a site taking 100 req/s of cached traffic queues nothing and needs no lane. A site taking 20 req/s of authenticated renders may need several.</p>
-<p>Lanes work because an authenticated GET writes no authoritative state under this SAPI. Measured per table on real renders: no <code>sessions</code> row, no <code>users_field_data.access</code>, no <code>flood</code>. Core throttles the access write on <code>KernelEvents::TERMINATE</code>, which this SAPI never dispatches. A lane keeps its own copy, sweeps expired rows (<code>src/ops/replica.ts</code>) and applies the primary&#39;s replication log. It refuses anything authoritative with a 421, and the front worker retries that request on the primary.</p>
+<p>Lanes work because an authenticated GET writes no authoritative state under this SAPI. Measured per table on real renders: no <code>sessions</code> row, no <code>users_field_data.access</code>, no <code>flood</code>. Core throttles the access write on <code>KernelEvents::TERMINATE</code>, which this SAPI never dispatches. A lane keeps its own copy, sweeps expired rows (<code>src/ops/replica/policy.ts</code>) and applies the primary&#39;s replication log. It refuses anything authoritative with a 421, and the front worker retries that request on the primary.</p>
 <nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#scaling">Scaling</a></li><li><a href="#what-a-lane-buys-against-a-vps">What a Lane Buys Against a VPS</a></li><li><a href="#autoscaling">Autoscaling</a></li><li><a href="#how-a-lane-is-built">How a Lane Is Built</a></li></ol></nav><h2 id="scaling">Scaling</h2>
 <p>Two quantities carry different claims.</p>
 <h3 id="per-object">Per Object</h3>
@@ -506,7 +782,7 @@
 <p>The two bill on different axes. A VPS bills for its box whether or not anyone visits. Hetzner&#39;s CX22 is 2 vCPU and 4 GB for EUR 3.79 a month, and DigitalOcean&#39;s equivalent is $24. Drupflare bills per request and per row written on a $5 Workers Paid plan. For one busy site the monthly figures are close enough that price does not decide it. For a fleet, or for a site whose traffic is bursty, they are not comparable: the VPS pays for its peak all month.</p>
 <p>On an uncached render Drupflare is not the faster side. It competes on the traffic a real site receives. Where it is slower is listed under <a href="../architecture/limitations.html">Limitations</a>.</p>
 <h2 id="autoscaling">Autoscaling</h2>
-<p>The primary counts, per alarm window, how many requests waited for its gate. Three consecutive windows must all show waiting before a lane is provisioned. The target is the smallest queue depth across those three, one lane per sustained waiter (<code>laneTarget()</code> in <code>src/ops/replica-demand.ts</code>). A burst that clears inside one window provisions nothing. A quiet window clears the run.</p>
+<p>The primary counts, per alarm window, how many requests waited for its gate. Three consecutive windows must all show waiting before a lane is provisioned. The target is the smallest queue depth across those three, one lane per sustained waiter (<code>laneTarget()</code> in <code>src/ops/replica/demand.ts</code>). A burst that clears inside one window provisions nothing. A quiet window clears the run.</p>
 <p>Autoscaling stops at 32 lanes by default. That bound is per-lane idle cost, which is storage plus replication catch-up, not a throughput limit. A new lane is also refused when the projected day&#39;s rows would pass 80% of the plan&#39;s daily row limit (<code>laneFitsRows()</code>, same file), because each lane rewrites every replicated row. <code>REPLICA_MAX_LANES</code> moves the cap, and <code>REPLICA_AUTOSCALE=0</code> turns autoscaling off. The variables are listed on <a href="../configuration/replicas.html">Replica Settings</a>.</p>
 <h2 id="how-a-lane-is-built">How a Lane Is Built</h2>
 <div class="table"><table>
@@ -541,9 +817,9 @@
 <td><code>REPLICA_LAG_MS</code> bounds how far behind a serving lane may fall, at 30 s</td>
 </tr>
 </tbody></table></div>
-<p>Three refusals hold the copy together. A torn copy, where table A is at generation 12 and table B at 13, is refused by <code>chunkRefusal()</code> (<code>src/ops/replica-restore.ts</code>), and the position stays in flight until a whole consistent copy lands. A lane cannot pass for one that has finished, because the first chunk declares every table the copy will deliver (<code>expect</code>), and the lane holds the driver to that list. No lane is admitted until <code>system.private_key</code> arrives from the primary, since two objects each minting their own would issue CSRF tokens the other rejects (<code>MANDATORY_STATE</code> in <code>src/ops/replica-admission.ts</code>).</p>
+<p>Three refusals hold the copy together. A torn copy, where table A is at generation 12 and table B at 13, is refused by <code>chunkRefusal()</code> (<code>src/ops/replica/restore.ts</code>), and the position stays in flight until a whole consistent copy lands. A lane cannot pass for one that has finished, because the first chunk declares every table the copy will deliver (<code>expect</code>), and the lane holds the driver to that list. No lane is admitted until <code>system.private_key</code> arrives from the primary, since two objects each minting their own would issue CSRF tokens the other rejects (<code>MANDATORY_STATE</code> in <code>src/ops/replica/admission.ts</code>).</p>
 <h3 id="lane-stages">Lane Stages</h3>
-<p>A lane&#39;s stage is stored in the object&#39;s <code>replica_stage</code> meta key, and the serve route answers 421 to any lane not at <code>SERVING</code> (<code>src/do/routes/serve.ts</code>). <code>ReplicaStage</code> in <code>src/ops/replica-admission.ts</code> names the stages. <code>setReplicaStage()</code> in <code>src/site-do.ts</code> refuses any move <code>canTransition()</code> does not allow.</p>
+<p>A lane&#39;s stage is stored in the object&#39;s <code>replica_stage</code> meta key, and the serve route answers 421 to any lane not at <code>SERVING</code> (<code>src/do/routes/serve.ts</code>). <code>ReplicaStage</code> in <code>src/ops/replica/admission.ts</code> names the stages. <code>setReplicaStage()</code> in <code>src/site-do.ts</code> refuses any move <code>canTransition()</code> does not allow.</p>
 <pre><code class="mermaid">stateDiagram-v2
     direction TB
     [*] --> CREATED
@@ -560,7 +836,7 @@
     SERVING --> WITHDRAWN
     WITHDRAWN --> CREATED</code></pre><p>Forward moves go one step at a time. Any stage except <code>WITHDRAWN</code> may move to <code>WITHDRAWN</code>, and <code>WITHDRAWN</code> may move only to <code>CREATED</code>. The code takes these moves:</p>
 <ul>
-<li><strong>CREATED to RESTORING</strong>: the first restore chunk lands (<code>src/do/replication.ts</code>).</li>
+<li><strong>CREATED to RESTORING</strong>: the first restore chunk lands (<code>src/do/replica/replication.ts</code>).</li>
 <li><strong>RESTORING to VERIFIED</strong>: the <code>done</code> chunk lands, and the mandatory state and every expected table are present.</li>
 <li><strong>VERIFIED to CATCHING_UP</strong>: a log pull finds the primary ahead of the lane.</li>
 <li><strong>CATCHING_UP to ELIGIBLE to SERVING</strong>: <code>admissionVerdict()</code> admits the lane, and the loop in <code>catchUpOnce()</code> walks both steps in one call. <code>ELIGIBLE</code> is never left stored between calls.</li>
@@ -570,7 +846,7 @@
 <p><code>admissionVerdict()</code> admits a lane only when the mandatory state is present, the schema versions match, the applied generation equals the primary&#39;s advertised generation, and the fingerprints agree. An unknown on either side refuses.</p>
 <p>A restored lane drives itself. Reaching <code>VERIFIED</code> arms its alarm. Each firing pulls <code>action=log</code> from the primary and applies it, then <code>admissionVerdict()</code> decides promotion to <code>SERVING</code> (<code>src/do/alarm/lane.ts</code>). A lane below <code>SERVING</code> owns its alarm chain and re-arms every 2 s. A <code>WITHDRAWN</code> lane resets itself to <code>CREATED</code>, clears its torn-copy markers and asks the primary for a fresh copy, then re-arms and repeats the ask until the copy lands. The primary queues the lane and takes the repair before growing the pool, on a quiet site as well as a busy one.</p>
 <h3 id="routing-a-request">Routing a Request</h3>
-<p><code>openContext()</code> in <code>src/site/target.ts</code> picks the object, and <code>sendHop()</code> in <code>src/site/hop.ts</code> sends the request. <code>chooseTarget()</code> in <code>src/ops/replica-routing.ts</code> makes the decision.</p>
+<p><code>openContext()</code> in <code>src/site/target.ts</code> picks the object, and <code>sendHop()</code> in <code>src/site/hop.ts</code> sends the request. <code>chooseTarget()</code> in <code>src/ops/replica/routing.ts</code> makes the decision.</p>
 <pre><code class="mermaid">flowchart TD
     A[&quot;Request reaches the front worker&quot;] --> B{&quot;Pool has lanes and path is /serve?&quot;}
     B -->|no| P[&quot;Primary object&quot;]
@@ -582,11 +858,11 @@
     R --> G{&quot;Replica is SERVING and accepts the call?&quot;}
     G -->|yes| H[&quot;Replica answers&quot;]
     G -->|no| X[&quot;421 with requires-primary and retry-safe 1&quot;]
-    X -->|front worker retries| P</code></pre><p>The lane count is the larger of <code>REPLICA_COUNT</code> and the pool size this isolate last learned from the primary&#39;s <code>x-cfw-lanes</code> header (<code>src/site/target.ts</code>, <code>believedLanes()</code> in <code>src/ops/replica-routing.ts</code>). The affinity key is the path for a request that carries a session, the client address for an anonymous one, and the path when neither is present (<code>affinityKey()</code>).</p>
+    X -->|front worker retries| P</code></pre><p>The lane count is the larger of <code>REPLICA_COUNT</code> and the pool size this isolate last learned from the primary&#39;s <code>x-cfw-lanes</code> header (<code>src/site/target.ts</code>, <code>believedLanes()</code> in <code>src/ops/replica/routing.ts</code>). The affinity key is the path for a request that carries a session, the client address for an anonymous one, and the path when neither is present (<code>affinityKey()</code>).</p>
 <p>Writes stay on the primary in three cases: <code>WRITE_FORWARD</code> is off, the write carries no session (a lane cannot mint one, because its <code>Set-Cookie</code> never reaches the client), or the route originates state only the primary may write, such as module installs, settings and uploads (<code>originationRoute()</code>).</p>
-<p>The front worker retries on the primary only when the 421 carries <code>x-cfw-requires-primary</code> and <code>x-cfw-retry-safe: 1</code> (<code>shouldFailover()</code>, <code>src/ops/replica-routing.ts</code>). The replica sets <code>retry-safe</code> from <code>didMutate()</code>. If a refusal arrives after a mutating call started, the replica answers 500 with <code>retry-safe: 0</code> and the request is not retried (<code>replicaHandoff()</code>, <code>src/do/serve.ts</code>). The router keeps no readiness cache. A lane that is not ready answers 421, and the retry costs one extra hop.</p>
+<p>The front worker retries on the primary only when the 421 carries <code>x-cfw-requires-primary</code> and <code>x-cfw-retry-safe: 1</code> (<code>shouldFailover()</code>, <code>src/ops/replica/routing.ts</code>). The replica sets <code>retry-safe</code> from <code>didMutate()</code>. If a refusal arrives after a mutating call started, the replica answers 500 with <code>retry-safe: 0</code> and the request is not retried (<code>replicaHandoff()</code>, <code>src/do/serve.ts</code>). The router keeps no readiness cache. A lane that is not ready answers 421, and the retry costs one extra hop.</p>
 <h3 id="the-replication-log">The Replication Log</h3>
-<p>The primary records each invocation&#39;s authoritative writes as one log record, sealed at the end of the invocation (<code>sealGeneration()</code> in <code>src/do/replication.ts</code>). Lanes pull records with <code>action=log</code>. Each record holds:</p>
+<p>The primary records each invocation&#39;s authoritative writes as one log record, sealed at the end of the invocation (<code>sealGeneration()</code> in <code>src/do/replica/replication.ts</code>). Lanes pull records with <code>action=log</code>. Each record holds:</p>
 <ul>
 <li><strong><code>generation</code></strong>: the commit sequence value when the invocation sealed.</li>
 <li><strong><code>parent</code></strong>: the generation of the last sealed record, which this record builds on.</li>
@@ -595,13 +871,15 @@
 <li><strong><code>statements</code></strong>: the writes in order, each with positional parameters.</li>
 <li><strong><code>overflowed</code></strong>: set when the writes were too many to log. The record then carries no statements, and a lane that meets it must restore.</li>
 </ul>
-<p>The record shape and the applier are in <code>src/ops/replication-log.ts</code>.</p>
+<p>The record shape and the applier are in <code>src/ops/replica/replication-log.ts</code>.</p>
 <p>Generations can skip numbers. The sequence advances on invalidation, and one invocation can move it several steps before it seals. A number that no record carries is then skipped. <code>malformed()</code> requires only that <code>generation</code> be greater than <code>parent</code>, and its comment says gaps are normal.</p>
 <p>The chain check is <code>planApply()</code>, and it accepts a record only when <code>parent</code> equals the lane&#39;s applied generation. A higher parent means a record is missing. A lower parent means the record builds on a position the lane already passed. Either refuses, and <code>catchUpOnce()</code> withdraws the lane. The parent is the last sealed record rather than <code>commitSeq() - 1</code>, because a seal can land past the current sequence value. A caught-up lane sits on that last sealed record, so the equality holds by construction. A record at or below the applied generation is a duplicate and is skipped.</p>
 <p><code>catchUpOnce()</code> applies each record in one transaction, since it does not pass a <code>chunkSize</code> to <code>applyRecord()</code>.</p>
 <hr>
-			</div>
-		</main>
+				</div>
+				<nav class="docs-pager" aria-label="Previous and next pages"><a rel="prev" class="docs-pager-prev" href="git-remotes.html"><span class="docs-pager-label">Previous</span><strong>Git Remotes</strong><span>Connect git repositories to a site so that a push installs a module and the result returns as a commit status.</span></a><a rel="next" class="docs-pager-next" href="external-database/index.html"><span class="docs-pager-label">Next</span><strong>External Databases and Hyperdrive</strong><span>Why a site lives in its Durable Object by default, and how an external database attaches instead.</span></a></nav>
+			</main>
+		</div>
 		<footer>
 			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
 		</footer>

@@ -9,11 +9,38 @@
 		<title>Replica Settings - Drupflare</title>
 		<meta
 			name="description"
-			content="Settings for replica lanes: count, autoscaling, write forwarding and lag. The concepts are on Replica Lanes; the index of every variable is on Configuration."
+			content="Settings for replica lanes: count, autoscaling, write forwarding and lag."
 		/>
 		<link
 			rel="icon"
 			href="../drupflare.ico"
+			sizes="any"
+		/>
+		<link
+			rel="icon"
+			type="image/png"
+			sizes="128x128"
+			href="../drupflare_128.png"
+		/>
+		<link
+			rel="apple-touch-icon"
+			href="../drupflare_128.png"
+		/>
+		<link
+			rel="canonical"
+			href="https://docs.drupflare.com/configuration/replicas.html"
+		/>
+		<meta
+			property="og:type"
+			content="website"
+		/>
+		<meta
+			property="og:site_name"
+			content="Drupflare"
+		/>
+		<meta
+			property="og:url"
+			content="https://docs.drupflare.com/configuration/replicas.html"
 		/>
 		<meta
 			property="og:title"
@@ -21,7 +48,7 @@
 		/>
 		<meta
 			property="og:description"
-			content="Settings for replica lanes: count, autoscaling, write forwarding and lag. The concepts are on Replica Lanes; the index of every variable is on Configuration."
+			content="Settings for replica lanes: count, autoscaling, write forwarding and lag."
 		/>
 		<meta
 			property="og:image"
@@ -71,24 +98,56 @@
 					Roboto,
 					sans-serif;
 			}
-			main,
-			nav .bar,
+			.layout,
+			.site .bar,
 			footer {
-				max-width: 52rem;
+				max-width: 78rem;
 				margin: 0 auto;
 			}
-			nav {
+			main {
+				min-width: 0;
+				max-width: 52rem;
+			}
+			main:focus {
+				outline: none;
+			}
+			.docs-skip {
+				position: absolute;
+				left: 1rem;
+				top: -4rem;
+				z-index: 30;
+				padding: 0.5rem 1rem;
+				border-radius: 0.5rem;
+				background: var(--card);
+				color: var(--accent);
+			}
+			.docs-skip:focus {
+				top: 0.5rem;
+			}
+			.docs-sr {
+				position: absolute;
+				width: 1px;
+				height: 1px;
+				overflow: hidden;
+				clip-path: inset(50%);
+				white-space: nowrap;
+			}
+			:focus-visible {
+				outline: 2px solid var(--accent);
+				outline-offset: 2px;
+			}
+			.site {
 				margin: 0 -1.5rem 3rem;
 				padding: 0.75rem 1.5rem;
 				border-bottom: 1px solid var(--line);
 			}
-			nav .bar {
+			.site .bar {
 				display: flex;
 				flex-wrap: wrap;
 				align-items: center;
 				gap: 0.25rem 1.25rem;
 			}
-			nav .brand {
+			.site .brand {
 				display: flex;
 				align-items: center;
 				gap: 0.5rem;
@@ -96,45 +155,45 @@
 				font-weight: 700;
 				letter-spacing: -0.01em;
 			}
-			nav .brand img {
+			.site .brand img {
 				width: 1.75rem;
 				height: 1.75rem;
 			}
-			nav a {
+			.site a {
 				color: var(--muted);
 				font-size: 0.925rem;
 				text-decoration: none;
 			}
-			nav a:hover,
-			nav a[aria-current] {
+			.site a:hover,
+			.site a[aria-current] {
 				color: var(--accent);
 			}
-			nav a.brand {
+			.site a.brand {
 				color: var(--fg);
 				font-size: 1.05rem;
 			}
-			nav .menu {
+			.site .menu {
 				position: relative;
 			}
-			nav .menu summary {
+			.site .menu summary {
 				color: var(--muted);
 				font-size: 0.925rem;
 				list-style: none;
 				cursor: pointer;
 			}
-			nav .menu summary::-webkit-details-marker {
+			.site .menu summary::-webkit-details-marker {
 				display: none;
 			}
-			nav .menu summary::after {
+			.site .menu summary::after {
 				content: ' \25BE';
 				font-size: 0.75em;
 			}
-			nav .menu summary:hover,
-			nav .menu[open] summary,
-			nav .menu[data-current] summary {
+			.site .menu summary:hover,
+			.site .menu[open] summary,
+			.site .menu[data-current] summary {
 				color: var(--accent);
 			}
-			nav .menu .panel {
+			.site .menu .panel {
 				position: absolute;
 				z-index: 10;
 				top: 1.9rem;
@@ -148,12 +207,206 @@
 				background: var(--card);
 				box-shadow: 0 0.75rem 2rem var(--glow);
 			}
-			nav .menu .panel a {
+			.site .menu .panel a {
 				padding: 0.4rem 0.75rem;
 				border-radius: 0.4rem;
 			}
-			nav .menu .panel a:hover {
+			.site .menu .panel a:hover {
 				background: var(--code-bg);
+			}
+			.docs-menu,
+			.docs-close {
+				padding: 0.3rem 0.8rem;
+				border: 1px solid var(--line);
+				border-radius: 0.5rem;
+				background: var(--card);
+				color: var(--fg);
+				font: inherit;
+				font-size: 0.9rem;
+				cursor: pointer;
+			}
+			.docs-sidebar {
+				inset: 0 auto 0 0;
+				width: min(22rem, 88vw);
+				height: 100%;
+				max-height: none;
+				margin: 0;
+				padding: 1rem 1.25rem 2rem;
+				border: 0;
+				border-right: 1px solid var(--line);
+				overflow-y: auto;
+				background: var(--card);
+				color: var(--fg);
+			}
+			.docs-sidebar::backdrop {
+				background: rgb(0 0 0 / 0.45);
+			}
+			.docs-sidebar-head {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				margin-bottom: 1rem;
+				font-weight: 700;
+			}
+			.docs-nav details {
+				margin: 0;
+			}
+			.docs-nav summary {
+				padding: 0.35rem 0;
+				list-style: none;
+				cursor: pointer;
+			}
+			.docs-nav summary::-webkit-details-marker {
+				display: none;
+			}
+			.docs-nav summary::before {
+				content: '\25B8';
+				display: inline-block;
+				width: 1rem;
+				color: var(--muted);
+				font-size: 0.8rem;
+			}
+			.docs-nav details[open] > summary::before {
+				content: '\25BE';
+			}
+			.docs-group > summary {
+				margin-top: 0.5rem;
+				color: var(--muted);
+				font-size: 0.8rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			.docs-section {
+				margin-left: 0.75rem;
+			}
+			.docs-section > summary {
+				font-size: 0.9rem;
+				font-weight: 600;
+			}
+			.docs-nav ul {
+				margin: 0 0 0.5rem;
+				padding: 0 0 0 1rem;
+				list-style: none;
+			}
+			.docs-nav li {
+				margin: 0;
+			}
+			.docs-nav li a {
+				display: block;
+				padding: 0.25rem 0.6rem;
+				border-left: 2px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+				line-height: 1.4;
+				text-decoration: none;
+			}
+			.docs-nav li a:hover {
+				color: var(--accent);
+			}
+			.docs-nav li a[aria-current] {
+				border-left-color: var(--accent-strong);
+				color: var(--accent);
+				font-weight: 600;
+			}
+			.docs-nav .docs-ext::after {
+				content: ' \2197';
+				font-size: 0.8em;
+			}
+			.docs-desc {
+				display: block;
+				padding: 0 0.6rem 0.4rem;
+				border-left: 2px solid var(--line);
+				color: var(--muted);
+				font-size: 0.78rem;
+				line-height: 1.4;
+			}
+			@media (min-width: 64rem) {
+				.layout {
+					display: grid;
+					grid-template-columns: 17rem minmax(0, 1fr);
+					gap: 3rem;
+				}
+				.docs-menu,
+				.docs-close {
+					display: none;
+				}
+				.docs-sidebar {
+					position: sticky;
+					top: 1.5rem;
+					display: block;
+					inset: auto;
+					align-self: start;
+					width: auto;
+					height: auto;
+					max-height: calc(100vh - 3rem);
+					padding: 0 0.5rem 1rem 0;
+					border: 0;
+					background: transparent;
+				}
+				.docs-sidebar-head {
+					display: none;
+				}
+			}
+			@media (prefers-reduced-motion: no-preference) and (max-width: 63.99rem) {
+				.docs-sidebar {
+					transform: translateX(-100%);
+					transition:
+						transform 0.2s ease,
+						overlay 0.2s allow-discrete,
+						display 0.2s allow-discrete;
+				}
+				.docs-sidebar:popover-open {
+					transform: none;
+				}
+				@starting-style {
+					.docs-sidebar:popover-open {
+						transform: translateX(-100%);
+					}
+				}
+			}
+			@media (prefers-reduced-motion: reduce) {
+				* {
+					transition: none !important;
+					animation: none !important;
+				}
+			}
+			.docs-pager {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+				gap: 0.85rem;
+				margin: 3rem 0 0;
+			}
+			.docs-pager a {
+				display: block;
+				padding: 0.85rem 1.1rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+			}
+			.docs-pager a:hover {
+				border-color: var(--accent-strong);
+			}
+			.docs-pager-next {
+				text-align: right;
+			}
+			.docs-pager .docs-pager-label {
+				display: block;
+				color: var(--accent);
+				font-size: 0.78rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			.docs-pager strong {
+				display: block;
+			}
+			.docs-pager a > span:last-child {
+				color: var(--muted);
+				font-size: 0.85rem;
+				line-height: 1.45;
 			}
 			h1 {
 				margin: 0 0 0.5rem;
@@ -209,6 +462,9 @@
 				line-height: 1.5;
 			}
 
+			.readme {
+				overflow-wrap: break-word;
+			}
 			.readme h1 {
 				margin: 0 0 1.25rem;
 			}
@@ -366,8 +622,20 @@
 		</style>
 	</head>
 	<body>
-		<nav>
+		<a
+			class="docs-skip"
+			href="#docs-main"
+			>Skip to content</a
+		>
+		<header class="site">
 			<div class="bar">
+				<button
+					type="button"
+					class="docs-menu"
+					popovertarget="docs-sidebar"
+				>
+					Menu
+				</button>
 				<a
 					class="brand"
 					href="../index.html"
@@ -378,16 +646,24 @@
 					/>
 					Drupflare
 				</a>
-				<details class="menu" data-current><summary>Run</summary><div class="panel"><a href="../getting-started/index.html">Getting Started</a><a href="../operating/index.html">Operating</a><a href="../configuration/index.html" aria-current="page">Configuration</a></div></details>
+				<details class="menu" data-current><summary>Run</summary><div class="panel"><a href="../getting-started/index.html">Getting Started</a><a href="../operating/index.html">Operating</a><a href="index.html">Configuration</a></div></details>
 				<details class="menu"><summary>Understand</summary><div class="panel"><a href="../architecture/index.html">Architecture</a><a href="../security/index.html">Security</a><a href="../impact/index.html">Impact</a><a href="../audiences/index.html">Audiences</a></div></details>
-				<details class="menu"><summary>Reference</summary><div class="panel"><a href="../technical-report.html">Technical Report</a><a href="../api/index.html">API</a><a href="../php/index.html">PHP</a></div></details>
+				<details class="menu"><summary>Reference</summary><div class="panel"><a href="../technical-report.html">Technical Report</a><a href="../api/index.html">API Reference</a><a href="../php/index.html">PHP Reference</a></div></details>
 				<a href="https://github.com/drupflare/worker">GitHub</a>
 			</div>
-		</nav>
-		<main>
-			
-			<div class="readme">
-				<p class="crumbs"><a href="index.html">Configuration</a></p>
+		</header>
+		<div class="layout">
+			<div class="docs-sidebar" id="docs-sidebar" popover>
+<div class="docs-sidebar-head"><span>Documentation</span><button type="button" class="docs-close" popovertarget="docs-sidebar" popovertargetaction="hide">Close</button></div>
+<nav class="docs-nav" aria-label="Documentation"><details class="docs-group"><summary>Getting Started</summary><ul><li><a href="../index.html">Overview</a></li><li><a href="../getting-started/index.html">Getting Started</a></li><li><a href="../getting-started/claim-and-log-in.html">Claiming and Managing a Site</a></li><li><a href="../getting-started/updating.html">Updating a Site</a></li><li><a href="../getting-started/testing.html">Testing</a></li><li><a href="../getting-started/reproduce-panopoly.html">Reproducing Panopoly</a></li><li><a href="../getting-started/reproduce-thunder.html">Reproducing Thunder</a></li></ul><details class="docs-section"><summary>Building From Source</summary><ul><li><a href="../getting-started/building-from-source/index.html">Building From Source</a></li><li><a href="../getting-started/building-from-source/steps.html">The Steps</a></li><li><a href="../getting-started/building-from-source/build-order.html">Build Order and Caching</a></li><li><a href="../getting-started/building-from-source/upgrading-core.html">Upgrading Drupal Core</a></li></ul></details><details class="docs-section"><summary>Repository Layout</summary><ul><li><a href="../getting-started/repository-layout/index.html">Repository Layout</a></li><li><a href="../getting-started/repository-layout/paths.html">Tracked and Generated Paths</a></li><li><a href="../getting-started/repository-layout/automation.html">Scripts and Automation</a></li></ul></details></details><details class="docs-group"><summary>Operating</summary><ul><li><a href="../operating/index.html">Operating</a></li><li><a href="../operating/administration.html">Administration</a></li><li><a href="../operating/recovery.html">Recovery</a></li><li><a href="../operating/git-remotes.html">Git Remotes</a></li><li><a href="../operating/replica-lanes.html">Replica Lanes</a></li></ul><details class="docs-section"><summary>External Databases</summary><ul><li><a href="../operating/external-database/index.html">External Databases and Hyperdrive</a></li><li><a href="../operating/external-database/why-not-default.html">Why the Default Is Not External</a></li></ul></details><details class="docs-section"><summary>PHP Interpreter Updates</summary><ul><li><a href="../operating/php-update-delivery/index.html">PHP Interpreter Update Delivery</a></li><li><a href="../operating/php-update-delivery/verification.html">Verification and Output</a></li><li><a href="../operating/php-update-delivery/rollback.html">Rollback and Staged Rollout</a></li><li><a href="../operating/php-update-delivery/trust-and-cost.html">Trust, Cost and Scope</a></li></ul></details></details><details class="docs-group"><summary>Architecture</summary><ul><li><a href="../architecture/index.html">Architecture</a></li><li><a href="../architecture/database.html">The Site Database</a></li><li><a href="../architecture/measurement-classes.html">Measurement Classes</a></li><li><a href="../architecture/wordpress.html">WordPress</a></li><li><a href="../architecture/compatibility.html">Compatibility</a></li><li><a href="../architecture/modules.html">Modules</a></li><li><a href="../architecture/limitations.html">Limitations</a></li></ul></details><details class="docs-group" open><summary>Configuration</summary><ul><li><a href="index.html">Configuration</a></li><li><a href="site-identity.html">Site Identity and Origin</a></li><li><a href="runtime.html">Runtime Settings</a></li><li><a href="replicas.html" aria-current="page">Replica Settings</a><span class="docs-desc">Settings for replica lanes: count, autoscaling, write forwarding and lag.</span></li><li><a href="plan-and-routes.html">Plan and Extensibility Routes</a></li><li><a href="diagnostics.html">Diagnostics</a></li><li><a href="migrated-settings.html">Migrated Project Settings</a></li></ul><details class="docs-section"><summary>Serving and Caching</summary><ul><li><a href="serving/index.html">Serving and Caching Settings</a></li><li><a href="serving/page-cache.html">Page Cache Settings</a></li><li><a href="serving/static-assets.html">Static Asset Settings</a></li><li><a href="serving/files-and-images.html">Files, Images and Prefill</a></li><li><a href="serving/r2-page-origin.html">R2 Page Origin Caching</a></li><li><a href="serving/request-limits.html">Request Limits</a></li></ul></details><details class="docs-section"><summary>Operations</summary><ul><li><a href="operations/index.html">Operations Settings</a></li><li><a href="operations/overrides.html">Runtime Overrides</a></li><li><a href="operations/owner-access.html">Owner Access and Audit</a></li><li><a href="operations/updates.html">Updates and Reconciliation</a></li><li><a href="operations/discovery.html">Discovery Document</a></li><li><a href="operations/wordpress-packages.html">WordPress Packages</a></li></ul></details><details class="docs-section"><summary>Integrations</summary><ul><li><a href="integrations/index.html">Integration Settings</a></li><li><a href="integrations/mail.html">Outbound Mail</a></li><li><a href="integrations/tcp.html">Outbound TCP</a></li><li><a href="integrations/workers-ai.html">Workers AI</a></li><li><a href="integrations/oidc-login.html">OIDC Login</a></li><li><a href="integrations/spool.html">Spool</a></li></ul></details></details><details class="docs-group"><summary>Security</summary><ul><li><a href="../security/index.html">Security</a></li><li><a href="../security/how-much-safer.html">How Much Safer</a></li><li><a href="../security/not-removed.html">What It Does Not Remove</a></li><li><a href="../security/incidents.html">Security Incidents and Planned Work</a></li></ul><details class="docs-section"><summary>Controls</summary><ul><li><a href="../security/controls/index.html">Security Controls</a></li><li><a href="../security/controls/requests.html">Request Controls</a></li><li><a href="../security/controls/credentials.html">Credentials and Persistence</a></li><li><a href="../security/controls/build-and-patching.html">Build and Patching Controls</a></li></ul></details></details><details class="docs-group"><summary>Impact</summary><ul><li><a href="../impact/index.html">Impact</a></li><li><a href="../impact/limits.html">What This Does Not Claim</a></li><li><a href="../impact/carbon.html">Carbon</a></li><li><a href="../impact/water.html">Water</a></li><li><a href="../impact/embodied.html">Embodied Carbon</a></li><li><a href="../impact/reproducing.html">Reproducing the Numbers</a></li><li><a href="../impact/references.html">References</a></li></ul><details class="docs-section"><summary>Energy</summary><ul><li><a href="../impact/energy/index.html">Energy</a></li><li><a href="../impact/energy/per-request.html">Energy Per Request</a></li><li><a href="../impact/energy/views.html">Energy Per View</a></li><li><a href="../impact/energy/inputs.html">Where the Figures Come From</a></li><li><a href="../impact/energy/operating-states.html">Operating States</a></li><li><a href="../impact/energy/production-baseline.html">Production Baseline</a></li><li><a href="../impact/energy/fleet.html">Fleet Energy</a></li></ul></details><details class="docs-section"><summary>Economics</summary><ul><li><a href="../impact/economics/index.html">Economics</a></li><li><a href="../impact/economics/bills.html">The Shape of the Bills</a></li><li><a href="../impact/economics/conventional-hosts.html">Conventional Hosts</a></li><li><a href="../impact/economics/vps-comparison.html">Drupflare vs a Traditional VPS</a></li><li><a href="../impact/economics/free-plan-and-warming.html">The Free Plan and Warming</a></li></ul></details><details class="docs-section"><summary>Free vs Paid</summary><ul><li><a href="../impact/economics/free-vs-paid/index.html">Free vs Paid</a></li><li><a href="../impact/economics/free-vs-paid/off-worker-arms.html">The Off-Worker Arms</a></li></ul></details></details><details class="docs-group"><summary>Audiences</summary><ul><li><a href="../audiences/index.html">Audiences</a></li><li><a href="../audiences/government.html">Federal Sites</a></li></ul></details><details class="docs-group"><summary>Reference</summary><ul><li><a href="../technical-report.html">Technical Report</a></li><li><a href="../api/index.html">API Reference</a><span class="docs-desc">The TypeScript modules under src/, generated by TypeDoc.</span></li><li><a href="../php/index.html">PHP Reference</a><span class="docs-desc">The PHP the interpreter runs, under src/site/php/, generated by phpDocumentor.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/releases" rel="noopener">Releases<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Published versions of the worker, with their notes.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/issues" rel="noopener">Issues<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Open and closed issues for the worker.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/blob/master/SECURITY.md" rel="noopener">Security Policy<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The supported versions, and how to report a vulnerability privately.</span></li><li><a class="docs-ext" href="https://drupflare.com" rel="noopener">Website<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Drupflare project site.</span></li></ul></details><details class="docs-group"><summary>On GitHub</summary><ul><li><a class="docs-ext" href="https://github.com/drupflare/worker" rel="noopener">worker<span class="docs-sr"> (external link)</span></a><span class="docs-desc">This repository: the deployable worker, its build and these docs.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/drupflare" rel="noopener">drupflare<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Cloudflare Workers compatibility layer plugin for the CMS.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/rom" rel="noopener">rom<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The database driver that stores a CMS in Durable Objects SQLite.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/phasm" rel="noopener">phasm<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The PHP WebAssembly interpreter for the workerd runtime.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/anachron" rel="noopener">anachron<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The backwards compatibility layer for older CMS versions.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/stream-http" rel="noopener">stream-http<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The HTTP stream wrapper for PHP.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/spool" rel="noopener">spool<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Client-side page rendering and execution framework.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/drangler" rel="noopener">drangler<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The command line tool for handling and maintaining Drupflare workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/bastion" rel="noopener">bastion<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Self-hostable Drupflare workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/dashboard" rel="noopener">dashboard<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Drupflare control plane.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/workforce" rel="noopener">workforce<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Management and fleet library for Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/burrow" rel="noopener">burrow<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Parallelism and arbitrary codegen on Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/cartridge" rel="noopener">cartridge<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Universal runtime for language interpreters inside a Durable Object.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/durabledb" rel="noopener">durabledb<span class="docs-sr"> (external link)</span></a><span class="docs-desc">SQLite for Durable Objects.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/untarl" rel="noopener">untarl<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Tar extraction library for Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/website" rel="noopener">website<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Source of the static project site.</span></li></ul></details></nav>
+</div>
+			<main
+				id="docs-main"
+				tabindex="-1"
+			>
+				
+				<div class="readme">
+					<p class="crumbs"><a href="index.html">Configuration</a></p>
 <h1 id="replica-settings">Replica Settings</h1>
 <p>Settings for replica lanes: count, autoscaling, write forwarding and lag. The concepts are on <a href="../operating/replica-lanes.html">Replica Lanes</a>; the index of every variable is on <a href="index.html">Configuration</a>.</p>
 <nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#variables">Variables</a></li><li><a href="#replica_count"><code>REPLICA_COUNT</code></a></li><li><a href="#replica_autoscale"><code>REPLICA_AUTOSCALE</code></a></li><li><a href="#replica_max_lanes"><code>REPLICA_MAX_LANES</code></a></li><li><a href="#write_forward"><code>WRITE_FORWARD</code></a></li><li><a href="#replica_lag_ms"><code>REPLICA_LAG_MS</code></a></li><li><a href="#creating-a-lane">Creating a Lane</a></li></ol></nav><h2 id="variables">Variables</h2>
@@ -436,24 +712,24 @@
 <p>An object&#39;s role comes from its own name. <code>REPLICA_READ_ONLY</code> is deployment-wide and would make the primary read-only too, so raising <code>REPLICA_COUNT</code> cannot put an existing object into replica mode by accident. The variable tells the router how many lanes to spread across, and nothing else.</p>
 <p>Only <code>/serve</code> spreads. Every other route pins to the primary. A route wrongly pinned loses capacity, and a route wrongly spread answers from a replica&#39;s copy. Lane selection and the 421 handoff are described on <a href="../operating/replica-lanes.html#routing-a-request">Replica Lanes</a>.</p>
 <p>One lane helps only once the single object is saturated. A fixed <code>REPLICA_COUNT</code> suits a site that is already contended. Autoscaling provisions lanes only under sustained queueing, which is the regime where even one lane pays. The measurements are on <a href="../operating/replica-lanes.html#when-a-lane-helps">Replica Lanes</a>.</p>
-<p>The ceiling is 256 because of arithmetic. A lane mints forwarded row ids from its own residue class modulo the partition (<code>ID_PARTITION_LANES</code>, <code>src/ops/write-forwarding.ts</code>), and the primary takes class 0. 256 is the largest pool whose writers all hold a class of their own. Past it, two writers would mint the same id.</p>
+<p>The ceiling is 256 because of arithmetic. A lane mints forwarded row ids from its own residue class modulo the partition (<code>ID_PARTITION_LANES</code>, <code>src/ops/replica/write-forwarding.ts</code>), and the primary takes class 0. 256 is the largest pool whose writers all hold a class of their own. Past it, two writers would mint the same id.</p>
 <p>Set <code>REPLICA_COUNT</code> no higher than the lanes a site has provisioned. Above that, the router hashes over buckets whose objects do not exist, which costs a wasted hop and a retry on the primary for each one. <code>REPLICA_COUNT</code>, <code>REPLICA_AUTOSCALE</code> and <code>REPLICA_MAX_LANES</code> are all KV-overridable, so a pool can be turned on, resized or turned off without a redeploy.</p>
 <h2 id="replica_autoscale"><code>REPLICA_AUTOSCALE</code></h2>
 <p>Raising <code>REPLICA_COUNT</code> by hand tells the router that lanes exist. It does not create them, so the lanes it routes to hold no data and answer 421 until somebody drives the provisioning loop. Autoscaling is the half that creates one.</p>
-<p>The signal is the number of requests that waited for the primary&#39;s gate in a window. A Durable Object runs one request at a time and a PHP render holds it for the whole render, so a waiting request is the queue, and a queue is the only thing a pool can fix. The target is one lane per waiter that held across the last three windows (the minimum over them), so a single burst cannot provision a lane that then exists forever. A window with no queue count falls back to peak concurrent in-flight requests, and the target is then the minimum peak across the three windows, minus one (<code>laneTarget()</code> in <code>src/ops/replica-demand.ts</code>). One quiet window clears the run. The copy is driven a chunk at a time off the alarm, the same way a fresh site migrates, so no firing owns a whole table copy.</p>
+<p>The signal is the number of requests that waited for the primary&#39;s gate in a window. A Durable Object runs one request at a time and a PHP render holds it for the whole render, so a waiting request is the queue, and a queue is the only thing a pool can fix. The target is one lane per waiter that held across the last three windows (the minimum over them), so a single burst cannot provision a lane that then exists forever. A window with no queue count falls back to peak concurrent in-flight requests, and the target is then the minimum peak across the three windows, minus one (<code>laneTarget()</code> in <code>src/ops/replica/demand.ts</code>). One quiet window clears the run. The copy is driven a chunk at a time off the alarm, the same way a fresh site migrates, so no firing owns a whole table copy.</p>
 <p>An explicit <code>REPLICA_COUNT</code> is a floor rather than a ceiling: a site told to run 2 lanes runs at least 2 and may still grow. <code>REPLICA_AUTOSCALE=0</code> is how an operator pins the number instead.</p>
 <h2 id="replica_max_lanes"><code>REPLICA_MAX_LANES</code></h2>
 <p>The ceiling autoscaling will not grow past. The default is 32, and larger values are capped at 32.</p>
 <p>Throughput does not set the cap. Addressing objects directly and summing, efficiency against perfect scaling is 100, 95, 90 and 85% at 8, 16, 32 and 48 replicas, a loss of about 5 points per doubling. This figure describes the topology. Routed throughput is a separate measurement, on <a href="../operating/replica-lanes.html#across-a-pool">Replica Lanes</a>. The default of 32 is a cost bound, not a correctness one. The correctness ceiling is 256, as described under <code>REPLICA_COUNT</code>.</p>
 <p>Set <code>REPLICA_AUTOSCALE=0</code> when measuring against a fixed lane count. Autoscaling builds lanes under the load a benchmark offers, so a control arm provisioned with zero lanes can answer from <code>r1</code> and <code>r2</code> on its first run. Read <code>x-cfw-lanes</code> back at drive time rather than trusting the configured number.</p>
-<p>A pool is reached only by isolates that have already seen it. <code>believedLanes()</code> is per isolate and is set from the <code>x-cfw-lanes</code> the primary reports on a response. The first request a cold isolate makes goes to the primary whatever the pool size. The belief expires after <code>LANES_TRUST_MS</code> (60 seconds, <code>src/ops/replica-routing.ts</code>). Sustained traffic keeps every isolate warm, while a low-rate or bursty client sees a larger share answered by the primary. Count distinct <code>x-cfw-replica</code> values across a burst to read a pool, since a single response cannot show it.</p>
+<p>A pool is reached only by isolates that have already seen it. <code>believedLanes()</code> is per isolate and is set from the <code>x-cfw-lanes</code> the primary reports on a response. The first request a cold isolate makes goes to the primary whatever the pool size. The belief expires after <code>LANES_TRUST_MS</code> (60 seconds, <code>src/ops/replica/routing.ts</code>). Sustained traffic keeps every isolate warm, while a low-rate or bursty client sees a larger share answered by the primary. Count distinct <code>x-cfw-replica</code> values across a burst to read a pool, since a single response cannot show it.</p>
 <p>A lane the router is not choosing falls back to the slow re-arm and hibernates, so an unused lane costs storage and replication catch-up rather than a warming chain.</p>
 <h2 id="write_forward"><code>WRITE_FORWARD</code></h2>
 <p>Lets a pool lane execute a write and forward the statements to the primary rather than refusing it. On unless <code>0</code>. It is reachable only where a pool already exists: every caller is behind a lane name or a non-zero <code>REPLICA_COUNT</code>, and both are off by default. A site with no pool is unaffected by this value.</p>
 <p>The lane runs the whole write locally, discards its own effect through the driver&#39;s <code>commit: false</code> path, and hands the statement list to the primary, which stays the sequencer. Ids are partitioned so that every writer holds a residue class no other writer mints: lanes from their lane number, the primary from slice 0. A lane records the ids it forwarded so it cannot repeat one before replication catches up.</p>
 <p>Two things are worth knowing before turning it off. A write reaches a lane at all only because this is on. With it off, the router pins every POST to the primary, so the one object the pool exists to relieve keeps every form submission. An unbuffered write, one Drupal issues outside a transaction, takes the transaction bridge on a lane rather than the exec bridge, because <code>cfwSqlExec</code> has no rollback and a write on it can be neither forwarded nor discarded. That routing lives in the driver. The host&#39;s guard refuses an exec write and fails over, which is what happens if the two ever disagree about whether a connection holds a residue class.</p>
 <h2 id="replica_lag_ms"><code>REPLICA_LAG_MS</code></h2>
-<p>The bound on how far behind a serving lane may fall. A <code>SERVING</code> lane pulls the primary&#39;s log on its own alarm, and <code>replicaLagMs()</code> (<code>src/ops/replica-routing.ts</code>) sets the interval. The default is 30,000 ms, clamped to 1,000 through 300,000 ms. Below a second a lane spends more on asking than on serving.</p>
+<p>The bound on how far behind a serving lane may fall. A <code>SERVING</code> lane pulls the primary&#39;s log on its own alarm, and <code>replicaLagMs()</code> (<code>src/ops/replica/routing.ts</code>) sets the interval. The default is 30,000 ms, clamped to 1,000 through 300,000 ms. Below a second a lane spends more on asking than on serving.</p>
 <p>Without this bound, a serving lane re-arms at <code>KEEP_WARM_MS</code> (240,000 ms) and can serve a copy four minutes behind the primary. The staleness fence refuses only a caller that states a freshness requirement, and a visitor states none.</p>
 <p>Each round costs two Durable Object requests against the primary, so this is a cost knob as much as a freshness one.</p>
 <h2 id="creating-a-lane">Creating a Lane</h2>
@@ -463,8 +739,10 @@
 <p><code>budget</code> sets rows per invocation and defaults to 4,000. The cursor carries the generation the copy began at, so a commit on the primary part-way through answers <code>torn</code>, which keeps the far end from refusing in a way that reads like a bug. Restart the copy; there is no resume.</p>
 <p>A primary cannot be copied from until it has minted <code>system.private_key</code>, which Drupal does on first use and never at install. <code>action=snapshot</code> answers 409 naming the gap. <code>\Drupal::service(&#39;private_key&#39;)-&gt;get()</code> on the primary closes it.</p>
 <p>Cron defaults to on. Leave it on unless a site has a reason not to: a module that depends on cron does not fail when cron never runs, it silently does nothing. Six of twenty-five surveyed contrib modules need it.</p>
-			</div>
-		</main>
+				</div>
+				<nav class="docs-pager" aria-label="Previous and next pages"><a rel="prev" class="docs-pager-prev" href="runtime.html"><span class="docs-pager-label">Previous</span><strong>Runtime Settings</strong><span>Settings for cron, warming, the interpreter lifecycle, replica mode, boot and storage.</span></a><a rel="next" class="docs-pager-next" href="plan-and-routes.html"><span class="docs-pager-label">Next</span><strong>Plan and Extensibility Routes</strong><span>How the plan selects a limits profile, and which routes extend a site.</span></a></nav>
+			</main>
+		</div>
 		<footer>
 			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
 		</footer>

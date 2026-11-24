@@ -9,11 +9,38 @@
 		<title>Runtime Settings - Drupflare</title>
 		<meta
 			name="description"
-			content="Settings for cron, warming, the interpreter lifecycle, replica mode, boot and storage. The index of every variable is on Configuration."
+			content="Settings for cron, warming, the interpreter lifecycle, replica mode, boot and storage."
 		/>
 		<link
 			rel="icon"
 			href="../drupflare.ico"
+			sizes="any"
+		/>
+		<link
+			rel="icon"
+			type="image/png"
+			sizes="128x128"
+			href="../drupflare_128.png"
+		/>
+		<link
+			rel="apple-touch-icon"
+			href="../drupflare_128.png"
+		/>
+		<link
+			rel="canonical"
+			href="https://docs.drupflare.com/configuration/runtime.html"
+		/>
+		<meta
+			property="og:type"
+			content="website"
+		/>
+		<meta
+			property="og:site_name"
+			content="Drupflare"
+		/>
+		<meta
+			property="og:url"
+			content="https://docs.drupflare.com/configuration/runtime.html"
 		/>
 		<meta
 			property="og:title"
@@ -21,7 +48,7 @@
 		/>
 		<meta
 			property="og:description"
-			content="Settings for cron, warming, the interpreter lifecycle, replica mode, boot and storage. The index of every variable is on Configuration."
+			content="Settings for cron, warming, the interpreter lifecycle, replica mode, boot and storage."
 		/>
 		<meta
 			property="og:image"
@@ -71,24 +98,56 @@
 					Roboto,
 					sans-serif;
 			}
-			main,
-			nav .bar,
+			.layout,
+			.site .bar,
 			footer {
-				max-width: 52rem;
+				max-width: 78rem;
 				margin: 0 auto;
 			}
-			nav {
+			main {
+				min-width: 0;
+				max-width: 52rem;
+			}
+			main:focus {
+				outline: none;
+			}
+			.docs-skip {
+				position: absolute;
+				left: 1rem;
+				top: -4rem;
+				z-index: 30;
+				padding: 0.5rem 1rem;
+				border-radius: 0.5rem;
+				background: var(--card);
+				color: var(--accent);
+			}
+			.docs-skip:focus {
+				top: 0.5rem;
+			}
+			.docs-sr {
+				position: absolute;
+				width: 1px;
+				height: 1px;
+				overflow: hidden;
+				clip-path: inset(50%);
+				white-space: nowrap;
+			}
+			:focus-visible {
+				outline: 2px solid var(--accent);
+				outline-offset: 2px;
+			}
+			.site {
 				margin: 0 -1.5rem 3rem;
 				padding: 0.75rem 1.5rem;
 				border-bottom: 1px solid var(--line);
 			}
-			nav .bar {
+			.site .bar {
 				display: flex;
 				flex-wrap: wrap;
 				align-items: center;
 				gap: 0.25rem 1.25rem;
 			}
-			nav .brand {
+			.site .brand {
 				display: flex;
 				align-items: center;
 				gap: 0.5rem;
@@ -96,45 +155,45 @@
 				font-weight: 700;
 				letter-spacing: -0.01em;
 			}
-			nav .brand img {
+			.site .brand img {
 				width: 1.75rem;
 				height: 1.75rem;
 			}
-			nav a {
+			.site a {
 				color: var(--muted);
 				font-size: 0.925rem;
 				text-decoration: none;
 			}
-			nav a:hover,
-			nav a[aria-current] {
+			.site a:hover,
+			.site a[aria-current] {
 				color: var(--accent);
 			}
-			nav a.brand {
+			.site a.brand {
 				color: var(--fg);
 				font-size: 1.05rem;
 			}
-			nav .menu {
+			.site .menu {
 				position: relative;
 			}
-			nav .menu summary {
+			.site .menu summary {
 				color: var(--muted);
 				font-size: 0.925rem;
 				list-style: none;
 				cursor: pointer;
 			}
-			nav .menu summary::-webkit-details-marker {
+			.site .menu summary::-webkit-details-marker {
 				display: none;
 			}
-			nav .menu summary::after {
+			.site .menu summary::after {
 				content: ' \25BE';
 				font-size: 0.75em;
 			}
-			nav .menu summary:hover,
-			nav .menu[open] summary,
-			nav .menu[data-current] summary {
+			.site .menu summary:hover,
+			.site .menu[open] summary,
+			.site .menu[data-current] summary {
 				color: var(--accent);
 			}
-			nav .menu .panel {
+			.site .menu .panel {
 				position: absolute;
 				z-index: 10;
 				top: 1.9rem;
@@ -148,12 +207,206 @@
 				background: var(--card);
 				box-shadow: 0 0.75rem 2rem var(--glow);
 			}
-			nav .menu .panel a {
+			.site .menu .panel a {
 				padding: 0.4rem 0.75rem;
 				border-radius: 0.4rem;
 			}
-			nav .menu .panel a:hover {
+			.site .menu .panel a:hover {
 				background: var(--code-bg);
+			}
+			.docs-menu,
+			.docs-close {
+				padding: 0.3rem 0.8rem;
+				border: 1px solid var(--line);
+				border-radius: 0.5rem;
+				background: var(--card);
+				color: var(--fg);
+				font: inherit;
+				font-size: 0.9rem;
+				cursor: pointer;
+			}
+			.docs-sidebar {
+				inset: 0 auto 0 0;
+				width: min(22rem, 88vw);
+				height: 100%;
+				max-height: none;
+				margin: 0;
+				padding: 1rem 1.25rem 2rem;
+				border: 0;
+				border-right: 1px solid var(--line);
+				overflow-y: auto;
+				background: var(--card);
+				color: var(--fg);
+			}
+			.docs-sidebar::backdrop {
+				background: rgb(0 0 0 / 0.45);
+			}
+			.docs-sidebar-head {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				margin-bottom: 1rem;
+				font-weight: 700;
+			}
+			.docs-nav details {
+				margin: 0;
+			}
+			.docs-nav summary {
+				padding: 0.35rem 0;
+				list-style: none;
+				cursor: pointer;
+			}
+			.docs-nav summary::-webkit-details-marker {
+				display: none;
+			}
+			.docs-nav summary::before {
+				content: '\25B8';
+				display: inline-block;
+				width: 1rem;
+				color: var(--muted);
+				font-size: 0.8rem;
+			}
+			.docs-nav details[open] > summary::before {
+				content: '\25BE';
+			}
+			.docs-group > summary {
+				margin-top: 0.5rem;
+				color: var(--muted);
+				font-size: 0.8rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			.docs-section {
+				margin-left: 0.75rem;
+			}
+			.docs-section > summary {
+				font-size: 0.9rem;
+				font-weight: 600;
+			}
+			.docs-nav ul {
+				margin: 0 0 0.5rem;
+				padding: 0 0 0 1rem;
+				list-style: none;
+			}
+			.docs-nav li {
+				margin: 0;
+			}
+			.docs-nav li a {
+				display: block;
+				padding: 0.25rem 0.6rem;
+				border-left: 2px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+				line-height: 1.4;
+				text-decoration: none;
+			}
+			.docs-nav li a:hover {
+				color: var(--accent);
+			}
+			.docs-nav li a[aria-current] {
+				border-left-color: var(--accent-strong);
+				color: var(--accent);
+				font-weight: 600;
+			}
+			.docs-nav .docs-ext::after {
+				content: ' \2197';
+				font-size: 0.8em;
+			}
+			.docs-desc {
+				display: block;
+				padding: 0 0.6rem 0.4rem;
+				border-left: 2px solid var(--line);
+				color: var(--muted);
+				font-size: 0.78rem;
+				line-height: 1.4;
+			}
+			@media (min-width: 64rem) {
+				.layout {
+					display: grid;
+					grid-template-columns: 17rem minmax(0, 1fr);
+					gap: 3rem;
+				}
+				.docs-menu,
+				.docs-close {
+					display: none;
+				}
+				.docs-sidebar {
+					position: sticky;
+					top: 1.5rem;
+					display: block;
+					inset: auto;
+					align-self: start;
+					width: auto;
+					height: auto;
+					max-height: calc(100vh - 3rem);
+					padding: 0 0.5rem 1rem 0;
+					border: 0;
+					background: transparent;
+				}
+				.docs-sidebar-head {
+					display: none;
+				}
+			}
+			@media (prefers-reduced-motion: no-preference) and (max-width: 63.99rem) {
+				.docs-sidebar {
+					transform: translateX(-100%);
+					transition:
+						transform 0.2s ease,
+						overlay 0.2s allow-discrete,
+						display 0.2s allow-discrete;
+				}
+				.docs-sidebar:popover-open {
+					transform: none;
+				}
+				@starting-style {
+					.docs-sidebar:popover-open {
+						transform: translateX(-100%);
+					}
+				}
+			}
+			@media (prefers-reduced-motion: reduce) {
+				* {
+					transition: none !important;
+					animation: none !important;
+				}
+			}
+			.docs-pager {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+				gap: 0.85rem;
+				margin: 3rem 0 0;
+			}
+			.docs-pager a {
+				display: block;
+				padding: 0.85rem 1.1rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+			}
+			.docs-pager a:hover {
+				border-color: var(--accent-strong);
+			}
+			.docs-pager-next {
+				text-align: right;
+			}
+			.docs-pager .docs-pager-label {
+				display: block;
+				color: var(--accent);
+				font-size: 0.78rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			.docs-pager strong {
+				display: block;
+			}
+			.docs-pager a > span:last-child {
+				color: var(--muted);
+				font-size: 0.85rem;
+				line-height: 1.45;
 			}
 			h1 {
 				margin: 0 0 0.5rem;
@@ -209,6 +462,9 @@
 				line-height: 1.5;
 			}
 
+			.readme {
+				overflow-wrap: break-word;
+			}
 			.readme h1 {
 				margin: 0 0 1.25rem;
 			}
@@ -366,8 +622,20 @@
 		</style>
 	</head>
 	<body>
-		<nav>
+		<a
+			class="docs-skip"
+			href="#docs-main"
+			>Skip to content</a
+		>
+		<header class="site">
 			<div class="bar">
+				<button
+					type="button"
+					class="docs-menu"
+					popovertarget="docs-sidebar"
+				>
+					Menu
+				</button>
 				<a
 					class="brand"
 					href="../index.html"
@@ -378,19 +646,27 @@
 					/>
 					Drupflare
 				</a>
-				<details class="menu" data-current><summary>Run</summary><div class="panel"><a href="../getting-started/index.html">Getting Started</a><a href="../operating/index.html">Operating</a><a href="../configuration/index.html" aria-current="page">Configuration</a></div></details>
+				<details class="menu" data-current><summary>Run</summary><div class="panel"><a href="../getting-started/index.html">Getting Started</a><a href="../operating/index.html">Operating</a><a href="index.html">Configuration</a></div></details>
 				<details class="menu"><summary>Understand</summary><div class="panel"><a href="../architecture/index.html">Architecture</a><a href="../security/index.html">Security</a><a href="../impact/index.html">Impact</a><a href="../audiences/index.html">Audiences</a></div></details>
-				<details class="menu"><summary>Reference</summary><div class="panel"><a href="../technical-report.html">Technical Report</a><a href="../api/index.html">API</a><a href="../php/index.html">PHP</a></div></details>
+				<details class="menu"><summary>Reference</summary><div class="panel"><a href="../technical-report.html">Technical Report</a><a href="../api/index.html">API Reference</a><a href="../php/index.html">PHP Reference</a></div></details>
 				<a href="https://github.com/drupflare/worker">GitHub</a>
 			</div>
-		</nav>
-		<main>
-			
-			<div class="readme">
-				<p class="crumbs"><a href="index.html">Configuration</a></p>
+		</header>
+		<div class="layout">
+			<div class="docs-sidebar" id="docs-sidebar" popover>
+<div class="docs-sidebar-head"><span>Documentation</span><button type="button" class="docs-close" popovertarget="docs-sidebar" popovertargetaction="hide">Close</button></div>
+<nav class="docs-nav" aria-label="Documentation"><details class="docs-group"><summary>Getting Started</summary><ul><li><a href="../index.html">Overview</a></li><li><a href="../getting-started/index.html">Getting Started</a></li><li><a href="../getting-started/claim-and-log-in.html">Claiming and Managing a Site</a></li><li><a href="../getting-started/updating.html">Updating a Site</a></li><li><a href="../getting-started/testing.html">Testing</a></li><li><a href="../getting-started/reproduce-panopoly.html">Reproducing Panopoly</a></li><li><a href="../getting-started/reproduce-thunder.html">Reproducing Thunder</a></li></ul><details class="docs-section"><summary>Building From Source</summary><ul><li><a href="../getting-started/building-from-source/index.html">Building From Source</a></li><li><a href="../getting-started/building-from-source/steps.html">The Steps</a></li><li><a href="../getting-started/building-from-source/build-order.html">Build Order and Caching</a></li><li><a href="../getting-started/building-from-source/upgrading-core.html">Upgrading Drupal Core</a></li></ul></details><details class="docs-section"><summary>Repository Layout</summary><ul><li><a href="../getting-started/repository-layout/index.html">Repository Layout</a></li><li><a href="../getting-started/repository-layout/paths.html">Tracked and Generated Paths</a></li><li><a href="../getting-started/repository-layout/automation.html">Scripts and Automation</a></li></ul></details></details><details class="docs-group"><summary>Operating</summary><ul><li><a href="../operating/index.html">Operating</a></li><li><a href="../operating/administration.html">Administration</a></li><li><a href="../operating/recovery.html">Recovery</a></li><li><a href="../operating/git-remotes.html">Git Remotes</a></li><li><a href="../operating/replica-lanes.html">Replica Lanes</a></li></ul><details class="docs-section"><summary>External Databases</summary><ul><li><a href="../operating/external-database/index.html">External Databases and Hyperdrive</a></li><li><a href="../operating/external-database/why-not-default.html">Why the Default Is Not External</a></li></ul></details><details class="docs-section"><summary>PHP Interpreter Updates</summary><ul><li><a href="../operating/php-update-delivery/index.html">PHP Interpreter Update Delivery</a></li><li><a href="../operating/php-update-delivery/verification.html">Verification and Output</a></li><li><a href="../operating/php-update-delivery/rollback.html">Rollback and Staged Rollout</a></li><li><a href="../operating/php-update-delivery/trust-and-cost.html">Trust, Cost and Scope</a></li></ul></details></details><details class="docs-group"><summary>Architecture</summary><ul><li><a href="../architecture/index.html">Architecture</a></li><li><a href="../architecture/database.html">The Site Database</a></li><li><a href="../architecture/measurement-classes.html">Measurement Classes</a></li><li><a href="../architecture/wordpress.html">WordPress</a></li><li><a href="../architecture/compatibility.html">Compatibility</a></li><li><a href="../architecture/modules.html">Modules</a></li><li><a href="../architecture/limitations.html">Limitations</a></li></ul></details><details class="docs-group" open><summary>Configuration</summary><ul><li><a href="index.html">Configuration</a></li><li><a href="site-identity.html">Site Identity and Origin</a></li><li><a href="runtime.html" aria-current="page">Runtime Settings</a><span class="docs-desc">Settings for cron, warming, the interpreter lifecycle, replica mode, boot and storage.</span></li><li><a href="replicas.html">Replica Settings</a></li><li><a href="plan-and-routes.html">Plan and Extensibility Routes</a></li><li><a href="diagnostics.html">Diagnostics</a></li><li><a href="migrated-settings.html">Migrated Project Settings</a></li></ul><details class="docs-section"><summary>Serving and Caching</summary><ul><li><a href="serving/index.html">Serving and Caching Settings</a></li><li><a href="serving/page-cache.html">Page Cache Settings</a></li><li><a href="serving/static-assets.html">Static Asset Settings</a></li><li><a href="serving/files-and-images.html">Files, Images and Prefill</a></li><li><a href="serving/r2-page-origin.html">R2 Page Origin Caching</a></li><li><a href="serving/request-limits.html">Request Limits</a></li></ul></details><details class="docs-section"><summary>Operations</summary><ul><li><a href="operations/index.html">Operations Settings</a></li><li><a href="operations/overrides.html">Runtime Overrides</a></li><li><a href="operations/owner-access.html">Owner Access and Audit</a></li><li><a href="operations/updates.html">Updates and Reconciliation</a></li><li><a href="operations/discovery.html">Discovery Document</a></li><li><a href="operations/wordpress-packages.html">WordPress Packages</a></li></ul></details><details class="docs-section"><summary>Integrations</summary><ul><li><a href="integrations/index.html">Integration Settings</a></li><li><a href="integrations/mail.html">Outbound Mail</a></li><li><a href="integrations/tcp.html">Outbound TCP</a></li><li><a href="integrations/workers-ai.html">Workers AI</a></li><li><a href="integrations/oidc-login.html">OIDC Login</a></li><li><a href="integrations/spool.html">Spool</a></li></ul></details></details><details class="docs-group"><summary>Security</summary><ul><li><a href="../security/index.html">Security</a></li><li><a href="../security/how-much-safer.html">How Much Safer</a></li><li><a href="../security/not-removed.html">What It Does Not Remove</a></li><li><a href="../security/incidents.html">Security Incidents and Planned Work</a></li></ul><details class="docs-section"><summary>Controls</summary><ul><li><a href="../security/controls/index.html">Security Controls</a></li><li><a href="../security/controls/requests.html">Request Controls</a></li><li><a href="../security/controls/credentials.html">Credentials and Persistence</a></li><li><a href="../security/controls/build-and-patching.html">Build and Patching Controls</a></li></ul></details></details><details class="docs-group"><summary>Impact</summary><ul><li><a href="../impact/index.html">Impact</a></li><li><a href="../impact/limits.html">What This Does Not Claim</a></li><li><a href="../impact/carbon.html">Carbon</a></li><li><a href="../impact/water.html">Water</a></li><li><a href="../impact/embodied.html">Embodied Carbon</a></li><li><a href="../impact/reproducing.html">Reproducing the Numbers</a></li><li><a href="../impact/references.html">References</a></li></ul><details class="docs-section"><summary>Energy</summary><ul><li><a href="../impact/energy/index.html">Energy</a></li><li><a href="../impact/energy/per-request.html">Energy Per Request</a></li><li><a href="../impact/energy/views.html">Energy Per View</a></li><li><a href="../impact/energy/inputs.html">Where the Figures Come From</a></li><li><a href="../impact/energy/operating-states.html">Operating States</a></li><li><a href="../impact/energy/production-baseline.html">Production Baseline</a></li><li><a href="../impact/energy/fleet.html">Fleet Energy</a></li></ul></details><details class="docs-section"><summary>Economics</summary><ul><li><a href="../impact/economics/index.html">Economics</a></li><li><a href="../impact/economics/bills.html">The Shape of the Bills</a></li><li><a href="../impact/economics/conventional-hosts.html">Conventional Hosts</a></li><li><a href="../impact/economics/vps-comparison.html">Drupflare vs a Traditional VPS</a></li><li><a href="../impact/economics/free-plan-and-warming.html">The Free Plan and Warming</a></li></ul></details><details class="docs-section"><summary>Free vs Paid</summary><ul><li><a href="../impact/economics/free-vs-paid/index.html">Free vs Paid</a></li><li><a href="../impact/economics/free-vs-paid/off-worker-arms.html">The Off-Worker Arms</a></li></ul></details></details><details class="docs-group"><summary>Audiences</summary><ul><li><a href="../audiences/index.html">Audiences</a></li><li><a href="../audiences/government.html">Federal Sites</a></li></ul></details><details class="docs-group"><summary>Reference</summary><ul><li><a href="../technical-report.html">Technical Report</a></li><li><a href="../api/index.html">API Reference</a><span class="docs-desc">The TypeScript modules under src/, generated by TypeDoc.</span></li><li><a href="../php/index.html">PHP Reference</a><span class="docs-desc">The PHP the interpreter runs, under src/site/php/, generated by phpDocumentor.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/releases" rel="noopener">Releases<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Published versions of the worker, with their notes.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/issues" rel="noopener">Issues<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Open and closed issues for the worker.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/blob/master/SECURITY.md" rel="noopener">Security Policy<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The supported versions, and how to report a vulnerability privately.</span></li><li><a class="docs-ext" href="https://drupflare.com" rel="noopener">Website<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Drupflare project site.</span></li></ul></details><details class="docs-group"><summary>On GitHub</summary><ul><li><a class="docs-ext" href="https://github.com/drupflare/worker" rel="noopener">worker<span class="docs-sr"> (external link)</span></a><span class="docs-desc">This repository: the deployable worker, its build and these docs.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/drupflare" rel="noopener">drupflare<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Cloudflare Workers compatibility layer plugin for the CMS.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/rom" rel="noopener">rom<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The database driver that stores a CMS in Durable Objects SQLite.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/phasm" rel="noopener">phasm<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The PHP WebAssembly interpreter for the workerd runtime.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/anachron" rel="noopener">anachron<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The backwards compatibility layer for older CMS versions.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/stream-http" rel="noopener">stream-http<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The HTTP stream wrapper for PHP.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/spool" rel="noopener">spool<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Client-side page rendering and execution framework.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/drangler" rel="noopener">drangler<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The command line tool for handling and maintaining Drupflare workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/bastion" rel="noopener">bastion<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Self-hostable Drupflare workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/dashboard" rel="noopener">dashboard<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Drupflare control plane.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/workforce" rel="noopener">workforce<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Management and fleet library for Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/burrow" rel="noopener">burrow<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Parallelism and arbitrary codegen on Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/cartridge" rel="noopener">cartridge<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Universal runtime for language interpreters inside a Durable Object.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/durabledb" rel="noopener">durabledb<span class="docs-sr"> (external link)</span></a><span class="docs-desc">SQLite for Durable Objects.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/untarl" rel="noopener">untarl<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Tar extraction library for Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/website" rel="noopener">website<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Source of the static project site.</span></li></ul></details></nav>
+</div>
+			<main
+				id="docs-main"
+				tabindex="-1"
+			>
+				
+				<div class="readme">
+					<p class="crumbs"><a href="index.html">Configuration</a></p>
 <h1 id="runtime-settings">Runtime Settings</h1>
 <p>Settings for cron, warming, the interpreter lifecycle, replica mode, boot and storage. The index of every variable is on <a href="index.html">Configuration</a>.</p>
-<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#cron">Cron</a></li><li><a href="#warming">Warming</a></li><li><a href="#interpreter-lifecycle">Interpreter Lifecycle</a></li><li><a href="#replica-mode">Replica Mode</a></li><li><a href="#boot-and-storage">Boot and Storage</a></li></ol></nav><h2 id="cron">Cron</h2>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#cron">Cron</a></li><li><a href="#warming">Warming</a></li><li><a href="#interpreter-lifecycle">Interpreter Lifecycle</a></li><li><a href="#growth-governor">Growth Governor</a></li><li><a href="#fresh-first-routes">Fresh First Routes</a></li><li><a href="#refusal-tiers">Refusal Tiers</a></li><li><a href="#repeating-a-refusal">Repeating a Refusal</a></li><li><a href="#replica-mode">Replica Mode</a></li><li><a href="#boot-and-storage">Boot and Storage</a></li></ol></nav><h2 id="cron">Cron</h2>
 <div class="table"><table>
 <thead>
 <tr>
@@ -592,10 +868,160 @@ that does not parse is ignored when read. A window that sets the clock to a zone
 <td>on</td>
 <td>keeps an evicted instance&#39;s interpreter for the next instance to adopt; <code>0</code> is off</td>
 </tr>
+<tr>
+<td><code>RELEASE_HOST_GRAPH</code></td>
+<td>on</td>
+<td>frees a dropped interpreter&#39;s filesystem graph; <code>0</code> is off</td>
+</tr>
 </tbody></table></div>
 <p><code>RECYCLE_ABOVE_BYTES</code> is the backstop for the isolate&#39;s 128 MiB limit, behind the primary defence. <code>USE_ZEND_ALLOC=0</code> means PHP returns nothing between requests, so demand inside one incarnation is cumulative; <code>/__migrate</code> and <code>/__firstrun</code> drop the interpreter when they finish, and this catches everything else. It must fire between invocations: linear memory is reclaimed only when the old module is collected, so dropping mid-request holds both allocations at once. <code>/serve-stats</code> reports <code>recycles</code> and <code>lastRecycle</code>; an object recycling every request is paying a boot per page.</p>
 <p>The limit is per isolate, not per object, and an isolate can host several objects of one class. <code>/serve-stats</code> reports <code>isolate</code>: its <code>id</code>, the <code>interpreters</code> it holds and their <code>linearBytes</code> added together. Two interpreters do not fit 128 MiB, so <code>interpreters</code> above 1 is the thing to look for on a replica pool.</p>
 <p><code>RETAIN_INTERPRETER</code> keeps the interpreter in the isolate when the instance is evicted, so the next request skips the boot while the isolate survives. In measurement, adopting a kept interpreter took 61-169 ms against 1-2.5 s for a boot. When the isolate is gone the next request boots as it would have anyway. An adopted interpreter is refused when the site committed a write since it was kept. <code>/serve-stats</code> reports <code>retention</code>.</p>
+<h2 id="growth-governor">Growth Governor</h2>
+<p>The recycle thresholds above act between invocations. The growth governor acts inside one: it refuses a grow of the interpreter&#39;s linear memory that would pass a cap, so a request that would have pushed the isolate over the platform&#39;s kill line fails alone instead of resetting the object and every request in flight. It is on unless <code>GROWTH_GOVERNOR</code> is <code>0</code>.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GROWTH_CAP_BYTES</code></td>
+<td>unset</td>
+<td>the cap in bytes; wins over the ledger and over <code>GROWTH_GOVERNOR</code></td>
+</tr>
+<tr>
+<td><code>GROWTH_GOVERNOR</code></td>
+<td>on</td>
+<td><code>0</code> turns the derived cap off</td>
+</tr>
+<tr>
+<td><code>GROWTH_HEADROOM_BYTES</code></td>
+<td>37748736</td>
+<td>the headroom the build holds with the interpreter resident (36 MiB), measured</td>
+</tr>
+<tr>
+<td><code>GROWTH_MARGIN_BYTES</code></td>
+<td>4194304</td>
+<td>bytes held back below the headroom for one request landing above the cap (4 MiB)</td>
+</tr>
+</tbody></table></div>
+<p>The cap is the boot size, plus the headroom, plus the JS-side bytes the ledger counted when the headroom was measured minus the ones it counts now, minus the margin, and never below the boot size. Each constant has one source:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>constant</th>
+<th>value</th>
+<th>source</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>boot size</td>
+<td>64 MiB</td>
+<td><code>INTERPRETER_MEMORY.initial</code>, 1024 pages, the tuned binary&#39;s import limit</td>
+</tr>
+<tr>
+<td>headroom</td>
+<td>36 MiB</td>
+<td>headroom ladder on a deployed paid worker, 2026-11-23, interpreter resident at 64 MiB of linear memory: stock Drupal after an admin page or a flush read 36 in 8 of 9 readings at a 240 s settle and never below 36 after 60 s; a Thunder object read 36 after a flush (3 reps, zero spread). Growth of linear memory counts one for one below 96 MiB</td>
+</tr>
+<tr>
+<td>JS side at the measurement</td>
+<td>19,187,577 bytes (18.3 MiB)</td>
+<td>the worker&#39;s own ledger at that state: the mount blob 13,012,361 bytes, the merged pack index 1,980,912 bytes (<code>PACK_INDEX_BYTES</code>) and about 4 MiB of resident files</td>
+</tr>
+<tr>
+<td>margin</td>
+<td>4 MiB</td>
+<td>assumed; not measured</td>
+</tr>
+</tbody></table></div>
+<p>On stock Drupal that is 64 + 36 + 0 - 4 = 96 MiB with the resident set at 4 MiB. A freshly booted object holds about 1 MiB of resident files, so its cap reads about 99 MiB and falls as files are opened. A staged <code>COLD_PACK</code> (the blob and its index out of the ledger) raises the cap by the bytes it frees, 13,012,361 + 1,980,912 = 14,993,273 bytes, and a larger resident set lowers it byte for byte. The ledger is read at boot and again at the start of every governed request.</p>
+<p><strong>WordPress is not measured.</strong> Its headroom has no ladder reading. Its pack blob is smaller (7.07 MiB read locally against 12.41), so the formula gives it a higher cap than Drupal&#39;s, which assumes its headroom is at least 36 MiB. A smaller JS side suggests more room, so the Drupal-derived figure is probably conservative there, but nothing shows it. Set <code>GROWTH_HEADROOM_BYTES</code> from a ladder reading before relying on the number.</p>
+<p>The cap is applied once the interpreter has started, so it never refuses the boot itself. A cap below the memory the interpreter already holds is lifted to what it holds: every grow is refused and nothing shrinks. A reused spare memory keeps the size an earlier incarnation grew it to, so after an owner phase that grew it (the provisioned incarnation sits at 107 MiB) the next boot&#39;s cap is lifted to that size and the governor refuses any further growth. A request that needs to grow then fails with a governed refusal.</p>
+<p>The cap does not apply to every phase. Provisioning, claim, install, modify, enable, restore, migration, every other object route except a page render, a render carrying the owner phase header (<code>x-cfw-phase</code>), and every alarm firing (fills, cron, reconciliation) legitimately grow linear memory well past a serving cap, and a refusal there would be a flow that never completes where a reset is retried and finishes. They run with the governor lifted, and it goes back on when they end. <code>/serve-stats</code> reports the number running now as <code>growthExempt</code>.</p>
+<p>A refused grow makes the interpreter&#39;s allocator fail. PHP prints <code>[error] Out of memory</code>, the run ends in <code>exit(1)</code>, and PHP&#39;s <code>catch</code> never runs. The object drops that interpreter, counts the run, and answers 503 with <code>x-cfw-growth-refused: 1</code>. The front worker repeats a GET or HEAD once, and sets <code>x-cfw-retried: growth</code> on the reply. Other methods and the GET routes that run cron are not repeated. A governed run is one transaction (see Refusal Tiers below), so a refused run saves nothing, and the 503 for an unsafe method says so.</p>
+<p>The governor sees linear memory only. The JS-side charge (mount blob, resident files, host graph, reply strings, bridge buffers) is outside it, which is why the cap moves with what the ledger can see of that charge. About 44 MiB of what the ladder charges at that state is outside everything the worker counts, and the headroom figure already includes it.</p>
+<p><code>/serve-stats</code> reports <code>growthCap</code> (null while off), <code>growthRefusals</code> (refused grows; the allocator retries smaller sizes, so one failed run can add several), <code>governedRuns</code> (runs a refusal ended), <code>rolledBackRuns</code> (those whose writes the transaction undid) and <code>lastGoverned</code> (when, and the size it asked for against the cap). With <code>MEMORY_TRACE=1</code> each refusal also logs a <code>growth-refused</code> line with the sizes.</p>
+<p>Those counters live in memory, and an object the platform resets after a refusal loses them. The refusal log is stored: each run a refusal ended writes one row to <code>cfw_growth_log</code> in the object&#39;s SQLite, after the run&#39;s transaction has rolled back and the interpreter is dropped, so the row is not part of what was undone. A row holds the time, the size it grew from and asked for, the cap, the JS-side bytes the ledger counted, the route (method and path without the query, and a path segment over 24 characters shown as <code>*</code>), whether the run&#39;s writes were rolled back, and the attempt (1 or 2). The newest 20 rows are kept; the older ones are deleted in the same batch. <code>/serve-stats</code> reports them newest first as <code>growthRefusalLog</code>, and a reset object still reports its last refusals. The table is created by the first refusal and by nothing else, so a site that was never refused has no table, and a normal request writes no row. A refusal writes one row, two once the log is full.</p>
+<h2 id="fresh-first-routes">Fresh First Routes</h2>
+<p>A cache flush on a heavy site (Thunder) needs more linear memory than the growth cap allows, and the platform ends an object that runs past its isolate limit. The registry gives such a request a fresh isolate. It is on by default for the performance page&#39;s POST (the cache flush), and <code>FRESH_FIRST_ROUTES=0</code> turns it off.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>FRESH_FIRST_ROUTES</code></td>
+<td><code>abort</code></td>
+<td>unset or <code>abort</code> covers the cache flush; a comma list of <code>METHOD /path</code> entries (a bare path means POST) replaces that route; <code>0</code> or an empty value turns the registry off</td>
+</tr>
+</tbody></table></div>
+<p>A request on the list that finds an interpreter resident writes and syncs a record, then calls <code>ctx.abort()</code> before any PHP has run. The request has had no side effect, so the front worker repeats it once, for any method, with <code>x-cfw-retried: abort</code>. The repeat lands on a new isolate and runs under the same fresh-attempt allowance as a governor repeat (see Repeating a Refusal). The object never aborts a request that carries the header, and the hop strips that header from every inbound request. A route outside the list never aborts.</p>
+<p>The cost of a matching request is one cold boot on the new isolate and one repeat, so the flush is slower than it would be on a warm interpreter. Dropping the interpreter inside the request instead was tried and removed: a fresh boot and the flush render after such a drop ended in a platform reset.</p>
+<p>A platform reset in the middle of a flush answers with the platform&#39;s own page, which carries no header, and takes the in-memory counters with it. So each abort is also stored. Before it aborts, the object writes one row to <code>cfw_fresh_first</code> (one row, id 1) and waits for the write to be durable: the time, the route, the interpreter&#39;s linear memory in bytes, a count that only goes up, and the isolate as <code>isolateBytes</code> reads it. When the repeat finishes on the new isolate a second write sets <code>completed_at</code>, the isolate reading and <code>end</code>: <code>ok</code> when it answered, <code>refused</code> when the governor refused it, <code>error</code> for anything else. It is written for a refusal as well as a response. <code>/serve-stats</code> reports <code>freshFirst: { count, last }</code>, and a <code>last</code> with a null <code>completedAt</code> is an abort whose repeat never finished. The table is created by the first abort and by nothing else, a request that does not abort writes nothing, and an abort writes two rows. <code>/serve-stats</code> also reports <code>incarnation</code>: the isolate&#39;s id and the time it first served (a new isolate, after an abort or a memory reset, changes both), the object instance&#39;s id (changes when the object restarts, even in the same isolate) and the interpreter&#39;s id and boot time (changes at every interpreter creation), so a run can tell a fresh isolate from a fresh instance. The isolate&#39;s start time is the first use of its id, not the platform&#39;s own start.</p>
+<p>The route is matched on method and path, with the query dropped, percent-escapes decoded, repeated and trailing slashes removed, and a leading language prefix (<code>/en</code>, <code>/pt-br</code>) tolerated for the request, so a multilingual site&#39;s flush is matched under any of its prefixes. The front worker hands the page request to the object as <code>/__serve?path=&lt;path and query as sent&gt;</code>, so a flush posted to <code>/admin/config/development/performance</code> arrives as exactly that path.</p>
+<h2 id="refusal-tiers">Refusal Tiers</h2>
+<p>A refusal moves a request up a short ladder instead of ending it half done.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>tier</th>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>0</td>
+<td><code>GROWTH_ROLLBACK</code></td>
+<td>on</td>
+<td>each governed run is one <code>transactionSync</code>; a refused grow rolls its writes back. <code>0</code> returns to partial writes</td>
+</tr>
+<tr>
+<td>1</td>
+<td><code>STEPPED_OPS</code>, <code>STEP_BUDGET_MS</code>, <code>STEP_MODULE_COST_MS</code>, <code>STEP_FLOOR_MS</code></td>
+<td>planner</td>
+<td>a module enable too big for one invocation runs one module per slice, each with a checkpoint that commits with it. A call that cannot finish within the budget (20000 ms of PHP time) or that leaves the interpreter oversized answers 202 and a poll URL, which is the same route</td>
+</tr>
+</tbody></table></div>
+<p>Tier 0 undoes a slice, never an earlier one that returned. A request with no park point is one slice, so it rolls back whole, and the 503 says <code>Nothing it did was saved</code> with <code>x-cfw-rolled-back: all</code>. A parked request (Redis, outbound HTTP, an external database) commits each slice at its park; a refusal in a later slice answers <code>x-cfw-rolled-back: slice</code> and says the earlier steps were saved. A trap or a fatal still commits what the run wrote. Effects that leave the object and are not rows, which today means the settings write to KV, wait for the slice to commit. Owner routes, provisioning and alarms are not wrapped.</p>
+<p>Tier 1 is on by default with a planner. <code>STEPPED_OPS</code> unset or <code>1</code> steps a module enable only when the modules it has to install, times <code>STEP_MODULE_COST_MS</code>, exceed <code>STEP_BUDGET_MS</code>. <code>always</code> steps every enable and <code>0</code> turns stepping off. <code>STEP_BUDGET_MS</code> is the PHP time one invocation may spend on steps before it answers 202 (default 20000). <code>STEP_MODULE_COST_MS</code> is the predicted PHP time of one module (default 12000, the middle of the deployed CPU of one-module invocations on a module site, boot included, so it overstates a module and errs toward stepping). With the defaults one module runs as a single call and two or more are stepped. Inside a stepped call the platform clock does not advance, so the only estimate of a step is its host calls times 0.13 ms, and it does not separate sites: two modules with the same call count ran 3.5 s and 11 s of CPU, and a module install of 72,575 calls (an estimate of 9.4 s) ran 35.9 s. <code>STEP_FLOOR_MS</code> (default 20000) is the least a step is charged against the budget, so by default an invocation runs one step. Two steps in one call ran 23.9 s of CPU and 30.3 s of wall time on a deployed worker, against a kill line between 30.3 and 32.4 s. A single module whose own install runs past that line is not divided by stepping. A client of <code>/enable</code> repeats the request while the reply says <code>done: false</code>. The enable route is an owner phase, so its steps run without the serving cap (a kernel boot on a large module site already holds 95.8 MiB of the 96 MiB cap); each step still commits in one transaction with its cursor, so an interrupted step repeats whole and a finished one never repeats. A step that fails is rolled back and the job stays at that step.</p>
+<h2 id="repeating-a-refusal">Repeating a Refusal</h2>
+<p>A refusal drops the interpreter, so a repeat boots a fresh one with the most room it will ever have (a render leaves 16 to 48 MiB of headroom right after a boot against 36 steady). The front worker already repeats a refused GET once. It now repeats a refused request of any method once, on one path and with the same <code>x-cfw-retried: growth</code> header, when the object proves the first try left nothing behind. It is on by default; <code>GROWTH_RETRY=0</code> returns to repeating safe methods only.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GROWTH_RETRY</code></td>
+<td>on</td>
+<td><code>0</code> stops the repeat of a request that is not a GET or HEAD</td>
+</tr>
+<tr>
+<td><code>GROWTH_RETRY_ALLOWANCE_BYTES</code></td>
+<td>8388608</td>
+<td>what the repeat may grow past the computed cap (8 MiB)</td>
+</tr>
+<tr>
+<td><code>GROWTH_RETRY_CEILING_BYTES</code></td>
+<td>109051904</td>
+<td>the cap the repeat never passes (104 MiB)</td>
+</tr>
+</tbody></table></div>
+<p>A POST or other unsafe request is repeated only when all of these hold: the answer carries <code>x-cfw-growth-refused: 1</code>, <code>x-cfw-rolled-back: all</code> (the refused run&#39;s transaction undid its writes and no earlier step of the request committed), <code>x-cfw-effects: none</code>, the request is not one of the GET routes that run cron, and the body the hop already holds as one buffer is at most 1 MiB. A larger body is not repeated, and a body is never read twice. The repeat carries a new attempt id, because the first one was marked before the run.</p>
+<p><code>x-cfw-effects</code> comes from the object&#39;s own ledger of PHP-to-host calls since the request&#39;s interpreter booted. <code>some</code> when any of these ran: an outbound HTTP call, an outbound socket (Redis, an external database, a mail relay), mail, a file store write, delete or rename, the identity claims, the runtime settings; or when a parked socket is open. <code>none</code> only when none ran. <code>unknown</code> when the ledger cannot tell: no tally, or the interpreter was booted again during the request, which resets the counts. Not counted, because they stay in the object&#39;s SQLite and roll back with the run: SQL, the queued-fetch insert, the cache read, logging and file reads. Only <code>none</code> repeats; <code>some</code> and <code>unknown</code> answer the 503.</p>
+<p>The repeat runs under the fresh-attempt allowance: the cap is the computed cap plus the allowance, never above the ceiling and never below the computed cap. Only a request carrying the header gets it, and the hop removes that header from every inbound request, so only the front worker can set it. The ceiling is the 108 MiB cliff the memory notes record, less the 4 MiB margin the cap already carries. Stock Drupal does not reach 96 MiB, so the allowance engages only on heavy routes. A second refusal on the repeat answers the 503 as before, and the refusal log keeps both tries: the <code>attempt</code> column reads 1 and 2.</p>
+<p>The evidence is one Thunder site, deployed. With the cap at 96 MiB the fresh isolate&#39;s flush was refused at 95.81 to 96.06 MiB. With the cap at 104 MiB the flush completed on a fresh isolate (90.6 MiB linear), and a config export was still refused at 108.9 to 109.2 MiB against the 104 cap, rolled back, repeated and passed, with no platform kill at 128 MB total. Running a registry-off arm with the repeat on is a test of how the two interact, not a way to make a run pass.</p>
 <h2 id="replica-mode">Replica Mode</h2>
 <p>The replica variables are on <a href="replicas.html">Replica Settings</a>. This section covers the read-only interlock and the calls between a primary and its replicas.</p>
 <p><strong><code>REPLICA_READ_ONLY</code> is a safety interlock.</strong> Setting it wraps every installed <code>cfw*</code> capability so the object cannot commit an authoritative write, and refuses anything unrecognised. The mode is reported under <code>replica</code> in <code>/serve-stats</code>.</p>
@@ -686,23 +1112,13 @@ that does not parse is ignored when read. A window that sets the clock to a zone
 </tr>
 <tr>
 <td><code>COLD_PACK</code></td>
-<td>on</td>
-<td>keep the Drupal pack in the object&#39;s own storage, not the isolate; <code>0</code> disables</td>
+<td>on; off for WordPress on free</td>
+<td>keep the pack in the object&#39;s own storage, not the isolate; <code>0</code> disables</td>
 </tr>
 <tr>
 <td><code>COLD_PACK_CACHE_CHUNKS</code></td>
 <td>8, at most 64</td>
 <td>64 KiB chunks of that pack held in memory</td>
-</tr>
-<tr>
-<td><code>REFRESH_INSTANCE</code></td>
-<td>off</td>
-<td><code>1</code> restarts PHP inside a dropped interpreter instead of building a new one</td>
-</tr>
-<tr>
-<td><code>REUSE_MOUNT</code></td>
-<td>off</td>
-<td><code>1</code> also keeps the restarted interpreter&#39;s mount when nothing it was built from changed</td>
 </tr>
 <tr>
 <td><code>SITE_DB_PREFIX</code></td>
@@ -756,7 +1172,71 @@ that does not parse is ignored when read. A window that sets the clock to a zone
 </tr>
 </tbody></table></div>
 <p><code>off</code> is the default. <code>file</code> writes its cache into the in-memory filesystem and never reads it back, so opcache reports itself disabled on that arm. <code>shm</code> accelerates scripts but places its arena in PHP&#39;s linear memory; in one measurement that took an object to 191.25 MiB, past the 128 MiB isolate limit. <code>off</code> renders no slower than <code>file</code> and leaves more memory free.</p>
-<p><code>pack</code> needs <code>bun scripts/bake-opcache.ts</code> first and mounts nothing without it. It loads the baked cache as a second layer and cuts a cold render&#39;s object CPU by roughly 500-900 ms (deployed, n=8 per arm, with the levers swapped between deploys as a control). It holds 8.58 MB more of the isolate, and the visitor&#39;s wall time did not follow the CPU across the swap. Re-bake after any driver or composer change: scripts are never revalidated against their source, so the mount refuses a layer baked from other sources.</p>
+<p><code>pack</code> needs <code>bun scripts/bake/opcache.ts</code> first and mounts nothing without it. It loads the baked cache as a second layer and cuts a cold render&#39;s object CPU by roughly 500-900 ms (deployed, n=8 per arm, with the levers swapped between deploys as a control). It holds 8.58 MB more of the isolate, and the visitor&#39;s wall time did not follow the CPU across the swap. Re-bake after any driver or composer change: scripts are never revalidated against their source, so the mount refuses a layer baked from other sources.</p>
+<h3 id="virtual_clock"><code>VIRTUAL_CLOCK</code></h3>
+<div class="table"><table>
+<thead>
+<tr>
+<th>value</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0</code>, <code>off</code></td>
+<td>PHP reads the platform clock</td>
+</tr>
+<tr>
+<td>unset, <code>1</code></td>
+<td>default; PHP&#39;s clock advances with work inside a run</td>
+</tr>
+<tr>
+<td><code>frozen</code></td>
+<td>a measurement arm: PHP&#39;s clock holds still for a run, which reproduces the platform locally</td>
+</tr>
+<tr>
+<td><code>simulated</code></td>
+<td>a measurement arm: <code>1</code> over a platform clock that holds still, so a local run is repeatable</td>
+</tr>
+</tbody></table></div>
+<p><code>VIRTUAL_CLOCK_KAPPA_MS</code> sets how many milliseconds of PHP time one call across the host boundary costs. The default is 0.13.</p>
+<p>A deployed worker advances <code>Date.now()</code> and <code>performance.now()</code> only when I/O completes, so inside one synchronous <code>php._run()</code> PHP&#39;s <code>time()</code>, <code>microtime()</code>, <code>hrtime()</code> and <code>gettimeofday()</code> do not move. Every loop that waits for a deadline then runs to the end of its work. Core&#39;s queue loop in <code>Cron::processQueue()</code> ends when <code>time()</code> passes its 15 second lease, so a queue drains whatever its size. Batch API ends a progressive request when <code>Timer::read()</code> passes 1,000 ms, so only the operation cap in <code>cfw_batch_yield()</code> ends one. <code>uniqid()</code> polls <code>gettimeofday()</code> for a new microsecond and spun for 302,500 ms on a deployed worker; a stand-in replaces it and stays.</p>
+<p>With the flag on, the clock returns <code>max(platform, base + calls * kappa, last + 1 microsecond)</code> capped at the platform clock plus 60,000 ms. <code>calls</code> counts the glue&#39;s host-call imports (SQL bridge, file system calls, reads and writes), <code>base</code> is the platform clock when the run started, and each <code>_run()</code> starts again from the platform clock. A parked run, which is several <code>_run()</code> calls, therefore restarts at each slice. The worker&#39;s own TypeScript reads <code>Date.now()</code> and <code>x-worker-ms</code> as before; only PHP&#39;s view changes.</p>
+<p>Measured on a local workerd, with the platform clock held still:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>probe</th>
+<th>clock held still</th>
+<th><code>VIRTUAL_CLOCK=simulated</code></th>
+<th><code>VIRTUAL_CLOCK</code> off, local clock</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Cron::processQueue()</code> over 2,400 items</td>
+<td>2,400 processed</td>
+<td>275 to 284 processed</td>
+<td>2,400 processed in 2.5 s or more</td>
+</tr>
+<tr>
+<td><code>_batch_process()</code> over 200 operations</td>
+<td>20 operations</td>
+<td>4 operations in 1.31 s</td>
+<td>20 operations</td>
+</tr>
+<tr>
+<td>poll for a new microsecond, bound of 1,000 reads</td>
+<td>1,000 reads</td>
+<td>1 read</td>
+<td>530 to 1,000 reads</td>
+</tr>
+</tbody></table></div>
+<p>The queue figures are n=3 for every arm and the batch figure for the virtual arm is n=2, each item costing 400 file system calls. The default of 0.13 is the median of nine warm Drupal renders (range 0.085 to 0.164 ms per call, a first render 0.107), taken as local elapsed time over counted calls. It was not calibrated on a deployed worker.</p>
+<p>Two limits follow from counting calls. Work that makes no host calls does not advance the clock, so a worker that burns CPU in pure PHP between calls is under-counted and the old behaviour returns for it. And the figures PHP reports from this clock, such as <code>renderMs</code> and the <code>x-cfw-render-ms</code> header, are modelled and never a CPU measurement; an absolute CPU figure still comes from <code>cpuTime</code>.</p>
+<p>A write made while the clock runs ahead carries the later time. A row cached for an hour, a state stamp or a queue lease stamped in a long run reads up to the run&#39;s overshoot, never more than 60 seconds, later than the platform&#39;s time. Core&#39;s database cache and <code>CfwCacheBackend</code> judge expiry against the request time, so they are unaffected inside a run; <code>CfwMemoryBackend</code> judges it against the clock, and an entry with a 2 second life set before four seconds of work is gone after it, as it would be on a platform whose clock moved. <code>CfwLockBackend</code> never reads the clock.</p>
+<h3 id="anachron_return_types"><code>ANACHRON_RETURN_TYPES</code></h3>
+<p>Module code written before core typed a method fails to load on a current core: a class that extends <code>ItemList</code> or <code>Map</code> and declares <code>offsetExists($offset)</code>, <code>getIterator()</code> or <code>count()</code> with no return type is a fatal (&quot;Declaration must be compatible&quot;). When a module&#39;s files are stored, through <code>/install</code>, <code>/install-lock</code>, <code>/modify</code> or <code>/git</code>, the worker adds the return type core declares to each such method in a module, theme or profile file. It also narrows a declared type that is wider than core&#39;s, such as a <code>normalize()</code> that declares <code>ArrayObject|array|string|int|float|bool|null</code> where core declares <code>array</code>, but only when every <code>return</code> in the method is provably core&#39;s type from its tokens (an array literal, an <code>array_*</code> call, an <code>(array)</code> cast, <code>parent::normalize()</code>, or a variable assigned only from those). It changes no line count and leaves a method alone when it cannot show the type is right: a bare <code>return</code>, a literal of another type, a body that never returns, a different parameter count, a non-public method, or a parent class it cannot read. Each of those is named in the receipt.</p>
+<p>The rewrite is on unless the variable is <code>off</code>, which stores the files as delivered. Files under <code>vendor/</code> and <code>libraries/</code> are never rewritten. The integrity record of a rewritten file holds the digest of the stored bytes, since those are the bytes that run. The archive digest a registry publishes is checked before anything is unpacked, so it still covers the original archive.</p>
+<p>The <code>/install</code> receipt, a <code>/modify</code> commit and a <code>/git</code> pull carry <code>returnTypes</code>: <code>files</code> changed, <code>methods</code> typed, <code>refused</code> as a count and <code>refusals</code> listing the first 25 with path, class, method, line and reason. A plan compares the stored rows with the files as they will be stored, so a second identical <code>/modify</code> commit or <code>/git</code> pull reads every file as unchanged and writes no row.</p>
 <h3 id="argon2"><code>ARGON2</code></h3>
 <p><code>1</code> hashes passwords with argon2id at m=19456 KiB, t=2, p=1, computed on the host. Default off.</p>
 <p>Turning it on is a migration: every bcrypt hash on the site reports as needing a rehash, and each account is upgraded at its owner&#39;s next login. Existing hashes keep working throughout; core&#39;s password service stays in place as the inner service and still owns bcrypt and legacy <code>$S$</code> hashes. Hashes are written in PHP&#39;s own <code>$argon2id$v=19$m=..,t=..,p=..$salt$tag</code> form, so a site that leaves this platform can verify them on any PHP with ext-argon2.</p>
@@ -816,8 +1296,10 @@ that does not parse is ignored when read. A window that sets the clock to a zone
 <p>What replaces this as the number to watch is the cold-encounter share, not the cold-boot duration. <code>src/ops/cold-encounter.ts</code> classifies every request the object handles and <code>/serve-stats</code> reports <code>coldOfPhp</code>, <code>coldOfObject</code> and <code>coldOfTraffic</code>. 1,264 ms is the floor for an object <code>thermal.ts</code> decided not to keep warm, and that policy already ships.</p>
 <p>Read <code>coldOfTraffic</code>, not <code>coldOfObject</code>. A plan hit, an isolate memo hit, a <code>caches.default</code> hit and a KV page read all return from the front worker, so the object&#39;s own denominator is the leftovers and a share taken against it reads several times high. The front worker reports what it absorbed on the next request that hops anyway, under <code>x-cfw-absorbed</code>, and <code>coldOfTraffic</code> is null until it has, because a worker too old to report and a site with nothing absorbed are otherwise the same reading.</p>
 <h3 id="the-pack-in-the-objects-storage">The pack in the object&#39;s storage</h3>
-<p><code>COLD_PACK</code> is on unless <code>0</code>. On the first mount an object copies the 13,012,361-byte Drupal pack from its assets into its own storage as 199 rows of 64 KiB (<code>cfw_pack_chunk</code>, one <code>cfw_pack_root</code> row), refusing a copy that is not the pinned digest, and the lazy mount then reads files from those rows and keeps <code>COLD_PACK_CACHE_CHUNKS</code> of them (8; at most 64) in memory. The pack stops being resident in the isolate. Headroom measured on Thunder&#39;s flush path is about 14 to 21 MiB (n=3 on Paid).</p>
+<p><code>COLD_PACK</code> is on unless <code>0</code>, except for WordPress on the free plan, where it is off until you set it to a value other than <code>0</code>. An explicit value always wins. The exception follows from the row meters: every WordPress request mounts a fresh interpreter, so a staged pack adds 147 to 281 row reads to each PHP request (189 rows become 354 on a search page, n=3 objects, no spread), and the free plan&#39;s 5,000,000 daily rows read then allow 14,124 renders instead of 26,455, a loss of 46.6%. The 6.6 MiB it frees does not bind for WordPress, whose idle interpreter holds about 73 MiB. Drupal keeps the pack in storage on every plan, and WordPress does on the paid plan. When it is on, the first mount copies the 13,012,361-byte Drupal pack, or the 7,417,841-byte WordPress pack, from its assets into its own storage as rows of 64 KiB (<code>cfw_pack_chunk</code>, one <code>cfw_pack_root</code> row), refusing a copy that is not the pinned digest, and the lazy mount then reads files from those rows and keeps <code>COLD_PACK_CACHE_CHUNKS</code> of them (8; at most 64) in memory. <code>bun run gen:core-pack</code> pins both digests, so it runs after <code>assets:pack</code> and after <code>assets:wordpress</code>; a pack that does not match its pin is mounted from assets and logged on every boot. The pack stops being resident in the isolate. Headroom measured on Thunder&#39;s flush path is about 14 to 21 MiB (n=3 on Paid).</p>
+<p>When the env sets no <code>LAZY_FS_BUDGET_BYTES</code>, <code>COLD_PACK</code> mounts with 4 MiB instead of the cartridge&#39;s 20 MiB, the value both shipped configs already carry. An explicit value wins.</p>
 <p>Rows are keyed by the pack digest. A worker with a new pack stages its own rows on the next mount and then deletes the earlier pack&#39;s rows, so an upgrade leaves one copy. A chunk that fails its hash on read drops the root row, and the next mount stages again. A pack that cannot be staged mounts from assets as before.</p>
+<p>Measured locally on stock Drupal with <code>tests/integration/pack-residency.spec.ts</code> (three objects per arm, no spread in any cell): the pack accounts for 12.41 MiB of what the mount holds with the flag off and for at most the cache (0.5 MiB at 8 chunks) with it on. Staging read 834 rows on the first boot and wrote 406 more than the flag-off arm. A cold page after an interpreter drop reads 218 more rows on the front page, 255 on <code>/admin/content</code> and 509 after a cache flush, which is 7.5% to 11.7% of the page&#39;s rows, and a warm page reads none. Caching 32 chunks cuts the front page&#39;s 218 to 155 and 64 chunks cuts it to 93, at 2 and 4 MiB resident, so 8 stays the default. The resident file budget costs almost nothing in rows: at 20, 12 and 8 MiB the arms are identical because no route here holds more than 6.34 MiB; at 4 MiB only the flush path evicts (650 files, one re-read), at 2 MiB the flush path re-reads 74 files and 26 more rows on a warm repeat, and at 1 MiB 129 files and the same 26 rows. Re-inflation costs CPU, which a local run cannot price, so the default stays at 4 MiB until a deployed run reads it. Nothing keeps a copy of the pack outside the rows: after the staged arms the pack cache had fetched the pack index once and the pack itself never.</p>
 <p>The mount only reads the source when the cartridge supports it. <code>@drupflare/cartridge</code> 0.3.1 ignores it, so a deploy built against that version stages nothing and behaves as <code>COLD_PACK=0</code> until the cartridge release that reads <code>SQL_PACK_SOURCE</code> is the one the worker depends on.</p>
 <div class="table"><table>
 <thead>
@@ -873,12 +1355,18 @@ that does not parse is ignored when read. A window that sets the clock to a zone
 </tbody></table></div>
 <p>A replica lane stages its own copy, so 32 lanes hold 32 copies (about $0.08 per month on Paid). The staged tables are local to each object and are never copied by a replica restore. A cold page costs no measurable time: 256 ms against 230 ms with the pack resident on one paired pass, inside the run-to-run spread. The boot image is unaffected, since the image restores a heap and the mount underneath it reads bytes either way.</p>
 <p>An earlier build kept the pack in storage and was removed because it did not move Thunder&#39;s memory resets (three paired deploys per arm, 29 reset retries against 9, spread 0 to 19). This default is for the memory headroom above; the reset rate with it on is not measured on a deployed site.</p>
-<h3 id="restarting-a-dropped-interpreter">Restarting a dropped interpreter</h3>
-<p><code>REFRESH_INSTANCE</code> is off by default. With <code>1</code>, a dropped interpreter is kept and the next boot restarts PHP inside it (<code>pib_refresh</code>) instead of building a second one. A seven-arm Thunder run read 0 of 18 reset pages on flush and cron with it and 17 of 18 without, and a second-object run read 2 of 24 with it against 3 of 24 without, so the effect did not replicate.</p>
-<p>Two interactions are handled: an interpreter that grew since its boot is not kept, and a boot that will restore the shared boot image does not restart in place, because the image needs a fresh heap. With both handled and the flag on, 5 specs still fail on the shipping binary: <code>enable-memory</code> &quot;costs at most ONE grow event&quot; (98.7 MiB against 85.8), and four in <code>interpreter-recycle</code> (a cold replica&#39;s first authenticated request peaks at 224.9 MiB and a mixed chain at 230.0 MiB against the 134.2 MiB ceiling; the memory-reuse case and the dead-after-exit case read different values). A restarted heap carries the allocations the shutdown did not return, so work after a restart peaks higher than work in a new instance. Until that is bounded the flag stays opt-in.</p>
+<h3 id="the-headroom-ladder">The Headroom Ladder</h3>
+<p><code>LADDER_PROBE=1</code> turns on <code>/ladder</code>, an owner route for measuring how much memory an isolate holds before the platform replaces it. Each POST allocates and touches one 4 MiB buffer, keeps it for the isolate&#39;s life, and answers the isolate id, the total held (<code>totalMiB</code>), the interpreter&#39;s linear memory and the spare memory a dropped interpreter left behind. Without the variable the route answers 404, and any method but POST answers 405.</p>
+<p>The route takes the site&#39;s owner token like the other owner routes and has no diagnostics fallback. The headroom is the total held by the last rung that still reported the first isolate id. <code>scripts/measure/ladder-arms.ts</code> drives it: it recycles the object, runs one of four arms (nothing, a booted site, an admin page, a cache flush), climbs until the id changes, and throws if 80 rungs pass without a replacement. Leave the variable off on a site that serves visitors, because a ladder run ends by getting the isolate replaced.</p>
+<h3 id="releasing-a-dropped-interpreter">Releasing a dropped interpreter</h3>
+<p>A dropped interpreter keeps its filesystem graph alive: the <code>Module</code>, the <code>FS</code> tree and the pack bytes of every lazily loaded file. On a deployed probe worker, eight collections nudged by 16 to 64 MiB of external buffers freed the <code>php</code> wrapper and nothing else of that graph. With the release on, the graph root and the largest file buffers were collected within one 12 to 28 MiB nudge in all 12 gated runs and 2 calibration calls. The <code>Module</code>, <code>FS</code> and name table shells stay, and what holds them is unknown.</p>
+<p><code>RELEASE_HOST_GRAPH</code> is on unless it is <code>0</code>. The release unlinks every node under <code>/drupal</code> from the name table, detaches the bytes of clean lazy files and empties the stream slots. It runs only for an interpreter nothing can run in again: not while the instance still holds parked outbound sockets, and not for an interpreter another instance of the object adopted. A build whose <code>FS</code> lacks the members it walks is left to the collector. Set <code>0</code> to turn it off without a code change.</p>
+<p>A restart of PHP inside a dropped interpreter, and a mount kept across such a restart, were tried and removed. The restart read 0 of 18 reset pages on flush and cron against 17 of 18 without it on one object, then 2 of 24 against 3 of 24 on a second, so the benefit did not replicate. It also kept the heap: an install then a boot peaked at 231.5 MiB restarted and 98.1 MiB in a new instance.</p>
 <p><strong>Changing <code>LAZY_MOUNT</code>, <code>MIGRATE_ENGINE</code> or <code>SITE_DB_PREFIX</code> in a deploying config means changing <code>assets/.assetsignore</code> too.</strong> The shipping asset set is derived from the canonical values of those three; <code>tests/unit/runtime/assets-ignore.spec.ts</code> fails when the two disagree.</p>
-			</div>
-		</main>
+				</div>
+				<nav class="docs-pager" aria-label="Previous and next pages"><a rel="prev" class="docs-pager-prev" href="site-identity.html"><span class="docs-pager-label">Previous</span><strong>Site Identity and Origin</strong><span>The variable that selects the CMS, and the variables that name a site and fix its origin.</span></a><a rel="next" class="docs-pager-next" href="replicas.html"><span class="docs-pager-label">Next</span><strong>Replica Settings</strong><span>Settings for replica lanes: count, autoscaling, write forwarding and lag.</span></a></nav>
+			</main>
+		</div>
 		<footer>
 			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
 		</footer>

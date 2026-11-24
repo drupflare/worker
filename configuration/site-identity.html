@@ -9,11 +9,38 @@
 		<title>Site Identity and Origin Settings - Drupflare</title>
 		<meta
 			name="description"
-			content="The variable that selects the CMS, and the variables that name a site and fix the origin its sessions and links use."
+			content="The variable that selects the CMS, and the variables that name a site and fix its origin."
 		/>
 		<link
 			rel="icon"
 			href="../drupflare.ico"
+			sizes="any"
+		/>
+		<link
+			rel="icon"
+			type="image/png"
+			sizes="128x128"
+			href="../drupflare_128.png"
+		/>
+		<link
+			rel="apple-touch-icon"
+			href="../drupflare_128.png"
+		/>
+		<link
+			rel="canonical"
+			href="https://docs.drupflare.com/configuration/site-identity.html"
+		/>
+		<meta
+			property="og:type"
+			content="website"
+		/>
+		<meta
+			property="og:site_name"
+			content="Drupflare"
+		/>
+		<meta
+			property="og:url"
+			content="https://docs.drupflare.com/configuration/site-identity.html"
 		/>
 		<meta
 			property="og:title"
@@ -21,7 +48,7 @@
 		/>
 		<meta
 			property="og:description"
-			content="The variable that selects the CMS, and the variables that name a site and fix the origin its sessions and links use."
+			content="The variable that selects the CMS, and the variables that name a site and fix its origin."
 		/>
 		<meta
 			property="og:image"
@@ -71,24 +98,56 @@
 					Roboto,
 					sans-serif;
 			}
-			main,
-			nav .bar,
+			.layout,
+			.site .bar,
 			footer {
-				max-width: 52rem;
+				max-width: 78rem;
 				margin: 0 auto;
 			}
-			nav {
+			main {
+				min-width: 0;
+				max-width: 52rem;
+			}
+			main:focus {
+				outline: none;
+			}
+			.docs-skip {
+				position: absolute;
+				left: 1rem;
+				top: -4rem;
+				z-index: 30;
+				padding: 0.5rem 1rem;
+				border-radius: 0.5rem;
+				background: var(--card);
+				color: var(--accent);
+			}
+			.docs-skip:focus {
+				top: 0.5rem;
+			}
+			.docs-sr {
+				position: absolute;
+				width: 1px;
+				height: 1px;
+				overflow: hidden;
+				clip-path: inset(50%);
+				white-space: nowrap;
+			}
+			:focus-visible {
+				outline: 2px solid var(--accent);
+				outline-offset: 2px;
+			}
+			.site {
 				margin: 0 -1.5rem 3rem;
 				padding: 0.75rem 1.5rem;
 				border-bottom: 1px solid var(--line);
 			}
-			nav .bar {
+			.site .bar {
 				display: flex;
 				flex-wrap: wrap;
 				align-items: center;
 				gap: 0.25rem 1.25rem;
 			}
-			nav .brand {
+			.site .brand {
 				display: flex;
 				align-items: center;
 				gap: 0.5rem;
@@ -96,45 +155,45 @@
 				font-weight: 700;
 				letter-spacing: -0.01em;
 			}
-			nav .brand img {
+			.site .brand img {
 				width: 1.75rem;
 				height: 1.75rem;
 			}
-			nav a {
+			.site a {
 				color: var(--muted);
 				font-size: 0.925rem;
 				text-decoration: none;
 			}
-			nav a:hover,
-			nav a[aria-current] {
+			.site a:hover,
+			.site a[aria-current] {
 				color: var(--accent);
 			}
-			nav a.brand {
+			.site a.brand {
 				color: var(--fg);
 				font-size: 1.05rem;
 			}
-			nav .menu {
+			.site .menu {
 				position: relative;
 			}
-			nav .menu summary {
+			.site .menu summary {
 				color: var(--muted);
 				font-size: 0.925rem;
 				list-style: none;
 				cursor: pointer;
 			}
-			nav .menu summary::-webkit-details-marker {
+			.site .menu summary::-webkit-details-marker {
 				display: none;
 			}
-			nav .menu summary::after {
+			.site .menu summary::after {
 				content: ' \25BE';
 				font-size: 0.75em;
 			}
-			nav .menu summary:hover,
-			nav .menu[open] summary,
-			nav .menu[data-current] summary {
+			.site .menu summary:hover,
+			.site .menu[open] summary,
+			.site .menu[data-current] summary {
 				color: var(--accent);
 			}
-			nav .menu .panel {
+			.site .menu .panel {
 				position: absolute;
 				z-index: 10;
 				top: 1.9rem;
@@ -148,12 +207,206 @@
 				background: var(--card);
 				box-shadow: 0 0.75rem 2rem var(--glow);
 			}
-			nav .menu .panel a {
+			.site .menu .panel a {
 				padding: 0.4rem 0.75rem;
 				border-radius: 0.4rem;
 			}
-			nav .menu .panel a:hover {
+			.site .menu .panel a:hover {
 				background: var(--code-bg);
+			}
+			.docs-menu,
+			.docs-close {
+				padding: 0.3rem 0.8rem;
+				border: 1px solid var(--line);
+				border-radius: 0.5rem;
+				background: var(--card);
+				color: var(--fg);
+				font: inherit;
+				font-size: 0.9rem;
+				cursor: pointer;
+			}
+			.docs-sidebar {
+				inset: 0 auto 0 0;
+				width: min(22rem, 88vw);
+				height: 100%;
+				max-height: none;
+				margin: 0;
+				padding: 1rem 1.25rem 2rem;
+				border: 0;
+				border-right: 1px solid var(--line);
+				overflow-y: auto;
+				background: var(--card);
+				color: var(--fg);
+			}
+			.docs-sidebar::backdrop {
+				background: rgb(0 0 0 / 0.45);
+			}
+			.docs-sidebar-head {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				margin-bottom: 1rem;
+				font-weight: 700;
+			}
+			.docs-nav details {
+				margin: 0;
+			}
+			.docs-nav summary {
+				padding: 0.35rem 0;
+				list-style: none;
+				cursor: pointer;
+			}
+			.docs-nav summary::-webkit-details-marker {
+				display: none;
+			}
+			.docs-nav summary::before {
+				content: '\25B8';
+				display: inline-block;
+				width: 1rem;
+				color: var(--muted);
+				font-size: 0.8rem;
+			}
+			.docs-nav details[open] > summary::before {
+				content: '\25BE';
+			}
+			.docs-group > summary {
+				margin-top: 0.5rem;
+				color: var(--muted);
+				font-size: 0.8rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			.docs-section {
+				margin-left: 0.75rem;
+			}
+			.docs-section > summary {
+				font-size: 0.9rem;
+				font-weight: 600;
+			}
+			.docs-nav ul {
+				margin: 0 0 0.5rem;
+				padding: 0 0 0 1rem;
+				list-style: none;
+			}
+			.docs-nav li {
+				margin: 0;
+			}
+			.docs-nav li a {
+				display: block;
+				padding: 0.25rem 0.6rem;
+				border-left: 2px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+				line-height: 1.4;
+				text-decoration: none;
+			}
+			.docs-nav li a:hover {
+				color: var(--accent);
+			}
+			.docs-nav li a[aria-current] {
+				border-left-color: var(--accent-strong);
+				color: var(--accent);
+				font-weight: 600;
+			}
+			.docs-nav .docs-ext::after {
+				content: ' \2197';
+				font-size: 0.8em;
+			}
+			.docs-desc {
+				display: block;
+				padding: 0 0.6rem 0.4rem;
+				border-left: 2px solid var(--line);
+				color: var(--muted);
+				font-size: 0.78rem;
+				line-height: 1.4;
+			}
+			@media (min-width: 64rem) {
+				.layout {
+					display: grid;
+					grid-template-columns: 17rem minmax(0, 1fr);
+					gap: 3rem;
+				}
+				.docs-menu,
+				.docs-close {
+					display: none;
+				}
+				.docs-sidebar {
+					position: sticky;
+					top: 1.5rem;
+					display: block;
+					inset: auto;
+					align-self: start;
+					width: auto;
+					height: auto;
+					max-height: calc(100vh - 3rem);
+					padding: 0 0.5rem 1rem 0;
+					border: 0;
+					background: transparent;
+				}
+				.docs-sidebar-head {
+					display: none;
+				}
+			}
+			@media (prefers-reduced-motion: no-preference) and (max-width: 63.99rem) {
+				.docs-sidebar {
+					transform: translateX(-100%);
+					transition:
+						transform 0.2s ease,
+						overlay 0.2s allow-discrete,
+						display 0.2s allow-discrete;
+				}
+				.docs-sidebar:popover-open {
+					transform: none;
+				}
+				@starting-style {
+					.docs-sidebar:popover-open {
+						transform: translateX(-100%);
+					}
+				}
+			}
+			@media (prefers-reduced-motion: reduce) {
+				* {
+					transition: none !important;
+					animation: none !important;
+				}
+			}
+			.docs-pager {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+				gap: 0.85rem;
+				margin: 3rem 0 0;
+			}
+			.docs-pager a {
+				display: block;
+				padding: 0.85rem 1.1rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+			}
+			.docs-pager a:hover {
+				border-color: var(--accent-strong);
+			}
+			.docs-pager-next {
+				text-align: right;
+			}
+			.docs-pager .docs-pager-label {
+				display: block;
+				color: var(--accent);
+				font-size: 0.78rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			.docs-pager strong {
+				display: block;
+			}
+			.docs-pager a > span:last-child {
+				color: var(--muted);
+				font-size: 0.85rem;
+				line-height: 1.45;
 			}
 			h1 {
 				margin: 0 0 0.5rem;
@@ -209,6 +462,9 @@
 				line-height: 1.5;
 			}
 
+			.readme {
+				overflow-wrap: break-word;
+			}
 			.readme h1 {
 				margin: 0 0 1.25rem;
 			}
@@ -366,8 +622,20 @@
 		</style>
 	</head>
 	<body>
-		<nav>
+		<a
+			class="docs-skip"
+			href="#docs-main"
+			>Skip to content</a
+		>
+		<header class="site">
 			<div class="bar">
+				<button
+					type="button"
+					class="docs-menu"
+					popovertarget="docs-sidebar"
+				>
+					Menu
+				</button>
 				<a
 					class="brand"
 					href="../index.html"
@@ -378,21 +646,31 @@
 					/>
 					Drupflare
 				</a>
-				<details class="menu" data-current><summary>Run</summary><div class="panel"><a href="../getting-started/index.html">Getting Started</a><a href="../operating/index.html">Operating</a><a href="../configuration/index.html" aria-current="page">Configuration</a></div></details>
+				<details class="menu" data-current><summary>Run</summary><div class="panel"><a href="../getting-started/index.html">Getting Started</a><a href="../operating/index.html">Operating</a><a href="index.html">Configuration</a></div></details>
 				<details class="menu"><summary>Understand</summary><div class="panel"><a href="../architecture/index.html">Architecture</a><a href="../security/index.html">Security</a><a href="../impact/index.html">Impact</a><a href="../audiences/index.html">Audiences</a></div></details>
-				<details class="menu"><summary>Reference</summary><div class="panel"><a href="../technical-report.html">Technical Report</a><a href="../api/index.html">API</a><a href="../php/index.html">PHP</a></div></details>
+				<details class="menu"><summary>Reference</summary><div class="panel"><a href="../technical-report.html">Technical Report</a><a href="../api/index.html">API Reference</a><a href="../php/index.html">PHP Reference</a></div></details>
 				<a href="https://github.com/drupflare/worker">GitHub</a>
 			</div>
-		</nav>
-		<main>
-			
-			<div class="readme">
-				<p class="crumbs"><a href="index.html">Configuration</a></p>
+		</header>
+		<div class="layout">
+			<div class="docs-sidebar" id="docs-sidebar" popover>
+<div class="docs-sidebar-head"><span>Documentation</span><button type="button" class="docs-close" popovertarget="docs-sidebar" popovertargetaction="hide">Close</button></div>
+<nav class="docs-nav" aria-label="Documentation"><details class="docs-group"><summary>Getting Started</summary><ul><li><a href="../index.html">Overview</a></li><li><a href="../getting-started/index.html">Getting Started</a></li><li><a href="../getting-started/claim-and-log-in.html">Claiming and Managing a Site</a></li><li><a href="../getting-started/updating.html">Updating a Site</a></li><li><a href="../getting-started/testing.html">Testing</a></li><li><a href="../getting-started/reproduce-panopoly.html">Reproducing Panopoly</a></li><li><a href="../getting-started/reproduce-thunder.html">Reproducing Thunder</a></li></ul><details class="docs-section"><summary>Building From Source</summary><ul><li><a href="../getting-started/building-from-source/index.html">Building From Source</a></li><li><a href="../getting-started/building-from-source/steps.html">The Steps</a></li><li><a href="../getting-started/building-from-source/build-order.html">Build Order and Caching</a></li><li><a href="../getting-started/building-from-source/upgrading-core.html">Upgrading Drupal Core</a></li></ul></details><details class="docs-section"><summary>Repository Layout</summary><ul><li><a href="../getting-started/repository-layout/index.html">Repository Layout</a></li><li><a href="../getting-started/repository-layout/paths.html">Tracked and Generated Paths</a></li><li><a href="../getting-started/repository-layout/automation.html">Scripts and Automation</a></li></ul></details></details><details class="docs-group"><summary>Operating</summary><ul><li><a href="../operating/index.html">Operating</a></li><li><a href="../operating/administration.html">Administration</a></li><li><a href="../operating/recovery.html">Recovery</a></li><li><a href="../operating/git-remotes.html">Git Remotes</a></li><li><a href="../operating/replica-lanes.html">Replica Lanes</a></li></ul><details class="docs-section"><summary>External Databases</summary><ul><li><a href="../operating/external-database/index.html">External Databases and Hyperdrive</a></li><li><a href="../operating/external-database/why-not-default.html">Why the Default Is Not External</a></li></ul></details><details class="docs-section"><summary>PHP Interpreter Updates</summary><ul><li><a href="../operating/php-update-delivery/index.html">PHP Interpreter Update Delivery</a></li><li><a href="../operating/php-update-delivery/verification.html">Verification and Output</a></li><li><a href="../operating/php-update-delivery/rollback.html">Rollback and Staged Rollout</a></li><li><a href="../operating/php-update-delivery/trust-and-cost.html">Trust, Cost and Scope</a></li></ul></details></details><details class="docs-group"><summary>Architecture</summary><ul><li><a href="../architecture/index.html">Architecture</a></li><li><a href="../architecture/database.html">The Site Database</a></li><li><a href="../architecture/measurement-classes.html">Measurement Classes</a></li><li><a href="../architecture/wordpress.html">WordPress</a></li><li><a href="../architecture/compatibility.html">Compatibility</a></li><li><a href="../architecture/modules.html">Modules</a></li><li><a href="../architecture/limitations.html">Limitations</a></li></ul></details><details class="docs-group" open><summary>Configuration</summary><ul><li><a href="index.html">Configuration</a></li><li><a href="site-identity.html" aria-current="page">Site Identity and Origin</a><span class="docs-desc">The variable that selects the CMS, and the variables that name a site and fix its origin.</span></li><li><a href="runtime.html">Runtime Settings</a></li><li><a href="replicas.html">Replica Settings</a></li><li><a href="plan-and-routes.html">Plan and Extensibility Routes</a></li><li><a href="diagnostics.html">Diagnostics</a></li><li><a href="migrated-settings.html">Migrated Project Settings</a></li></ul><details class="docs-section"><summary>Serving and Caching</summary><ul><li><a href="serving/index.html">Serving and Caching Settings</a></li><li><a href="serving/page-cache.html">Page Cache Settings</a></li><li><a href="serving/static-assets.html">Static Asset Settings</a></li><li><a href="serving/files-and-images.html">Files, Images and Prefill</a></li><li><a href="serving/r2-page-origin.html">R2 Page Origin Caching</a></li><li><a href="serving/request-limits.html">Request Limits</a></li></ul></details><details class="docs-section"><summary>Operations</summary><ul><li><a href="operations/index.html">Operations Settings</a></li><li><a href="operations/overrides.html">Runtime Overrides</a></li><li><a href="operations/owner-access.html">Owner Access and Audit</a></li><li><a href="operations/updates.html">Updates and Reconciliation</a></li><li><a href="operations/discovery.html">Discovery Document</a></li><li><a href="operations/wordpress-packages.html">WordPress Packages</a></li></ul></details><details class="docs-section"><summary>Integrations</summary><ul><li><a href="integrations/index.html">Integration Settings</a></li><li><a href="integrations/mail.html">Outbound Mail</a></li><li><a href="integrations/tcp.html">Outbound TCP</a></li><li><a href="integrations/workers-ai.html">Workers AI</a></li><li><a href="integrations/oidc-login.html">OIDC Login</a></li><li><a href="integrations/spool.html">Spool</a></li></ul></details></details><details class="docs-group"><summary>Security</summary><ul><li><a href="../security/index.html">Security</a></li><li><a href="../security/how-much-safer.html">How Much Safer</a></li><li><a href="../security/not-removed.html">What It Does Not Remove</a></li><li><a href="../security/incidents.html">Security Incidents and Planned Work</a></li></ul><details class="docs-section"><summary>Controls</summary><ul><li><a href="../security/controls/index.html">Security Controls</a></li><li><a href="../security/controls/requests.html">Request Controls</a></li><li><a href="../security/controls/credentials.html">Credentials and Persistence</a></li><li><a href="../security/controls/build-and-patching.html">Build and Patching Controls</a></li></ul></details></details><details class="docs-group"><summary>Impact</summary><ul><li><a href="../impact/index.html">Impact</a></li><li><a href="../impact/limits.html">What This Does Not Claim</a></li><li><a href="../impact/carbon.html">Carbon</a></li><li><a href="../impact/water.html">Water</a></li><li><a href="../impact/embodied.html">Embodied Carbon</a></li><li><a href="../impact/reproducing.html">Reproducing the Numbers</a></li><li><a href="../impact/references.html">References</a></li></ul><details class="docs-section"><summary>Energy</summary><ul><li><a href="../impact/energy/index.html">Energy</a></li><li><a href="../impact/energy/per-request.html">Energy Per Request</a></li><li><a href="../impact/energy/views.html">Energy Per View</a></li><li><a href="../impact/energy/inputs.html">Where the Figures Come From</a></li><li><a href="../impact/energy/operating-states.html">Operating States</a></li><li><a href="../impact/energy/production-baseline.html">Production Baseline</a></li><li><a href="../impact/energy/fleet.html">Fleet Energy</a></li></ul></details><details class="docs-section"><summary>Economics</summary><ul><li><a href="../impact/economics/index.html">Economics</a></li><li><a href="../impact/economics/bills.html">The Shape of the Bills</a></li><li><a href="../impact/economics/conventional-hosts.html">Conventional Hosts</a></li><li><a href="../impact/economics/vps-comparison.html">Drupflare vs a Traditional VPS</a></li><li><a href="../impact/economics/free-plan-and-warming.html">The Free Plan and Warming</a></li></ul></details><details class="docs-section"><summary>Free vs Paid</summary><ul><li><a href="../impact/economics/free-vs-paid/index.html">Free vs Paid</a></li><li><a href="../impact/economics/free-vs-paid/off-worker-arms.html">The Off-Worker Arms</a></li></ul></details></details><details class="docs-group"><summary>Audiences</summary><ul><li><a href="../audiences/index.html">Audiences</a></li><li><a href="../audiences/government.html">Federal Sites</a></li></ul></details><details class="docs-group"><summary>Reference</summary><ul><li><a href="../technical-report.html">Technical Report</a></li><li><a href="../api/index.html">API Reference</a><span class="docs-desc">The TypeScript modules under src/, generated by TypeDoc.</span></li><li><a href="../php/index.html">PHP Reference</a><span class="docs-desc">The PHP the interpreter runs, under src/site/php/, generated by phpDocumentor.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/releases" rel="noopener">Releases<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Published versions of the worker, with their notes.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/issues" rel="noopener">Issues<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Open and closed issues for the worker.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/blob/master/SECURITY.md" rel="noopener">Security Policy<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The supported versions, and how to report a vulnerability privately.</span></li><li><a class="docs-ext" href="https://drupflare.com" rel="noopener">Website<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Drupflare project site.</span></li></ul></details><details class="docs-group"><summary>On GitHub</summary><ul><li><a class="docs-ext" href="https://github.com/drupflare/worker" rel="noopener">worker<span class="docs-sr"> (external link)</span></a><span class="docs-desc">This repository: the deployable worker, its build and these docs.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/drupflare" rel="noopener">drupflare<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Cloudflare Workers compatibility layer plugin for the CMS.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/rom" rel="noopener">rom<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The database driver that stores a CMS in Durable Objects SQLite.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/phasm" rel="noopener">phasm<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The PHP WebAssembly interpreter for the workerd runtime.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/anachron" rel="noopener">anachron<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The backwards compatibility layer for older CMS versions.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/stream-http" rel="noopener">stream-http<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The HTTP stream wrapper for PHP.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/spool" rel="noopener">spool<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Client-side page rendering and execution framework.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/drangler" rel="noopener">drangler<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The command line tool for handling and maintaining Drupflare workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/bastion" rel="noopener">bastion<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Self-hostable Drupflare workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/dashboard" rel="noopener">dashboard<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Drupflare control plane.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/workforce" rel="noopener">workforce<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Management and fleet library for Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/burrow" rel="noopener">burrow<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Parallelism and arbitrary codegen on Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/cartridge" rel="noopener">cartridge<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Universal runtime for language interpreters inside a Durable Object.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/durabledb" rel="noopener">durabledb<span class="docs-sr"> (external link)</span></a><span class="docs-desc">SQLite for Durable Objects.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/untarl" rel="noopener">untarl<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Tar extraction library for Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/website" rel="noopener">website<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Source of the static project site.</span></li></ul></details></nav>
+</div>
+			<main
+				id="docs-main"
+				tabindex="-1"
+			>
+				
+				<div class="readme">
+					<p class="crumbs"><a href="index.html">Configuration</a></p>
 <h1 id="site-identity-and-origin-settings">Site Identity and Origin Settings</h1>
 <p>The variable that selects the CMS, and the variables that name a site and fix the origin its sessions and links use.</p>
 <nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#cms">CMS</a></li><li><a href="#site-identity-and-origin">Site Identity and Origin</a></li></ol></nav><h2 id="cms">CMS</h2>
-<p><code>CMS</code> selects which CMS the build packs, and <code>drupal</code> is the only value. It is read at BUILD time by
-<code>bun run assets:driver</code>, from the environment and then from <code>wrangler.jsonc</code>, which sets it. Unlike
+<p><code>CMS</code> selects which CMS the build packs: <code>drupal</code>, which <code>wrangler.jsonc</code> sets, or <code>wordpress</code>, which
+<code>bun run assets:wordpress</code> and <code>bun run dev:wordpress</code> select. <code>joomla</code> is accepted as a name and the
+packer refuses it, because Joomla has no module set. It is read at BUILD time by
+<code>bun run assets:driver</code>, from the environment and then from <code>wrangler.jsonc</code>. Unlike
 every other var it has no default: a missing or unknown value fails the build instead of packing
 Drupal under another name. At runtime it is only reported, as the fleet row&#39;s <code>cms</code>.</p>
 <h2 id="site-identity-and-origin">Site Identity and Origin</h2>
@@ -427,7 +705,7 @@ Drupal under another name. At runtime it is only reported, as the fleet row&#39;
 </tbody></table></div>
 <h3 id="site_id"><code>SITE_ID</code></h3>
 <p>One object per site, and the object&#39;s name is the site identity, so a wrong answer here serves a
-request from a different site&#39;s database. The layers, in order, are implemented in <code>src/ops/site-id.ts</code>: <code>?site=</code> (only when the caller opts
+request from a different site&#39;s database. The layers, in order, are implemented in <code>src/ops/site/id.ts</code>: <code>?site=</code> (only when the caller opts
 in), a <code>site:host:&lt;host&gt;</code> KV mapping, then <code>SITE_ID</code>, then the deployment&#39;s primary site
 (<code>src/ops/deployment-site.ts</code>), then the hostname itself, then the literal <code>site</code>.</p>
 <p>The optional layers sit above the derived one because derivation answers for every real host, so
@@ -449,7 +727,7 @@ a node that has sites on non-default ports, since their ids would change.</p>
 <p>The KV reads in the chain (the host mapping and the deployment document) wait at most 2 seconds. A
 read that does not answer uses the last value this isolate saw, or falls through as a failed read
 does.</p>
-<p>Spec: <code>tests/unit/ops/site-id.spec.ts</code>.</p>
+<p>Spec: <code>tests/unit/ops/site/id.spec.ts</code>.</p>
 <h3 id="site_location_hint"><code>SITE_LOCATION_HINT</code></h3>
 <p>One of <code>wnam enam sam weur eeur apac apac-ne apac-se oc afr me</code>, or unset.</p>
 <p>Unset by default. Placement follows the first request a site answers, which for a deploy-button site
@@ -465,7 +743,7 @@ platform rejects would take the site down for the sake of a preference.</p>
 <code>Location:</code>, the link in a password-reset mail.</p>
 <p>The inbound <code>Host</code> carries no guarantee: an attacker who can set it can move a password-reset link
 onto a host they control. So the origin is a property of the site, resolved in
-<code>src/ops/site-origin.ts</code> in this order:</p>
+<code>src/ops/site/origin.ts</code> in this order:</p>
 <ol>
 <li><code>SITE_ORIGIN</code>, which wins outright.</li>
 <li><strong>The pin</strong>, held in <code>cfw_meta</code> under <code>site_origin</code>. Trust on first use: the first non-local
@@ -486,7 +764,7 @@ pin on every request, so it can change the origin of a site that has already pin
 value is left in place.</p>
 <p>Getting it wrong points canonical tags, redirects and mailed links at the wrong host. What a request
 resolves to is a separate question, answered by <code>SITE_ID</code>.</p>
-<p>Specs: <code>tests/unit/ops/site-origin.spec.ts</code>, <code>tests/integration/render-origin.spec.ts</code>.</p>
+<p>Specs: <code>tests/unit/ops/site/origin.spec.ts</code>, <code>tests/integration/render/origin.spec.ts</code>.</p>
 <h3 id="alias-hosts">Alias Hosts</h3>
 <p>A site answers on more than one hostname through <code>site:host:&lt;host&gt;</code> entries in <code>CONFIG_KV</code>, one per
 host, each naming the site. <code>drangler domain add &lt;host&gt;</code> writes the entry with your wrangler login
@@ -501,9 +779,11 @@ carries <code>x-cfw-alias: &lt;canonical host&gt;</code>.</p>
 on, and an unmapped host that reaches the site through the deployment primary keeps the canonical
 links. The first request a site ever answers still pins its origin, so claim the site on its main
 host before adding aliases.</p>
-<p>Specs: <code>tests/unit/ops/site-origin.spec.ts</code>, <code>tests/integration/deployment-site.spec.ts</code>.</p>
-			</div>
-		</main>
+<p>Specs: <code>tests/unit/ops/site/origin.spec.ts</code>, <code>tests/integration/deployment-site.spec.ts</code>.</p>
+				</div>
+				<nav class="docs-pager" aria-label="Previous and next pages"><a rel="prev" class="docs-pager-prev" href="index.html"><span class="docs-pager-label">Previous</span><strong>Configuration</strong><span>Every variable and binding in the wrangler configs, with the working default for each.</span></a><a rel="next" class="docs-pager-next" href="runtime.html"><span class="docs-pager-label">Next</span><strong>Runtime Settings</strong><span>Settings for cron, warming, the interpreter lifecycle, replica mode, boot and storage.</span></a></nav>
+			</main>
+		</div>
 		<footer>
 			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
 		</footer>

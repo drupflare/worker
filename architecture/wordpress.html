@@ -1,0 +1,956 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>WordPress - Drupflare</title>
+		<meta
+			name="description"
+			content="What runs, how it differs from Drupal, the measurements read so far, plugin evidence and where Joomla stands."
+		/>
+		<link
+			rel="icon"
+			href="../drupflare.ico"
+			sizes="any"
+		/>
+		<link
+			rel="icon"
+			type="image/png"
+			sizes="128x128"
+			href="../drupflare_128.png"
+		/>
+		<link
+			rel="apple-touch-icon"
+			href="../drupflare_128.png"
+		/>
+		<link
+			rel="canonical"
+			href="https://docs.drupflare.com/architecture/wordpress.html"
+		/>
+		<meta
+			property="og:type"
+			content="website"
+		/>
+		<meta
+			property="og:site_name"
+			content="Drupflare"
+		/>
+		<meta
+			property="og:url"
+			content="https://docs.drupflare.com/architecture/wordpress.html"
+		/>
+		<meta
+			property="og:title"
+			content="WordPress - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="What runs, how it differs from Drupal, the measurements read so far, plugin evidence and where Joomla stands."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			.layout,
+			.site .bar,
+			footer {
+				max-width: 78rem;
+				margin: 0 auto;
+			}
+			main {
+				min-width: 0;
+				max-width: 52rem;
+			}
+			main:focus {
+				outline: none;
+			}
+			.docs-skip {
+				position: absolute;
+				left: 1rem;
+				top: -4rem;
+				z-index: 30;
+				padding: 0.5rem 1rem;
+				border-radius: 0.5rem;
+				background: var(--card);
+				color: var(--accent);
+			}
+			.docs-skip:focus {
+				top: 0.5rem;
+			}
+			.docs-sr {
+				position: absolute;
+				width: 1px;
+				height: 1px;
+				overflow: hidden;
+				clip-path: inset(50%);
+				white-space: nowrap;
+			}
+			:focus-visible {
+				outline: 2px solid var(--accent);
+				outline-offset: 2px;
+			}
+			.site {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			.site .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			.site .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			.site .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			.site a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			.site a:hover,
+			.site a[aria-current] {
+				color: var(--accent);
+			}
+			.site a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			.site .menu {
+				position: relative;
+			}
+			.site .menu summary {
+				color: var(--muted);
+				font-size: 0.925rem;
+				list-style: none;
+				cursor: pointer;
+			}
+			.site .menu summary::-webkit-details-marker {
+				display: none;
+			}
+			.site .menu summary::after {
+				content: ' \25BE';
+				font-size: 0.75em;
+			}
+			.site .menu summary:hover,
+			.site .menu[open] summary,
+			.site .menu[data-current] summary {
+				color: var(--accent);
+			}
+			.site .menu .panel {
+				position: absolute;
+				z-index: 10;
+				top: 1.9rem;
+				left: -0.75rem;
+				display: flex;
+				flex-direction: column;
+				min-width: 12rem;
+				padding: 0.5rem;
+				border: 1px solid var(--line);
+				border-radius: 0.7rem;
+				background: var(--card);
+				box-shadow: 0 0.75rem 2rem var(--glow);
+			}
+			.site .menu .panel a {
+				padding: 0.4rem 0.75rem;
+				border-radius: 0.4rem;
+			}
+			.site .menu .panel a:hover {
+				background: var(--code-bg);
+			}
+			.docs-menu,
+			.docs-close {
+				padding: 0.3rem 0.8rem;
+				border: 1px solid var(--line);
+				border-radius: 0.5rem;
+				background: var(--card);
+				color: var(--fg);
+				font: inherit;
+				font-size: 0.9rem;
+				cursor: pointer;
+			}
+			.docs-sidebar {
+				inset: 0 auto 0 0;
+				width: min(22rem, 88vw);
+				height: 100%;
+				max-height: none;
+				margin: 0;
+				padding: 1rem 1.25rem 2rem;
+				border: 0;
+				border-right: 1px solid var(--line);
+				overflow-y: auto;
+				background: var(--card);
+				color: var(--fg);
+			}
+			.docs-sidebar::backdrop {
+				background: rgb(0 0 0 / 0.45);
+			}
+			.docs-sidebar-head {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				margin-bottom: 1rem;
+				font-weight: 700;
+			}
+			.docs-nav details {
+				margin: 0;
+			}
+			.docs-nav summary {
+				padding: 0.35rem 0;
+				list-style: none;
+				cursor: pointer;
+			}
+			.docs-nav summary::-webkit-details-marker {
+				display: none;
+			}
+			.docs-nav summary::before {
+				content: '\25B8';
+				display: inline-block;
+				width: 1rem;
+				color: var(--muted);
+				font-size: 0.8rem;
+			}
+			.docs-nav details[open] > summary::before {
+				content: '\25BE';
+			}
+			.docs-group > summary {
+				margin-top: 0.5rem;
+				color: var(--muted);
+				font-size: 0.8rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			.docs-section {
+				margin-left: 0.75rem;
+			}
+			.docs-section > summary {
+				font-size: 0.9rem;
+				font-weight: 600;
+			}
+			.docs-nav ul {
+				margin: 0 0 0.5rem;
+				padding: 0 0 0 1rem;
+				list-style: none;
+			}
+			.docs-nav li {
+				margin: 0;
+			}
+			.docs-nav li a {
+				display: block;
+				padding: 0.25rem 0.6rem;
+				border-left: 2px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+				line-height: 1.4;
+				text-decoration: none;
+			}
+			.docs-nav li a:hover {
+				color: var(--accent);
+			}
+			.docs-nav li a[aria-current] {
+				border-left-color: var(--accent-strong);
+				color: var(--accent);
+				font-weight: 600;
+			}
+			.docs-nav .docs-ext::after {
+				content: ' \2197';
+				font-size: 0.8em;
+			}
+			.docs-desc {
+				display: block;
+				padding: 0 0.6rem 0.4rem;
+				border-left: 2px solid var(--line);
+				color: var(--muted);
+				font-size: 0.78rem;
+				line-height: 1.4;
+			}
+			@media (min-width: 64rem) {
+				.layout {
+					display: grid;
+					grid-template-columns: 17rem minmax(0, 1fr);
+					gap: 3rem;
+				}
+				.docs-menu,
+				.docs-close {
+					display: none;
+				}
+				.docs-sidebar {
+					position: sticky;
+					top: 1.5rem;
+					display: block;
+					inset: auto;
+					align-self: start;
+					width: auto;
+					height: auto;
+					max-height: calc(100vh - 3rem);
+					padding: 0 0.5rem 1rem 0;
+					border: 0;
+					background: transparent;
+				}
+				.docs-sidebar-head {
+					display: none;
+				}
+			}
+			@media (prefers-reduced-motion: no-preference) and (max-width: 63.99rem) {
+				.docs-sidebar {
+					transform: translateX(-100%);
+					transition:
+						transform 0.2s ease,
+						overlay 0.2s allow-discrete,
+						display 0.2s allow-discrete;
+				}
+				.docs-sidebar:popover-open {
+					transform: none;
+				}
+				@starting-style {
+					.docs-sidebar:popover-open {
+						transform: translateX(-100%);
+					}
+				}
+			}
+			@media (prefers-reduced-motion: reduce) {
+				* {
+					transition: none !important;
+					animation: none !important;
+				}
+			}
+			.docs-pager {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+				gap: 0.85rem;
+				margin: 3rem 0 0;
+			}
+			.docs-pager a {
+				display: block;
+				padding: 0.85rem 1.1rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+			}
+			.docs-pager a:hover {
+				border-color: var(--accent-strong);
+			}
+			.docs-pager-next {
+				text-align: right;
+			}
+			.docs-pager .docs-pager-label {
+				display: block;
+				color: var(--accent);
+				font-size: 0.78rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			.docs-pager strong {
+				display: block;
+			}
+			.docs-pager a > span:last-child {
+				color: var(--muted);
+				font-size: 0.85rem;
+				line-height: 1.45;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 1.5rem;
+			}
+			h2.group {
+				margin: 2rem 0 0.75rem;
+				color: var(--muted);
+				font-size: 0.95rem;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme {
+				overflow-wrap: break-word;
+			}
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme .toc {
+				margin: 1.5rem 0 2rem;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme .crumbs {
+				margin: -1.5rem 0 1.5rem;
+				color: var(--muted);
+				font-size: 0.875rem;
+			}
+			.readme .toc ol {
+				columns: 2 15rem;
+				margin: 0.5rem 0 0;
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+			.readme .docs-render {
+				margin: 1.25rem 0;
+				overflow-x: auto;
+				text-align: center;
+			}
+			.readme .docs-render svg {
+				max-width: 100%;
+				height: auto;
+			}
+			.readme details {
+				margin: 1.25rem 0;
+				padding: 0.25rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+			}
+			.readme summary {
+				margin: 0.5rem 0;
+				font-weight: 600;
+				cursor: pointer;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<a
+			class="docs-skip"
+			href="#docs-main"
+			>Skip to content</a
+		>
+		<header class="site">
+			<div class="bar">
+				<button
+					type="button"
+					class="docs-menu"
+					popovertarget="docs-sidebar"
+				>
+					Menu
+				</button>
+				<a
+					class="brand"
+					href="../index.html"
+				>
+					<img
+						src="../drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<details class="menu"><summary>Run</summary><div class="panel"><a href="../getting-started/index.html">Getting Started</a><a href="../operating/index.html">Operating</a><a href="../configuration/index.html">Configuration</a></div></details>
+				<details class="menu" data-current><summary>Understand</summary><div class="panel"><a href="index.html">Architecture</a><a href="../security/index.html">Security</a><a href="../impact/index.html">Impact</a><a href="../audiences/index.html">Audiences</a></div></details>
+				<details class="menu"><summary>Reference</summary><div class="panel"><a href="../technical-report.html">Technical Report</a><a href="../api/index.html">API Reference</a><a href="../php/index.html">PHP Reference</a></div></details>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</header>
+		<div class="layout">
+			<div class="docs-sidebar" id="docs-sidebar" popover>
+<div class="docs-sidebar-head"><span>Documentation</span><button type="button" class="docs-close" popovertarget="docs-sidebar" popovertargetaction="hide">Close</button></div>
+<nav class="docs-nav" aria-label="Documentation"><details class="docs-group"><summary>Getting Started</summary><ul><li><a href="../index.html">Overview</a></li><li><a href="../getting-started/index.html">Getting Started</a></li><li><a href="../getting-started/claim-and-log-in.html">Claiming and Managing a Site</a></li><li><a href="../getting-started/updating.html">Updating a Site</a></li><li><a href="../getting-started/testing.html">Testing</a></li><li><a href="../getting-started/reproduce-panopoly.html">Reproducing Panopoly</a></li><li><a href="../getting-started/reproduce-thunder.html">Reproducing Thunder</a></li></ul><details class="docs-section"><summary>Building From Source</summary><ul><li><a href="../getting-started/building-from-source/index.html">Building From Source</a></li><li><a href="../getting-started/building-from-source/steps.html">The Steps</a></li><li><a href="../getting-started/building-from-source/build-order.html">Build Order and Caching</a></li><li><a href="../getting-started/building-from-source/upgrading-core.html">Upgrading Drupal Core</a></li></ul></details><details class="docs-section"><summary>Repository Layout</summary><ul><li><a href="../getting-started/repository-layout/index.html">Repository Layout</a></li><li><a href="../getting-started/repository-layout/paths.html">Tracked and Generated Paths</a></li><li><a href="../getting-started/repository-layout/automation.html">Scripts and Automation</a></li></ul></details></details><details class="docs-group"><summary>Operating</summary><ul><li><a href="../operating/index.html">Operating</a></li><li><a href="../operating/administration.html">Administration</a></li><li><a href="../operating/recovery.html">Recovery</a></li><li><a href="../operating/git-remotes.html">Git Remotes</a></li><li><a href="../operating/replica-lanes.html">Replica Lanes</a></li></ul><details class="docs-section"><summary>External Databases</summary><ul><li><a href="../operating/external-database/index.html">External Databases and Hyperdrive</a></li><li><a href="../operating/external-database/why-not-default.html">Why the Default Is Not External</a></li></ul></details><details class="docs-section"><summary>PHP Interpreter Updates</summary><ul><li><a href="../operating/php-update-delivery/index.html">PHP Interpreter Update Delivery</a></li><li><a href="../operating/php-update-delivery/verification.html">Verification and Output</a></li><li><a href="../operating/php-update-delivery/rollback.html">Rollback and Staged Rollout</a></li><li><a href="../operating/php-update-delivery/trust-and-cost.html">Trust, Cost and Scope</a></li></ul></details></details><details class="docs-group" open><summary>Architecture</summary><ul><li><a href="index.html">Architecture</a></li><li><a href="database.html">The Site Database</a></li><li><a href="measurement-classes.html">Measurement Classes</a></li><li><a href="wordpress.html" aria-current="page">WordPress</a><span class="docs-desc">What runs, how it differs from Drupal, the measurements read so far, plugin evidence and where Joomla stands.</span></li><li><a href="compatibility.html">Compatibility</a></li><li><a href="modules.html">Modules</a></li><li><a href="limitations.html">Limitations</a></li></ul></details><details class="docs-group"><summary>Configuration</summary><ul><li><a href="../configuration/index.html">Configuration</a></li><li><a href="../configuration/site-identity.html">Site Identity and Origin</a></li><li><a href="../configuration/runtime.html">Runtime Settings</a></li><li><a href="../configuration/replicas.html">Replica Settings</a></li><li><a href="../configuration/plan-and-routes.html">Plan and Extensibility Routes</a></li><li><a href="../configuration/diagnostics.html">Diagnostics</a></li><li><a href="../configuration/migrated-settings.html">Migrated Project Settings</a></li></ul><details class="docs-section"><summary>Serving and Caching</summary><ul><li><a href="../configuration/serving/index.html">Serving and Caching Settings</a></li><li><a href="../configuration/serving/page-cache.html">Page Cache Settings</a></li><li><a href="../configuration/serving/static-assets.html">Static Asset Settings</a></li><li><a href="../configuration/serving/files-and-images.html">Files, Images and Prefill</a></li><li><a href="../configuration/serving/r2-page-origin.html">R2 Page Origin Caching</a></li><li><a href="../configuration/serving/request-limits.html">Request Limits</a></li></ul></details><details class="docs-section"><summary>Operations</summary><ul><li><a href="../configuration/operations/index.html">Operations Settings</a></li><li><a href="../configuration/operations/overrides.html">Runtime Overrides</a></li><li><a href="../configuration/operations/owner-access.html">Owner Access and Audit</a></li><li><a href="../configuration/operations/updates.html">Updates and Reconciliation</a></li><li><a href="../configuration/operations/discovery.html">Discovery Document</a></li><li><a href="../configuration/operations/wordpress-packages.html">WordPress Packages</a></li></ul></details><details class="docs-section"><summary>Integrations</summary><ul><li><a href="../configuration/integrations/index.html">Integration Settings</a></li><li><a href="../configuration/integrations/mail.html">Outbound Mail</a></li><li><a href="../configuration/integrations/tcp.html">Outbound TCP</a></li><li><a href="../configuration/integrations/workers-ai.html">Workers AI</a></li><li><a href="../configuration/integrations/oidc-login.html">OIDC Login</a></li><li><a href="../configuration/integrations/spool.html">Spool</a></li></ul></details></details><details class="docs-group"><summary>Security</summary><ul><li><a href="../security/index.html">Security</a></li><li><a href="../security/how-much-safer.html">How Much Safer</a></li><li><a href="../security/not-removed.html">What It Does Not Remove</a></li><li><a href="../security/incidents.html">Security Incidents and Planned Work</a></li></ul><details class="docs-section"><summary>Controls</summary><ul><li><a href="../security/controls/index.html">Security Controls</a></li><li><a href="../security/controls/requests.html">Request Controls</a></li><li><a href="../security/controls/credentials.html">Credentials and Persistence</a></li><li><a href="../security/controls/build-and-patching.html">Build and Patching Controls</a></li></ul></details></details><details class="docs-group"><summary>Impact</summary><ul><li><a href="../impact/index.html">Impact</a></li><li><a href="../impact/limits.html">What This Does Not Claim</a></li><li><a href="../impact/carbon.html">Carbon</a></li><li><a href="../impact/water.html">Water</a></li><li><a href="../impact/embodied.html">Embodied Carbon</a></li><li><a href="../impact/reproducing.html">Reproducing the Numbers</a></li><li><a href="../impact/references.html">References</a></li></ul><details class="docs-section"><summary>Energy</summary><ul><li><a href="../impact/energy/index.html">Energy</a></li><li><a href="../impact/energy/per-request.html">Energy Per Request</a></li><li><a href="../impact/energy/views.html">Energy Per View</a></li><li><a href="../impact/energy/inputs.html">Where the Figures Come From</a></li><li><a href="../impact/energy/operating-states.html">Operating States</a></li><li><a href="../impact/energy/production-baseline.html">Production Baseline</a></li><li><a href="../impact/energy/fleet.html">Fleet Energy</a></li></ul></details><details class="docs-section"><summary>Economics</summary><ul><li><a href="../impact/economics/index.html">Economics</a></li><li><a href="../impact/economics/bills.html">The Shape of the Bills</a></li><li><a href="../impact/economics/conventional-hosts.html">Conventional Hosts</a></li><li><a href="../impact/economics/vps-comparison.html">Drupflare vs a Traditional VPS</a></li><li><a href="../impact/economics/free-plan-and-warming.html">The Free Plan and Warming</a></li></ul></details><details class="docs-section"><summary>Free vs Paid</summary><ul><li><a href="../impact/economics/free-vs-paid/index.html">Free vs Paid</a></li><li><a href="../impact/economics/free-vs-paid/off-worker-arms.html">The Off-Worker Arms</a></li></ul></details></details><details class="docs-group"><summary>Audiences</summary><ul><li><a href="../audiences/index.html">Audiences</a></li><li><a href="../audiences/government.html">Federal Sites</a></li></ul></details><details class="docs-group"><summary>Reference</summary><ul><li><a href="../technical-report.html">Technical Report</a></li><li><a href="../api/index.html">API Reference</a><span class="docs-desc">The TypeScript modules under src/, generated by TypeDoc.</span></li><li><a href="../php/index.html">PHP Reference</a><span class="docs-desc">The PHP the interpreter runs, under src/site/php/, generated by phpDocumentor.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/releases" rel="noopener">Releases<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Published versions of the worker, with their notes.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/issues" rel="noopener">Issues<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Open and closed issues for the worker.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/worker/blob/master/SECURITY.md" rel="noopener">Security Policy<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The supported versions, and how to report a vulnerability privately.</span></li><li><a class="docs-ext" href="https://drupflare.com" rel="noopener">Website<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Drupflare project site.</span></li></ul></details><details class="docs-group"><summary>On GitHub</summary><ul><li><a class="docs-ext" href="https://github.com/drupflare/worker" rel="noopener">worker<span class="docs-sr"> (external link)</span></a><span class="docs-desc">This repository: the deployable worker, its build and these docs.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/drupflare" rel="noopener">drupflare<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Cloudflare Workers compatibility layer plugin for the CMS.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/rom" rel="noopener">rom<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The database driver that stores a CMS in Durable Objects SQLite.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/phasm" rel="noopener">phasm<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The PHP WebAssembly interpreter for the workerd runtime.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/anachron" rel="noopener">anachron<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The backwards compatibility layer for older CMS versions.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/stream-http" rel="noopener">stream-http<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The HTTP stream wrapper for PHP.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/spool" rel="noopener">spool<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Client-side page rendering and execution framework.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/drangler" rel="noopener">drangler<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The command line tool for handling and maintaining Drupflare workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/bastion" rel="noopener">bastion<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Self-hostable Drupflare workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/dashboard" rel="noopener">dashboard<span class="docs-sr"> (external link)</span></a><span class="docs-desc">The Drupflare control plane.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/workforce" rel="noopener">workforce<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Management and fleet library for Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/burrow" rel="noopener">burrow<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Parallelism and arbitrary codegen on Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/cartridge" rel="noopener">cartridge<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Universal runtime for language interpreters inside a Durable Object.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/durabledb" rel="noopener">durabledb<span class="docs-sr"> (external link)</span></a><span class="docs-desc">SQLite for Durable Objects.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/untarl" rel="noopener">untarl<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Tar extraction library for Cloudflare Workers.</span></li><li><a class="docs-ext" href="https://github.com/drupflare/website" rel="noopener">website<span class="docs-sr"> (external link)</span></a><span class="docs-desc">Source of the static project site.</span></li></ul></details></nav>
+</div>
+			<main
+				id="docs-main"
+				tabindex="-1"
+			>
+				
+				<div class="readme">
+					<p class="crumbs"><a href="index.html">Architecture</a></p>
+<h1 id="wordpress">WordPress</h1>
+<p>WordPress 7.1.4 runs the same way Drupal does: PHP 8.5 as WebAssembly inside a Durable Object, with the object&#39;s own SQLite as the database. This page says what runs, how it differs from Drupal, and every figure read so far with its n, plan and date. A figure labelled <code>measured</code> came off an instrument; <code>derived</code> is arithmetic over measured inputs and assumed weights.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol><li><a href="#what-runs">What Runs</a></li><li><a href="#differences-from-drupal">Differences From Drupal</a></li><li><a href="#measurements">Measurements</a></li><li><a href="#page-cache">Page Cache</a></li><li><a href="#free-plan">Free Plan</a></li><li><a href="#plugins-and-themes">Plugins and Themes</a></li><li><a href="#joomla">Joomla</a></li><li><a href="#not-yet-read">Not Yet Read</a></li></ol></nav><h2 id="what-runs">What Runs</h2>
+<p>A WordPress site answers its front page, <code>/wp-admin/</code>, login, the REST API, <code>admin-ajax.php</code> and cron from the object, with <code>wpdb</code> ending at <code>ctx.storage.sql</code>. The build selects it with <code>CMS=wordpress</code>; see <a href="../configuration/site-identity.html#cms">Site Identity</a>.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>piece</th>
+<th>what it is</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>database seam</td>
+<td>a <code>wpdb</code> subclass shipped as <code>wp-content/db.php</code>; a MySQL-to-SQLite translator written in TypeScript runs on the host</td>
+</tr>
+<tr>
+<td>pack</td>
+<td>WordPress core and its bundled themes in one read-only pack, a database baked by WordPress&#39;s own installer, and seven shim classes for outbound HTTP and images</td>
+</tr>
+<tr>
+<td>browser files</td>
+<td>published through Workers Assets from <code>assets/wordpress-site/</code>; see <a href="../configuration/serving/static-assets.html#wordpress-assets">Static Assets</a></td>
+</tr>
+<tr>
+<td>plugins and themes</td>
+<td>delivered by the host from a pinned registry; see <a href="../configuration/operations/wordpress-packages.html">WordPress Packages</a></td>
+</tr>
+<tr>
+<td>page cache</td>
+<td>on by default; see <a href="../configuration/serving/page-cache.html#wordpress_page_cache">Page Cache</a></td>
+</tr>
+</tbody></table></div>
+<p>Build and run one locally:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> fetch:wordpress</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> assets:wordpress</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> dev:wordpress</span></span></code></pre><p>WordPress Multisite is refused by name. The behaviour that differs from stock WordPress is on <a href="limitations.html">Limitations</a>: outbound requests, mail, the object cache and cron.</p>
+<h2 id="differences-from-drupal">Differences From Drupal</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th></th>
+<th>Drupal</th>
+<th>WordPress</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>database</td>
+<td><code>cfw_do_sqlite</code> driver replaces Drupal&#39;s database layer</td>
+<td><code>wpdb</code> subclass plus a host-side translator</td>
+</tr>
+<tr>
+<td>interpreter</td>
+<td>stays resident between requests on a warm object</td>
+<td>dropped after every render; WordPress cannot serve a second request in the same interpreter</td>
+</tr>
+<tr>
+<td>render shape</td>
+<td>a warm render reassembles from cache bins</td>
+<td>no bins, so every fill is a full render</td>
+</tr>
+<tr>
+<td>module delivery</td>
+<td><code>/install</code>, <code>/modify</code>, git remotes</td>
+<td><code>/wp-packages</code> with receipts, one transaction each</td>
+</tr>
+<tr>
+<td>discovery document</td>
+<td>published</td>
+<td>answers 404, the format has no kind for WordPress</td>
+</tr>
+<tr>
+<td>pack blob</td>
+<td>12.41 MiB</td>
+<td>7.07 MiB</td>
+</tr>
+</tbody></table></div>
+<h2 id="measurements">Measurements</h2>
+<p>Each row is one instrument on one plan. Do not set a Drupal figure against a WordPress one unless the instrument and the plan match.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>quantity</th>
+<th>figure</th>
+<th>n and spread</th>
+<th>plan, date</th>
+<th>label</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>statements translated against pinned MySQL</td>
+<td>2,372 of 2,372</td>
+<td>2,372</td>
+<td>local, 2026-11-18</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>differential against the upstream SQLite plugin and native MySQL</td>
+<td>0 unexplained differences</td>
+<td>1,849 statements</td>
+<td>local, 2026-11-22</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>slug lookup on a 20,000-post model</td>
+<td>3 rows read, was 11,002</td>
+<td>fixed-seed model</td>
+<td>local, 2026-11-22</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>uncached front page, object CPU</td>
+<td>about 1.0 to 2.0 s; the two runs differ by 2x and the cause is unknown</td>
+<td>two runs, n=10 and n=5</td>
+<td>student free, 2026-11-18</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>uncached front page, wall</td>
+<td>1.1 to 2.3 s; run one p50 2,250 ms, min 1,830, max 3,061</td>
+<td>n=10 in run one</td>
+<td>student free, 2026-11-18</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>cached hit, object CPU</td>
+<td>0 ms; wall median 4 ms</td>
+<td>n=9</td>
+<td>student free, 2026-11-18</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>fill wall by route</td>
+<td>home 2,517, post 3,481, page 2,187, category 2,324, feed 1,956 ms</td>
+<td>one fill per route</td>
+<td>paid, 2026-11-23</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>cached hit wall by route, p50</td>
+<td>home 11, post 4, page 78, category 4, feed 3 ms</td>
+<td>n=10 per route</td>
+<td>paid, 2026-11-23</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>rows written per fill</td>
+<td>median 15, range 5 to 124; a publish wrote 55</td>
+<td>one fill per route</td>
+<td>paid, 2026-11-23</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td><code>cpuTime</code> p50 by route</td>
+<td>front 1,715, login form 1,083, login POST 3,106, admin 1,791, new post 2,214, REST posts 1,124, cron 1,276, media upload 1,533 ms</td>
+<td>n=3 per route</td>
+<td>paid, 2026-11-23</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>free regeneration ceiling</td>
+<td>45,138 renders a day, bound by duration; rows would allow 89,104</td>
+<td>assumed weights, 2.25 s a fill from one run of n=10</td>
+<td>model, free</td>
+<td><code>derived</code></td>
+</tr>
+<tr>
+<td>free serving ceiling</td>
+<td>100,000 requests a day, bound by Worker requests</td>
+<td>model</td>
+<td>model, free</td>
+<td><code>derived</code></td>
+</tr>
+</tbody></table></div>
+<p>The uncached render sits at Drupal&#39;s cold-bins order (2,127 ms, <code>measured</code>, n=10) and not at its warm render (38 to 60 ms). The local wall time of a render is 0.47 to 0.6 s, so a deployed render takes 2.3 to 10.9 times as long, and the cause is not found. Reproduce the two ceilings with <code>bun scripts/measure/free-envelope.ts</code>; the 2.25 s is an input taken from a deployed run, not a result of the model.</p>
+<h3 id="memory">Memory</h3>
+<p>The route census drives twelve stock WordPress routes on a deployed paid worker with the memory governor at its default.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>reading</th>
+<th>figure</th>
+<th>n and spread</th>
+<th>plan, date</th>
+<th>label</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>interpreter linear memory</td>
+<td>64.0 MiB on every route; cron 64.7 MiB</td>
+<td>34 drives, n=3 per route (plugin activation n=1)</td>
+<td>paid, 2026-11-23</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>platform meter, per route p50</td>
+<td>109.9 to 134.8 MiB; plugin activation 149.8 MiB</td>
+<td>same</td>
+<td>paid, 2026-11-23</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>refusals and resets</td>
+<td>none; no incarnation changed</td>
+<td>same</td>
+<td>paid, 2026-11-23</td>
+<td><code>measured</code></td>
+</tr>
+</tbody></table></div>
+<p>An earlier census (12 routes, n=5, 2026-11-22, paid) read the interpreter at 69 to 91 MiB and the meter at up to 200.7 MiB on the single-post route, 2.3 MiB under the 203 MiB kill line. It ran on an earlier build, and shared minute rows can inflate a meter reading. The later table is the current build&#39;s. The WordPress interpreter is dropped after every render, so its linear figure is per render. The growth governor has no WordPress reading; see <a href="../configuration/runtime.html">Runtime</a>.</p>
+<h2 id="page-cache">Page Cache</h2>
+<p>The page cache stores an anonymous page and replays it without starting WordPress. An authenticated response never enters it. It was checked by soak and by a write-to-fresh contract.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>check</th>
+<th>result</th>
+<th>n</th>
+<th>environment, date</th>
+<th>label</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>two soaks of 4,400 operations</td>
+<td>no stale content after a purge; clean restart arm in both</td>
+<td>2 soaks</td>
+<td>local, 2026-11-22</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>one stale <code>/feed/</code> answer from the edge</td>
+<td>did not recur; unexplained</td>
+<td>1 answer</td>
+<td>local, 2026-11-22</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>soak of 1,500 operations, final code</td>
+<td>publish median 1.2 s, max 2.3 s; edit max 1.7 s; trash 1.7 s; option change median 5.4 s, max 9.7 s</td>
+<td>one run</td>
+<td>local, 2026-11-22</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>six-route publish until fresh, with the 25 ms yield and visitor quiet window</td>
+<td>3.7 to 5.6 s, median 4.5 s, down from a median of 29.3 s</td>
+<td>n=10 and n=6</td>
+<td>local, 2026-11-22</td>
+<td><code>measured</code></td>
+</tr>
+<tr>
+<td>publish until fresh, deployed</td>
+<td>13.9, 15.3 and 21.1 s in the soak that finished; other readings of 22 to 55 s are unexplained</td>
+<td>a few runs</td>
+<td>paid, 2026-11-23</td>
+<td><code>measured</code></td>
+</tr>
+</tbody></table></div>
+<p>The contract is one second per route a write names plus two seconds: 8 s for a publish, 6 s for an edit. The local soak meets it. The deployed readings do not, because a deployed render takes about 2.3 s and the object renders one page at a time, so six routes need about 14 s. A publish purges 19 of 20 stored rows even with neighbour tagging. After a wholesale purge the first visitor of each page waits for one render, 2 to 3.5 s deployed; <code>AGED_SERVE_MAX_MS</code> brings the old copy back.</p>
+<h2 id="free-plan">Free Plan</h2>
+<p>The free plan runs WordPress. Two deployed runs on a student free account answered the front page, login, admin and REST routes, and a cached hit cost the object no CPU. The 10 ms CPU cap does not fail a Durable Object invocation, and an uncached render of 1 to 2 s completed in both runs. Two limits shape the plan:</p>
+<ul>
+<li>Regeneration is bound by duration at about 45,138 renders a day, against 50,916 for Drupal, which is bound by rows. Both are <code>derived</code>.</li>
+<li><code>COLD_PACK</code> is off for WordPress on free, because every WordPress request mounts a fresh interpreter and a staged pack adds 147 to 281 row reads to each one. See <a href="../configuration/runtime.html">Runtime</a>.</li>
+</ul>
+<p>A deployed cached run on a free account has not been read, so the render fraction that prices the page store is not known for WordPress.</p>
+<h2 id="plugins-and-themes">Plugins and Themes</h2>
+<p>The registry in <code>config/wp-plugins.yml</code> holds one plugin, Classic Editor, at 1.6.7 and 1.7.0. In a local <code>wrangler dev</code> run it was installed at 1.7.0, activated in a browser, updated to 1.6.7 and rolled back (n=1). Thirty-five ZIP rule cases refuse hostile archives. No set of real sites or plugins has been run, so this page makes no claim about which plugins work. A plugin that calls <code>curl_*</code> directly, or one that sends a statement the translator refuses, will fail; Action Scheduler&#39;s claim statement is one that is refused today.</p>
+<h2 id="joomla">Joomla</h2>
+<p>Joomla has local proofs and no running site. Its installer SQL (147 statements) runs through the translator after five bake-time rewrites, with data equal to native MySQL in all 76 tables. A running site is blocked by the SQL Joomla sends at runtime: nested-set writes send <code>LOCK TABLES</code>, and the translator refuses <code>LOCK TABLES</code>, <code>START TRANSACTION</code> and <code>SAVEPOINT</code>. 13 of 50 statements in its update scripts are refused today. No Joomla request or memory reading exists.</p>
+<h2 id="not-yet-read">Not Yet Read</h2>
+<ul>
+<li>A deployed cached run on a free account, and the render fraction it gives.</li>
+<li>Deployed publish-to-fresh over a full soak.</li>
+<li>WordPress under the memory governor.</li>
+<li>Energy for a WordPress view, and a VPS comparison.</li>
+<li>A WordPress codebase or plugin corpus run.</li>
+</ul>
+				</div>
+				<nav class="docs-pager" aria-label="Previous and next pages"><a rel="prev" class="docs-pager-prev" href="measurement-classes.html"><span class="docs-pager-label">Previous</span><strong>Measurement Classes</strong><span>The four classes a number belongs to, and what each class allows an instrument to do.</span></a><a rel="next" class="docs-pager-next" href="compatibility.html"><span class="docs-pager-label">Next</span><strong>Compatibility</strong><span>The codebases run against the worker, generated from the compatibility record.</span></a></nav>
+			</main>
+		</div>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+		<script
+			src="../render.js"
+			defer
+		></script>
+	</body>
+</html>

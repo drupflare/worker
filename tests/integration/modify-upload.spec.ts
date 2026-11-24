@@ -1,17 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { changeModuleFiles, renameModulePackage } from '../../src/do/module-files';
-import { drupalOp } from '../../src/drupal/site-php';
-import { updbUnit } from '../../src/drupal/updb-php';
+import { drupalOp } from '../../src/drupal/php/site';
+import { updbUnit } from '../../src/drupal/php/updb';
 import {
 	digestSource,
 	integrityReport,
 	MODSUM_ADOPTED_KEY,
 	readAllRecords,
 	readPackageRecords
-} from '../../src/ops/module-integrity';
-import { OWNER_HASH_KEY } from '../../src/ops/site-secrets';
+} from '../../src/ops/module/integrity';
+import { OWNER_HASH_KEY } from '../../src/ops/site/secrets';
 import type { SitePhpDurableObject } from '../../src/site-do';
 import { HOST_HELPERS_PHP } from '../../src/site/generated/assets';
+import {
+	DATA_TYPE_CLASSES,
+	inconsistentClass,
+	UNTYPED_FILES,
+	UNTYPED_METHODS,
+	untypedModule
+} from '../helpers/return-type-module';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -731,6 +738,116 @@ describe('a revision at a packed core path', () => {
 		// a migrated site enables its modules before their code arrives (farmOS)
 		expect(seen.afterInfo).toBe(0);
 		expect(seen.afterEdit).toBe(1);
+	}, 900_000);
+
+	it('keeps them when the same bytes, wiring files included, are uploaded again', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const seed = () =>
+				site.execSql(
+					`INSERT OR REPLACE INTO cache_container (cid, data, expire, created, serialized, tags, checksum) VALUES ('cfw_sentinel', x'00', -1, 0, 0, '', 0)`
+				);
+			const kept = () =>
+				site.execSql(`SELECT cid FROM cache_container WHERE cid = 'cfw_sentinel'`).rows
+					.length;
+			await upload(call, moduleTree('<?php\n'), 'first');
+			seed();
+			const again = await upload(call, moduleTree('<?php\n'), 'again');
+			return { again, kept: kept() };
+		});
+		expect(seen.again.commit.body).toMatchObject({ ok: true, rowsWritten: 0 });
+		expect(seen.kept).toBe(1);
+	}, 900_000);
+});
+
+describe('an enable that fails halfway', () => {
+	const DIR = `modules/custom/${PACKAGE}`;
+	const tree = (install: string): Record<string, string> => ({
+		[`${DIR}/${PACKAGE}.info.yml`]:
+			'name: Probe\ntype: module\ncore_version_requirement: ^11\n',
+		[`${DIR}/${PACKAGE}.module`]: '<?php\n',
+		[`${DIR}/${PACKAGE}.install`]: install,
+		[`${DIR}/config/install/${PACKAGE}.settings.yml`]: 'mode: probe\n'
+	});
+	const SCHEMA = `<?php
+function ${PACKAGE}_schema() {
+  return ['cfw_probe_rows' => ['fields' => ['id' => ['type' => 'serial', 'not null' => TRUE]], 'primary key' => ['id']]];
+}
+`;
+	const BROKEN = `${SCHEMA}function ${PACKAGE}_install() { throw new \\RuntimeException('install stopped halfway'); }\n`;
+	const ENABLE = `${ORIGIN}/__enable?module=${PACKAGE}`;
+	const state = (site: ServeDo) =>
+		site.runJson(
+			drupalOp(`$m = \\Drupal::config('core.extension')->get('module') ?: [];
+				$out['listed'] = isset($m['${PACKAGE}']);
+				$out['table'] = \\Drupal::database()->schema()->tableExists('cfw_probe_rows');
+				$out['config'] = \\Drupal::configFactory()->get('${PACKAGE}.settings')->get('mode');
+				$out['schema'] = \\Drupal::keyValue('system.schema')->get('${PACKAGE}');`)
+		) as Promise<Record<string, unknown>>;
+
+	it('puts back its tables, config and extension entry, so the retry installs', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			await upload(call, tree(BROKEN), 'broken');
+			const failed = (await (
+				await site.fetch(new Request(ENABLE, { method: 'POST' }))
+			).json()) as Record<string, unknown>;
+			const afterFail = await state(site);
+			await upload(call, tree(`${SCHEMA}\nfunction ${PACKAGE}_install() {}\n`), 'fixed');
+			const retried = (await (
+				await site.fetch(new Request(ENABLE, { method: 'POST' }))
+			).json()) as Record<string, unknown>;
+			return { failed, afterFail, retried, afterRetry: await state(site) };
+		});
+		expect(seen.failed['ok']).toBe(false);
+		expect(String(seen.failed['throwMessage'])).toContain('install stopped halfway');
+		expect(seen.failed['rolledBack']).toMatchObject({ tables: ['cfw_probe_rows'], errors: [] });
+		expect(seen.afterFail).toMatchObject({ listed: false, table: false, config: null });
+		expect(seen.afterFail['schema']).toBeFalsy();
+		expect(String(seen.retried['throwMessage'] ?? '')).toBe('');
+		expect(seen.retried['ok']).toBe(true);
+		expect(seen.afterRetry).toMatchObject({ listed: true, table: true, config: 'probe' });
+	}, 900_000);
+
+	it('reports nothing rolled back when the install succeeds', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			await upload(call, tree(`${SCHEMA}\nfunction ${PACKAGE}_install() {}\n`), 'fine');
+			return (await (
+				await site.fetch(new Request(ENABLE, { method: 'POST' }))
+			).json()) as Record<string, unknown>;
+		});
+		expect(seen['ok']).toBe(true);
+		expect(seen['rolledBack']).toBeUndefined();
+	}, 900_000);
+
+	it('drops the compiled container after a rollback and keeps it after a good install', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const seed = () =>
+				site.execSql(
+					`INSERT OR REPLACE INTO cache_container (cid, data, expire, created, serialized, tags, checksum) VALUES ('cfw_sentinel', x'00', -1, 0, 0, '', 0)`
+				);
+			const kept = () =>
+				site.execSql(`SELECT cid FROM cache_container WHERE cid = 'cfw_sentinel'`).rows
+					.length;
+			const enable = async () =>
+				(await (
+					await site.fetch(new Request(ENABLE, { method: 'POST' }))
+				).json()) as Record<string, unknown>;
+			await upload(call, tree(BROKEN), 'broken');
+			seed();
+			const failed = await enable();
+			const afterFail = kept();
+			await upload(call, tree(`${SCHEMA}\nfunction ${PACKAGE}_install() {}\n`), 'fixed');
+			seed();
+			const good = await enable();
+			return { failed, afterFail, good, afterGood: kept() };
+		});
+		expect(seen.failed['rolledBack']).toBeDefined();
+		expect(seen.afterFail).toBe(0);
+		expect(seen.good['ok']).toBe(true);
+		expect(seen.afterGood).toBe(1);
 	}, 900_000);
 });
 
@@ -1459,5 +1576,127 @@ describe('installed module files are held to sealed records', () => {
 		expect(seen.held.n).toBe(seen.open.n);
 		expect(seen.stats.checked).toBeGreaterThanOrEqual(files);
 		expect(seen.stats.refused).toBe(0);
+	}, 900_000);
+});
+
+describe('an uploaded module whose data type classes override typed core methods', () => {
+	const CLASSES = DATA_TYPE_CLASSES.map((c) => `Drupal\\${PACKAGE}\\Plugin\\DataType\\${c}`);
+	const PREFIX = `modules/custom/${PACKAGE}`;
+
+	/** uploads the tree, enables the module and asks the kernel to load each class */
+	async function deliver(tree: Record<string, string>, off = false, again = false) {
+		return await inObject(freshSite(), async (site: ServeDo) => {
+			if (off) site.env = { ...site.env, ANACHRON_RETURN_TYPES: 'off' };
+			const token = await ownerToken(site);
+			const call = modify(site, token);
+			const first = await upload(call, tree, 'untyped');
+			const second = again ? await upload(call, tree, 'untyped again') : undefined;
+			const rows = Object.fromEntries(
+				site
+					.execSql('SELECT path, source FROM cfw_module_file WHERE package = ?', [
+						PACKAGE
+					])
+					.rows.map((row) => [String(row['path']), String(row['source'])])
+			);
+			const real = site as unknown as SitePhpDurableObject;
+			const records = readPackageRecords(real.secretStore().sealed, PACKAGE);
+			await site.fetch(
+				new Request(`${ORIGIN}/__enable?module=${PACKAGE}`, { method: 'POST' })
+			);
+			// the kernel runs with the module enabled before any class loads, so a fatal in the next
+			// call is the class and not the harness
+			const ready = (await site.runJson(
+				drupalOp(`$m = \\Drupal::config('core.extension')->get('module') ?: [];
+					$out['enabled'] = isset($m['${PACKAGE}']);`)
+			)) as { enabled?: boolean } | undefined;
+			const loaded = (await site.runJson(
+				drupalOp(`$out['loaded'] = [];
+					foreach (${JSON.stringify(CLASSES)} as $c) { $out['loaded'][$c] = class_exists($c); }`)
+			)) as { loaded?: Record<string, boolean> } | undefined;
+			return {
+				first,
+				second,
+				rows,
+				recorded: Object.entries(rows).every(
+					([path, source]) => records.get(path) === digestSource(source)
+				),
+				enabled: ready?.enabled,
+				loaded: loaded?.loaded
+			};
+		});
+	}
+
+	const receipt = (reply: { body: Record<string, unknown> }) =>
+		reply.body['returnTypes'] as { files: number; methods: number; refused: number };
+
+	it('types the overrides at the commit, receipts them, and the classes load', async () => {
+		const tree = untypedModule(PACKAGE);
+		const seen = await deliver(tree);
+		expect(seen.first.commit.body).toMatchObject({ ok: true, applied: true });
+		expect(receipt(seen.first.commit)).toMatchObject({
+			files: UNTYPED_FILES,
+			methods: UNTYPED_METHODS,
+			refused: 0
+		});
+		expect(seen.rows[`${PREFIX}/src/Plugin/DataType/KeysFromJson.php`]).toContain(
+			'offsetExists($offset): bool'
+		);
+		expect(seen.recorded, 'the sealed record is not the digest of the stored bytes').toBe(true);
+		expect(seen.enabled).toBe(true);
+		expect(seen.loaded).toEqual(Object.fromEntries(CLASSES.map((c) => [c, true])));
+	}, 900_000);
+
+	it('control: stored as delivered, the same classes do not load', async () => {
+		const tree = untypedModule(PACKAGE);
+		const seen = await deliver(tree, true);
+		expect(seen.first.commit.body).toMatchObject({ ok: true, applied: true });
+		expect(receipt(seen.first.commit)).toMatchObject({ files: 0, methods: 0, refused: 0 });
+		for (const [path, source] of Object.entries(tree))
+			expect(seen.rows[path], path).toBe(source);
+		expect(seen.enabled).toBe(true);
+		expect(Object.values(seen.loaded ?? {})).not.toContain(true);
+	}, 900_000);
+
+	it('names a method the type would break, installs the rest and keeps the refused bytes', async () => {
+		const [path, source] = inconsistentClass(PACKAGE);
+		const seen = await deliver({ ...untypedModule(PACKAGE), [path]: source });
+		expect(seen.first.commit.body).toMatchObject({ ok: true, applied: true });
+		expect(receipt(seen.first.commit)).toMatchObject({ methods: UNTYPED_METHODS, refused: 1 });
+		expect(seen.rows[path]).toBe(source);
+	}, 900_000);
+
+	it('plans a second identical commit as unchanged for every transform, and writes no row', async () => {
+		const proxy = `<?php
+/**
+ * This file was generated via php core/scripts/generate-proxy-class.php 'Drupal\\${PACKAGE}\\Svc' "x".
+ */
+namespace Drupal\\${PACKAGE}\\ProxyClass {
+  class Svc extends \\Drupal\\${PACKAGE}\\Base {}
+}
+`;
+		const tree = {
+			...untypedModule(PACKAGE),
+			[`${PREFIX}/src/ProxyClass/Svc.php`]: proxy,
+			[`${PREFIX}/src/Fibers.php`]: `<?php\nnamespace Drupal\\${PACKAGE};\nclass Fibers { public function run() { return new \\Fiber(fn() => 1); } }\n`,
+			[`${PREFIX}/src/Plain.php`]:
+				'<?php\nnamespace Drupal\\' + PACKAGE + ';\nclass Plain {}\n'
+		};
+		const seen = await deliver(tree, false, true);
+		const second = seen.second as NonNullable<typeof seen.second>;
+		// the three transforms changed the stored bytes
+		expect(seen.rows[`${PREFIX}/src/ProxyClass/Svc.php`]).toContain('ProxyBuilder');
+		expect(seen.rows[`${PREFIX}/src/Fibers.php`]).toContain('PhpWasmSyncFiber');
+		expect(seen.rows[`${PREFIX}/src/Plugin/DataType/KeysFromJson.php`]).toContain('): bool');
+		const files = Object.keys(tree).length;
+		expect(seen.first.commit.body['counts']).toMatchObject({ added: files, modified: 0 });
+		// what the planner says before a byte is sent, and what the commit then does
+		for (const counts of [second.plan.body['counts'], second.commit.body['counts']]) {
+			expect(counts).toEqual({ added: 0, modified: 0, removed: 0, unchanged: files });
+		}
+		expect(second.plan.body['rowsWritten']).toBe(0);
+		expect(second.commit.body['rowsWritten']).toBe(0);
+		expect(receipt(second.commit)).toMatchObject({ files: 0, methods: 0 });
+		expect(receipt(seen.first.commit)).toMatchObject({ files: UNTYPED_FILES });
+		expect(seen.recorded).toBe(true);
 	}, 900_000);
 });

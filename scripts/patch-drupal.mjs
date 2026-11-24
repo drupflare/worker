@@ -221,7 +221,7 @@ const TWIG_STORAGE_MARKER = "$settings['php_storage']['twig']";
 const TWIG_STORAGE_PATCH = `
 // --- appended by scripts/patch-drupal.mjs: reachable precompiled Twig ---
 // MTimeProtectedFileStorage names each file after the containing directory's mtime, which in a
-// MEMFS mounted from a pack is mount time -- so scripts/bake-twig.php could never predict it and
+// MEMFS mounted from a pack is mount time -- so scripts/bake/twig.php could never predict it and
 // every shipped template would be recompiled. FileStorage's path is <dir>/<key> and depends on
 // nothing the mount invents. Nothing can overwrite files in this tree, so there is no attacker for
 // the mtime check to stop.
@@ -253,8 +253,8 @@ const PSR4_PATCH = `
 // The shipped database has \`drupflare\` in core.extension, and its HttpsStreamWrapper extends the
 // packaged Drupflare\\StreamHttp\\HttpsStreamWrapper. Drupal registers a namespace per MODULE and a
 // libraries/ directory is not one, so every native kernel booted against this tree fatals on that
-// parent class the moment ModuleHandler::loadAll() includes the .module -- bake-twig.php,
-// bake-collectors.php and lift-container.ts all did. settings.php is the one place every bootstrap
+// parent class the moment ModuleHandler::loadAll() includes the .module -- bake/twig.php,
+// bake/collectors.php and lift/container.ts all did. settings.php is the one place every bootstrap
 // reads, which is the same reason the edge registers this root in its own settings override.
 // PHP_SAPI === 'cli' GATES THIS TO NATIVE BUILDS, and the gate is the point. This file is PACKED
 // and the Durable Object reads it, where the same root is already registered by settings-override.php --

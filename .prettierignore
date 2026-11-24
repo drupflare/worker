@@ -19,7 +19,7 @@ src/wordpress/generated/
 src/site/generated/assets.ts
 src/site/html/
 scripts/generated/
-src/ops/shipped-lock.ts
+src/ops/composer/shipped-lock.ts
 docs/compatibility.json
 docs/architecture/compatibility.md
 

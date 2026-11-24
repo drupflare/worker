@@ -500,7 +500,7 @@ modules:
       callback request, followed by its userinfo GET. Two parked HTTP calls ran in one render, each
       performed in JavaScript while PHP was frozen mid-call. `externalauth` then wrote
       `openid_connect.keycloak` into `authmap` against the `sub` of the id_token and opened a
-      session. `park-oidc.spec.ts` is the assertion. The control beside it is the pre-fix reading:
+      session. `park/oidc.spec.ts` is the assertion. The control beside it is the pre-fix reading:
       the deferred transport answered `is not in the fetch cache; queued for the next drain`, with
       no row and no account.
 
@@ -650,7 +650,7 @@ modules:
     verified: 'enabled against a real site; `cache.backend.redis`, `redis.factory`,
       `redis.lock.factory`, `redis.flood.factory` and `queue.redis` all resolve afterwards and none
       before. It ships no config and creates no table, so the container is the observable: the
-      same shape as facets. Its socket is answered by the Zend park: `park-interpreter.spec.ts`
+      same shape as facets. Its socket is answered by the Zend park: `park/interpreter.spec.ts`
       drives PHP through an open, two writes and two reads against the rig Redis and gets
       `+OK|+PONG` back, five parks each performed in JavaScript on a later invocation. The Durable
       Object own SQLite is still the faster cache backend and the recommended one, because a parked
@@ -908,7 +908,7 @@ modules:
     needs: []
     why: 'Twig templates, theme settings and an asset library; no PHP classes and no I/O. It was
       unverifiable for three gate-side reasons and none of them was the runtime: composer installs
-      it to `themes/contrib`, `pack-drupal.ts` swept no theme tree, and `/__enable` drove
+      it to `themes/contrib`, `pack/drupal.ts` swept no theme tree, and `/__enable` drove
       `module_installer` against `extension.list.module`, which does not list themes. All three are
       wired now and the theme installs through `theme_installer`. Its default library mode loads
       USWDS from a CDN, which OMB M-23-22 forbids for static third-party assets, so a federal

@@ -303,7 +303,7 @@ function workerLanes(): number {
 }
 
 /**
- * `src/ops/shipped-lock.ts` imports the root `composer.lock` as text, which wrangler's `Text` rule
+ * `src/ops/composer/shipped-lock.ts` imports the root `composer.lock` as text, which wrangler's `Text` rule
  * does in a bundle. Vite has no rule for the extension and would parse the file as JavaScript, so
  * the projects that load source through vite get the same mapping here.
  */

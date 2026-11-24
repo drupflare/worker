@@ -15,5 +15,6 @@
 	"prettier.useTabs": true,
 	"prettier.tabWidth": 4,
 	"prettier.printWidth": 100,
-	"npm.packageManager": "bun"
+	"npm.packageManager": "bun",
+	"git.ignoreLimitWarning": true
 }

@@ -2,6 +2,7 @@
 vendor/
 # composer targets this instead of vendor/, which holds the wasm binaries (see composer.json)
 .composer-vendor/
+.composer
 node_modules/
 package-lock.json
 
@@ -15,7 +16,7 @@ wordpress-src
 drupal-min-src
 
 # the module repositories assets:driver packs, cloned here when they are not checked out beside this
-# one. CI writes the same three paths; scripts/build-local.ts is what clones them locally
+# one. CI writes the same three paths; scripts/build/local.ts is what clones them locally
 .siblings/
 
 assets/*
@@ -60,6 +61,8 @@ playwright-results/
 
 # typedoc output; built in CI and deployed to gh-pages, never committed to master
 typedoc/
+# the docs fences written out for the type check
+build/docs-fences/
 # phpdoc output and its cache, same rule
 .phpdoc/cache/
 
@@ -74,12 +77,12 @@ typedoc/
 .interp/
 .interp.prev*/
 
-# the release payload and the dry-run output; built by scripts/release-payload.ts and attached
+# the release payload and the dry-run output; built by scripts/release/payload.ts and attached
 # to a GitHub Release, never committed
 dist/
 
-# the shipping pack, saved while scripts/contrib-fixture.ts has a fixture pack mounted in its
-# place; `bun scripts/contrib-fixture.ts --restore` puts it back and deletes this
+# the shipping pack, saved while scripts/contrib/fixture.ts has a fixture pack mounted in its
+# place; `bun scripts/contrib/fixture.ts --restore` puts it back and deletes this
 .contrib-fixture/
 .cdn-archive/
 .refresh/
@@ -88,5 +91,7 @@ dist/
 .vps-context/
 # corpus clones scripts/e2e/corpus-lane.ts loads
 /.corpus/
+/.corpus-swap/
+/.drangler-backup/
 # the s5 probe copies the interpreter glue and a tuned wasm here on every run
 /scripts/e2e/s5-probe/build/

@@ -20,7 +20,7 @@ free:
     value: 1
     why: the packed daily-meter row, charged once per METER_FLUSH_SECONDS rather than per tick. It
       was 2, and 4 on a trafficked site, because each counter had a cfw_meta key of its own;
-      src/ops/day-meters.ts packs them and cold-encounter-wire.spec.ts pins the flush at one row
+      src/ops/meters/day-meters.ts packs them and cold-encounter-wire.spec.ts pins the flush at one row
   queueOperationsPerDay:
     value: 10000
     why: 'one message costs three: a write, a read and a delete, each per 64 KB'

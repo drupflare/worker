@@ -18,7 +18,7 @@
 #   MIGRATE_ENGINE unset -> migrateEngine() defaults to 'sql' in src/site-do.ts, so `database`
 #                          is false and NOTHING fetches site.sqlite; the shipping binary carries
 #                          no pdo_sqlite to open it with either
-#   the JS engine replays drupal-sql/ (assetChunkLoader, src/db/migrate-sql.ts:508)
+#   the JS engine replays drupal-sql/ (assetChunkLoader, src/db/dump/migrate.ts:508)
 #   mountDriver() reads driver.json (@drupflare/cartridge/fs)
 #   the free-tier prefill reads prefill.json (the /__migrate handler in src/site-do.ts)
 #
@@ -33,7 +33,7 @@
 
 # the Drupal static tree, which the BROWSER fetches at /core/**. Every pack skips these extensions
 # because PHP never opens them, and nothing serves a file out of the MEMFS over HTTP -- so the asset
-# layer is the only thing that can answer them. scripts/pack-static.ts writes it
+# layer is the only thing that can answer them. scripts/pack/static.ts writes it
 !/core/
 !/modules/
 # and /themes/, which `assets:static` has always built and nothing ever shipped: the payload list
@@ -47,21 +47,21 @@
 !/drupal-pf/core.pf.json
 !/drupal-pf/core.pf.bin
 
-# the opcache file cache the `pack` arm mounts as a second layer; scripts/bake-opcache.ts writes it,
+# the opcache file cache the `pack` arm mounts as a second layer; scripts/bake/opcache.ts writes it,
 # and a tree that never ran it has none
 !/drupal-opc/
 
 # the build's CSS and JS aggregates, which `ASSET_AGGREGATES=1` substitutes into a stored page.
 # Withheld, this lever could not work at any setting: the substitution rewrote every asset tag to an
 # /agg/ URL that the asset layer did not publish, so the Worker answered it as a Drupal path and the
-# page rendered with no CSS. `scripts/pack-aggregates.ts` writes them
+# page rendered with no CSS. `scripts/pack/aggregates.ts` writes them
 !/agg/
 
 # the migration chunks the JS engine replays: manifest.json plus NNNN.json
 !/drupal-sql/
 
 # the shared boot image `BOOT_IMAGE=1` restores: index.json plus 2 MiB page files, which the object
-# reads through its own ASSETS binding. `scripts/bake-boot-image.ts` writes them
+# reads through its own ASSETS binding. `scripts/bake/boot-image.ts` writes them
 !/bootimage/
 
 # WordPress's pack, when a build made one: the lazy mount's per-file pack, the packed drop-in and the
@@ -77,6 +77,6 @@
 
 # spool's worker script and the page scripts of the installed library, which a device fetches with
 # no Worker invocation. The paths under /.spool/ that are not files stay with the Worker.
-# scripts/pack-spool.ts writes them
+# scripts/pack/spool.ts writes them
 !/spool-sw.js
 !/.spool/

@@ -6,8 +6,8 @@ import {
 	drupalRequest,
 	MB_CHECK,
 	PROBE_RUNTIME
-} from '../../drupal/site-php';
-import { tcpLive } from '../../drupal/tcp-php';
+} from '../../drupal/php/site';
+import { tcpLive } from '../../drupal/php/tcp';
 import { aiEnabled, aiQueueUrl, allowedModels, neuronCost } from '../../ops/ai';
 import { deferredKey } from '../../ops/deferred-post';
 import type { SitePhpDurableObject } from '../../site-do';

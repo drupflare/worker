@@ -1,4 +1,3 @@
-import { isTokenError, needsRefresh, refresh, type TokenSet } from '../ops/cf-oauth';
 import {
 	DEFAULT_SCOPES,
 	callbackUri,
@@ -8,7 +7,8 @@ import {
 	type OidcConfig,
 	type OidcProvider
 } from '../ops/oidc';
-import { ORIGIN_KEY, chooseOrigin, pinnable } from '../ops/site-origin';
+import { isTokenError, needsRefresh, refresh, type TokenSet } from '../ops/owner/cf-oauth';
+import { ORIGIN_KEY, chooseOrigin, pinnable } from '../ops/site/origin';
 import { errorMessage } from '../util/errors';
 import {
 	CF_OAUTH_ACCOUNT_KEY,

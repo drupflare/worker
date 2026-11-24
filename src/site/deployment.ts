@@ -8,7 +8,7 @@ import {
 	type SiteCensus
 } from '../ops/deployment-site';
 import { discoveryDocument, discoveryLimits } from '../ops/discovery';
-import { sha256Hex } from '../ops/owner-recovery';
+import { sha256Hex } from '../ops/owner/recovery';
 import {
 	canWriteKv,
 	KV_OVERRIDABLE,
@@ -22,7 +22,7 @@ import {
 	writePlan,
 	writeSettings
 } from '../ops/plan';
-import { siteStubOptions } from '../ops/site-id';
+import { siteStubOptions } from '../ops/site/id';
 import { cmsOf } from '../util/cms';
 import { jsonError } from '../util/reply';
 import type { Stamped } from '../util/types';

@@ -1,13 +1,13 @@
-import { type AuthSpend, utcDayKey } from '../ops/auth-budget';
 import { ABSORBED_REPORT_MAX } from '../ops/cold-encounter';
+import { type AuthSpend, utcDayKey } from '../ops/meters/auth-budget';
 import {
 	believedLanes,
 	formatLanesPointer,
 	lanesKvKey,
 	parseLanesPointer,
 	rememberLanes
-} from '../ops/replica-routing';
-import { cacheKey } from './edge-cache';
+} from '../ops/replica/routing';
+import { cacheKey } from './edge/cache';
 
 /**
  * Page requests this isolate answered per site (plan, memo, `caches.default` and KV hits never
@@ -58,7 +58,7 @@ const LANE_ABSENT_TTL_S = 300;
  * Seeds this isolate's belief from the edge so the first request routes on it: `caches.default`
  * (per colo) first, then `CONFIG_KV` (global); either answer, pool or absence, is cached per colo.
  *
- * @internal exported for `replica-failover.spec.ts` (the primary memoises `lanesProvisioned()`,
+ * @internal exported for `replica/failover.spec.ts` (the primary memoises `lanesProvisioned()`,
  * so a fixture cannot reach it through a request)
  */
 export async function primeLanes(

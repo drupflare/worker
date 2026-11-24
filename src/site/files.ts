@@ -1,7 +1,7 @@
 import { normaliseUri } from '../db/file-store';
 import { defaultCache } from '../ops/cache-api';
-import { parseTransformPath, runImageTransform } from '../ops/image-runtime';
-import { resolveSite, siteStubOptions } from '../ops/site-id';
+import { parseTransformPath, runImageTransform } from '../ops/image/runtime';
+import { resolveSite, siteStubOptions } from '../ops/site/id';
 import { cmsOf, type Cms } from '../util/cms';
 import { errorMessage } from '../util/errors';
 import type { SiteWorkerEnv } from './types';
@@ -28,8 +28,7 @@ const INLINE_FILE_TYPES = new Set([
  *
  * Drupal expects the web server to answer these from disk and has no route for them, so without
  * this every public original is a 404 (unless the optional R2 mirror is configured). Drupal when no
- * CMS is given, because the worker has no runtime CMS value yet; a name the table lacks answers
- * undefined.
+ * CMS is given; a name the table lacks answers undefined.
  */
 export function publicFileUri(
 	method: string,

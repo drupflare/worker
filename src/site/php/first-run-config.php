@@ -115,7 +115,7 @@ try {
 	// indistinguishable from a lazily minted one
 	$out['privateKey'] = strlen(Drupal::service('private_key')->get()) > 0 ? 'present' : 'MISSING';
 
-	// the salt is the HOST's now: src/ops/site-secrets.ts mints one per site at boot, persists it in
+	// the salt is the HOST's now: src/ops/site/secrets.ts mints one per site at boot, persists it in
 	// cfw_meta and appends the assignment to settings.php, so generating another here would replace a
 	// live salt with one nothing stores and invalidate every session on the next remount
 	$out['hashSalt'] = strlen(Settings::getHashSalt()) > 0 ? 'present' : 'MISSING';

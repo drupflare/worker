@@ -1,7 +1,7 @@
 import type { SitePhpDurableObject } from '../../site-do';
 import type { HeapRestoreCursor } from '../alarm';
 import { restoreAlarmDecision } from '../alarm';
-import { restoreStepOnce } from '../heap-image';
+import { restoreStepOnce } from '../boot/heap-image';
 import type { AlarmContext, AlarmEnd } from './context';
 
 /**

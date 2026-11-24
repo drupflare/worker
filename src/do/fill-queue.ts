@@ -1,9 +1,9 @@
 import type { AggregateIndex } from '../ops/aggregates';
 import { ATTEMPT_TTL_MS } from '../ops/attempt';
-import { hasSessionCookie } from '../ops/auth-budget';
 import { readTagList, tagChecksum } from '../ops/fragment-index';
-import { eagerDerivativesEnabled } from '../ops/render-lane';
-import type { ForwardStatement } from '../ops/write-forwarding';
+import { eagerDerivativesEnabled } from '../ops/image/render-lane';
+import { hasSessionCookie } from '../ops/meters/auth-budget';
+import type { ForwardStatement } from '../ops/replica/write-forwarding';
 import { firstRow } from '../util/sql';
 import type { FillQueueHost } from './host';
 import { UNSTORABLE_KEY } from './keys';

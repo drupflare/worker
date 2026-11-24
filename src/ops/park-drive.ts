@@ -19,7 +19,7 @@ import { bytesToBase64 } from '../db/file-store';
 import { backendExec } from '../db/pg-exec';
 import { binaryToBytes } from '../util/base64';
 import { errorMessage } from '../util/errors';
-import { runParkImage, type ParkImageRequest } from './image-runtime';
+import { runParkImage, type ParkImageRequest } from './image/runtime';
 import { fetchGuarded, outboundGuardEnabled, refuseOutbound } from './outbound-guard';
 import { resolveTcpEndpoint, type TcpEndpoint, type TcpEnv } from './tcp';
 

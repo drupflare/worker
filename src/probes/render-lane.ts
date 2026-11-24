@@ -10,7 +10,7 @@
  */
 import { defineLane, LanePool, type LaneResult } from '@drupflare/burrow/parallel';
 import wasm3 from '@drupflare/burrow/vendor/wasm3.wasm';
-import { runImageTransform, type Transform } from '../ops/image-runtime.js';
+import { runImageTransform, type Transform } from '../ops/image/runtime.js';
 
 /** the four shipped styles, all `image_scale` plus the AVIF convert */
 const STYLES: Record<string, Transform> = {

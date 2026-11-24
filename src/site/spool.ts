@@ -3,9 +3,9 @@ import type { VectorDiff } from '@drupflare/spool/protocol';
 import { spoolProxy, type SpoolProxy } from '@drupflare/spool/proxy';
 import type { VersionStore } from '@drupflare/spool/stores';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { tinyimgBinding } from '../ops/image-runtime';
+import { tinyimgBinding } from '../ops/image/runtime';
 import { spoolEnabled, spoolFeature } from '../ops/plan';
-import { siteStubOptions } from '../ops/site-id';
+import { siteStubOptions } from '../ops/site/id';
 import {
 	isSpoolPath,
 	SPOOL_OBJECT_PATH,

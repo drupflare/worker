@@ -6,9 +6,9 @@ import {
 	unmappedSite
 } from '../ops/deployment-site';
 import { forgetSite } from '../ops/fleet';
-import { sha256Hex } from '../ops/owner-recovery';
+import { sha256Hex } from '../ops/owner/recovery';
 import { appendRetireLog, forgetHostMappings, type RetireKv } from '../ops/retire';
-import { resetHostMemo, siteStubOptions } from '../ops/site-id';
+import { resetHostMemo, siteStubOptions } from '../ops/site/id';
 import { jsonError } from '../util/reply';
 import { ownerCredential, siteFor } from './owner';
 import type { FrontEntry } from './types';

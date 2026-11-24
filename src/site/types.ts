@@ -1,9 +1,9 @@
 import type { SiteEnv } from '../env';
 import type { PlanTier } from '../ops/edge-plan';
 import type { FleetDb } from '../ops/fleet';
-import type { PageKv } from '../ops/page-store';
+import type { PageKv } from '../ops/page/store';
 import type { PlanKv } from '../ops/plan';
-import type { RoutingDecision } from '../ops/replica-routing';
+import type { RoutingDecision } from '../ops/replica/routing';
 
 /** What the front end requires: the namespace is not optional for a Worker that only proxies. */
 export interface SiteWorkerEnv extends SiteEnv {

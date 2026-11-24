@@ -1,4 +1,4 @@
-import { IMAGE_ROUTE_PREFIX } from '../ops/image-runtime';
+import { IMAGE_ROUTE_PREFIX } from '../ops/image/runtime';
 import { storeKeyFor } from '../ops/store-rule';
 import { LOGIN_PATH } from '../ui/admin';
 import { cmsOf, type Cms } from '../util/cms';

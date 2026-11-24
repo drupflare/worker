@@ -1,5 +1,5 @@
-import { runImageTransform } from '../ops/image-runtime.js';
-import type { Transform } from '../ops/image-transform.js';
+import { runImageTransform } from '../ops/image/runtime.js';
+import type { Transform } from '../ops/image/transform.js';
 
 /**
  * What an image derivative costs on the EDGE, which is the only instrument for it.

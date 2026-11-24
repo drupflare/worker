@@ -1,11 +1,12 @@
-import { readMigrateCursor } from '../db/migrate-sql';
+import { readMigrateCursor } from '../db/dump/migrate';
 import {
 	ADVISORY_STATE_KEY,
 	advisoryFreshness,
 	type AdvisoryVerdict,
 	readAdvisories
 } from '../ops/advisories';
-import { DAILY_DO_QUOTA, DAILY_ROWS_QUOTA } from '../ops/auth-budget';
+import { DAILY_DO_QUOTA, DAILY_ROWS_QUOTA } from '../ops/meters/auth-budget';
+import { projectImageTransforms } from '../ops/meters/thresholds';
 import { isFree } from '../ops/plan';
 import { parseState, recordOutcome, serialiseState } from '../ops/repair';
 import {
@@ -16,7 +17,6 @@ import {
 	runHostTripwires,
 	SEVERITY
 } from '../ops/supervisor';
-import { projectImageTransforms } from '../ops/thresholds';
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage } from '../util/errors';
 import { firstRow } from '../util/sql';

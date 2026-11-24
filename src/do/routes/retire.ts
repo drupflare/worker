@@ -1,4 +1,4 @@
-import { bearerToken, ownerTokenIsSet, ownerTokenMatches } from '../../ops/site-secrets';
+import { bearerToken, ownerTokenIsSet, ownerTokenMatches } from '../../ops/site/secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { jsonError } from '../../util/reply';
 

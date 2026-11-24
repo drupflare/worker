@@ -4,7 +4,7 @@ import {
 	latestSnapshotMeta,
 	snapshotPageIndex
 } from '../../db/heap-store';
-import { BOOT_KERNEL, BOOT_PHASES, type BootPhase, bootPhaseFragment } from '../../drupal/site-php';
+import { BOOT_KERNEL, BOOT_PHASES, type BootPhase, bootPhaseFragment } from '../../drupal/php/site';
 import { opcacheMode } from '../../runtime/opcache';
 import type { SitePhpDurableObject } from '../../site-do';
 import { DIAG_BRIDGE_PHP } from '../../site/generated/assets';
@@ -12,8 +12,8 @@ import { errorMessage } from '../../util/errors';
 import { phpScript } from '../../util/php';
 import { jsonError } from '../../util/reply';
 import { heapRestoreChunkBudget, heapSnapshotEnabled } from '../alarm';
-import { bootImageBakeEnabled, captureBootImage } from '../boot-image';
-import { delegatingHandleTable } from '../heap-image';
+import { delegatingHandleTable } from '../boot/heap-image';
+import { bootImageBakeEnabled, captureBootImage } from '../boot/image';
 import { HEAP_IMAGE_ATTEMPTS_KEY, HEAP_IMAGE_KEY } from '../keys';
 import type { Payload } from '../types';
 

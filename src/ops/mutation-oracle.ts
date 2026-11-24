@@ -1,7 +1,7 @@
 /**
  * Every authoritative effect one request produced, recorded rather than refused.
  *
- * The read-only guard in `replica.ts` is the production posture (unknown fails to the primary);
+ * The read-only guard in `replica/policy.ts` is the production posture (unknown fails to the primary);
  * this is the discovery posture, running a request to completion on a primary and
  * counting its effects. A zero from an unarmed oracle reads as a clean request, so
  * {@link EffectProfile} carries what it wrapped and {@link profileIsTrustworthy} refuses an
@@ -9,8 +9,8 @@
  * @module
  */
 import type { WriteTally } from '../db/write-tally';
-import { authoritativeWrites, classifyCapability } from './replica';
-import { classifyState } from './state-inventory';
+import { authoritativeWrites, classifyCapability } from './replica/policy';
+import { classifyState } from './replica/state-inventory';
 
 /** what kind of thing a request did (a stale cache row is minor, a mail send irreversible) */
 export type EffectClass =

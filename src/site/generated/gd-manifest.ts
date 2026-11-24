@@ -1,4 +1,4 @@
-/** the gd names that passed the differential; `bun scripts/gen-gd-manifest.ts` writes it */
+/** the gd names that passed the differential; `bun scripts/gen/gd-manifest.ts` writes it */
 export const GD_MANIFEST = {
 	functions: [
 		'imagecreatefromstring',

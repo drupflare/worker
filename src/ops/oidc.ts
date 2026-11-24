@@ -8,7 +8,7 @@
  * @module
  */
 import { binaryToBytes } from '../util/base64';
-import { base64Url, createPkce, randomToken, timingSafeEqual, type Pkce } from './cf-oauth';
+import { base64Url, createPkce, randomToken, timingSafeEqual, type Pkce } from './owner/cf-oauth';
 
 // #region configuration
 
@@ -55,7 +55,7 @@ export function discoveryUrl(issuer: string): string {
 	return `${issuer.replace(/\/+$/, '')}${DISCOVERY_PATH}`;
 }
 
-/** loopback only (`site-origin.ts` keeps a wider set for a different question) */
+/** loopback only (`site/origin.ts` keeps a wider set for a different question) */
 const LOOPBACK = /^(localhost|127(\.\d{1,3}){3}|\[?::1\]?)$/;
 
 /** http is refused; loopback is exempt and a deployed Worker has no loopback to reach */

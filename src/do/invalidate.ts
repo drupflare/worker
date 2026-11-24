@@ -1,5 +1,5 @@
 import { fanoutDecision, ROWS_PER_TAGGED_PAGE, ROWS_PER_UNTAGGED_PAGE } from '../ops/fanout';
-import { pageKvEnabled } from '../ops/page-store';
+import { pageKvEnabled } from '../ops/page/store';
 import { pathTagFor } from '../ops/spool';
 import { routeFamilies } from '../ops/thermal';
 import type { SitePhpDurableObject } from '../site-do';

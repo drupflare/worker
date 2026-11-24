@@ -13,10 +13,10 @@ import {
 	runCronQueue,
 	runFetchReopen,
 	runHealthSelfTest
-} from '../drupal/cron-php';
+} from '../drupal/php/cron';
 import { errorMessage } from '../util/errors';
 import { GENERATED_CRON_KNOWN, GENERATED_CRON_POLICY } from './generated/modules';
-import { warmWindowOpen } from './warm-window';
+import { warmWindowOpen } from './warm/window';
 
 /** the cursor `exec()` hands back, narrowed to what a ledger reads */
 export interface CronCursor {
@@ -749,7 +749,7 @@ export function gcExpired(sql: CronSql, options: CronOptions = {}): Ledger {
  * The row alone is inert: `State` is a `CacheCollector` over `cache.bootstrap` (cid `state`), so
  * `\Drupal::state()->get('system.cron_last')` never sees a `key_value`-only write and the status
  * report keeps saying "Cron has not run recently". The `cache_bootstrap` delete makes it visible
- * (`module-converge.spec.ts` fails without it).
+ * (`module/converge.spec.ts` fails without it).
  */
 export function setCronLast(sql: CronSql, options: CronOptions = {}): Ledger {
 	const led = ledger('cron_last');

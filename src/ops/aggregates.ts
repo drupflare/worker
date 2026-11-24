@@ -9,7 +9,7 @@
  * @module
  */
 
-/** what `pack-aggregates.ts` writes; only the two fields this reads are named */
+/** what `pack/aggregates.ts` writes; only the two fields this reads are named */
 export type AggregateIndex = {
 	libraries: Record<string, { css?: string; js?: string }>;
 	files: Record<string, { css?: string[]; js?: string[] }>;

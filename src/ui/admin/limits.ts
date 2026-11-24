@@ -1,10 +1,10 @@
-import { type PlanEnv, type ResolvedPlan } from '../../ops/plan';
 import {
 	projectImageTransforms,
 	thresholdReport,
 	type ImagePlan,
 	type MeterReading
-} from '../../ops/thresholds';
+} from '../../ops/meters/thresholds';
+import { type PlanEnv, type ResolvedPlan } from '../../ops/plan';
 import {
 	ADMIN_LIMITS_HTML,
 	ADMIN_LIMITS_IMAGES_HINT_HTML,

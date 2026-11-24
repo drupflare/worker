@@ -6,7 +6,7 @@
  * (a waiting visitor got a 1101). Writing the pack's row, baked against the running driver and the
  * site's module set, removes the rebuild.
  *
- * No imports, because `scripts/pack-sql.ts` runs under plain node and reads this file directly.
+ * No imports, because `scripts/pack/sql.ts` runs under plain node and reads this file directly.
  * @module
  */
 

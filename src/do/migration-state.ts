@@ -4,7 +4,7 @@ import {
 	ensureMigrateTable,
 	readMigrateCursor,
 	type MigrateCursor
-} from '../db/migrate-sql';
+} from '../db/dump/migrate';
 import type { MigrationHost } from './host';
 import { sqlChunkPrefix } from './levers';
 

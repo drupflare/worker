@@ -1,16 +1,16 @@
-import { sessionCookieValue } from '../ops/auth-budget';
 import { defaultCache } from '../ops/cache-api';
+import { sessionCookieValue } from '../ops/meters/auth-budget';
 import {
 	affinityKey,
 	believedLanes,
 	chooseTarget,
 	replicaCount,
 	type RoutingDecision
-} from '../ops/replica-routing';
-import { siteStubOptions } from '../ops/site-id';
-import { writeForwardEnabled } from '../ops/write-forwarding';
+} from '../ops/replica/routing';
+import { writeForwardEnabled } from '../ops/replica/write-forwarding';
+import { siteStubOptions } from '../ops/site/id';
 import { cmsOf, type Cms } from '../util/cms';
-import { genBucketMs } from './edge-cache';
+import { genBucketMs } from './edge/cache';
 import { siteFor } from './owner';
 import type { FrontContext, FrontEntry } from './types';
 

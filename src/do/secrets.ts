@@ -5,7 +5,7 @@ import {
 	readSealed,
 	writeSealed,
 	type SecretStore
-} from '../ops/site-secrets';
+} from '../ops/site/secrets';
 import type { SecretsHost } from './host';
 import type { Row } from './types';
 

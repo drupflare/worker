@@ -2,15 +2,15 @@ import { edgeRules } from './ops/edge-rules';
 import { chunkStack, isLengthError } from './ops/error-probe';
 import { ensureFleetTable, listSites, warmTargets, type FleetRow } from './ops/fleet';
 import { cspMode, resolvePlan, resolveSettings, withPlan, withSettings } from './ops/plan';
-import { resolveSite } from './ops/site-id';
-import { aliasRewrite } from './ops/site-origin';
+import { resolveSite } from './ops/site/id';
+import { aliasRewrite } from './ops/site/origin';
 import { SitePhpDurableObject } from './site-do';
 import { decideAllowance } from './site/allowance';
 import { cspReportRoute } from './site/csp-report';
 import { decorateReply } from './site/decorate';
 import { canonicalOriginOf } from './site/deployment';
-import { readEdgeTiers, readKvTier } from './site/edge-read';
-import { storeEdge } from './site/edge-store';
+import { readEdgeTiers, readKvTier } from './site/edge/read';
+import { storeEdge } from './site/edge/store';
 import { fileRoute, ownerRoute, pageRewrite } from './site/entry';
 import { runFillWindow } from './site/fill-window';
 import { isNeverDrupal } from './site/guards';
@@ -30,7 +30,7 @@ import { cmsOf, type Cms } from './util/cms';
 import { answerConditional, withValidator } from './wordpress/conditional';
 import { withoutTrackingCookies } from './wordpress/cookies';
 
-export { RenderLane } from './ops/render-lane';
+export { RenderLane } from './ops/image/render-lane';
 export { moduleAssetPath, publicFileUri } from './site/files';
 export { runFillWindow } from './site/fill-window';
 export type {

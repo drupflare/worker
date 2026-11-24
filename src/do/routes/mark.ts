@@ -1,4 +1,4 @@
-import type { StorageLike } from '../../db/migrate-sql';
+import type { StorageLike } from '../../db/dump/migrate';
 import {
 	changeManifest,
 	changeStatements,
@@ -11,7 +11,7 @@ import {
 } from '../../db/write-mark';
 import type { SitePhpDurableObject } from '../../site-do';
 import { jsonError } from '../../util/reply';
-import { keepsMark, MARK_REFUSAL } from '../role';
+import { keepsMark, MARK_REFUSAL } from '../replica/role';
 
 const shown = (row: { mark: string; startedAt: number }) => ({
 	mark: row.mark,

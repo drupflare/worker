@@ -10,7 +10,7 @@
  * @module
  */
 import { type HeapSql, hashStoredSnapshot } from '../db/heap-store';
-import { type SealedStore, tokenMatches } from './site-secrets';
+import { type SealedStore, tokenMatches } from './site/secrets';
 
 /** sealed key prefix; the snapshot id follows */
 export const HEAP_RECORD_PREFIX = 'heapsum:';

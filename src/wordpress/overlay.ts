@@ -1,7 +1,7 @@
 import { type LazyFS, mkdirp } from '@drupflare/cartridge/fs';
 import { withMask } from '@drupflare/cartridge/mask';
 import type { LazyInstalledNode } from '../do/lazy-mount';
-import { trustsModuleFiles } from '../do/role';
+import { trustsModuleFiles } from '../do/replica/role';
 import type { SiteBinary } from '../do/types';
 import {
 	digestBytes,
@@ -10,8 +10,8 @@ import {
 	readPackageRecords,
 	recordMatches,
 	writePackageRecords
-} from '../ops/module-integrity';
-import { OWNER_HASH_KEY } from '../ops/site-secrets';
+} from '../ops/module/integrity';
+import { OWNER_HASH_KEY } from '../ops/site/secrets';
 import type { SitePhpDurableObject } from '../site-do';
 import { firstRow } from '../util/sql';
 import { contentFolder, type WpKind } from './registry';

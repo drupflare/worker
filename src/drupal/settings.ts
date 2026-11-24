@@ -1,5 +1,5 @@
 import type { SiteBinary } from '../do/types';
-import { ensureHashSalt, hashSaltAssignment } from '../ops/site-secrets';
+import { ensureHashSalt, hashSaltAssignment } from '../ops/site/secrets';
 import type { SitePhpDurableObject } from '../site-do';
 import { SERVICES_YAML, SETTINGS_OVERRIDE_PHP } from '../site/generated/assets';
 import { renderTemplate } from '../util/template';

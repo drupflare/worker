@@ -10,7 +10,7 @@ import {
 	readOidcSetup,
 	type PendingLogin
 } from '../../ops/oidc';
-import { appendAudit, noteFailedAttempt } from '../../ops/owner-audit';
+import { appendAudit, noteFailedAttempt } from '../../ops/owner/audit';
 import {
 	isNonce,
 	judgeProof,
@@ -18,13 +18,13 @@ import {
 	sha256Hex,
 	spendProof,
 	type RecoverKv
-} from '../../ops/owner-recovery';
+} from '../../ops/owner/recovery';
 import {
 	bearerToken,
 	ownerTokenIsSet,
 	ownerTokenMatches,
 	rotateOwnerToken
-} from '../../ops/site-secrets';
+} from '../../ops/site/secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { jsonError } from '../../util/reply';
 import { OIDC_CLIENT_ID_KEY, OIDC_ISSUER_KEY, OIDC_PENDING_KEY, OIDC_TICKET_KEY } from '../keys';

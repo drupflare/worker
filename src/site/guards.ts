@@ -263,7 +263,7 @@ export function phpEntryRedirect(pathname: string): string | undefined {
  *
  * The query string is stripped first: four patterns are `$`-anchored and the caller passes
  * `pathname + search`, so `/.env?x=1` would otherwise slip through to the object. Drupal when no CMS
- * is given, because the worker has no runtime CMS value yet; a name the table lacks refuses all.
+ * is given; a name the table lacks refuses all.
  */
 export function isNeverDrupal(pathname: string, cms: Cms = 'drupal'): boolean {
 	const guards = NEVER_BY_CMS[cms];

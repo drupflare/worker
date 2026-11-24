@@ -7,15 +7,15 @@ import {
 	readAudit,
 	takeAuditDetail,
 	verifyAuditChain
-} from '../../ops/owner-audit';
-import { sha256Hex } from '../../ops/owner-recovery';
+} from '../../ops/owner/audit';
+import { sha256Hex } from '../../ops/owner/recovery';
 import {
 	OWNER_HASH_KEY,
 	bearerToken,
 	ownerTokenMatches,
 	tokenMatches,
 	type SealedStore
-} from '../../ops/site-secrets';
+} from '../../ops/site/secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { jsonError } from '../../util/reply';
 

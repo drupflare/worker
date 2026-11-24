@@ -1,4 +1,4 @@
-import { DO_MAX_RECORD_BYTES, DO_MAX_STATEMENT_CHARS } from '../../db/export-sql';
+import { DO_MAX_RECORD_BYTES, DO_MAX_STATEMENT_CHARS } from '../../db/dump/export';
 import { drainMirrors, pendingMirrors, queueRehydrateAll, storedBytes } from '../../db/file-store';
 import {
 	amplification,
@@ -13,7 +13,7 @@ import {
 	WRITE_WORKLOADS,
 	writeWorkload,
 	type WriteWorkload
-} from '../../drupal/site-php';
+} from '../../drupal/php/site';
 import type { SitePhpDurableObject } from '../../site-do';
 import { jsonError } from '../../util/reply';
 import { firstRow } from '../../util/sql';

@@ -1,4 +1,3 @@
-import { AUTH_MODE_HEADER, ROLES_HEADER } from '../ops/auth-budget';
 import {
 	believedCsrf,
 	believedGeneration,
@@ -25,7 +24,8 @@ import {
 	writeEdgePlan,
 	type PlanTier
 } from '../ops/edge-plan';
-import { moduleHeadersOf } from '../ops/module-headers';
+import { AUTH_MODE_HEADER, ROLES_HEADER } from '../ops/meters/auth-budget';
+import { moduleHeadersOf } from '../ops/module/headers';
 import { sessionCsrf } from '../ops/render-plan';
 import { servingFor } from '../ops/store-rule';
 import { cmsOf } from '../util/cms';

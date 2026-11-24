@@ -4,19 +4,23 @@ import {
 	MANDATORY_COLLECTIONS,
 	MANDATORY_STATE,
 	type ReplicaStage
-} from '../../ops/replica-admission';
-import { planRestore, type ProvisionCursor, type RestoreChunk } from '../../ops/replica-restore';
+} from '../../ops/replica/admission';
 import {
 	applyRecord,
 	type LogRecord,
 	positionalBindings,
 	positionTrust,
 	readPosition
-} from '../../ops/replication-log';
-import { fingerprintState, readStateRows } from '../../ops/state-fingerprint';
-import { type ForwardStatement, planForward, splitForward } from '../../ops/write-forwarding';
+} from '../../ops/replica/replication-log';
+import { planRestore, type ProvisionCursor, type RestoreChunk } from '../../ops/replica/restore';
+import { fingerprintState, readStateRows } from '../../ops/replica/state-fingerprint';
+import {
+	type ForwardStatement,
+	planForward,
+	splitForward
+} from '../../ops/replica/write-forwarding';
 import type { SitePhpDurableObject } from '../../site-do';
-import { refusesPrimaryRoutes, roleName } from '../role';
+import { refusesPrimaryRoutes, roleName } from '../replica/role';
 
 /**
  * What this object publishes about its own authoritative state, and what it makes of a primary's.

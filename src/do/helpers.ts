@@ -1,4 +1,4 @@
-import { acceptModuleHeader } from '../ops/module-headers';
+import { acceptModuleHeader } from '../ops/module/headers';
 import { MAX_MAIL_ATTEMPTS, MAX_OUTBOUND_BODY_BYTES } from './limits';
 
 export { forwardTo } from '../util/forward';

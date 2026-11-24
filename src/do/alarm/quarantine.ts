@@ -1,5 +1,5 @@
-import { latestImport, storedImportLoader } from '../../db/import-sql';
-import { chunksPerInvocation, SqlMigrator } from '../../db/migrate-sql';
+import { latestImport, storedImportLoader } from '../../db/dump/import';
+import { chunksPerInvocation, SqlMigrator } from '../../db/dump/migrate';
 import { isQuarantined, parseState, type RepairState, shouldRollback } from '../../ops/repair';
 import type { SitePhpDurableObject } from '../../site-do';
 import type { AlarmContext, AlarmEnd } from './context';

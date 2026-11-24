@@ -10,7 +10,7 @@
  * @module
  */
 import { tierFor, type RuntimeTier } from './catalog';
-import { checkInstallable, type InstallVerdict } from './packagist';
+import { checkInstallable, type InstallVerdict } from './composer/packagist';
 
 /** the KV surface this reads; narrowed so a test supplies a plain object */
 export type OracleKv = {

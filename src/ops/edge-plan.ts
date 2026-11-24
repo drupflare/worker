@@ -32,8 +32,8 @@
  * @module
  */
 
-import { moduleHeaderRecord } from './module-headers';
-import { pageKvEnabled, planKvWritesEnabled, type PageKv, type PageStoreEnv } from './page-store';
+import { moduleHeaderRecord } from './module/headers';
+import { pageKvEnabled, planKvWritesEnabled, type PageKv, type PageStoreEnv } from './page/store';
 import {
 	compilePlan,
 	fillSlots,

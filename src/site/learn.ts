@@ -1,8 +1,8 @@
-import { parseAuthSpend } from '../ops/auth-budget';
 import { isCacheTier } from '../ops/cache-tiers';
 import { rememberEdgeGeneration } from '../ops/edge-plan';
-import { LANES_EPOCH_HEADER, LANES_HEADER, rememberLanes } from '../ops/replica-routing';
-import { asGeneration, writeGeneration } from './edge-cache';
+import { parseAuthSpend } from '../ops/meters/auth-budget';
+import { LANES_EPOCH_HEADER, LANES_HEADER, rememberLanes } from '../ops/replica/routing';
+import { asGeneration, writeGeneration } from './edge/cache';
 import { writeAuthSpend, writeLanes } from './memos';
 import type { AuthState, EdgeRead, FrontContext, Learned } from './types';
 

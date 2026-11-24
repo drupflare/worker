@@ -1,3 +1,4 @@
+import { SHIPPED_CORE_VERSION } from '../ops/composer/shipped-lock';
 import { type DeploymentKv, recordClaimed } from '../ops/deployment-site';
 import {
 	ensureFleetTable,
@@ -10,7 +11,6 @@ import {
 import { isPaid } from '../ops/plan';
 import { isQuarantined, parseState } from '../ops/repair';
 import { FIRST_RUN_KEY } from '../ops/setup-page';
-import { SHIPPED_CORE_VERSION } from '../ops/shipped-lock';
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage } from '../util/errors';
 import type { HealthHost } from './host';

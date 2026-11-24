@@ -2,7 +2,7 @@
  * `node_field_data` indexes no default workload reads, dropped by the pack and reconciliation.
  * Each costs about two charged rows per node create and revision (all three: create 51 -> 45,
  * revision 56 -> 50). `type` and `status_type` stay: without them a content-type listing is a table
- * scan. No imports, so `pack-sql.ts` can read it under plain node.
+ * scan. No imports, so `pack/sql.ts` can read it under plain node.
  */
 export const UNREAD_NODE_INDEXES = [
 	'node_field_data_node__vid',

@@ -10,7 +10,7 @@ import {
 	type MirrorBucket,
 	type MirrorDrain
 } from '../../db/file-store';
-import { drainPageMirrors } from '../../ops/page-mirror';
+import { drainPageMirrors } from '../../ops/page/mirror';
 import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
 import { fileEvictAfterMs, mirrorLimit } from '../levers';

@@ -1,5 +1,5 @@
 import { refusalFor, scoreModule, vectorFor } from './capability-contract';
-import { satisfies } from './composer-constraint';
+import { satisfies } from './composer/constraint';
 
 /** one catalog entry: a pre-packed module and what it needs */
 export type CatalogEntry = {
@@ -23,7 +23,7 @@ export type CatalogEntry = {
 	bytes?: number;
 };
 
-import { MODULE_TIER_NOTES, allKnownCapabilities } from './module-tiers';
+import { MODULE_TIER_NOTES, allKnownCapabilities } from './module/tiers';
 
 /**
  * What a module needs beyond a version constraint; `deferrable-outbound` is not a refusal. Blocking
@@ -322,7 +322,7 @@ export function tierFor(
 	name: string,
 	capabilities: RuntimeCapabilities = SHIPPED_CAPABILITIES
 ): { tier: RuntimeTier; reason?: string } {
-	// merge `module-tiers.ts` in, or a module classified in only one table reads as unknown
+	// merge `module/tiers.ts` in, or a module classified in only one table reads as unknown
 	const needs = allKnownCapabilities(KNOWN_MODULE_CAPABILITIES)[name];
 	if (needs === undefined) {
 		return {

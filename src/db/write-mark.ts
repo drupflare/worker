@@ -1,6 +1,6 @@
-import { classifyState } from '../ops/state-inventory';
-import { columnSelect, encodeLiteral, ident, isRegenerable } from './export-sql';
-import type { SqlLike, StorageLike } from './migrate-sql';
+import { classifyState } from '../ops/replica/state-inventory';
+import { columnSelect, encodeLiteral, ident, isRegenerable } from './dump/export';
+import type { SqlLike, StorageLike } from './dump/migrate';
 
 /**
  * Journal entries kept before the journal stops growing; the count keeps going past it.

@@ -1,4 +1,4 @@
-import { siteStubOptions } from '../ops/site-id';
+import { siteStubOptions } from '../ops/site/id';
 
 /**
  * The bindings a window needs: the namespace, plus its two optional bounds.

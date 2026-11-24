@@ -3,7 +3,7 @@
  * (241 ms of boot). Not the shipping interpreter; an experiment arm selected by aliasing
  * `./php-binary.js` to this file (the alias cannot target the `.wasm` import directly).
  *
- * It has no `pdo_sqlite`, so the site is replayed in JavaScript (`src/db/migrate-sql.ts`); base
+ * It has no `pdo_sqlite`, so the site is replayed in JavaScript (`src/db/dump/migrate.ts`); base
  * ext-pdo is present, so the class constants core's sqlite `Connection` references resolve.
  * @module
  */

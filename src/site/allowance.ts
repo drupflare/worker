@@ -6,7 +6,7 @@ import {
 	isAuthenticatedRequest,
 	secondsUntilUtcReset,
 	type AuthBudgetEnv
-} from '../ops/auth-budget';
+} from '../ops/meters/auth-budget';
 import { cmsOf, type Cms } from '../util/cms';
 import { readAuthSpend } from './memos';
 import type { AuthState, FrontContext } from './types';

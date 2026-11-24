@@ -2,7 +2,7 @@ import { OPCACHE_MODES } from '../runtime/opcache';
 import { CSP_MODES, type CspMode } from './csp';
 import { ruleDocumentRefusal } from './edge-rules';
 import { spoolExcludeRefusal } from './spool';
-import { parseWarmWindow } from './warm-window';
+import { parseWarmWindow } from './warm/window';
 
 /** the subset of the environment a plan decision reads */
 export type PlanEnv = { PLAN?: string };

@@ -1,4 +1,4 @@
-import { carriesAuthorization, cookieKind } from '../ops/auth-budget';
+import { carriesAuthorization, cookieKind } from '../ops/meters/auth-budget';
 import { cmsOf } from '../util/cms';
 
 /** the most distinct unclassified cookie names `/serve-stats` keeps; later ones count as `other` */

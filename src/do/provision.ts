@@ -1,22 +1,27 @@
-import { importGeneration, importStatus, latestImport, storedImportLoader } from '../db/import-sql';
+import {
+	importGeneration,
+	importStatus,
+	latestImport,
+	storedImportLoader
+} from '../db/dump/import';
 import {
 	SqlMigrator,
 	chunksPerInvocation,
 	ensureMigrateTable,
 	readMigrateCursor
-} from '../db/migrate-sql';
+} from '../db/dump/migrate';
 import { openRestoreMark, readRestoreMark } from '../db/write-mark';
 import { PACKED_CONTAINER_DIGEST } from '../ops/container-digest';
 import { ensureFragmentTables } from '../ops/fragment-index';
-import { ensureRevTables } from '../ops/module-rev';
-import { STALE_DEPTH_MAX } from '../ops/page-store';
+import { ensureRevTables } from '../ops/module/rev';
+import { STALE_DEPTH_MAX } from '../ops/page/store';
 import { DRIVER_DIGEST_KEY } from '../ops/reconcile';
 import { ensureHealthTable } from '../ops/supervisor';
 import type { SitePhpDurableObject } from '../site-do';
 import { cmsOf } from '../util/cms';
 import { errorMessage } from '../util/errors';
+import { phasesFor } from './boot/tree';
 import { migrationSelfDrives, prefillDefault } from './levers';
-import { phasesFor } from './tree-boot';
 import type { Payload, Row } from './types';
 
 /**

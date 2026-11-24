@@ -1,4 +1,4 @@
-import { importStatus, latestImport } from '../../db/import-sql';
+import { importStatus, latestImport } from '../../db/dump/import';
 import {
 	adminPasswordPhp,
 	extensionsListPhp,
@@ -6,7 +6,7 @@ import {
 	themeDefaultPhp,
 	type ThemeDefaultRequest,
 	uninstallModulePhp
-} from '../../drupal/extension-php';
+} from '../../drupal/php/extension';
 import {
 	claimWarmRun,
 	firstRunConfig,
@@ -14,15 +14,14 @@ import {
 	OPS_REGISTRY,
 	opsRun,
 	packConsistencyRun
-} from '../../drupal/site-php';
-import { strataConfigPhp, strataStorePhp } from '../../drupal/strata-php';
-import { claimWarmStep } from '../../ops/claim-warm';
+} from '../../drupal/php/site';
+import { strataConfigPhp, strataStorePhp } from '../../drupal/php/strata';
 import { CRON_CLAIM_GRACE_MS, cronIntervalMs } from '../../ops/cron-drive';
 import { cellOf, type ConsoleCell, readConsole } from '../../ops/db-console';
 import { type DeploymentKv, recordClaimed } from '../../ops/deployment-site';
 import { extensionRows } from '../../ops/extensions';
 import { healthTree, reconcileNode, repairNode, supervisorNode } from '../../ops/health-tree';
-import { noteAuditDetail } from '../../ops/owner-audit';
+import { noteAuditDetail } from '../../ops/owner/audit';
 import { enabledModules } from '../../ops/reconcile';
 import {
 	isQuarantined,
@@ -33,13 +32,13 @@ import {
 	shouldRollback
 } from '../../ops/repair';
 import { FIRST_RUN_KEY } from '../../ops/setup-page';
-import { chooseOrigin, ORIGIN_KEY, pinnable } from '../../ops/site-origin';
+import { chooseOrigin, ORIGIN_KEY, pinnable } from '../../ops/site/origin';
 import {
 	bearerToken,
 	mintOwnerToken,
 	ownerTokenMatches,
 	randomKeyBase64
-} from '../../ops/site-secrets';
+} from '../../ops/site/secrets';
 import {
 	capturesStatements,
 	parseStoreRequest,
@@ -52,6 +51,7 @@ import {
 } from '../../ops/strata-config';
 import { gcHealthLedger, LEDGER_MAX_ROWS } from '../../ops/supervisor';
 import { updbStatus } from '../../ops/updb';
+import { claimWarmStep } from '../../ops/warm/claim';
 import type { SitePhpDurableObject } from '../../site-do';
 import { cmsOf } from '../../util/cms';
 import { errorMessage } from '../../util/errors';

@@ -1,13 +1,14 @@
 import { dropAllSnapshots, ensureHeapTables } from '../db/heap-store';
-import { cronHookList } from '../drupal/cron-php';
+import { cronHookList } from '../drupal/php/cron';
+import { SHIPPED_CORE_VERSION } from '../ops/composer/shipped-lock';
 import {
 	CORE_VERSION_KEY,
 	invalidateVersionPinnedCaches,
 	type InvalidationResult
 } from '../ops/core-version';
 import { type CronHookCache, cronHooksFor, cronHooksFromList } from '../ops/cron';
-import { dailyLimit } from '../ops/degrade';
 import { pruneHeapRecords } from '../ops/heap-integrity';
+import { dailyLimit } from '../ops/meters/degrade';
 import {
 	extensionFingerprint,
 	PACKED_CONTAINER_PATH,
@@ -27,7 +28,6 @@ import {
 	serialiseReconcileState
 } from '../ops/reconcile';
 import { FIRST_RUN_KEY } from '../ops/setup-page';
-import { SHIPPED_CORE_VERSION } from '../ops/shipped-lock';
 import {
 	readSweepCursor,
 	sweepDue,
@@ -51,11 +51,11 @@ import type { SitePhpDurableObject } from '../site-do';
 import { cmsOf } from '../util/cms';
 import { errorMessage, isMissingTable } from '../util/errors';
 import { columnText, firstRow } from '../util/sql';
+import { phasesFor } from './boot/tree';
 import type { ReconcileStateHost } from './host';
 import { CRON_HOOKS_KEY, HEAP_IMAGE_KEY, RECONCILE_KEY } from './keys';
 import { fillBatchSize } from './levers';
-import { refusesReconcile } from './role';
-import { phasesFor } from './tree-boot';
+import { refusesReconcile } from './replica/role';
 import type { Payload } from './types';
 
 /**

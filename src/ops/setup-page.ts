@@ -10,7 +10,7 @@
 import { SETUP_PAGE_CSS, SETUP_PAGE_HTML, SETUP_PAGE_JS } from '../site/generated/assets';
 import { cmsOf } from '../util/cms';
 import { renderTemplate } from '../util/template';
-import { wantsHtml } from './warming-page';
+import { wantsHtml } from './warm/page';
 
 /** the `cfw_meta` key `/firstrun` stamps once a site has been configured */
 export const FIRST_RUN_KEY = 'first_run_at';

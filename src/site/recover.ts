@@ -3,9 +3,9 @@ import {
 	noteOwnerFailure,
 	ownerFailKey,
 	ownerRefusedForNow
-} from '../ops/admin-session';
-import { isNonce, RECOVER_PATH } from '../ops/owner-recovery';
-import { siteStubOptions } from '../ops/site-id';
+} from '../ops/owner/admin-session';
+import { isNonce, RECOVER_PATH } from '../ops/owner/recovery';
+import { siteStubOptions } from '../ops/site/id';
 import { siteFor } from './owner';
 import type { FrontEntry } from './types';
 

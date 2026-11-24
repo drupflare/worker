@@ -7,13 +7,13 @@ import {
 	RestorePartsError,
 	uploadStatus,
 	type UploadStatus
-} from '../../db/restore-parts';
+} from '../../db/dump/restore-parts';
 import { MARK_ID, noteRestoreMark } from '../../db/write-mark';
 import { DEFAULT_MAX_PAGED_RESTORE_BYTES, RESTORE_PART_MAX_BYTES } from '../../ops/body-limit';
 import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
 import { jsonError } from '../../util/reply';
-import { keepsMark, MARK_REFUSAL } from '../role';
+import { keepsMark, MARK_REFUSAL } from '../replica/role';
 
 /** the part body, counted as it arrives; one part is the most this route ever holds */
 async function readPartBody(request: Request): Promise<Uint8Array> {

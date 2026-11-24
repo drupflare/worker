@@ -4,8 +4,8 @@ import {
 	type AuditEntry,
 	entryHash,
 	isAuditEntry
-} from './owner-audit';
-import { siteKvKey } from './site-id';
+} from './owner/audit';
+import { siteKvKey } from './site/id';
 
 /** the CONFIG_KV key holding the retirement log, a hash chain in the shape of the owner audit log */
 export const RETIRE_LOG_KEY = 'site:retired-log';

@@ -1,5 +1,8 @@
-/** the CMSs the shared tables know; `scripts/cms.ts` `CMS_VALUES` is the build-side list */
-export type Cms = 'drupal' | 'wordpress' | 'joomla';
+/** every CMS the build can pack and the shared tables key on */
+export const CMS_VALUES = ['drupal', 'wordpress', 'joomla'] as const;
+
+/** one of {@link CMS_VALUES} */
+export type Cms = (typeof CMS_VALUES)[number];
 
 /** the CMS an environment selects: the `CMS` var, or Drupal when it is absent or empty */
 export function cmsOf(env: unknown): string {

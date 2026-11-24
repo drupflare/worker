@@ -6,8 +6,8 @@ import {
 	warmForced,
 	warmIntervalConfigured
 } from '../ops/cron';
+import { resolvePlanNumber } from '../ops/meters/plan-profile';
 import { isPaid } from '../ops/plan';
-import { resolvePlanNumber } from '../ops/plan-profile';
 import { parseState } from '../ops/repair';
 import {
 	RATE_WINDOW_MS,

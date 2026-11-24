@@ -21,7 +21,7 @@ import {
 import { cmsOf } from '../../util/cms';
 import { errorMessage } from '../../util/errors';
 import { wordpressCronPhase } from '../../wordpress/cron';
-import { phasesFor } from '../tree-boot';
+import { phasesFor } from '../boot/tree';
 import type { AlarmContext } from './context';
 
 /** what a cron outbox row carries: the cursor the firing starts from and the hooks it may run */

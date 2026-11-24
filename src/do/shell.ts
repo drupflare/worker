@@ -1,4 +1,4 @@
-import { harvestShell, renderFragments } from '../drupal/site-php';
+import { harvestShell, renderFragments } from '../drupal/php/site';
 import { indexFragments, purgeShellsForTags } from '../ops/fragment-index';
 import {
 	assemble,
@@ -310,7 +310,7 @@ export async function assembleFor(
  *
  * It compares harvest to harvest: a harvest empties the render bin, so its holes lack the
  * `#attached` libraries an ordinary render inlines and the asset sets differ by construction.
- * The cost is 40 to 52 rows written, break-even at 4 to 13 requests (`shell-verify-cost.spec.ts`
+ * The cost is 40 to 52 rows written, break-even at 4 to 13 requests (`shell/verify-cost.spec.ts`
  * measures it). The harvest body is Drupal's own BigPipe stream and is what the visitor receives.
  */
 export async function verifyShellFor(

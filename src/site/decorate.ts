@@ -1,5 +1,5 @@
-import { AUTH_MODE_HEADER, AUTH_REASON_HEADER } from '../ops/auth-budget';
-import { REPLICA_HEADER } from '../ops/replica-routing';
+import { AUTH_MODE_HEADER, AUTH_REASON_HEADER } from '../ops/meters/auth-budget';
+import { REPLICA_HEADER } from '../ops/replica/routing';
 import type { AuthState, FrontContext, Hop, Learned, StoreOutcome } from './types';
 
 /** The facts the response headers report about how a request was answered. */

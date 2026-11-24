@@ -4,9 +4,9 @@ import {
 	noteOwnerFailure,
 	ownerFailKey,
 	ownerRefusedForNow
-} from '../ops/admin-session';
-import { resolveSite, siteStubOptions } from '../ops/site-id';
-import { bearerToken } from '../ops/site-secrets';
+} from '../ops/owner/admin-session';
+import { resolveSite, siteStubOptions } from '../ops/site/id';
+import { bearerToken } from '../ops/site/secrets';
 import { PUBLIC_ROUTES } from './routes';
 import type { SiteWorkerEnv } from './types';
 

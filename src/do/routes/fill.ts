@@ -1,4 +1,4 @@
-import { invalidateTags, renderPage } from '../../drupal/site-php';
+import { invalidateTags, renderPage } from '../../drupal/php/site';
 import {
 	compilePlan,
 	fillSlots,

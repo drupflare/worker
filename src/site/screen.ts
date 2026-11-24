@@ -1,4 +1,4 @@
-import { EDGE_PAGE_TTL_S } from './edge-cache';
+import { EDGE_PAGE_TTL_S } from './edge/cache';
 import {
 	BodyLimitExceeded,
 	bodyLimitFor,

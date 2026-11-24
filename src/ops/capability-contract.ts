@@ -75,7 +75,7 @@ export const VECTORS: readonly Vector[] = [
 		expected: false,
 		blocker: 'platform',
 		evidence:
-			'THE PROBE IS STALE AS A CAPABILITY TEST and is kept because the flag it names is real: `cfwSuspend` asks for Asyncify or JSPI, which this build has neither of, and `FetchHandler` is the transport that needs them. What a module needs -- an HTTP call answered inside the render -- is served another way as of 2026-09-08: `ParkFetchHandler` yields through the Zend park and the Worker performs the fetch. `park-oidc.spec.ts` drives `drupal/openid_connect` through a real authorization-code exchange on it. So `RuntimeCapabilities.blockingOutbound` is TRUE while this vector is false, and the two are not in conflict: this asks whether the wasm stack can be suspended and that asks whether an answer can arrive before the render ends. It is a literal for the same reason `blockingSocket` is -- a single-expression probe runs inside ONE `_run`, and a host that could answer there would not need a park at all'
+			'THE PROBE IS STALE AS A CAPABILITY TEST and is kept because the flag it names is real: `cfwSuspend` asks for Asyncify or JSPI, which this build has neither of, and `FetchHandler` is the transport that needs them. What a module needs -- an HTTP call answered inside the render -- is served another way as of 2026-09-08: `ParkFetchHandler` yields through the Zend park and the Worker performs the fetch. `park/oidc.spec.ts` drives `drupal/openid_connect` through a real authorization-code exchange on it. So `RuntimeCapabilities.blockingOutbound` is TRUE while this vector is false, and the two are not in conflict: this asks whether the wasm stack can be suspended and that asks whether an answer can arrive before the render ends. It is a literal for the same reason `blockingSocket` is -- a single-expression probe runs inside ONE `_run`, and a host that could answer there would not need a park at all'
 	},
 	{
 		// executed, two parks: a build that does not re-arm still has the symbols. The calls sit
@@ -95,7 +95,7 @@ export const VECTORS: readonly Vector[] = [
 		expected: true,
 		blocker: null,
 		evidence:
-			'MEASURED TRUE on the long64 build: a trapped call several frames down parks, resumes with a host value, parks again and finishes, and the delivered result is correct. **IT IS NOT THE CAPABILITY A MODULE NEEDS**, and the gap is the whole point -- every call here happens inside one `_run`, and a host able to answer inside one `_run` would not need a park at all. The capability is a park in one invocation resumed in a LATER one, which no single-expression probe can express. `park-interpreter.spec.ts` measures that against the real interpreter; see `RuntimeCapabilities.blockingSocket` for what it says'
+			'MEASURED TRUE on the long64 build: a trapped call several frames down parks, resumes with a host value, parks again and finishes, and the delivered result is correct. **IT IS NOT THE CAPABILITY A MODULE NEEDS**, and the gap is the whole point -- every call here happens inside one `_run`, and a host able to answer inside one `_run` would not need a park at all. The capability is a park in one invocation resumed in a LATER one, which no single-expression probe can express. `park/interpreter.spec.ts` measures that against the real interpreter; see `RuntimeCapabilities.blockingSocket` for what it says'
 	},
 	{
 		id: 'http.curl',
@@ -371,7 +371,7 @@ export const VECTORS: readonly Vector[] = [
 		expected: true,
 		blocker: null,
 		evidence:
-			'The toolkit lived at `src/ImageToolkit/` while the manager registers the subdir `Plugin/ImageToolkit`, so discovery never saw it and a site had NO toolkit at all -- gd is absent too. Moved; `tests/integration/image-toolkit.spec.ts` asserts discovery, availability and a derivative end to end'
+			'The toolkit lived at `src/ImageToolkit/` while the manager registers the subdir `Plugin/ImageToolkit`, so discovery never saw it and a site had NO toolkit at all -- gd is absent too. Moved; `tests/integration/image/toolkit.spec.ts` asserts discovery, availability and a derivative end to end'
 	},
 	{
 		id: 'media.getimagesize',

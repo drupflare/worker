@@ -1,17 +1,4 @@
 import {
-	authorizeUrl,
-	callbackUrl,
-	createPkce,
-	exchangeCode,
-	isTokenError,
-	type PendingAuth,
-	pendingMatches,
-	randomToken,
-	resolveAccountId,
-	revoke,
-	type TokenSet
-} from '../../ops/cf-oauth';
-import {
 	applyDnsPlan,
 	createSendingSubdomain,
 	dnsPlan,
@@ -24,6 +11,19 @@ import {
 	type TokenGrants,
 	zoneRecords
 } from '../../ops/mail-onboard';
+import {
+	authorizeUrl,
+	callbackUrl,
+	createPkce,
+	exchangeCode,
+	isTokenError,
+	type PendingAuth,
+	pendingMatches,
+	randomToken,
+	resolveAccountId,
+	revoke,
+	type TokenSet
+} from '../../ops/owner/cf-oauth';
 import type { SitePhpDurableObject } from '../../site-do';
 import { jsonError } from '../../util/reply';
 import {

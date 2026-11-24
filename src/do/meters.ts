@@ -1,4 +1,3 @@
-import { DAILY_ROWS_QUOTA } from '../ops/auth-budget';
 import {
 	ZERO_ENCOUNTERS,
 	addEncounters,
@@ -6,6 +5,7 @@ import {
 	parseEncounters,
 	type EncounterCounts
 } from '../ops/cold-encounter';
+import { DAILY_ROWS_QUOTA } from '../ops/meters/auth-budget';
 import {
 	DAY_METERS_PREFIX,
 	dayMetersKey,
@@ -13,8 +13,8 @@ import {
 	readDayMeters,
 	writeDayMeters,
 	type DayMeters
-} from '../ops/day-meters';
-import { dailyLimit, degradation as degradationFor, type Degradation } from '../ops/degrade';
+} from '../ops/meters/day-meters';
+import { dailyLimit, degradation as degradationFor, type Degradation } from '../ops/meters/degrade';
 import { isMissingTable } from '../util/errors';
 import { firstRow } from '../util/sql';
 import type { MeterHost } from './host';

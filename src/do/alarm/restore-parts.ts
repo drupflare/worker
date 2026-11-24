@@ -1,4 +1,4 @@
-import { purgeExpiredUploads } from '../../db/restore-parts';
+import { purgeExpiredUploads } from '../../db/dump/restore-parts';
 import type { AlarmContext } from './context';
 
 /**

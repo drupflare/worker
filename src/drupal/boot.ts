@@ -9,10 +9,10 @@ import { migrateEngine } from '../do/levers';
 import { mountInstalledModules } from '../do/packages';
 import type { SiteBinary } from '../do/types';
 import { coldPackEnv } from '../ops/cold-pack';
+import { SHIPPED_LOCK_VERSIONS } from '../ops/composer/shipped-lock';
 import { DRIVER_DIGEST } from '../ops/driver-digest';
 import { lookupMemoFor } from '../ops/lookup-memo';
 import { OPCACHE_PACK } from '../ops/opcache-pack';
-import { SHIPPED_LOCK_VERSIONS } from '../ops/shipped-lock';
 import {
 	OPCACHE_PACK_ROOT,
 	opcacheMode,

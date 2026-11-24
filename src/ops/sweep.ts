@@ -4,10 +4,10 @@
  * @module
  */
 import { firstRow } from '../util/sql';
-import { DEFAULT_AUTH_ROWS_FRACTION, utcDayKey } from './auth-budget';
 import { cronDue } from './cron-drive';
-import { REDUCE_AT } from './degrade';
-import { staleAllowed } from './page-store';
+import { DEFAULT_AUTH_ROWS_FRACTION, utcDayKey } from './meters/auth-budget';
+import { REDUCE_AT } from './meters/degrade';
+import { staleAllowed } from './page/store';
 
 /** the reads and writes a sweep needs, narrowed so it is drivable over a stand-in */
 export interface SweepSql {

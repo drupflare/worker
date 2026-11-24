@@ -4,14 +4,14 @@ import {
 	dumpChunk,
 	type DumpCursor,
 	dumpDatabase
-} from '../../db/export-sql';
-import { isIdentityMetaStatement, storeImport } from '../../db/import-sql';
+} from '../../db/dump/export';
+import { isIdentityMetaStatement, storeImport } from '../../db/dump/import';
 import { MARK_ID, noteRestoreMark } from '../../db/write-mark';
-import { isBookmark, sealedExportRows } from '../../ops/site-secrets';
+import { isBookmark, sealedExportRows } from '../../ops/site/secrets';
 import type { SitePhpDurableObject } from '../../site-do';
 import { errorMessage } from '../../util/errors';
 import { jsonError } from '../../util/reply';
-import { keepsMark, MARK_REFUSAL } from '../role';
+import { keepsMark, MARK_REFUSAL } from '../replica/role';
 
 /**
  * Point-in-time recovery, which the platform offers only as a runtime API (no wrangler

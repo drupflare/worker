@@ -8,7 +8,7 @@ declare module '*.wasm' {
 }
 
 /**
- * A zstd frame from `scripts/pack-wasm-zstd.ts` (8.3 and experiment arms only); wrangler's `Data`
+ * A zstd frame from `scripts/pack/wasm-zstd.ts` (8.3 and experiment arms only); wrangler's `Data`
  * rule gives an `ArrayBuffer`.
  */
 declare module '*.zst' {
@@ -17,7 +17,7 @@ declare module '*.zst' {
 }
 
 /**
- * The root `composer.lock` as text (wrangler's `Text` rule), which `src/ops/shipped-lock.ts` parses
+ * The root `composer.lock` as text (wrangler's `Text` rule), which `src/ops/composer/shipped-lock.ts` parses
  * so the lock is the one place the shipped versions are written.
  */
 declare module '*.lock' {

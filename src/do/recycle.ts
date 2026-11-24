@@ -1,5 +1,6 @@
 import { isMissingTable } from '../util/errors';
 import { firstRow } from '../util/sql';
+import { memoryOf, releaseGrowthCap } from './growth/cap';
 import type { RecycleHost } from './host';
 import { isolateAboveBytes, recycleAboveBytes } from './isolate';
 import { PACK_INDEX_BYTES, lazyMountBytes } from './lazy-mount';
@@ -49,6 +50,7 @@ export function dropInterpreter(host: RecycleHost): void {
 	if (!host.php?.binary) return;
 	// a one-shot interpreter's writes are judged as it goes
 	host.php.mysql?.endRun?.();
+	releaseGrowthCap(memoryOf(host.php.binary));
 	host.php = undefined;
 }
 

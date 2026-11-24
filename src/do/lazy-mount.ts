@@ -116,6 +116,6 @@ export function packCachedEnv<E>(env: E): E {
  * What the merged pack index retains on the JS heap, in bytes: `heapUsed` either side of a
  * `JSON.parse` of `core.pf.json` (1,980,912 for 11,457 entries, 1.5x the file). It lifts the
  * authenticated plateau from 96.8% to 98.3% of the ceiling. A constant, so
- * `pack-index-bytes.spec.ts` fails when the pack drifts from it.
+ * `pack/index-bytes.spec.ts` fails when the pack drifts from it.
  */
 export const PACK_INDEX_BYTES = 1_980_912;

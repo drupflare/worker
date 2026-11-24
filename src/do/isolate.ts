@@ -60,10 +60,55 @@ export function spareMemoryBytes(): number {
 }
 
 let isolateIdMemo: string | undefined;
+let isolateStartedMemo = 0;
 
 /** this isolate's id, minted on first use because workerd refuses randomness at global scope */
 export function isolateId(): string {
-	return (isolateIdMemo ??= crypto.randomUUID());
+	if (isolateIdMemo === undefined) {
+		isolateIdMemo = crypto.randomUUID();
+		isolateStartedMemo = Date.now();
+	}
+	return isolateIdMemo;
+}
+
+/** when this isolate first needed its id, which is the first request or alarm it served */
+export function isolateStartedAt(): number {
+	isolateId();
+	return isolateStartedMemo;
+}
+
+const instanceIds = new WeakMap<object, string>();
+const interpreterIds = new WeakMap<object, string>();
+
+function idOf(ids: WeakMap<object, string>, owner: object): string {
+	let id = ids.get(owner);
+	if (id === undefined) {
+		id = crypto.randomUUID();
+		ids.set(owner, id);
+	}
+	return id;
+}
+
+/**
+ * Which incarnation answers: the isolate (changes when the platform replaces it, by an abort or a
+ * memory reset), the object instance (changes when the object restarts, even in the same isolate)
+ * and the interpreter (changes at every interpreter creation). The instance and interpreter ids
+ * are minted on first read and stay fixed for the life of the thing they name.
+ */
+export function incarnation(
+	instance: object,
+	php: object | undefined,
+	phpBootedAt: number | undefined
+): {
+	isolate: { id: string; startedAt: number };
+	instance: string;
+	interpreter: { id: string; bootedAt: number | null } | null;
+} {
+	return {
+		isolate: { id: isolateId(), startedAt: isolateStartedAt() },
+		instance: idOf(instanceIds, instance),
+		interpreter: php ? { id: idOf(interpreterIds, php), bootedAt: phpBootedAt ?? null } : null
+	};
 }
 
 /** records whether an object holds an interpreter at the end of an invocation */

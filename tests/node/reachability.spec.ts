@@ -27,11 +27,11 @@ const ALLOWED_OFF_EDGE = new Map<string, string>([
 	// neither has anything to do at request time
 	['src/ops/dormancy.ts', 'artifact auditor; tests/node/dormancy.spec.ts drives it'],
 	[
-		'src/ops/module-table.ts',
-		'the record of what each contrib run asserted; module-table.spec.ts and contrib-verify.spec.ts read it'
+		'src/ops/module/table.ts',
+		'the record of what each contrib run asserted; module/table.spec.ts and contrib-verify.spec.ts read it'
 	],
 	// the discovery half of the replica work, and it must NEVER reach the edge: it RECORDS effects
-	// where `src/ops/replica.ts` refuses them, so a replica running this would learn what a request
+	// where `src/ops/replica/policy.ts` refuses them, so a replica running this would learn what a request
 	// does by letting it happen. effect-census.spec.ts drives it
 	[
 		'src/ops/mutation-oracle.ts',
@@ -144,7 +144,7 @@ describe('every module under src/ is reachable, or is allowed not to be by name'
 		// dormancy reads as `dead` rather than `script` because a vitest spec drives it, not a bun
 		// entrypoint -- which is accurate, and why it carries a reason above.
 		//
-		// `module-table.ts` LEFT this list by gaining a producer. `scripts/install-census.ts` reads
+		// `module/table.ts` LEFT this list by gaining a producer. `scripts/install-census.ts` reads
 		// it to install the census into `drupal-src`, so a bun entrypoint reaches it and the scan
 		// classifies it `script`. That is the direction this list is meant to move in.
 		const dead = scan().dead.map((r) => r.file);

@@ -2,7 +2,7 @@ import { encode } from '@drupflare/durabledb/codec';
 import { describe, expect, it } from 'vitest';
 import { SHIPPING_STEP } from '../../scripts/measure/growth-glue';
 import { INITIAL_BYTES } from '../../scripts/measure/initial-pages';
-import { renderPage } from '../../src/drupal/site-php';
+import { renderPage } from '../../src/drupal/php/site';
 import { writeCursor, type StoredCursor } from '../../src/ops/cron';
 import { DEFAULT_CRON_BUDGET, driveCron } from '../../src/ops/cron-drive';
 import {
@@ -95,6 +95,35 @@ async function heap(site: ServeDo): Promise<number> {
 async function stats(site: ServeDo): Promise<Record<string, unknown>> {
 	const res = await site.fetch(new Request('https://do.local/__serve-stats'));
 	return (await res.json()) as Record<string, unknown>;
+}
+
+type PibRun = (code: string) => unknown;
+
+/**
+ * Wraps the one `pib_run` call that both run paths make: `_run()` reaches it through a promise and
+ * a governed slice calls it straight through the Module. Stubbing `_run()` alone is skipped by a
+ * slice, which is the default path. Returns the call that puts the real one back.
+ */
+function wrapPibRun(inst: { binary: object }, wrap: (code: string, real: PibRun) => unknown) {
+	const binary = inst.binary as { ccall: (...args: unknown[]) => unknown };
+	const real = binary.ccall;
+	binary.ccall = function (this: unknown, ...args: unknown[]) {
+		if (args[0] !== 'pib_run') return real.apply(this, args);
+		const call = (code: string) =>
+			real.apply(this, [args[0], args[1], args[2], [code], ...args.slice(4)]);
+		return wrap(String((args[3] as unknown[])[0]), call);
+	};
+	return () => {
+		binary.ccall = real;
+	};
+}
+
+/** applies a patch to the page's PHP, which is base64 inside cfw_park_run() when parked */
+function patchRender(code: string, patch: (php: string) => string): string {
+	const parked = /cfw_park_run\(base64_decode\("([^"]*)"\)/.exec(code);
+	if (parked?.[1] === undefined) return patch(code);
+	const inner = patch(Buffer.from(parked[1], 'base64').toString('utf8'));
+	return code.replace(parked[1], Buffer.from(inner).toString('base64'));
 }
 
 async function provision(site: ServeDo): Promise<string> {
@@ -416,18 +445,17 @@ describe('the interpreter recycle', () => {
 				const before = Number((await stats(site)).trappedRuns ?? 0);
 
 				const inst = await site.ensurePhp();
-				const real = inst.php._run.bind(inst.php);
 				let thrown = '';
-				inst.php._run = () => {
+				const restore = wrapPibRun(inst, () => {
 					throw new WebAssembly.RuntimeError('memory access out of bounds');
-				};
+				});
 				try {
 					await site.run('<?php echo 1;');
 				} catch (e) {
 					thrown = String((e as Error)?.message ?? e);
 				}
 				const dropped = site.php === undefined;
-				inst.php._run = real;
+				restore();
 
 				const after = Number((await stats(site)).trappedRuns ?? 0);
 				// the control: a clean run after the trap must work, or "dropped" proves nothing
@@ -1090,15 +1118,14 @@ describe('a request that ends in exit()', () => {
 		async () => {
 			const out = await inObject(freshSite(), async (site: ServeDo) => {
 				const inst = await site.ensurePhp();
-				const real = inst.php._run.bind(inst.php);
 				// a build without the exit fix: the run that exits works, every later one runs nothing
 				let dead = false;
-				inst.php._run = async (code: string) => {
+				wrapPibRun(inst, (code, real) => {
 					if (dead) return 0;
-					const ret = await real(code);
+					const ret = real(code);
 					dead = /exit\(/.test(code);
 					return ret;
-				};
+				});
 				const before = Number((await stats(site)).exitedRuns ?? 0);
 				const reply = await site.runJson(harness('echo "partial"; exit(0);'));
 				const dropped = site.php === undefined;
@@ -1200,21 +1227,13 @@ describe('a served page whose PHP ends in exit()', () => {
 		async () => {
 			const out = await inObject(await provisionedSite(), async (site: ServeDo) => {
 				const inst = await site.ensurePhp();
-				const real = inst.php._run.bind(inst.php);
 				// the render is the one fragment that carries the page: parked, it is base64 inside
 				// cfw_park_run(); unparked, it calls cfw_serve()
-				inst.php._run = (code: string) => {
-					const parked = /cfw_park_run\(base64_decode\("([^"]*)"\)/.exec(code);
-					if (parked?.[1] !== undefined) {
-						const inner = patch(Buffer.from(parked[1], 'base64').toString('utf8'));
-						return real(code.replace(parked[1], Buffer.from(inner).toString('base64')));
-					}
-					return real(patch(code));
-				};
+				const restore = wrapPibRun(inst, (code, real) => real(patchRender(code, patch)));
 				const served = await serveDirect(site, '/', '&inline=1&edge=0');
 				const kept = site.php === inst;
 				const exited = Number((await stats(site)).exitedRuns);
-				inst.php._run = real;
+				restore();
 				// this object has no database, so a render that runs to the end redirects to the installer
 				const again = await site.runJson(
 					renderPage('/', [], false, { origin: 'https://x.test' })
@@ -1249,15 +1268,7 @@ describe('a served page whose PHP ends in exit()', () => {
 				await site.run(
 					'<?php drupal_register_shutdown_function(function () { echo "STALE-QUEUE"; });'
 				);
-				const real = inst.php._run.bind(inst.php);
-				inst.php._run = (code: string) => {
-					const parked = /cfw_park_run\(base64_decode\("([^"]*)"\)/.exec(code);
-					if (parked?.[1] !== undefined) {
-						const inner = patch(Buffer.from(parked[1], 'base64').toString('utf8'));
-						return real(code.replace(parked[1], Buffer.from(inner).toString('base64')));
-					}
-					return real(patch(code));
-				};
+				wrapPibRun(inst, (code, real) => real(patchRender(code, patch)));
 				return await serveDirect(site, '/filter/tips', '&inline=1&edge=0');
 			});
 
@@ -1274,22 +1285,13 @@ describe('a served page whose PHP ends in exit()', () => {
 			const out = await inObject(freshSite(), async (site: ServeDo) => {
 				await provision(site);
 				const inst = await site.ensurePhp();
-				const real = inst.php._run.bind(inst.php);
 				let armed = true;
 				const fatal = (php: string) =>
 					php.replace(
 						'$response = cfw_serve(',
 						'_drupal_exception_handler(new Exception("cfw exit probe")); $response = cfw_serve('
 					);
-				inst.php._run = (code: string) => {
-					if (!armed) return real(code);
-					const parked = /cfw_park_run\(base64_decode\("([^"]*)"\)/.exec(code);
-					if (parked?.[1] !== undefined) {
-						const inner = fatal(Buffer.from(parked[1], 'base64').toString('utf8'));
-						return real(code.replace(parked[1], Buffer.from(inner).toString('base64')));
-					}
-					return real(fatal(code));
-				};
+				wrapPibRun(inst, (code, real) => real(armed ? patchRender(code, fatal) : code));
 				const served = await serveDirect(site, '/filter/tips', '&inline=1&edge=0');
 				armed = false;
 				const kept = site.php === inst;

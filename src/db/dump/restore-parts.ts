@@ -8,17 +8,17 @@
  * @module
  */
 import { createHash } from 'node:crypto';
-import { RESTORE_PART_MAX_BYTES } from '../ops/body-limit';
-import { firstRow } from '../util/sql';
-import { DO_SQLITE_MAX_STATEMENT_CHARS } from './heap-store';
+import { RESTORE_PART_MAX_BYTES } from '../../ops/body-limit';
+import { firstRow } from '../../util/sql';
+import { DO_SQLITE_MAX_STATEMENT_CHARS } from '../heap-store';
 import {
 	IMPORT_STATEMENTS_PER_CHUNK,
 	ensureImportTables,
 	isIdentityMetaStatement,
 	splitSqlStatementsStrict,
 	type StoredImport
-} from './import-sql';
-import type { SqlLike, StorageLike } from './migrate-sql';
+} from './import';
+import type { SqlLike, StorageLike } from './migrate';
 
 /** how long an upload is kept after the last call that changed it */
 export const RESTORE_UPLOAD_TTL_MS = 6 * 60 * 60 * 1000;

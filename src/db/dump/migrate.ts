@@ -1,5 +1,5 @@
-import { isPaid } from '../ops/plan';
-import { errorMessage } from '../util/errors';
+import { isPaid } from '../../ops/plan';
+import { errorMessage } from '../../util/errors';
 /** a value `sql.exec()` can bind; wide integers arrive as decimal strings (see `decodeParam`) */
 export type SqlParam = null | number | bigint | string | Uint8Array;
 
@@ -30,7 +30,7 @@ export interface StorageLike {
 	transactionSync<T>(cb: () => T): T;
 }
 
-/** the part of `manifest.json` a replay reads (`scripts/pack-sql.ts` writes more) */
+/** the part of `manifest.json` a replay reads (`scripts/pack/sql.ts` writes more) */
 export interface MigrationManifest {
 	generation: string;
 	totals: { chunks: number; statements: number; rows: number };
@@ -521,7 +521,7 @@ export function chunksPerInvocation(env?: MigratePlanEnv): number {
 
 /**
  * Chunks a free invocation replays; one fetch per chunk plus the manifest must stay under
- * {@link FREE_SUBREQUEST_LIMIT} (`tests/node/migrate-sql.spec.ts`).
+ * {@link FREE_SUBREQUEST_LIMIT} (`tests/node/dump/migrate.spec.ts`).
  */
 export const FREE_CHUNKS_PER_INVOCATION = 40;
 

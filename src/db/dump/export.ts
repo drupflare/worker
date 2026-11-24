@@ -1,5 +1,5 @@
-import { fnv1a32 } from '../util/hash';
-import type { SqlLike } from './migrate-sql';
+import { fnv1a32 } from '../../util/hash';
+import type { SqlLike } from './migrate';
 
 /**
  * Tables the restore path itself lives in, excluded outright (no DDL, drops or rows).

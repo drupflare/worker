@@ -3,8 +3,8 @@
  * Chunks are bounded by statement count, not bytes (a byte budget does not bound replay cost).
  * @module
  */
-import { firstRow } from '../util/sql';
-import { DO_SQLITE_MAX_STATEMENT_CHARS } from './heap-store';
+import { firstRow } from '../../util/sql';
+import { DO_SQLITE_MAX_STATEMENT_CHARS } from '../heap-store';
 import type {
 	MigrateCursor,
 	MigrationChunk,
@@ -12,7 +12,7 @@ import type {
 	MigrationManifest,
 	SqlLike,
 	StorageLike
-} from './migrate-sql';
+} from './migrate';
 
 /** statements per import chunk; the migration pack uses comparable units at 0-3 ms each */
 export const IMPORT_STATEMENTS_PER_CHUNK = 40;

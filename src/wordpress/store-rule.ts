@@ -1,6 +1,6 @@
 import type { ServingRow, StoreInput } from '../ops/store-rule';
 
-/** the env var that turns the WordPress page cache on; any value but `1` is off */
+/** the env var that turns the WordPress page cache off when it is `0`; any other value, or none, is on */
 export const PAGE_CACHE_SETTING = 'WORDPRESS_PAGE_CACHE';
 
 /** `Cache-Control` directives that say a response is for one visitor or must not be kept */
@@ -21,7 +21,7 @@ export function carriesNonce(html: string): boolean {
 
 /** whether the page cache is on in this environment */
 export function pageCacheOn(env: unknown): boolean {
-	return (env as Record<string, unknown> | undefined)?.[PAGE_CACHE_SETTING] === '1';
+	return (env as Record<string, unknown> | undefined)?.[PAGE_CACHE_SETTING] !== '0';
 }
 
 // #region the key
@@ -345,7 +345,7 @@ export function judge(
 /**
  * The reason a WordPress response may not enter an anonymous store, or undefined when it may.
  *
- * Nothing is stored unless `WORDPRESS_PAGE_CACHE` is `1`. With it on, only an anonymous, cookie-free
+ * Nothing is stored when `WORDPRESS_PAGE_CACHE` is `0`. With it on, only an anonymous, cookie-free
  * GET of a path the key rules accept, answering 200 with a complete body of the right type, no
  * Set-Cookie, no private directive, no `Vary` that matters and no nonce is stored.
  */

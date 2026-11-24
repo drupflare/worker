@@ -286,9 +286,9 @@ export function sameStable(a: Stable, b: Stable): boolean {
 	return figures(a) === figures(b);
 }
 
-/** the write-to-fresh bound in ms for a confirm that reads this many routes, one render each in series */
+/** the write-to-fresh bound in ms: one render per route plus one slid-in fill, 3 s each, and 2 s of slack */
 export function contractMsFor(routes: number): number {
-	return 1000 * routes + 2000;
+	return 3000 * (routes + 1) + 2000;
 }
 
 /** the violation text for a confirm that ran over its bound, or undefined when it did not */
@@ -313,6 +313,17 @@ export function judgeContract(
 		: `${kind} took ${n(worstMs)} ms for ${what}, over the ${n(bound)} ms bound`;
 }
 
+const TRANSPORT_RETRYABLE = /ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|timed out/;
+
+/**
+ * Whether a failed request may be sent again. A refused connect never carried the request, so any
+ * method is safe; the other failures may have reached the server, so only a read is.
+ */
+export function retryableTransport(message: string, idempotent: boolean): boolean {
+	if (/ECONNREFUSED/.test(message)) return true;
+	return idempotent && TRANSPORT_RETRYABLE.test(message);
+}
+
 /** the median and extremes of a list of numbers, or undefined when it is empty */
 export function spread(
 	values: number[]
@@ -328,3 +339,105 @@ export function spread(
 		max: sorted[sorted.length - 1]!
 	};
 }
+
+// #region the deployed target
+/** where a run points and what it may do there */
+export type Target =
+	| { deployed: false }
+	| {
+			deployed: true;
+			origin: string;
+			host: string;
+			port: number;
+			secure: boolean;
+			rowsStop: number;
+	  };
+
+/** a target read from the arguments, or the reason it is refused; a reason never carries a token */
+export type TargetRead = { ok: true; target: Target } | { ok: false; error: string };
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
+
+/** reads `--deployed`, `SOAK_ORIGIN` and `SOAK_ROWS_STOP`; a token never passes through here */
+export function readTarget(argv: string[], env: Record<string, string | undefined>): TargetRead {
+	const deployed = argv.includes('--deployed');
+	const origin = env.SOAK_ORIGIN ?? '';
+	if (!deployed) {
+		return origin === ''
+			? { ok: true, target: { deployed: false } }
+			: { ok: false, error: 'SOAK_ORIGIN is set without --deployed' };
+	}
+	if (argv.includes('--determinism')) {
+		return { ok: false, error: '--determinism runs the seed twice and needs a local rig' };
+	}
+	if (origin === '') return { ok: false, error: '--deployed needs SOAK_ORIGIN' };
+	let url: URL;
+	try {
+		url = new URL(origin);
+	} catch {
+		return { ok: false, error: 'SOAK_ORIGIN is not a URL' };
+	}
+	const secure = url.protocol === 'https:';
+	if (!secure && !(url.protocol === 'http:' && LOCAL_HOSTS.has(url.hostname))) {
+		return { ok: false, error: 'SOAK_ORIGIN must be https://, or http:// on localhost' };
+	}
+	if (url.username !== '' || url.password !== '' || url.pathname !== '/' || url.search !== '') {
+		return { ok: false, error: 'SOAK_ORIGIN is an origin: no credentials, path or query' };
+	}
+	const stop = env.SOAK_ROWS_STOP ?? '';
+	if (!/^[1-9][0-9]*$/.test(stop)) {
+		return { ok: false, error: '--deployed needs SOAK_ROWS_STOP, a whole number of rows' };
+	}
+	return {
+		ok: true,
+		target: {
+			deployed: true,
+			origin: url.origin,
+			host: url.hostname,
+			port: url.port === '' ? (secure ? 443 : 80) : Number(url.port),
+			secure,
+			rowsStop: Number(stop)
+		}
+	};
+}
+
+/** whether the run goes on at a poll of the object's rows-written counter, and what to say if not */
+export function rowsGuard(
+	rowsToday: number,
+	stop: number,
+	operations: number
+): { stop: boolean; message: string } {
+	const n = (v: number) => v.toLocaleString('en-US');
+	return rowsToday > stop
+		? {
+				stop: true,
+				message: `rows guard: rowsToday ${n(rowsToday)} passed SOAK_ROWS_STOP ${n(stop)} after ${n(operations)} operations; the run stopped`
+			}
+		: { stop: false, message: '' };
+}
+
+/** the owner routes a deployed run calls, each with what it stands in for on a local rig */
+export const OWNER_ROUTES_USED = [
+	{ route: '/serve-stats', method: 'GET', standsInFor: '/serve-stats' },
+	{ route: '/db-console', method: 'POST', standsInFor: '/sql reads' },
+	{ route: '/recycle', method: 'POST', standsInFor: 'killing and restarting the process' }
+] as const;
+
+/** a piece of the run that did not happen, with the reason */
+export type Skipped = { arm: string; skipped: true; reason: string };
+
+/** the record of a skipped piece */
+export const skipped = (arm: string, reason: string): Skipped => ({ arm, skipped: true, reason });
+
+/** the pieces a deployed run cannot do with an owner token alone */
+export const DEPLOYED_SKIPS = {
+	plantedRow: skipped(
+		'planted-row controls',
+		'they write a row, /sql is open only with PW_DIAGNOSTICS and /db-console rolls a write back'
+	),
+	processRestart: skipped(
+		'process restart',
+		'a deployed object has no process to kill; /recycle replaces its interpreter instead'
+	)
+} as const;
+// #endregion

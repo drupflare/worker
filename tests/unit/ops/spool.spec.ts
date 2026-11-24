@@ -184,7 +184,14 @@ describe('what each CMS keeps out of spool', () => {
 	it('leaves a file to the media features, which need no page store', () => {
 		expect(refuses('wordpress', '/wp-content/uploads/2026/photo.jpg', {})).toBeUndefined();
 		expect(refuses('wordpress', '/wp-content/uploads/2026/photo.jpg')).toBeUndefined();
-		expect(refuses('wordpress', '/hello/', {})).toBe('store-off');
+		expect(refuses('wordpress', '/hello/', { WORDPRESS_PAGE_CACHE: '0' })).toBe('store-off');
+	});
+
+	it('replicates WordPress pages by default and holds them when the page cache is 0', () => {
+		expect(refuses('wordpress', '/hello/', {})).toBeUndefined();
+		expect(refuses('wordpress', '/hello/', { WORDPRESS_PAGE_CACHE: '1' })).toBeUndefined();
+		expect(refuses('wordpress', '/hello/', { WORDPRESS_PAGE_CACHE: '0' })).toBe('store-off');
+		expect(refuses('wordpress', '/wp-admin/', {})).toBe('cms-path:/wp-admin');
 	});
 
 	it('keeps Joomla administrator and API out, and holds every Joomla page while its store is off', () => {

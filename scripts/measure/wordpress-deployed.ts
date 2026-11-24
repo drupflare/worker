@@ -68,7 +68,7 @@ export const STATS_READS = 2;
 /** the query name that carries a request's tag; `tag` is a WordPress query variable and cannot be it */
 export const TAG_PARAM = 'cfwrig';
 
-/** the env var the page cache reads, set for the throwaway only */
+/** the env var the page cache reads; the throwaway leaves it unset and runs the shipped default */
 export const PAGE_CACHE_VAR = 'WORDPRESS_PAGE_CACHE';
 
 /** how a step is authenticated */
@@ -86,6 +86,8 @@ export type PlanStep = {
 	auth: Auth;
 	/** the `x-cfw-phase` value an owner request carries */
 	phase?: 'boot-only' | 'load' | 'render' | 'probe';
+	/** read the rows-written counter around the step, pausing each side so no other request joins its window */
+	meter?: boolean;
 };
 
 /** the measured steps, in the order they run after the claim */
@@ -276,6 +278,57 @@ export const REQUEST_PLAN: readonly PlanStep[] = [
 	}
 ];
 
+const ROUTES = [
+	{ id: 'home', label: 'front page', path: '/' },
+	{ id: 'post', label: 'a post', path: '/2026/01/01/hello-world/' },
+	{ id: 'page', label: 'a page', path: '/sample-page/' },
+	{ id: 'category', label: 'a category archive', path: '/category/uncategorized/' },
+	{ id: 'feed', label: 'the feed', path: '/feed/' }
+] as const;
+
+const anonymous = (
+	id: string,
+	label: string,
+	path: string,
+	n: number,
+	meter = false
+): PlanStep => ({ id, label, method: 'GET', path, n, tagged: false, auth: 'none', meter });
+
+/** hits per route after its fill */
+export const CACHED_HITS = 10;
+
+/**
+ * The page store's cost: each route filled on a fresh interpreter then hit, one publish, and the
+ * pages it purges filled again. Every request but the publish is untagged, because a `cfwrig`
+ * query makes the path one the store refuses.
+ */
+export const CACHED_PLAN: readonly PlanStep[] = [
+	{ ...(REQUEST_PLAN.find((s) => s.id === 'login') as PlanStep) },
+	{ ...(REQUEST_PLAN.find((s) => s.id === 'rest-nonce') as PlanStep) },
+	...ROUTES.flatMap((r) => [
+		anonymous(`fill-${r.id}`, `${r.label}, first request: a fill`, r.path, 1, true),
+		anonymous(`hit-${r.id}`, `${r.label}, ${CACHED_HITS} more: hits`, r.path, CACHED_HITS)
+	]),
+	{
+		id: 'publish',
+		label: 'POST a published post through REST (the purge)',
+		method: 'POST',
+		path: '/wp-json/wp/v2/posts',
+		n: 1,
+		tagged: true,
+		auth: 'cookie-nonce',
+		meter: true
+	},
+	...(['home', 'category', 'feed'] as const).map((id) => {
+		const r = ROUTES.find((x) => x.id === id) as (typeof ROUTES)[number];
+		return anonymous(`refill-${id}`, `${r.label} after the publish: a refill`, r.path, 1, true);
+	}),
+	anonymous('hit-after', 'front page after the refill: hits', '/', 3)
+];
+
+/** the plans by name */
+export const PLANS = { full: REQUEST_PLAN, cached: CACHED_PLAN } as const;
+
 /** what a plan costs in requests, before it runs */
 export function countBudget(plan: readonly PlanStep[] = REQUEST_PLAN): {
 	measured: number;
@@ -284,8 +337,8 @@ export function countBudget(plan: readonly PlanStep[] = REQUEST_PLAN): {
 	claimObjectInvocations: number;
 } {
 	const measured = plan.reduce((a, s) => a + s.n, 0);
-	// the polls, the claim, and the two stats reads
-	const setup = READY_POLLS_MAX + 1 + STATS_READS;
+	// the polls, the claim, the two bracketing stats reads, and two per metered step
+	const setup = READY_POLLS_MAX + 1 + STATS_READS + 2 * plan.filter((s) => s.meter).length;
 	return { measured, setup, total: measured + setup, claimObjectInvocations: 3 };
 }
 
@@ -334,7 +387,10 @@ export function planRequests(
 
 /** the parsed command line */
 export type WpOptions = {
-	mode: 'dry' | 'local' | 'deployed';
+	mode: 'dry' | 'local' | 'deployed' | 'emit-config';
+	plan: keyof typeof PLANS;
+	/** false leaves `PW_DIAGNOSTICS` out of the throwaway, as a shipped deployment runs */
+	diagnostics: boolean;
 	name: string;
 	account: string | undefined;
 	eventsOut: string | undefined;
@@ -351,6 +407,8 @@ export function freshName(): string {
 export function parseWpOptions(argv: readonly string[]): WpOptions {
 	const o: WpOptions = {
 		mode: 'dry',
+		plan: 'full',
+		diagnostics: true,
 		name: '',
 		account: undefined,
 		eventsOut: undefined,
@@ -358,8 +416,14 @@ export function parseWpOptions(argv: readonly string[]): WpOptions {
 	};
 	const modes = new Set<string>();
 	for (const a of argv) {
-		if (a === '--dry' || a === '--local' || a === '--deployed') modes.add(a.slice(2));
-		else if (a.startsWith('--account=')) o.account = a.slice('--account='.length);
+		if (a === '--dry' || a === '--local' || a === '--deployed' || a === '--emit-config')
+			modes.add(a.slice(2));
+		else if (a === '--no-diagnostics') o.diagnostics = false;
+		else if (a.startsWith('--plan=')) {
+			const p = a.slice('--plan='.length);
+			if (p !== 'full' && p !== 'cached') throw new Error('--plan takes full or cached');
+			o.plan = p;
+		} else if (a.startsWith('--account=')) o.account = a.slice('--account='.length);
 		else if (a.startsWith('--name=')) o.name = a.slice('--name='.length);
 		else if (a.startsWith('--events-out=')) o.eventsOut = a.slice('--events-out='.length);
 		else if (a.startsWith('--port=')) o.port = Number(a.slice('--port='.length));
@@ -369,7 +433,16 @@ export function parseWpOptions(argv: readonly string[]): WpOptions {
 		throw new Error('--local and --deployed are exclusive');
 	}
 	if (modes.has('local') && modes.has('dry')) throw new Error('--local and --dry are exclusive');
-	o.mode = modes.has('deployed') ? 'deployed' : modes.has('local') ? 'local' : 'dry';
+	if (modes.has('emit-config') && modes.size > 1) {
+		throw new Error('--emit-config is exclusive with the other modes');
+	}
+	o.mode = modes.has('emit-config')
+		? 'emit-config'
+		: modes.has('deployed')
+			? 'deployed'
+			: modes.has('local')
+				? 'local'
+				: 'dry';
 	if (modes.size === 0) throw new Error('say one of --dry, --local or --deployed');
 	if (modes.has('deployed') && modes.has('dry')) o.mode = 'dry';
 	const wantsAccount = modes.has('deployed') || modes.has('dry');
@@ -467,7 +540,7 @@ export function stageAssets(root: string, outDir: string, probe: string): Staged
 }
 
 /** the vars the throwaway runs with, and why each is set */
-export function wpVars(origin?: string): Record<string, string> {
+export function wpVars(origin?: string, diagnostics = true): Record<string, string> {
 	return {
 		CMS: 'wordpress',
 		PLAN: 'free',
@@ -475,8 +548,7 @@ export function wpVars(origin?: string): Record<string, string> {
 		RETAIN_INTERPRETER: '0',
 		SQL_CHUNK_PREFIX: 'wordpress/sql',
 		HEAP_SNAPSHOT: '0',
-		PW_DIAGNOSTICS: '1',
-		[PAGE_CACHE_VAR]: '1',
+		...(diagnostics ? { PW_DIAGNOSTICS: '1' } : {}),
 		...(origin === undefined ? {} : { SITE_ORIGIN: origin })
 	};
 }
@@ -486,7 +558,8 @@ export function wpConfig(
 	name: string,
 	root: string,
 	assetsDir: string,
-	origin?: string
+	origin?: string,
+	diagnostics = true
 ): Record<string, unknown> {
 	return {
 		name,
@@ -494,7 +567,7 @@ export function wpConfig(
 		minify: true,
 		compatibility_date: '2026-08-01',
 		compatibility_flags: ['nodejs_compat'],
-		vars: wpVars(origin),
+		vars: wpVars(origin, diagnostics),
 		rules: [
 			{ type: 'CompiledWasm', globs: ['**/*.wasm'], fallthrough: true },
 			{ type: 'Data', globs: ['**/*.zst', '**/*.br'], fallthrough: true },
@@ -883,11 +956,16 @@ export type RunOutput = {
 	statsAfter: Record<string, unknown>;
 	probe: ProbeResult;
 	notes: string[];
+	/** rows the object counted written around each metered step */
+	stepRows: Record<string, number>;
 	startedAt: number;
 	endedAt: number;
 };
 
-type Step = (typeof REQUEST_PLAN)[number];
+type Step = PlanStep;
+
+/** pause either side of a metered step, longer than the join window, so only its own requests fall in it */
+export const METER_PAUSE_MS = 4000;
 
 /**
  * Sends the whole plan to `base`: ready polls, the claim, each measured step, two stats reads. The
@@ -900,9 +978,11 @@ export async function driveWordpress(
 	doFetch: typeof fetch,
 	sleep: (ms: number) => Promise<void>,
 	log: (s: string) => void,
-	probeUrl = 'https://example.com/'
+	probeUrl = 'https://example.com/',
+	plan: readonly PlanStep[] = REQUEST_PLAN
 ): Promise<RunOutput> {
-	assertBudget();
+	assertBudget(plan);
+	const stepRows: Record<string, number> = {};
 	const pass = `pw-${crypto.randomUUID()}`;
 	const jar = new CookieJar();
 	const records: RequestRecord[] = [];
@@ -1015,7 +1095,14 @@ export async function driveWordpress(
 
 	let probe: ProbeResult = { ok: false, reason: 'the probe step did not run' };
 	const stepDone = (s: Step) => log(`drove ${s.id}: ${s.n} request${s.n === 1 ? '' : 's'}`);
-	for (const s of REQUEST_PLAN) {
+	const rowsNow = async () => Number((await statsGet()).rowsToday);
+	for (const s of plan) {
+		let rowsBefore = Number.NaN;
+		if (s.meter) {
+			await sleep(METER_PAUSE_MS);
+			rowsBefore = await rowsNow();
+			await sleep(METER_PAUSE_MS);
+		}
 		for (let i = 0; i < s.n; i++) {
 			const tag = s.tagged ? tagFor(name, s.id, i) : null;
 			const path = tag === null ? s.path : withTag(s.path, tag);
@@ -1031,12 +1118,14 @@ export async function driveWordpress(
 				headers.cookie = 'wordpress_test_cookie=WP%20Cookie%20check';
 				body = loginBody('rigadmin', pass, origin);
 			}
-			if (s.id === 'draft' || s.id === 'save') {
+			if (s.id === 'draft' || s.id === 'save' || s.id === 'publish') {
 				headers['content-type'] = 'application/json';
 				body =
 					s.id === 'draft'
 						? JSON.stringify({ title: `rig draft ${i}`, status: 'draft' })
-						: JSON.stringify({ title: 'Hello world, saved by the rig' });
+						: s.id === 'publish'
+							? JSON.stringify({ title: 'Published by the rig', status: 'publish' })
+							: JSON.stringify({ title: 'Hello world, saved by the rig' });
 			}
 			const withCookies =
 				s.auth === 'cookie' || s.auth === 'cookie-nonce' || s.id === 'login';
@@ -1050,10 +1139,23 @@ export async function driveWordpress(
 			if (s.id === 'rest-nonce') nonce = r.text.trim();
 			if (s.id === 'probe') probe = parseProbeBody(r.text);
 		}
+		if (s.meter) {
+			await sleep(METER_PAUSE_MS);
+			stepRows[s.id] = (await rowsNow()) - rowsBefore;
+		}
 		stepDone(s);
 	}
 	const statsAfter = await statsGet();
-	return { records, statsBefore, statsAfter, probe, notes, startedAt, endedAt: Date.now() };
+	return {
+		records,
+		statsBefore,
+		statsAfter,
+		probe,
+		notes,
+		stepRows,
+		startedAt,
+		endedAt: Date.now()
+	};
 }
 
 // #endregion
@@ -1066,16 +1168,77 @@ export const SOURCES = {
 	hop: 'x-worker-ms, the front worker hop (the wall figure)'
 } as const;
 
+const median = (v: readonly number[]): number | undefined => {
+	const s = [...v].sort((a, b) => a - b);
+	return s.length === 0 ? undefined : s[Math.floor(s.length / 2)];
+};
+
+/**
+ * The inputs `free-envelope.ts` takes for WordPress, read from a cached run: per route the fill's
+ * wall and object cpuTime, the rows it wrote, and the hit's wall and front cpuTime. A figure with
+ * no source (no join, no meter) prints `unread`. Nothing here replaces the assumed 2.25 s a fill;
+ * that is the main session's decision.
+ */
+export function cachedInputs(
+	records: readonly RequestRecord[],
+	joined: readonly Joined[] | undefined,
+	stepRows: Readonly<Record<string, number>>
+): string[] {
+	const wall = (step: string) =>
+		records
+			.filter((r) => r.step === step)
+			.map((r) => Number(r.headers['x-worker-ms']))
+			.filter(Number.isFinite);
+	const cpu = (step: string, side: 'objects' | 'front') =>
+		(joined ?? [])
+			.filter((j) => j.record.step === step && j.front !== undefined)
+			.map((j) =>
+				side === 'front'
+					? (j.front as ClassedRow).cpuMs
+					: j.objects.reduce((a, o) => a + o.cpuMs, 0)
+			);
+	const fmt = (v: number | undefined, n: number, unit: string) =>
+		v === undefined ? 'unread' : `${v} ${unit} (p50, n=${n})`;
+	const out = [
+		'free-envelope inputs for WordPress (measured, this run; assumed values stay until told)'
+	];
+	for (const r of ROUTES) {
+		const f = `fill-${r.id}`;
+		const h = `hit-${r.id}`;
+		out.push(
+			`  ${r.id}: fill wall ${fmt(median(wall(f)), wall(f).length, 'ms')}; fill object cpu ${fmt(median(cpu(f, 'objects')), cpu(f, 'objects').length, 'ms')}; ` +
+				`fill rows ${stepRows[f] ?? 'unread'}; hit wall ${fmt(median(wall(h)), wall(h).length, 'ms')}; hit front cpu ${fmt(median(cpu(h, 'front')), cpu(h, 'front').length, 'ms')}`
+		);
+	}
+	const fills = ROUTES.map((r) => median(wall(`fill-${r.id}`))).filter(
+		(v): v is number => v !== undefined
+	);
+	out.push(
+		`  WORDPRESS_RENDER_SECONDS candidate: ${fills.length === 0 ? 'unread' : `${(median(fills) as number) / 1000} s (median of the ${fills.length} route medians, n=1 fill each)`}; the file assumes 2.25 s`
+	);
+	const rows = ROUTES.map((r) => stepRows[`fill-${r.id}`]).filter((v) => v !== undefined);
+	out.push(
+		`  WORDPRESS_ROWS_PER_FILL candidate: ${rows.length === 0 ? 'unread' : `${median(rows)} rows (median over ${rows.length} fills); the file derives it from a warmth mix`}`
+	);
+	out.push(
+		`  publish rows ${stepRows.publish ?? 'unread'}; refill rows home ${stepRows['refill-home'] ?? 'unread'}, category ${stepRows['refill-category'] ?? 'unread'}, feed ${stepRows['refill-feed'] ?? 'unread'}`
+	);
+	return out;
+}
+
 /** prints the run: the table, the meters, the probe and the notes */
 export function report(
 	out: RunOutput,
 	joined: readonly Joined[] | undefined,
 	log: (s: string) => void,
-	events?: { front: ClassedRow[]; objects: ClassedRow[] }
+	events?: { front: ClassedRow[]; objects: ClassedRow[] },
+	plan: readonly PlanStep[] = REQUEST_PLAN
 ): void {
 	log('');
 	log(`sources: CPU is ${SOURCES.cpu}; wall is ${SOURCES.hop}; n and spread are per row`);
-	for (const l of formatTable(assembleTable(out.records, joined))) log(l);
+	for (const l of formatTable(assembleTable(out.records, joined, plan))) log(l);
+	if (plan === CACHED_PLAN)
+		for (const l of cachedInputs(out.records, joined, out.stepRows)) log(l);
 	if (events) {
 		log(
 			`whole run, object invocations by class: ${formatClassTable(classTable(events.objects))}`
@@ -1097,9 +1260,10 @@ export function planLines(
 	name: string,
 	root: string,
 	staged: readonly StagedFile[],
-	env: Record<string, string | undefined>
+	env: Record<string, string | undefined>,
+	plan: readonly PlanStep[] = REQUEST_PLAN
 ): string[] {
-	const b = countBudget();
+	const b = countBudget(plan);
 	const bytes = staged.reduce((a, f) => a + f.bytes, 0);
 	const missing = [STUDENT_ID_ENV, STUDENT_TOKEN_ENV].filter((v) => !env[v]);
 	const problems = stageProblems(staged);
@@ -1107,7 +1271,7 @@ export function planLines(
 		`worker name: ${name}`,
 		`account: student (free), the variables ${STUDENT_ID_ENV} and ${STUDENT_TOKEN_ENV} are ${missing.length === 0 ? 'both set' : `MISSING: ${missing.join(', ')}`}`,
 		`vars: ${JSON.stringify(wpVars())}`,
-		`page cache setting for the throwaway only: ${PAGE_CACHE_VAR}=1 (the tree's own setting; the earlier test switch is gone from src/)`,
+		`page cache: ${PAGE_CACHE_VAR} is not passed, so the throwaway runs the shipped default (on)`,
 		`published assets: ${staged.length} files, ${bytes} bytes; largest ${Math.max(...staged.map((f) => f.bytes))} bytes; free limits ${ASSET_PUBLISH.filesPerVersion.free} files per version, ${ASSET_MAX_BYTES} bytes per asset (the per-asset figure is the repo's note, not re-read from the docs)`,
 		...staged.map((f) => `  ${f.path} ${f.bytes}`),
 		problems.length === 0
@@ -1121,12 +1285,39 @@ export function planLines(
 	];
 }
 
+/** what a cached plan sends and how long it takes, as `--dry` prints it; needs no credential */
+export function cachedPlanLines(plan: readonly PlanStep[] = CACHED_PLAN): string[] {
+	const b = countBudget(plan);
+	const metered = plan.filter((s) => s.meter).length;
+	const pauseS = (metered * 3 * METER_PAUSE_MS) / 1000;
+	const fills = plan.filter((s) => s.id.startsWith('fill-') || s.id.startsWith('refill-')).length;
+	const hits = plan.filter((s) => s.id.startsWith('hit-')).reduce((a, s) => a + s.n, 0);
+	return [
+		`cached plan: ${plan.length} steps, ${b.measured} measured requests (${fills} fills, ${hits} hits, 1 publish), ${b.setup} setup requests (polls up to ${READY_POLLS_MAX}, 1 claim, ${STATS_READS + 2 * metered} stats reads) = ${b.total} of ${REQUEST_CEILING}`,
+		`pauses: ${metered} metered steps at ${(3 * METER_PAUSE_MS) / 1000} s each = ${pauseS} s, so a stats read never falls in a step's join window`,
+		'owner stats reads are front-worker requests that each cost one object invocation; a fill is one object invocation plus its rows; a hit served from the front worker costs no object invocation',
+		'figures read: cpuTime and wall per invocation from Workers Observability events (measured), rows per fill from rowsToday around each metered step (the object counter, not the bill), x-worker-ms per request (wall)',
+		'the 2.25 s a fill in free-envelope.ts stays assumed until the main session replaces it'
+	];
+}
+
 /** the deployed measuring step: drive, wait for ingest, read events, print */
-export function measureDeployed(name: string): (ctx: RunContext) => Promise<void> {
+export function measureDeployed(
+	name: string,
+	plan: readonly PlanStep[] = REQUEST_PLAN
+): (ctx: RunContext) => Promise<void> {
 	return async (ctx) => {
 		const secrets = [ctx.creds.id, ctx.creds.token];
 		const log = (s: string) => ctx.deps.log(redact(s, secrets));
-		const out = await driveWordpress(ctx.base, name, ctx.deps.fetch, ctx.deps.sleep, log);
+		const out = await driveWordpress(
+			ctx.base,
+			name,
+			ctx.deps.fetch,
+			ctx.deps.sleep,
+			log,
+			undefined,
+			plan
+		);
 		log(`waiting ${OBSERVABILITY_INGEST_LAG_MS / 60_000} min for Observability ingest`);
 		await ctx.deps.sleep(OBSERVABILITY_INGEST_LAG_MS);
 		const from = out.startedAt - 2000;
@@ -1160,7 +1351,7 @@ export function measureDeployed(name: string): (ctx: RunContext) => Promise<void
 			);
 			log(`raw events written (redacted) to ${resolve(ctx.eventsOut)}`);
 		}
-		report(out, joinEvents(out.records, front, objects), log, { front, objects });
+		report(out, joinEvents(out.records, front, objects), log, { front, objects }, plan);
 	};
 }
 
@@ -1213,12 +1404,14 @@ async function localRun(opts: WpOptions, root: string, staged: string): Promise<
 			opts.name,
 			fetch,
 			(ms) => new Promise((r) => setTimeout(r, ms)),
-			(s) => console.log(s)
+			(s) => console.log(s),
+			undefined,
+			PLANS[opts.plan]
 		);
 		console.log(
 			'local run: no Observability here; wall figures are this machine, not the platform'
 		);
-		report(out, undefined, (s) => console.log(s));
+		report(out, undefined, (s) => console.log(s), undefined, PLANS[opts.plan]);
 		return 0;
 	} catch (e) {
 		console.log(`local run failed: ${(e as Error).message}`);
@@ -1239,14 +1432,25 @@ if (import.meta.main) {
 	const staged = join(tmpdir(), `wp-rig-${opts.name}`, 'assets');
 	const files = stageAssets(root, staged, probe);
 	if (opts.mode === 'dry') {
-		const lines = planLines(opts.name, root, files, process.env);
+		const plan = PLANS[opts.plan];
+		const lines = planLines(opts.name, root, files, process.env, plan);
 		for (const l of lines) console.log(l);
+		if (opts.plan === 'cached') {
+			for (const l of cachedPlanLines(plan)) console.log(l);
+			process.exit(stageProblems(files).length === 0 ? 0 : 2);
+		}
 		process.exit(
 			[STUDENT_ID_ENV, STUDENT_TOKEN_ENV].every((v) => process.env[v]) &&
 				stageProblems(files).length === 0
 				? 0
 				: 2
 		);
+	} else if (opts.mode === 'emit-config') {
+		const dir = join(tmpdir(), `wp-rig-${opts.name}`);
+		const config = join(dir, 'wrangler.jsonc');
+		const cfg = wpConfig(opts.name, root, staged, undefined, opts.diagnostics);
+		writeFileSync(config, JSON.stringify(cfg, null, '\t'));
+		console.log(JSON.stringify({ name: opts.name, config, assets: staged }));
 	} else if (opts.mode === 'local') {
 		process.exit(await localRun(opts, root, staged));
 	} else {
@@ -1254,7 +1458,7 @@ if (import.meta.main) {
 			fetch,
 			sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
 			log: (s) => console.log(s),
-			measure: measureDeployed(opts.name),
+			measure: measureDeployed(opts.name, PLANS[opts.plan]),
 			run: (cmd, args, env) =>
 				new Promise((res) => {
 					const child = spawn(cmd, args, { cwd: root, env });
@@ -1276,7 +1480,7 @@ if (import.meta.main) {
 				process.env,
 				deps,
 				root,
-				(name, r) => wpConfig(name, r, staged)
+				(name, r) => wpConfig(name, r, staged, undefined, opts.diagnostics)
 			)
 		);
 	}

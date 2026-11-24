@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { servingFor, storeKeyFor, storesPath, type StoreInput } from '../../../src/ops/store-rule';
-import { storeEdge } from '../../../src/site/edge-store';
+import { storeEdge } from '../../../src/site/edge/store';
 import { pageRewrite } from '../../../src/site/entry';
 import type { FrontContext, FrontEntry } from '../../../src/site/types';
 import {
@@ -73,19 +73,35 @@ describe('the serving table', () => {
 });
 
 describe('the WordPress page cache setting', () => {
-	it('is off unless the value is exactly 1', () => {
+	it('is off only when the value is exactly 0', () => {
+		const off = { [PAGE_CACHE_SETTING]: '0' };
+		expect(pageCacheOn(off)).toBe(false);
+		expect(wordpressRefusal(anonymous, off)).toBe('page-cache-off');
+		expect(servingFor('wordpress').readable(off)).toBe(false);
+		expect(storesPath('wordpress', off, '/')).toBe(false);
+	});
+
+	it('is on when unset, empty, 1 or any other value', () => {
 		for (const env of [
 			{},
 			undefined,
-			{ [PAGE_CACHE_SETTING]: '0' },
+			ON,
+			{ [PAGE_CACHE_SETTING]: '' },
 			{ [PAGE_CACHE_SETTING]: 'true' }
 		]) {
-			expect(pageCacheOn(env), JSON.stringify(env)).toBe(false);
-			expect(wordpressRefusal(anonymous, env), JSON.stringify(env)).toBe('page-cache-off');
-			expect(servingFor('wordpress').readable(env)).toBe(false);
-			expect(storesPath('wordpress', env, '/')).toBe(false);
+			expect(pageCacheOn(env), JSON.stringify(env)).toBe(true);
+			expect(wordpressRefusal(anonymous, env), JSON.stringify(env)).toBeUndefined();
+			expect(servingFor('wordpress').readable(env)).toBe(true);
+			expect(storesPath('wordpress', env, '/')).toBe(true);
 		}
-		expect(pageCacheOn(ON)).toBe(true);
+	});
+
+	it('refuses an authenticated response under the default', () => {
+		expect(wordpressRefusal({ ...anonymous, hasCookie: true }, {})).toBe('cookie');
+		expect(wordpressRefusal({ ...anonymous, hasAuthorization: true }, {})).toBe(
+			'authorization'
+		);
+		expect(wordpressRefusal({ ...anonymous, setsCookie: true }, {})).toBe('set-cookie');
 	});
 
 	it('does not reach the Drupal row', () => {
@@ -542,8 +558,9 @@ describe('the WordPress rule, case by case, each with the rule removed', () => {
 	});
 
 	it('refuses with the setting off before it reads anything else', () => {
-		expect(judge({ ...anonymous, method: 'POST' }, {})).toBe('page-cache-off');
-		expect(judge(anonymous, {}, new Set(['page-cache-off']))).toBeUndefined();
+		const off = { [PAGE_CACHE_SETTING]: '0' };
+		expect(judge({ ...anonymous, method: 'POST' }, off)).toBe('page-cache-off');
+		expect(judge(anonymous, off, new Set(['page-cache-off']))).toBeUndefined();
 	});
 });
 
@@ -696,7 +713,7 @@ describe('the front worker store', () => {
 	};
 
 	it('puts nothing in the edge cache or KV for WordPress while the setting is off', () => {
-		const { out, puts } = stored({ CMS: 'wordpress' }, {});
+		const { out, puts } = stored({ CMS: 'wordpress', [PAGE_CACHE_SETTING]: '0' }, {});
 		expect(out).toEqual({
 			put: 'skipped:page-cache-off',
 			kvPut: 'skipped:page-cache-off'
@@ -808,7 +825,6 @@ describe('the object fill, case by case: nothing a rule refuses reaches the page
 			const input: StoreInput = { ...anonymous, ...c.change };
 			if (input.path === undefined) return undefined;
 			site.env['CMS'] = 'wordpress';
-			site.env['WORDPRESS_PAGE_CACHE'] = '1';
 			markProvisioned(site);
 			site.ensureServeTables();
 			stubRender(site, () => ({
@@ -844,7 +860,6 @@ describe('the object fill, case by case: nothing a rule refuses reaches the page
 		const stored = (cookie: string | undefined) =>
 			inObject(freshSite(), async (site) => {
 				site.env['CMS'] = 'wordpress';
-				site.env['WORDPRESS_PAGE_CACHE'] = '1';
 				markProvisioned(site);
 				site.ensureServeTables();
 				stubRender(site, () => ({

@@ -14,13 +14,23 @@
  *
  * Usage: `bun scripts/wp/cache-soak.ts [--operations=4400] [--seed=1] [--determinism] [--out=file]`
  * (environment: `SOAK_PORT`, `SOAK_CONTRACT_MS`, `SOAK_PLAN`, `free` unless set).
+ *
+ * `--deployed` points the same run at a worker that is already running, named by `SOAK_ORIGIN`.
+ * `SOAK_ROWS_STOP` is required: the run reads the object's rows-written counter every 500
+ * operations and stops when it passes that figure. Owner calls use `/serve-stats`, `/db-console`
+ * and `/recycle` with the owner token. The run claims the site itself, because it sets the admin
+ * password it logs in with and the claim reply is the only place the token is shown; give it an
+ * unclaimed site. The token is never printed. What an owner token cannot do (a planted row, a
+ * process kill) is reported as skipped, with the reason, in the run's JSON.
  */
 import { type ChildProcess, spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { request } from 'node:http';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { cpus, loadavg, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+	DEPLOYED_SKIPS,
 	digest,
 	frontPage,
 	judgeAnswer,
@@ -31,11 +41,17 @@ import {
 	judgeStore,
 	type Model,
 	OPERATIONS,
+	OWNER_ROUTES_USED,
 	pick,
 	prng,
 	type PurgeCounters,
+	readTarget,
+	retryableTransport,
+	rowsGuard,
 	sameStable,
 	type Seen,
+	type Skipped,
+	skipped,
 	spread,
 	type Stable,
 	type StoredRow,
@@ -56,21 +72,56 @@ const CONTRACT_OVERRIDE_MS =
 const PLAN = process.env.SOAK_PLAN === 'paid' ? 'paid' : 'free';
 const FRESH_LIMIT_MS = Number(process.env.SOAK_FRESH_LIMIT_MS ?? 45_000);
 const AGED_WINDOW_MS = 62_000;
-const ORIGIN = `http://localhost:${PORT}`;
+const targetRead = readTarget(process.argv, process.env);
+if (!targetRead.ok) {
+	console.error(`cache-soak: ${targetRead.error}`);
+	process.exit(2);
+}
+const TARGET = targetRead.target;
+const ORIGIN = TARGET.deployed ? TARGET.origin : `http://localhost:${PORT}`;
+const REQUEST_TIMEOUT_MS = 180_000;
+/** the owner token of a deployed run, read from the claim reply and never printed */
+let ownerToken = '';
 
 type Answer = Seen & { cookies: string[]; ms: number };
 type Init = { method?: string; headers?: Record<string, string>; body?: string };
 
-function raw(path: string, init: Init = {}): Promise<Answer> {
+/** connection-level failures a deployed read is retried for; the count is part of the result */
+let transportRetries = 0;
+
+async function raw(path: string, init: Init = {}): Promise<Answer> {
+	const idempotent = (init.method ?? 'GET') === 'GET' || init.method === 'HEAD';
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return await rawOnce(path, init);
+		} catch (error) {
+			const message =
+				error instanceof Error
+					? `${error.message} ${(error as { code?: string }).code ?? ''}`
+					: String(error);
+			if (!TARGET.deployed || attempt >= 3 || !retryableTransport(message, idempotent))
+				throw error;
+			transportRetries++;
+			console.error(
+				`transport retry ${transportRetries}: ${path.split('?')[0]} (${message.trim()})`
+			);
+			await new Promise((r) => setTimeout(r, 1000 * attempt));
+		}
+	}
+}
+
+function rawOnce(path: string, init: Init = {}): Promise<Answer> {
 	const t0 = Date.now();
+	const send = TARGET.deployed && TARGET.secure ? httpsRequest : httpRequest;
 	return new Promise((resolve, reject) => {
-		const req = request(
+		const req = send(
 			{
-				host: 'localhost',
-				port: PORT,
+				host: TARGET.deployed ? TARGET.host : 'localhost',
+				port: TARGET.deployed ? TARGET.port : PORT,
 				path,
 				method: init.method ?? 'GET',
-				headers: { accept: '*/*', ...init.headers }
+				headers: { accept: '*/*', ...init.headers },
+				...(TARGET.deployed ? { timeout: REQUEST_TIMEOUT_MS, agent: false, family: 4 } : {})
 			},
 			(res) => {
 				const chunks: Buffer[] = [];
@@ -91,9 +142,19 @@ function raw(path: string, init: Init = {}): Promise<Answer> {
 			}
 		);
 		req.on('error', reject);
+		req.on('timeout', () => req.destroy(new Error(`${path.split('?')[0]} timed out`)));
 		req.end(init.body);
 	});
 }
+
+// carries the owner token, so it is for owner routes only and never for a page
+const owner = (path: string, init: Init = {}): Promise<Answer> =>
+	raw(
+		path,
+		TARGET.deployed
+			? { ...init, headers: { ...init.headers, authorization: `Bearer ${ownerToken}` } }
+			: init
+	);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -167,10 +228,92 @@ class Rig {
 	}
 }
 
+/** a worker that is already running: nothing to start or stop, only to wait for */
+class Remote {
+	start(): void {}
+
+	async stop(): Promise<void> {}
+
+	async ready(): Promise<void> {
+		const deadline = Date.now() + 300_000;
+		for (;;) {
+			try {
+				if ((await raw('/wp-login.php')).status === 200) return;
+			} catch {
+				// not answering yet
+			}
+			if (Date.now() > deadline) throw new Error('the worker never answered 200');
+			await sleep(5000);
+		}
+	}
+
+	async remove(): Promise<void> {}
+}
+
+/**
+ * What each owner route answers to the token alone, and to no token (which must be a 401, so a
+ * route open to anyone is not mistaken for one the token opened). `/recycle` replaces the
+ * interpreter, which is the one change a deployed run lets it make.
+ */
+async function proveOwnerRoutes(): Promise<Record<string, string>> {
+	const read = (a: Answer, ok: (b: string) => boolean) => {
+		try {
+			return a.status === 200 && ok(a.body) ? 'ok' : `answered ${a.status}`;
+		} catch {
+			return `answered ${a.status} with a body that is not the expected JSON`;
+		}
+	};
+	const out: Record<string, string> = {};
+	const noToken = await raw('/serve-stats');
+	out['/serve-stats without a token'] =
+		noToken.status === 401 ? 'ok' : `answered ${noToken.status}`;
+	out['/serve-stats'] = read(await owner('/serve-stats'), (b) =>
+		Number.isFinite(Number((JSON.parse(b) as { rowsToday?: unknown }).rowsToday))
+	);
+	out['/db-console'] = read(
+		await owner('/db-console', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ v: 1, sql: 'SELECT count(*) AS n FROM cfw_page' })
+		}),
+		(b) => Array.isArray((JSON.parse(b) as { rows?: unknown }).rows)
+	);
+	out['/recycle'] = read(await owner('/recycle', { method: 'POST' }), () => true);
+	for (const route of OWNER_ROUTES_USED.slice(0, 2)) {
+		if (out[route.route] !== 'ok') {
+			throw new Error(
+				`${route.route} does not answer the owner token alone: ${out[route.route]}`
+			);
+		}
+	}
+	return out;
+}
+
 const json = async (path: string): Promise<Record<string, unknown>> =>
-	JSON.parse((await raw(path)).body) as Record<string, unknown>;
-const sql = (q: string, params: unknown[] = []) =>
-	json(`/sql?q=${encodeURIComponent(q)}&params=${encodeURIComponent(JSON.stringify(params))}`);
+	JSON.parse((await owner(path)).body) as Record<string, unknown>;
+
+/** reads only: the local rig runs `/sql`, a deployed worker answers the same statement on `/db-console` */
+const sql = async (q: string, params: unknown[] = []): Promise<Record<string, unknown>> => {
+	if (!TARGET.deployed) {
+		return json(
+			`/sql?q=${encodeURIComponent(q)}&params=${encodeURIComponent(JSON.stringify(params))}`
+		);
+	}
+	const res = await owner('/db-console', {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ v: 1, sql: q, params })
+	});
+	if (res.status !== 200) {
+		throw new Error(`/db-console answered ${res.status}: ${res.body.slice(0, 160)}`);
+	}
+	const out = JSON.parse(res.body) as { columns: string[]; rows: unknown[][] };
+	return {
+		rows: out.rows.map((cells) =>
+			Object.fromEntries(out.columns.map((name, i) => [name, cells[i]]))
+		)
+	};
+};
 const storedRows = async (): Promise<StoredRow[]> =>
 	((
 		await sql(
@@ -187,10 +330,14 @@ type Timed = {
 	/** the one minute load average when each write kind was confirmed */
 	load: Record<string, number[]>;
 	staleReads: number;
+	/** the tier that answered each stale read inside a confirm, by write kind */
+	staleTiers: Record<string, Record<string, number>>;
 	rowsBefore: number;
 	rowsAfter: number;
 	renders: number;
 	barriers: { at: number; rows: number; bytes: number; rowsToday: number }[];
+	/** the rows guard's message when it stopped the run */
+	stoppedBy?: string;
 };
 
 /** one run: its stable figures, its timed ones and what the arms found */
@@ -202,12 +349,20 @@ type Run = {
 	restart?: Record<string, unknown>;
 	counters?: Record<string, unknown>;
 	probes: Record<string, unknown>;
+	/** pieces a deployed run did not do, each with the reason */
+	skipped: Skipped[];
+	/** what each owner route answered before the run began; deployed only */
+	ownerRoutes?: Record<string, string>;
+	/** idempotent reads repeated after a connection-level failure; deployed only */
+	transportRetries?: number;
 };
 
 const FORM = { 'content-type': 'application/x-www-form-urlencoded' };
 
 async function execute(seed: number, label: string): Promise<Run> {
-	const rig = new Rig();
+	const rig = TARGET.deployed ? new Remote() : new Rig();
+	const skips: Skipped[] = [];
+	let ownerRoutes: Record<string, string> | undefined;
 	const roll = prng(seed);
 	const violations: string[] = [];
 	const log: string[] = [];
@@ -219,6 +374,7 @@ async function execute(seed: number, label: string): Promise<Run> {
 		freshMs: {},
 		load: {},
 		staleReads: 0,
+		staleTiers: {},
 		rowsBefore: 0,
 		rowsAfter: 0,
 		renders: 0,
@@ -256,6 +412,24 @@ async function execute(seed: number, label: string): Promise<Run> {
 			})
 		});
 		if (claim.status !== 200) throw new Error(`claim answered ${claim.status}`);
+		if (TARGET.deployed) {
+			ownerToken = String(
+				(JSON.parse(claim.body) as { ownerToken?: unknown }).ownerToken ?? ''
+			);
+			if (ownerToken === '') throw new Error('the claim returned no owner token');
+			ownerRoutes = await proveOwnerRoutes();
+			if (ownerRoutes['/recycle'] !== 'ok') {
+				skips.push(
+					skipped(
+						'process restart',
+						`/recycle with the owner token: ${ownerRoutes['/recycle']}`
+					)
+				);
+			} else {
+				skips.push(DEPLOYED_SKIPS.processRestart);
+			}
+			skips.push(DEPLOYED_SKIPS.plantedRow);
+		}
 
 		let cookie = '';
 		let nonce = '';
@@ -456,15 +630,22 @@ async function execute(seed: number, label: string): Promise<Run> {
 			judgeQuietWrite([heldRow], [], still, still).length > 0 &&
 			judgeQuietWrite([heldRow], [{ ...heldRow, rendered_at: 2 }], still, still).length === 0;
 		const planted = `/zz-control-${token().toLowerCase()}/`;
-		await sql(
-			"INSERT INTO cfw_page (path, status, content_type, html, rendered_at, render_ms) VALUES (?, 500, 'text/html', ?, 1, 1)",
-			[planted, `<html>${draftBody}</html>`]
-		);
-		const auditPlanted = await audit(model);
+		let auditPlanted: string[];
+		if (TARGET.deployed) {
+			// the judge alone: a deployed run cannot write the row the local control reads back
+			const row = { path: planted, status: 500, rendered_at: 1, stale_at: null, bytes: 1 };
+			auditPlanted = judgeStore([row], { [draftBody]: [planted] });
+		} else {
+			await sql(
+				"INSERT INTO cfw_page (path, status, content_type, html, rendered_at, render_ms) VALUES (?, 500, 'text/html', ?, 1, 1)",
+				[planted, `<html>${draftBody}</html>`]
+			);
+			auditPlanted = await audit(model);
+		}
 		controls.plantedRowFlagged =
 			auditPlanted.some((m) => m.includes(planted) && m.includes('status 500')) &&
 			auditPlanted.some((m) => m.includes('is stored in') && m.includes(planted));
-		await sql('DELETE FROM cfw_page WHERE path = ?', [planted]);
+		if (!TARGET.deployed) await sql('DELETE FROM cfw_page WHERE path = ?', [planted]);
 		controls.storeCleanAfterRemoval = (await audit(model)).length === 0;
 		for (const [name, ok] of Object.entries(controls)) {
 			if (!ok) note(`detector control ${name} did not fire`);
@@ -491,6 +672,10 @@ async function execute(seed: number, label: string): Promise<Run> {
 		const m0 = await meter();
 		timed.rowsBefore = m0.rowsToday;
 		const rendersBefore = m0.renders;
+		if (TARGET.deployed) {
+			const start = rowsGuard(m0.rowsToday, TARGET.rowsStop, 0);
+			if (start.stop) throw new Error(`refusing to start: ${start.message}`);
+		}
 
 		const etags = new Map<string, string>();
 		const retired = new Map<string, string[]>();
@@ -544,6 +729,9 @@ async function execute(seed: number, label: string): Promise<Run> {
 						}
 					} else {
 						timed.staleReads++;
+						const byTier = (timed.staleTiers[kind] ??= {});
+						const tier = tierOf(a.headers) || '-';
+						byTier[tier] = (byTier[tier] ?? 0) + 1;
 						lastWhy = `${r}: ${problems.join('; ')} (${tierOf(a.headers) || '-'})`;
 					}
 				}
@@ -981,8 +1169,16 @@ async function execute(seed: number, label: string): Promise<Run> {
 					rowsToday: mm.rowsToday
 				});
 				console.error(
-					`[${label}] ${i + 1}/${OPERATIONS_COUNT} operations, ${timed.requests} requests, ${rows.length} rows, ${violations.length} violations`
+					`[${label}] ${i + 1}/${OPERATIONS_COUNT} operations, ${timed.requests} requests, ${rows.length} rows, ${violations.length} violations, rowsToday ${mm.rowsToday}`
 				);
+				if (TARGET.deployed) {
+					const guard = rowsGuard(mm.rowsToday, TARGET.rowsStop, i + 1);
+					if (guard.stop) {
+						timed.stoppedBy = guard.message;
+						note(guard.message);
+						break;
+					}
+				}
 			}
 		}
 		// #endregion
@@ -990,6 +1186,25 @@ async function execute(seed: number, label: string): Promise<Run> {
 		const afterMeter = await meter();
 		timed.rowsAfter = afterMeter.rowsToday;
 		timed.renders = afterMeter.renders - rendersBefore;
+		if (timed.stoppedBy !== undefined) {
+			return {
+				stable: {
+					seed,
+					operations: OPERATIONS_COUNT,
+					byKind,
+					writesByKind,
+					logDigest: digest(undated(log.join('\n'))),
+					violations,
+					storedPaths: (await storedRows()).map((r) => r.path)
+				},
+				timed,
+				controls,
+				probes,
+				skipped: [...skips, skipped('stampede arm and restart arm', timed.stoppedBy)],
+				ownerRoutes,
+				transportRetries
+			};
+		}
 		await sleep(2500);
 		const finalRows = await storedRows();
 		const storedPaths = finalRows.map((r) => r.path);
@@ -1027,14 +1242,30 @@ async function execute(seed: number, label: string): Promise<Run> {
 		for (let i = 0; i < 120 && ((await stats()).queue as unknown[]).length > 0; i++)
 			await sleep(500);
 		await sleep(1500);
-		await sql('DELETE FROM cfw_page WHERE path = ?', [cold]);
-		stampede.cold = await herd(cold, 50);
+		let coldKey = true;
+		if (TARGET.deployed) {
+			// /sql is closed here, so the key must already be empty: a post nobody has read is
+			const held = await sql('SELECT count(*) AS n FROM cfw_page WHERE path = ?', [cold]);
+			coldKey = Number(((held.rows ?? []) as { n: number }[])[0]?.n ?? 0) === 0;
+			if (!coldKey) {
+				skips.push(
+					skipped(
+						'stampede cold key',
+						`${cold} already holds a row and clearing it needs /sql`
+					)
+				);
+			}
+		} else {
+			await sql('DELETE FROM cfw_page WHERE path = ?', [cold]);
+		}
+		if (coldKey) stampede.cold = await herd(cold, 50);
 		stampede.controlRefused = await herd(`/?s=${token().toLowerCase()}`, 12);
 		// one render and the rest served from what it stored; two renders of one key is a defect
 		const herdOk =
-			(stampede.cold as { renders: number }).renders === 1 &&
-			(stampede.cold as { bodies: number }).bodies === 1 &&
-			(stampede.cold as { statuses: number[] }).statuses.join() === '200';
+			!coldKey ||
+			((stampede.cold as { renders: number }).renders === 1 &&
+				(stampede.cold as { bodies: number }).bodies === 1 &&
+				(stampede.cold as { statuses: number[] }).statuses.join() === '200');
 		const controlBites = (stampede.controlRefused as { renders: number }).renders >= 10;
 		if (!herdOk) note(`stampede: ${JSON.stringify(stampede.cold)}`);
 		if (!controlBites)
@@ -1058,9 +1289,22 @@ async function execute(seed: number, label: string): Promise<Run> {
 		const generationBefore = Number(
 			(await raw(`/serve?path=${encodeURIComponent('/')}&edge=0`)).headers['x-cfw-generation']
 		);
-		await rig.stop();
-		rig.start();
-		await rig.ready();
+		if (TARGET.deployed) {
+			// a fresh interpreter in place of a fresh process; the stored rows must survive it the same way
+			if (ownerRoutes?.['/recycle'] === 'ok') {
+				const recycled = await owner('/recycle', { method: 'POST' });
+				restart.mode = 'recycle';
+				restart.recycleStatus = recycled.status;
+				if (recycled.status !== 200) note(`/recycle answered ${recycled.status}`);
+				await rig.ready();
+			} else {
+				restart.mode = 'none';
+			}
+		} else {
+			await rig.stop();
+			rig.start();
+			await rig.ready();
+		}
 		const rowsAfterRestart = await storedRows();
 		const lost = rowsBefore
 			.filter((r) => !rowsAfterRestart.some((a) => a.path === r.path))
@@ -1119,7 +1363,18 @@ async function execute(seed: number, label: string): Promise<Run> {
 			violations,
 			storedPaths
 		};
-		return { stable, timed, controls, stampede, restart, counters, probes };
+		return {
+			stable,
+			timed,
+			controls,
+			stampede,
+			restart,
+			counters,
+			probes,
+			skipped: skips,
+			ownerRoutes,
+			transportRetries
+		};
 	} finally {
 		await rig.remove();
 	}
@@ -1143,8 +1398,11 @@ const labels = process.argv.includes('--determinism') ? ['run-a', 'run-b'] : ['r
 for (const label of labels) runs.push(await execute(SEED, label));
 
 const report = {
-	figures: `local: wrangler dev on this machine, PLAN ${PLAN}, WORDPRESS_PAGE_CACHE 1`,
-	contractMs: CONTRACT_OVERRIDE_MS ?? 'per route: 1000 ms each plus 2000 ms',
+	figures: TARGET.deployed
+		? `deployed: ${TARGET.origin}, the shipped WORDPRESS_PAGE_CACHE default, rows guard at ${TARGET.rowsStop}`
+		: `local: wrangler dev on this machine, PLAN ${PLAN}, WORDPRESS_PAGE_CACHE 1`,
+	contractMs:
+		CONTRACT_OVERRIDE_MS ?? 'one render per route plus one fill, 3000 ms each, plus 2000 ms',
 	host: { cores: cpus().length, loadAverageAtEnd: loadavg()[0] },
 	runs: runs.map((r) => ({
 		stable: r.stable,
@@ -1157,6 +1415,7 @@ const report = {
 			Object.entries(r.timed.load).map(([k, v]) => [k, spread(v)])
 		),
 		staleReadsInsideWindow: r.timed.staleReads,
+		staleTiers: r.timed.staleTiers,
 		rowsToday: { before: r.timed.rowsBefore, after: r.timed.rowsAfter },
 		rendersDuringSoak: r.timed.renders,
 		barriers: r.timed.barriers,
@@ -1164,7 +1423,14 @@ const report = {
 		stampede: r.stampede,
 		restart: r.restart,
 		counters: r.counters,
-		probes: r.probes
+		probes: r.probes,
+		...(TARGET.deployed
+			? {
+					skipped: r.skipped,
+					ownerRoutes: r.ownerRoutes,
+					stoppedByRowsGuard: r.timed.stoppedBy ?? null
+				}
+			: {})
 	})),
 	determinism:
 		runs.length === 2
@@ -1180,4 +1446,7 @@ const text = JSON.stringify(report, null, 2);
 console.log(text);
 const out = arg('out', '');
 if (out !== '') writeFileSync(out, text);
-process.exit(report.violations.length === 0 && (report.determinism?.same ?? true) ? 0 : 1);
+const stopped = runs.some((r) => r.timed.stoppedBy !== undefined);
+process.exit(
+	stopped ? 3 : report.violations.length === 0 && (report.determinism?.same ?? true) ? 0 : 1
+);

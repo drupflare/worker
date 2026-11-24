@@ -1,8 +1,9 @@
 import { mountDrupalLazy, mountRecord } from '@drupflare/cartridge/fs';
 import { assetRequestCounts, packCachedEnv, type SiteMountInfo } from '../do/lazy-mount';
 import type { SiteBinary } from '../do/types';
+import { coldPackEnv } from '../ops/cold-pack';
 import { isPaid } from '../ops/plan';
-import { ensureHashSalt } from '../ops/site-secrets';
+import { ensureHashSalt } from '../ops/site/secrets';
 import type { SitePhpDurableObject } from '../site-do';
 import { DEFAULT_HTTP_BUDGET, deriveSalts, PAID_HTTP_BUDGET, wpConfigText } from './config';
 import { DRIVER_DIGEST } from './driver-digest';
@@ -69,7 +70,7 @@ export async function bootWordpressTree(
 ): Promise<void> {
 	const FS = binary.FS as unknown as RootFS & typeof binary.FS;
 	boots += 1;
-	const mountEnv = packCachedEnv(site.env);
+	const mountEnv = coldPackEnv(site, packCachedEnv(site.env));
 	site.mountInfo = await mountDrupalLazy(binary, mountEnv, {
 		layers: [{ prefix: PREFIX.tree }]
 	});

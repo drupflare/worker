@@ -35,6 +35,7 @@ const OWNER_ONLY = [
 	'/writemark',
 	'/writechanges',
 	'/recycle',
+	'/ladder',
 	'/ledger-gc',
 	'/strata-config',
 	'/strata-store',

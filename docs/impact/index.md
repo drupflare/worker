@@ -25,3 +25,7 @@ Every figure on the impact pages carries one of four labels.
 | `published`          | quoted from a named external source, cited where it appears             |
 
 A figure keeps its label wherever it is repeated.
+
+## Which CMS a Figure Describes
+
+The energy, carbon, water and cost figures on these pages are Drupal's. No joules have been read for a WordPress view, and its cost per render is not yet on the economics model. The WordPress readings that exist, with their plan and n, are on [WordPress](../architecture/wordpress.md). The one WordPress input on these pages is the free-plan envelope, whose WordPress ceilings are `derived` with assumed weights.

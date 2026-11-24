@@ -746,7 +746,61 @@
 				"simple_oauth_native_apps",
 				"simple_oauth_pkce",
 				"simple_oauth_server_metadata"
-			]
+			],
+			"deployed": {
+				"sha": "f2b73148a83c99697e2d7ba7fcd36084fe0f8c40",
+				"run": "local:2026-11-23T18:08:50.304Z",
+				"date": "2026-11-23",
+				"plan": "free",
+				"rows": {
+					"install": {
+						"state": "inline"
+					},
+					"container build": {
+						"state": "inline",
+						"note": "the container was rebuilt by the enable"
+					},
+					"anon render": {
+						"state": "inline"
+					},
+					"auth render": {
+						"state": "inline"
+					},
+					"entity crud": {
+						"state": "inline"
+					},
+					"form submit": {
+						"state": "inline"
+					},
+					"file rw": {
+						"state": "inline",
+						"note": "a multipart image upload through the media form was stored and read back byte for byte"
+					},
+					"queue cron": {
+						"state": "inline",
+						"note": "cron ran from the administration form and the log records Cron run completed"
+					},
+					"outbound http": {
+						"state": "parked",
+						"note": "the update check fetched from the registry through the parked fetch"
+					},
+					"update": {
+						"state": "inline",
+						"note": "prepared run rmwtl09ge; drained to phase complete, with no unit to run"
+					},
+					"cache rebuild": {
+						"state": "inline"
+					},
+					"config import": {
+						"state": "inline",
+						"note": "system.site was imported from YAML and read back"
+					},
+					"module workflow": {
+						"state": "inline",
+						"note": "routes from its routing file: /admin/config/people/simple_oauth/oauth-21"
+					}
+				}
+			}
 		},
 		"mantle2": {
 			"sha": "8d10eff7f825a20b789eb766827dbf8c3490e2e7",
@@ -4403,7 +4457,62 @@
 				"drupal/lagoon_logs",
 				"drupal/redis"
 			],
-			"custom": []
+			"custom": [],
+			"deployed": {
+				"sha": "dc070ad689afcb0b5a055b27788b991c62df7a0e",
+				"run": "local:2026-11-23T18:13:11.592Z",
+				"date": "2026-11-23",
+				"plan": "free",
+				"rows": {
+					"install": {
+						"state": "inline",
+						"note": "2/2 registry packages; 0/0 custom uploaded; 0/0 modules enabled; 2737 rows written by the delivery (free allows 100,000 a day)"
+					},
+					"container build": {
+						"state": "inline",
+						"note": "the project enables no module, so the container is the one the first boot built"
+					},
+					"anon render": {
+						"state": "inline"
+					},
+					"auth render": {
+						"state": "inline"
+					},
+					"entity crud": {
+						"state": "inline"
+					},
+					"form submit": {
+						"state": "inline"
+					},
+					"file rw": {
+						"state": "inline",
+						"note": "a multipart image upload through the media form was stored and read back byte for byte"
+					},
+					"queue cron": {
+						"state": "unsupported",
+						"note": "the run answered 503; no message on the page; the log has no Cron run completed entry"
+					},
+					"outbound http": {
+						"state": "parked",
+						"note": "the update check fetched from the registry through the parked fetch"
+					},
+					"update": {
+						"state": "inline",
+						"note": "prepared run rmwtl4khg; drained to phase complete, with no unit to run"
+					},
+					"cache rebuild": {
+						"state": "inline"
+					},
+					"config import": {
+						"state": "inline",
+						"note": "system.site was imported from YAML and read back"
+					},
+					"module workflow": {
+						"state": "inline",
+						"note": "/admin/reports/status, /admin/config"
+					}
+				}
+			}
 		},
 		"islandora": {
 			"sha": "a518aea24986d3db9dcf66be340638d0d0637d52",
@@ -5112,62 +5221,62 @@
 			]
 		},
 		"strawberryfield": {
-			"sha": "95129453b7ad8d422670a1c8723fdea31ad911b0",
+			"sha": "340a02c00e4b6ebf11e4bc6b59e50f5c84ca0928",
 			"lane": "fixture",
-			"run": "local:2026-09-29T21:42:39.918Z",
-			"date": "2026-09-29",
+			"run": "local:2026-11-24T03:31:13.416Z+anachron:d0bc4a5",
+			"date": "2026-11-24",
 			"rows": {
 				"install": {
 					"state": "unsupported",
-					"note": "enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\MimeType\\ExtensionMimeTypeGuesser::setMapping(?array $mapping = null): voi); upstream conflict: frictionlessdata/datapackage dev-main requires justinrainbow/json-schema ^5.2, and drupal/core-recommended pins ~6.8.2, so a native Drupal 11 site on core-recommended cannot resolve it either; it is installed past the check and runs against the shipped 6.8.2"
+					"note": "enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file name (search_api_solr.solr_field_type.dense_vector_field_512_und_9_0_0.yml has id dense_vector_field_512_und), which core's config installer refuses; pinned at the v2.1.0 tag (declares Drupal 11), not the earlier main-branch commit 95129453, which is in no tag and carries the DataType and generated-proxy return-type fatals that v2.0.0 and v2.1.0 fix; frictionlessdata/datapackage dev-main requires justinrainbow/json-schema ^5.2 while drupal/core-recommended pins ~6.8.2, so it is installed past the check and runs against the shipped 6.8.2; the module's info file depends on search_api and search_api_solr, which the install delivers; enabling is refused because five config/install Solr field type files carry an id without the _9_0_0 suffix their file names have, and core's config installer throws on a name that differs from the id (the same files are on the module's main branch)"
 				},
 				"container build": {
 					"state": "unsupported",
-					"note": "blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\Mime"
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
 				},
 				"anon render": {
 					"state": "unsupported",
-					"note": "blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\Mime"
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
 				},
 				"auth render": {
 					"state": "unsupported",
-					"note": "blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\Mime"
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
 				},
 				"entity crud": {
 					"state": "unsupported",
-					"note": "blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\Mime"
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
 				},
 				"form submit": {
 					"state": "unsupported",
-					"note": "blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\Mime"
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
 				},
 				"file rw": {
 					"state": "unsupported",
-					"note": "blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\Mime"
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
 				},
 				"queue cron": {
 					"state": "unsupported",
-					"note": "blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\Mime"
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
 				},
 				"outbound http": {
 					"state": "unsupported",
-					"note": "blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\Mime"
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
 				},
 				"update": {
 					"state": "unsupported",
-					"note": "blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\Mime"
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
 				},
 				"cache rebuild": {
 					"state": "unsupported",
-					"note": "blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\Mime"
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
 				},
 				"config import": {
 					"state": "unsupported",
-					"note": "blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\Mime"
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
 				},
 				"module workflow": {
 					"state": "unsupported",
-					"note": "blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or '}' in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\\strawberryfield\\ProxyClass\\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\\Core\\File\\Mime"
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
 				}
 			}
 		},

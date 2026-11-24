@@ -4,8 +4,10 @@ The variable that selects the CMS, and the variables that name a site and fix th
 
 ## CMS
 
-`CMS` selects which CMS the build packs, and `drupal` is the only value. It is read at BUILD time by
-`bun run assets:driver`, from the environment and then from `wrangler.jsonc`, which sets it. Unlike
+`CMS` selects which CMS the build packs: `drupal`, which `wrangler.jsonc` sets, or `wordpress`, which
+`bun run assets:wordpress` and `bun run dev:wordpress` select. `joomla` is accepted as a name and the
+packer refuses it, because Joomla has no module set. It is read at BUILD time by
+`bun run assets:driver`, from the environment and then from `wrangler.jsonc`. Unlike
 every other var it has no default: a missing or unknown value fails the build instead of packing
 Drupal under another name. At runtime it is only reported, as the fleet row's `cms`.
 
@@ -21,7 +23,7 @@ Drupal under another name. At runtime it is only reported, as the fleet row's `c
 ### `SITE_ID`
 
 One object per site, and the object's name is the site identity, so a wrong answer here serves a
-request from a different site's database. The layers, in order, are implemented in `src/ops/site-id.ts`: `?site=` (only when the caller opts
+request from a different site's database. The layers, in order, are implemented in `src/ops/site/id.ts`: `?site=` (only when the caller opts
 in), a `site:host:<host>` KV mapping, then `SITE_ID`, then the deployment's primary site
 (`src/ops/deployment-site.ts`), then the hostname itself, then the literal `site`.
 
@@ -49,7 +51,7 @@ The KV reads in the chain (the host mapping and the deployment document) wait at
 read that does not answer uses the last value this isolate saw, or falls through as a failed read
 does.
 
-Spec: `tests/unit/ops/site-id.spec.ts`.
+Spec: `tests/unit/ops/site/id.spec.ts`.
 
 ### `SITE_LOCATION_HINT`
 
@@ -74,7 +76,7 @@ Every absolute URL Drupal emits is built from the origin: the canonical tag, a f
 
 The inbound `Host` carries no guarantee: an attacker who can set it can move a password-reset link
 onto a host they control. So the origin is a property of the site, resolved in
-`src/ops/site-origin.ts` in this order:
+`src/ops/site/origin.ts` in this order:
 
 1. `SITE_ORIGIN`, which wins outright.
 2. **The pin**, held in `cfw_meta` under `site_origin`. Trust on first use: the first non-local
@@ -99,7 +101,7 @@ value is left in place.
 Getting it wrong points canonical tags, redirects and mailed links at the wrong host. What a request
 resolves to is a separate question, answered by `SITE_ID`.
 
-Specs: `tests/unit/ops/site-origin.spec.ts`, `tests/integration/render-origin.spec.ts`.
+Specs: `tests/unit/ops/site/origin.spec.ts`, `tests/integration/render/origin.spec.ts`.
 
 ### Alias Hosts
 
@@ -119,4 +121,4 @@ on, and an unmapped host that reaches the site through the deployment primary ke
 links. The first request a site ever answers still pins its origin, so claim the site on its main
 host before adding aliases.
 
-Specs: `tests/unit/ops/site-origin.spec.ts`, `tests/integration/deployment-site.spec.ts`.
+Specs: `tests/unit/ops/site/origin.spec.ts`, `tests/integration/deployment-site.spec.ts`.

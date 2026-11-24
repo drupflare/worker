@@ -1,6 +1,6 @@
 # Architecture
 
-How a request is answered, what the build packs, and how a site repairs itself.
+How a request is answered, what the build packs, and how a site repairs itself. The request path, the enabling mechanisms and self-repair apply to Drupal and to WordPress; [WordPress](wordpress.md) lists where WordPress differs.
 
 ## Request Path
 
@@ -78,12 +78,16 @@ Four things make it work:
    long invocation into chunks, each sized to complete on its own. `assets/drupal-sql/manifest.json`
    carries the current chunk count.
 
+WordPress uses the first, second and fourth. Its third is a `wpdb` subclass that hands MySQL to a
+translator on the host, which runs it on the same Durable Object SQLite; see
+[WordPress](wordpress.md).
+
 ## Static Assets
 
 Drupal's stylesheets, scripts, fonts and images are served by Workers Assets from `assets/core/`, at
 the `/core/**` URLs Drupal already emits. All three PHP packers skip those extensions because PHP
 never opens them, and nothing serves a file out of the in-memory filesystem over HTTP, so the asset
-layer is the only thing that can answer them. `scripts/pack-static.ts` copies the tree. Workers
+layer is the only thing that can answer them. `scripts/pack/static.ts` copies the tree. Workers
 Assets content-hashes, caches and compresses what it serves, and a hit never reaches the Worker, so
 it costs nothing against either free-tier ceiling.
 
@@ -102,7 +106,7 @@ the substitution emits answers 200.
 
 Workers Assets allows 20,000 files per deploy and 25 MiB per file, both documented platform limits.
 `bun run release:check` prints the published count against the first and
-`scripts/pack-perfile.ts` and `scripts/contrib-fixture.ts` refuse a pack file over the second. The
+`scripts/pack/perfile.ts` and `scripts/contrib/fixture.ts` refuse a pack file over the second. The
 published set was 4,627 files at the last count, 23.1% of the file limit. The pack's 11,675 members
 live inside two files (`core.pf.bin` and `core.pf.json`), so they do not count against either limit.
 
@@ -147,6 +151,7 @@ automatic.
 
 - [Measurement Classes](measurement-classes.md): the four classes a number belongs to, and which instrument each allows.
 - [The Site Database](database.md): how the database every new site starts from is built.
-- [Compatibility](compatibility.md): which Drupal codebases run, per codebase, from the corpus lane.
+- [WordPress](wordpress.md): what runs, how it differs from Drupal, the measurements read so far, plugin evidence and where Joomla stands.
+- [Compatibility](compatibility.md): which Drupal codebases run, per codebase, from the corpus lane. It is generated from the Drupal corpus; WordPress compatibility is on the WordPress page.
 - [Limitations](limitations.md): what does not run, what runs differently, and the limit behind each.
 - [Modules](modules.md): contributed modules, module revisions, and which modules have run on a real site.

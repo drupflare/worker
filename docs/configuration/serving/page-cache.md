@@ -39,7 +39,7 @@ one-change-old answer is wrong rather than merely old. `NEVER_STALE` is a comma-
 prefixes and is added to that list rather than replacing it, so a site cannot make its own login
 page staleable by configuring badly.
 
-Consumers: `staleAllowed()` and `readStalePage()` in `src/ops/page-store.ts`.
+Consumers: `staleAllowed()` and `readStalePage()` in `src/ops/page/store.ts`.
 
 ## `MEMORY_CACHE_BINS`
 
@@ -133,9 +133,10 @@ Measured on a deployed paid worker, one session, one 100,748-byte authenticated 
 
 ## `WORDPRESS_PAGE_CACHE`
 
-`1` lets a WordPress site answer anonymous page views from the object's stored copy and the shared
-tiers. Any other value, or no value, stores and replays nothing, which is the default. Drupal never
-reads it, and it is not on `KV_OVERRIDABLE`: a wrong stored page is a wrong answer, not a slow site.
+A WordPress site answers anonymous page views from the object's stored copy and the shared tiers by
+default, the same as Drupal. `0` stores and replays nothing; any other value, or no value, leaves it
+on. Drupal never reads it, and it is not on `KV_OVERRIDABLE`: a wrong stored page is a wrong answer,
+not a slow site.
 
 A response is stored only when every rule below passes, and each rule is a named row in
 `src/wordpress/store-rule.ts` with a test that removes it and shows the case then gets through.
@@ -205,9 +206,15 @@ refills for them.
 
 `NEVER_STALE` and the previous-generation tier of `PAGE_KV` do not apply to WordPress. A trashed or
 unpublished post renders a 404 that is never stored, so nothing would replace its old copy in `PAGE_KV`
-and the post would stay visible. After a purge the front worker therefore waits for a render. The
-object still answers a page marked superseded by a wholesale purge for up to `AGED_SERVE_MAX_MS`
-(60 seconds by default), and says so with `x-cfw-cache: AGED`.
+and the post would stay visible. After a purge the front worker therefore waits for a render. On WordPress the object does not
+answer a page marked superseded by a wholesale purge: `AGED_SERVE_MAX_MS` defaults to 0 there, so
+the first read of such a page renders it at once. Setting the variable brings back the `AGED`
+answer (`x-cfw-cache: AGED`) for that many milliseconds. Drupal keeps its 60 second default.
+
+The aged answer was dropped for WordPress because a render takes seconds and the refill queue runs
+in the order it was filled, whatever the visitors ask for. On a local object with a 2.2 second
+render and 22 stored pages, a wholesale purge left four read routes stale for 47.0 and 47.8
+seconds (n=2); with the aged answer off the same reads were fresh in 10.8 and 10.8 seconds (n=2).
 
 An isolate learns a new generation within its pointer window, so another colo can answer the old page
 for a few seconds after a write.
@@ -232,12 +239,23 @@ visitor. Two rules keep the queue moving:
 `0` turns the wait off and leaves only the yield. The pages nobody asked for are filled after the
 visitors go quiet, so the queue takes longer to empty than it did.
 
-How long a page can stay stale after the write that purged it depends on how many pages that write
-purges, because the object renders one page at a time. The bound is 1 second per page the write
-affects plus 2 seconds: 8 seconds for a publish (six pages), 6 seconds for an edit (four), and 1
-second per stored page plus 2 seconds for a write that purges every stored page. It rests on a
-measured render of about 0.6 seconds per page on a local object that renders one page at a time. No
-deployed reading has been taken, so treat it as the local figure.
+How long a page can stay stale after the write that purged it depends on how many pages are read,
+because the object renders one page at a time. A read of a purged page renders it on the spot, so
+the wait is one render per route read, plus one render for a background fill that can start between
+two reads: after a quiet period the first alarm firing goes through the visitor wait once. A
+publish that reads six routes therefore costs about seven renders. Measured on a local object with
+a render slowed to 2.2 seconds, six routes were fresh in 15.4, 15.4, 15.2 and 15.4 seconds (n=4).
+The same arithmetic holds for a wholesale purge: four routes read were fresh in 11.0, 11.8 and
+11.5 seconds (n=3).
+
+The soak's bound is three seconds per render, one render per route plus one for the slid-in fill,
+plus two seconds: 23 seconds for a six-route publish, 17 for a four-route edit or trash, 11 for a
+two-route term edit or comment approval. A render takes about 0.6 seconds on a local object and
+2.0 to 3.5 seconds on a deployed one. On a deployed object, 800 operations of one seed read the
+slowest confirm at 16.1 seconds for a publish (n=18), 14.5 for a trash (n=16), 9.5 for an edit
+(n=5), 6.9 for a term edit (n=10) and 6.8 for a comment approval (n=4), each inside its bound. One
+theme switch of 20 read 190 seconds, and a transport retry on the site's front page fell inside
+that confirm, so it is not counted as a render time.
 
 ### Validators
 
@@ -260,7 +278,7 @@ A request is read against three groups of cookie names.
   GDPR Cookie Consent, Cookiebot, Complianz, CookieYes, OneTrust, Borlabs and Moove. A request that
   carries only these is the anonymous request. The front worker drops them before it asks any tier, so
   the stored page is the one a visitor with no cookie gets, and a visitor with `_ga` and one without
-  read and fill the same entry. The names are anchored patterns in `src/ops/auth-budget.ts`, so a
+  read and fill the same entry. The names are anchored patterns in `src/ops/meters/auth-budget.ts`, so a
   look-alike such as `_ga_session_admin` stays in the third group.
 - Every other name is unclassified. The request is treated as authenticated (no shared tier, no store,
   the allowance applies) because a plugin cookie such as a cart can make the page per visitor.

@@ -7,6 +7,7 @@ From a clean clone to a running site, then claiming it and moving an existing on
 - [Claiming and Managing a Site](claim-and-log-in.md): claim a new site, log in, and the management surfaces.
 - [Updating a Site](updating.md): taking a new release, keeping a site current, and what an update leaves alone.
 - [Reproducing Thunder](reproduce-thunder.md): rebuild a Verified codebase on your own machine and score it.
+- [Reproducing Panopoly](reproduce-panopoly.md): build a Drupal 7 distribution natively and deliver it through anachron.
 
 ## Prerequisites
 
@@ -14,6 +15,18 @@ From a clean clone to a running site, then claiming it and moving an existing on
 - Node 24+ as well; a few scripts need `node:sqlite`, which Bun does not ship
 - PHP 8.3+ with `pdo_sqlite` (only to run the database driver's test suite)
 - A Cloudflare account with Durable Objects enabled (available on the free plan)
+
+## Choosing Drupal or WordPress
+
+A build packs one CMS, selected by `CMS` in `wrangler.jsonc` (see [Site Identity](../configuration/site-identity.md#cms)). The commands below start Drupal. For WordPress, fetch its pinned tree, pack it and start the WordPress dev server:
+
+```bash
+bun run fetch:wordpress
+bun run assets:wordpress
+bun run dev:wordpress
+```
+
+A WordPress deploy publishes its browser files with `--assets assets/wordpress-site`; see [Static Assets](../configuration/serving/static-assets.md#wordpress-assets). Claiming and logging in work the same way for both. [WordPress](../architecture/wordpress.md) lists what differs, and [WordPress Packages](../configuration/operations/wordpress-packages.md) covers plugins and themes.
 
 ## Install and Run
 

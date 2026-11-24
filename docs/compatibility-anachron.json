@@ -537,8 +537,8 @@
 		"localgov_microsites": {
 			"sha": "4de8403b60f8c9c91d8966a65ff4ebb0537582bc",
 			"lane": "fixture",
-			"run": "local:2026-11-08T19:36:57.930Z+anachron:unversioned",
-			"date": "2026-11-08",
+			"run": "local:2026-11-24T03:33:14.304Z+anachron:d0bc4a5",
+			"date": "2026-11-24",
 			"rows": {
 				"install": {
 					"state": "inline",
@@ -574,7 +574,7 @@
 				},
 				"update": {
 					"state": "inline",
-					"note": "prepared run rmw88i8jj; drained to phase complete"
+					"note": "prepared run rmwu54ipw; drained to phase complete"
 				},
 				"cache rebuild": {
 					"state": "inline"
@@ -842,12 +842,12 @@
 		"fflch": {
 			"sha": "75fc28a784560ba8b044043603870a7d9acc42a2",
 			"lane": "fixture",
-			"run": "local:2026-11-08T19:37:53.666Z+anachron:unversioned",
-			"date": "2026-11-08",
+			"run": "local:2026-11-24T03:31:41.923Z+anachron:d0bc4a5",
+			"date": "2026-11-24",
 			"rows": {
 				"install": {
 					"state": "unsupported",
-					"note": "11 failed: bower-asset/ckeditor-dev 4.14.1: bower-asset/ckeditor-dev: metadata 404 for bower-asset/ckeditor-dev | bower-asset/colorbox 1.6.4: bower-asset/colorbox: metadata 404 for bower-asset/colorbox | bower-asset/jquery.cycle : bower-asset/jquery.cycle: metadata 404 for bower-asset/jquery.cycle | bower-asset/jquery.hoverintent : bower-asset/jquery.hoverintent: metadata 404 for bower-asset/jquery.hoverintent; 135/148 registry packages; 0/0 custom uploaded; 0/0 modules enabled; 8 composer patches not applied; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid; override for the anachron run: the verified corpus records install none for this repository"
+					"note": "4 failed: bower-asset/jquery.hoverintent dev-master#dda471d12d340606bbdb0966eab5bf91cdb8bc76: bower-asset/jquery.hoverintent: bower-asset/jquery.hoverintent has no downloadable archive | npm-asset/ckeditor_youtube 2.1.15: npm-asset/ckeditor_youtube: npm-asset/ckeditor_youtube ships a tar, which is not read here | npm-asset/juicebox_lite 1.5.1: npm-asset/juicebox_lite: npm-asset/juicebox_lite ships a tar, which is not read here | npm-asset/tabletoolstoolbar 0.0.1: npm-asset/tabletoolstoolbar: npm-asset/tabletoolstoolbar ships a tar, which is not read here; 142/148 registry packages; 0/0 custom uploaded; 0/0 modules enabled; 8 composer patches not applied; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid; override for the anachron run: the verified corpus records install none for this repository; 9 5xx answers in the run: 0 with the growth-refused header, 1 with the object-reset page, 8 neither"
 				},
 				"container build": {
 					"state": "inline",
@@ -879,7 +879,7 @@
 				},
 				"update": {
 					"state": "inline",
-					"note": "prepared run rmw88jqgr; drained to phase complete"
+					"note": "prepared run rmwu53cbm; drained to phase complete"
 				},
 				"cache rebuild": {
 					"state": "inline"
@@ -1076,11 +1076,73 @@
 				"fflch/centrodametropole_breadcrumb",
 				"fflch/compras",
 				"fflch/fflch-theme",
+				"fflch/pragmatica-drupal-module",
 				"fflch/urbandatabrasil_userform",
 				"fflch/webform_ficha_catalografica",
+				"uspdev/replicado_drupal",
 				"uspdev/webform_boleto_usp"
 			],
 			"custom": []
+		},
+		"strawberryfield": {
+			"sha": "340a02c00e4b6ebf11e4bc6b59e50f5c84ca0928",
+			"lane": "fixture",
+			"run": "local:2026-11-24T03:31:13.416Z+anachron:d0bc4a5",
+			"date": "2026-11-24",
+			"rows": {
+				"install": {
+					"state": "unsupported",
+					"note": "enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file name (search_api_solr.solr_field_type.dense_vector_field_512_und_9_0_0.yml has id dense_vector_field_512_und), which core's config installer refuses; pinned at the v2.1.0 tag (declares Drupal 11), not the earlier main-branch commit 95129453, which is in no tag and carries the DataType and generated-proxy return-type fatals that v2.0.0 and v2.1.0 fix; frictionlessdata/datapackage dev-main requires justinrainbow/json-schema ^5.2 while drupal/core-recommended pins ~6.8.2, so it is installed past the check and runs against the shipped 6.8.2; the module's info file depends on search_api and search_api_solr, which the install delivers; enabling is refused because five config/install Solr field type files carry an id without the _9_0_0 suffix their file names have, and core's config installer throws on a name that differs from the id (the same files are on the module's main branch)"
+				},
+				"container build": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
+				},
+				"anon render": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
+				},
+				"auth render": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
+				},
+				"entity crud": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
+				},
+				"form submit": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
+				},
+				"file rw": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
+				},
+				"queue cron": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
+				},
+				"outbound http": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
+				},
+				"update": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
+				},
+				"cache rebuild": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
+				},
+				"config import": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
+				},
+				"module workflow": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling strawberryfield was refused: The configuration name \"search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0\" does not match the ID \"dense_vector_field_768_und\" at /drupal/core/lib/Drupal/Core/Config/ConfigInstaller.php:432; 5 config files carry an id that differs from their file n"
+				}
+			}
 		}
 	}
 }

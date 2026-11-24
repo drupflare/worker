@@ -1,7 +1,7 @@
 <div style="display: flex; align-items: center; flex-direction: column;" align="center">
     <img align="center" style="align-self: center; max-width: 256px" src="https://cdn.drupflare.com/drupflare.png" width="30%" alt="" />
     <h1 style="text-align: center;">Drupflare</h1>
-    <p style="text-align: center;">Drupal 11 on Cloudflare Workers</p>
+    <p style="text-align: center;">Drupal and WordPress on Cloudflare Workers</p>
     <div align="center">
         <img src="https://img.shields.io/github/v/release/drupflare/worker" alt="release">
         <img src="https://img.shields.io/github/license/drupflare/worker" alt="license">
@@ -17,9 +17,12 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/drupflare/worker)
 
-**Drupal 11 running on Cloudflare Workers.** No VPS, no container, no origin server. PHP 8.5
+**Drupal 11 and WordPress running on Cloudflare Workers.** No VPS, no container, no origin server. PHP 8.5
 executes as WebAssembly inside a Durable Object, with the Durable Object's own SQLite as the
-database. PHP 8.5 is what ships, with no extension dropped to fit.
+database. PHP 8.5 is what ships, with no extension dropped to fit. Drupal is the CMS the project
+certifies against real codebases; WordPress renders, logs in, serves its admin and REST API, and
+manages plugins from a Durable Object, and has been measured on deployed workers. Joomla has local
+proofs and no running site. See [WordPress](docs/architecture/wordpress.md).
 
 The interpreter ships as a raw WebAssembly module that the platform compiles ahead of time, so
 startup costs a few milliseconds. A paid site holds its interpreter warm between requests; a quiet
@@ -46,7 +49,7 @@ so an authenticated read workload scales past one thread. See [Replica Lanes](do
 
 ## 🎯 Why
 
-A small Drupal site is a strange thing to host. It needs a webserver, a PHP runtime, a database, a
+A small Drupal or WordPress site is a strange thing to host. It needs a webserver, a PHP runtime, a database, a
 cache, a CDN, backups, and someone to apply security patches, and it serves almost entirely
 anonymous, cacheable traffic. The infrastructure is sized for the 1% of requests that render.
 
@@ -87,6 +90,9 @@ compiled plan or by the object.
   and PHP's database calls block.
 - **A Drupal database driver.** `cfw_do_sqlite`, from [`rom`](https://github.com/drupflare/rom),
   replaces everything in Drupal's database layer that assumed PDO and a file on disk.
+- **A WordPress database seam.** A `wpdb` subclass sends WordPress's MySQL to a translator on the
+  host, which runs it on the object's SQLite. 2,372 of 2,372 captured statements replay against
+  pinned MySQL.
 - **Divisibility.** First-run migration runs in JavaScript, in chunks that each finish inside one
   invocation.
 
@@ -103,8 +109,15 @@ compiled plan or by the object.
   heap.
 - **A database** in the object's own SQLite, created at first boot by replaying the packed
   `assets/drupal/site.sqlite` through the `cfw_do_sqlite` driver.
-- **Real codebases.** 27 production Drupal codebases pinned in `config/corpus.yml` are scored on 13
-  capabilities; see [Compatibility](docs/architecture/compatibility.md).
+- **Real codebases.** 30 codebases pinned in `config/corpus.yml`, three of them Drupal 7, are
+  scored on 13 capabilities; see [Compatibility](docs/architecture/compatibility.md). In the latest
+  local certification pass, 6 hold Certified (farmos, thunder, govcms, localgov_microsites,
+  simple_oauth_21 and lagoon_cachebackend) and mantle2 is deployed. A codebase earns Certified with
+  three consecutive passing deployed runs and keeps it while at least 3 of its newest 4 pass and the
+  newest passes.
+- **WordPress 7.1.4**, with its bundled themes, a database baked by its own installer and a
+  registry of pinned plugins. WordPress has no corpus run yet; Classic Editor is the one plugin
+  proven, locally. See [WordPress](docs/architecture/wordpress.md).
 
 ---
 
@@ -124,6 +137,14 @@ bun run dev
 `assets/` and `.interp/` are generated and gitignored, so `bun run hydrate` lands them on a clean
 clone. Open `http://localhost:8787/`: the first visit starts the site, answering 503 with a
 self-refreshing page while the packed database replays.
+
+To run WordPress instead, fetch its pinned tree, pack it and start the WordPress dev server:
+
+```bash
+bun run fetch:wordpress
+bun run assets:wordpress
+bun run dev:wordpress
+```
 
 A new site is unclaimed until `POST /firstrun` mints the administrator password and the owner
 token, each shown once:
@@ -157,7 +178,7 @@ deployment, one small VPS, still saves 99.80% at that traffic and 94.24% at 30 m
 month. Per request the two runtimes are at parity, so the saving comes from idle nodes and not from
 PHP running faster.
 
-Every figure is derived and modelled, because no source sizes a production node. [Impact](docs/impact/index.md)
+These figures are for Drupal; no WordPress energy figure has been read. Every figure is derived and modelled, because no source sizes a production node. [Impact](docs/impact/index.md)
 labels each one; [Energy](docs/impact/energy/index.md), [Economics](docs/impact/economics/index.md) and
 [Carbon](docs/impact/carbon.md) hold the detail.
 
@@ -171,6 +192,7 @@ labels each one; [Energy](docs/impact/energy/index.md), [Economics](docs/impact/
 | ----------------------------------------------------------- | ----------------------------------------------------------------------- |
 | [Getting Started](docs/getting-started/index.md)            | first boot, claiming a site, deploying, and moving an existing site in  |
 | [Architecture](docs/architecture/index.md)                  | how a request is answered, static assets, and self-repair               |
+| [WordPress](docs/architecture/wordpress.md)                 | what runs, how it differs from Drupal, and every figure read so far     |
 | [Free vs Paid](docs/impact/economics/free-vs-paid/index.md) | what each Cloudflare plan allows a site, and which limit binds first    |
 | [VPS Comparison](docs/impact/economics/vps-comparison.md)   | latency, throughput and cost against nginx and PHP-FPM on the same tree |
 | [Limitations](docs/architecture/limitations.md)             | what does not run, what runs differently, and the limit behind each     |
@@ -207,7 +229,8 @@ labels each one; [Energy](docs/impact/energy/index.md), [Economics](docs/impact/
 | [Security Controls](docs/security/controls/index.md)                       | the controls in place today                                   |
 | [Security Incidents](docs/security/incidents.md)                           | the CVE and incident map, PHP2Shell, planned work             |
 | [Government](docs/audiences/government.md)                                 | what a US federal site owner owns and what the host owns      |
-| [Compatibility](docs/architecture/compatibility.md)                        | per-codebase results for the 27 production codebases          |
+| [Compatibility](docs/architecture/compatibility.md)                        | per-codebase results for the 30 Drupal codebases              |
+| [WordPress Packages](docs/configuration/operations/wordpress-packages.md)  | plugins and themes: install, update, roll back, archive rules |
 | [Building From Source](docs/getting-started/building-from-source/index.md) | the payload and source routes, and upgrading Drupal core      |
 | [Repository Layout](docs/getting-started/repository-layout/index.md)       | every path outside `src/` and how it arrives on a clean clone |
 | [Database](docs/architecture/database.md)                                  | how `assets/drupal/site.sqlite` is built                      |

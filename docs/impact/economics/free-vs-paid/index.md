@@ -28,6 +28,18 @@ requests invoked no Worker (`measured`; see [The Off-Worker Arms](off-worker-arm
 this, and the shipped config does not enable it. With it on, the same arithmetic gives 1,515 views a
 day.
 
+### WordPress on Free
+
+The serving ceiling is the same 100,000 requests a day. Regeneration is lower and binds on a
+different meter: about 45,138 renders a day against Drupal's 50,916, bound by duration, because a
+WordPress render takes about 2.25 s of wall clock and the object renders one page at a time
+(`derived`; weights assumed, the 2.25 s is one deployed run with n=10 and a maximum of 3.061 s; rows
+would allow 89,104). Run `bun scripts/measure/free-envelope.ts` for both. Two deployed runs on a
+student free account (2026-11-18) answered the front page, login, admin and REST, and a cached hit
+cost the object no CPU (`measured`, n=9). No deployed cached run on a free account has been read,
+so the share of views that render is not known for WordPress. See
+[WordPress](../../../architecture/wordpress.md#free-plan).
+
 | artifact             | what it is                                                     | from                              |
 | -------------------- | -------------------------------------------------------------- | --------------------------------- |
 | Worker bundle        | fits the 64 MiB Worker size limit                              | `bun run release:check`           |
@@ -170,4 +182,4 @@ shows the full projection with the largest style count that still fits.
 > What it saves is CPU, which is not a meter this project is bound by.
 >
 > The `caches.default` tier this project does use is a different mechanism and is safe: its key
-> carries both the origin and the site id. `tests/node/cache-partition.spec.ts` holds both halves.
+> carries both the origin and the site id. `tests/node/cache/partition.spec.ts` holds both halves.

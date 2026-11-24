@@ -10,6 +10,7 @@ import {
 	agreementFields,
 	agreementForm,
 	anachronDir,
+	cfwHeaders,
 	claimOwner,
 	composerReplaces,
 	composerRequires,
@@ -17,28 +18,37 @@ import {
 	declaredNames,
 	deliveredPackages,
 	deployedOrigin,
+	describeServerErrors,
 	emptyNumbers,
 	enabledExtensions,
+	enabler,
+	enableSteps,
 	errorFieldNames,
 	filledFlags,
 	fixtureStatus,
+	flushHeaderNote,
 	formHtml,
 	formValues,
 	haltedBeat,
 	infoRequires,
+	inlineRetry,
 	installUrl,
 	lostServer,
 	mergeResults,
+	missingClassModule,
 	missingDependency,
 	moduleDir,
 	nativeCause,
 	nativeLibraries,
+	pickStats,
+	projectEnv,
 	readableNote,
 	recordDeployed,
 	redirectTarget,
 	refusalFor,
 	remoteServer,
 	renderMatrix,
+	repeatedAnswer,
 	requiredText,
 	resultPaths,
 	routePaths,
@@ -49,21 +59,36 @@ import {
 	unresolvedFailure,
 	unsettled,
 	updateNote,
+	UPLOAD_REQUEST_TIMEOUT_MS,
 	waitForTimingLock,
 	withAnachronOverride,
+	withConfigMismatch,
+	withInstallNote,
+	withServerErrorNote,
 	type AnachronOverride,
 	type Compatibility,
 	type Corpus,
-	type RowState
+	type RowState,
+	type ServerError
 } from '../../scripts/e2e/corpus-lane';
 import {
 	admitsDrupal11,
+	advisoryIds,
+	configIdMismatches,
 	installPath,
+	lockDivergence,
 	lockedContrib,
+	nativeNotes,
+	nativeNoteText,
 	nativePlan,
+	nativeRoot,
 	needsProfileSwitch,
 	projectPlan,
-	upgradeNote
+	projectRepositories,
+	REMOVED_CORE_MODULES,
+	skippedPatches,
+	upgradeNote,
+	withRegistryProfile
 } from '../../scripts/e2e/corpus-project';
 import { hiddenFields } from '../../scripts/e2e/live-deploy';
 
@@ -375,7 +400,9 @@ describe('config/corpus.yml', () => {
 	it('pins every repository to a full commit and a known install path', () => {
 		for (const repo of file.repos) {
 			expect(repo.sha, repo.id).toMatch(/^[0-9a-f]{40}$/);
-			expect(['modify', 'project', 'profile', 'none'], repo.id).toContain(repo.install);
+			expect(['modify', 'project', 'profile', 'd7-docker', 'none'], repo.id).toContain(
+				repo.install
+			);
 			expect(Array.isArray(repo.needs), repo.id).toBe(true);
 		}
 		expect(new Set(file.repos.map((r) => r.id)).size).toBe(file.repos.length);
@@ -508,6 +535,59 @@ describe('what a project asks of a site', () => {
 		}
 	});
 
+	it('requires the project of a module the shipped core removed, unless the lock has it', () => {
+		const root = build(
+			{ require: { 'drupal/token': '^1.13', 'drupal/hal': '^2' } },
+			'module:\n  token: 0\n  action: 0\n  hal: 0\n  rdf: 0\n'
+		);
+		try {
+			writeFileSync(
+				join(root, 'composer.lock'),
+				JSON.stringify({
+					packages: [
+						{ name: 'drupal/token', version: '1.15.0', type: 'drupal-module' },
+						{ name: 'drupal/hal', version: '2.0.5', type: 'drupal-module' }
+					]
+				})
+			);
+			const plan = projectPlan(root);
+			expect(plan.packages['drupal/action']).toBe('*');
+			expect(plan.packages['drupal/rdf']).toBe('*');
+			expect(plan.packages['drupal/hal']).toBe('2.0.5');
+			expect(plan.packages).not.toHaveProperty('drupal/token', '*');
+			expect(REMOVED_CORE_MODULES).toContain('action');
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it('uploads a module kept inside a theme, and not the theme or a core checkout', () => {
+		const root = build({}, 'module:\n  gesso_helper: 0\n');
+		try {
+			mkdirSync(join(root, 'web/themes/site_theme/gesso_helper'), { recursive: true });
+			writeFileSync(
+				join(root, 'web/themes/site_theme/site_theme.info.yml'),
+				'name: t\ntype: theme\n'
+			);
+			writeFileSync(
+				join(root, 'web/themes/site_theme/gesso_helper/gesso_helper.info.yml'),
+				'name: g\ntype: module\n'
+			);
+			mkdirSync(join(root, 'web/core/modules/system'), { recursive: true });
+			writeFileSync(
+				join(root, 'web/core/modules/system/system.info.yml'),
+				'name: System\ntype: module\n'
+			);
+			expect(
+				projectPlan(root)
+					.custom.map((c) => `${c.kind}:${c.name}`)
+					.sort()
+			).toEqual(['module:gesso_helper', 'module:mine']);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("carries the project's minimum-stability, and none when it sets none", () => {
 		const dev = build({ 'minimum-stability': 'dev' }, 'module:\n  token: 0\n');
 		const stable = build({}, 'module:\n  token: 0\n');
@@ -610,6 +690,24 @@ describe('module-shaped repositories', () => {
 		).toBe('openy_map');
 		expect(
 			missingDependency('Unable to install modules a due to missing modules a.')
+		).toBeNull();
+	});
+
+	it('passes a project environment as the worker vars PHP reads with getenv', () => {
+		expect(projectEnv({ WEBCMS_S3_REGION: 'us-east-1' })).toEqual({
+			DRUPAL_ENV_WEBCMS_S3_REGION: 'us-east-1'
+		});
+		expect(projectEnv(undefined)).toEqual({});
+	});
+
+	it('names the module whose class a refusal could not find, and none for core', () => {
+		expect(
+			missingClassModule('Class "Drupal\\samlauth\\Event\\SamlauthEvents" not found')
+		).toBe('samlauth');
+		expect(missingClassModule('Class "Drupal\\Core\\Entity\\Gone" not found')).toBeNull();
+		expect(missingClassModule('Class "Acme\\Thing" not found')).toBeNull();
+		expect(
+			missingClassModule('The service "a" has a dependency on a non-existent service')
 		).toBeNull();
 	});
 });
@@ -886,6 +984,21 @@ describe('naming what stopped a native install', () => {
 		).toBe(
 			'[error]  TypeError: ClassLocation::__construct(): Argument #6 must be of type EntityTypeManager | #0 trace | #1 trace'
 		);
+	});
+
+	it('starts at a PHP Error line and not at an unrelated download warning above it', () => {
+		const cause = nativeCause([
+			'Downloading a/b (1.0.0)',
+			'curl: could not resolve host cache.example.invalid, retrying',
+			'Error: Undefined constant PDO::MYSQL_ATTR_USE_BUFFERED_QUERY in /out/site/web/core/Connection.php on line 140',
+			'#0 trace',
+			'#1 trace',
+			'#2 trace'
+		]);
+		expect(
+			cause.startsWith('Error: Undefined constant PDO::MYSQL_ATTR_USE_BUFFERED_QUERY')
+		).toBe(true);
+		expect(cause).not.toContain('could not resolve host');
 	});
 
 	it('keeps the message under a Symfony In-file header and a composer problem', () => {
@@ -1379,7 +1492,7 @@ describe('an anachron run', () => {
 		const overrides = parse(
 			readFileSync(resolve(process.cwd(), 'config/corpus-anachron.yml'), 'utf8')
 		) as Record<string, AnachronOverride>;
-		expect(Object.keys(overrides).sort()).toEqual(['fflch', 'migration_example']);
+		expect(Object.keys(overrides).sort()).toEqual(['fflch', 'migration_example', 'panopoly']);
 		for (const id of Object.keys(overrides)) {
 			const base = corpus.repos.find((r) => r.id === id)!;
 			expect(base.install, id).toBe('none');
@@ -1399,5 +1512,585 @@ describe('an anachron run', () => {
 			expect(refusalFor(base), id).toMatch(/^needs upgrade:/);
 			expect(refusalFor(base, { anachron: true }), id).toBeNull();
 		}
+	});
+});
+
+describe('the repositories a project lists', () => {
+	it('keeps composer and GitHub entries, in an array or an object, and skips the standard hosts', () => {
+		const listed = {
+			'0': { type: 'composer', url: 'https://packages.drupal.org/8' },
+			assets: { type: 'composer', url: 'https://asset-packagist.org' },
+			pragmatica: {
+				type: 'git',
+				url: 'https://github.com/fflch/pragmatica-drupal-module.git'
+			},
+			local: { type: 'path', url: '../local' },
+			plain: { type: 'composer', url: 'http://insecure.test' }
+		};
+		const expected = [
+			{ type: 'composer', url: 'https://asset-packagist.org' },
+			{ type: 'vcs', url: 'https://github.com/fflch/pragmatica-drupal-module.git' }
+		];
+		expect(projectRepositories(listed)).toEqual(expected);
+		expect(projectRepositories(Object.values(listed))).toEqual(expected);
+		expect(projectRepositories(undefined)).toEqual([]);
+	});
+
+	it('goes on the install path as one repository value each', () => {
+		const url = installUrl('a/b', null, undefined, false, false, [
+			{ type: 'composer', url: 'https://asset-packagist.org' }
+		]);
+		expect(url).toContain('&repository=composer%7Chttps%3A%2F%2Fasset-packagist.org');
+		expect(installUrl('a/b', null, undefined, false)).not.toContain('repository');
+	});
+
+	it('names a module whose config files carry an id that differs from their file name', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'cfg-'));
+		try {
+			const install = join(dir, 'config', 'install');
+			mkdirSync(install, { recursive: true });
+			const name = 'search_api_solr.solr_field_type.dense_vector_field_768_und_9_0_0.yml';
+			writeFileSync(join(install, name), 'status: true\nid: dense_vector_field_768_und\n');
+			writeFileSync(join(install, 'strawberryfield.settings.yml'), 'mime: true\n');
+			writeFileSync(
+				join(install, 'search_api_solr.solr_field_type.text_und_9_0_0.yml'),
+				'id: text_und_9_0_0\n'
+			);
+			expect(configIdMismatches(dir)).toEqual([
+				{ file: name, id: 'dense_vector_field_768_und' }
+			]);
+			const refused =
+				'enabling strawberryfield was refused: The configuration name "x_9_0_0" does not match the ID "x"';
+			expect(withConfigMismatch(refused, dir)).toContain(
+				`1 config files carry an id that differs from their file name (${name} has id dense_vector_field_768_und)`
+			);
+			expect(withConfigMismatch('enabling x was refused: a fatal', dir)).toBe(
+				'enabling x was refused: a fatal'
+			);
+			expect(withConfigMismatch(refused, join(dir, 'config'))).toBe(refused);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('reads what a lock records for each required package, and retries a 404 with it', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'plan-'));
+		try {
+			writeFileSync(
+				join(dir, 'composer.json'),
+				JSON.stringify({
+					require: { 'ckeditor-plugin/iframe': '4.15.0', 'drupal/token': '^1.0' }
+				})
+			);
+			writeFileSync(
+				join(dir, 'composer.lock'),
+				JSON.stringify({
+					packages: [
+						{
+							name: 'ckeditor-plugin/iframe',
+							version: '4.15.0',
+							type: 'drupal-library',
+							dist: {
+								url: 'https://download.ckeditor.com/iframe/releases/iframe_4.15.0.zip',
+								type: 'zip'
+							}
+						},
+						{
+							name: 'drupal/token',
+							version: '1.15.0',
+							type: 'drupal-module',
+							dist: null
+						}
+					]
+				})
+			);
+			const plan = projectPlan(dir);
+			expect(Object.keys(plan.inline ?? {})).toEqual(['ckeditor-plugin/iframe']);
+			const fail = 'ckeditor-plugin/iframe: metadata 404 for ckeditor-plugin/iframe';
+			const again = inlineRetry(plan, 'ckeditor-plugin/iframe', fail);
+			expect(again).toEqual([
+				{
+					type: 'package',
+					name: 'ckeditor-plugin/iframe',
+					definition: plan.inline?.['ckeditor-plugin/iframe']
+				}
+			]);
+			const url = installUrl(
+				'ckeditor-plugin/iframe',
+				'4.15.0',
+				undefined,
+				false,
+				false,
+				again
+			);
+			expect(decodeURIComponent(url)).toContain(
+				'&repository=package|{"name":"ckeditor-plugin/iframe"'
+			);
+			expect(
+				inlineRetry(plan, 'ckeditor-plugin/iframe', 'archive 500 from https://x')
+			).toBeUndefined();
+			expect(inlineRetry(plan, 'drupal/token', fail)).toBeUndefined();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('is read by a project with a lock and a project without one', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'plan-'));
+		try {
+			writeFileSync(
+				join(dir, 'composer.json'),
+				JSON.stringify({
+					require: { 'drupal/localgov_microsites': '^4.0' },
+					repositories: [{ type: 'composer', url: 'https://asset-packagist.org' }]
+				})
+			);
+			const plan = projectPlan(dir);
+			expect(plan.locked).toBe(false);
+			expect(plan.repositories).toEqual([
+				{ type: 'composer', url: 'https://asset-packagist.org' }
+			]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe('the install profile of a project with no lock', () => {
+	const plan = {
+		profile: null,
+		packages: { 'drupal/token': '^1.0', 'drupal/localgov_microsites': '^4.0' },
+		custom: [],
+		modules: [],
+		patches: 0,
+		locked: false
+	};
+	const fetcher = (async (input: RequestInfo | URL) => {
+		const url = String(input);
+		const name = /p2\/(.+)\.json/.exec(url)?.[1] ?? '';
+		return Response.json({
+			packages: {
+				[name]: [{ type: name.endsWith('microsites') ? 'drupal-profile' : 'drupal-module' }]
+			}
+		});
+	}) as typeof fetch;
+
+	it('reads the profile from the type the registry publishes, so a distribution is migrated', async () => {
+		const read = await withRegistryProfile(plan, fetcher);
+		expect(read.profile).toBe('localgov_microsites');
+		expect(needsProfileSwitch(read)).toBe(true);
+		expect(needsProfileSwitch(plan)).toBe(false);
+	});
+
+	it('asks nothing of a project that has a lock or already names its profile', async () => {
+		const never = (async () => {
+			throw new Error('no fetch expected');
+		}) as unknown as typeof fetch;
+		expect(await withRegistryProfile({ ...plan, locked: true }, never)).toEqual({
+			...plan,
+			locked: true
+		});
+		expect(await withRegistryProfile({ ...plan, profile: 'standard' }, never)).toEqual({
+			...plan,
+			profile: 'standard'
+		});
+	});
+});
+
+describe('where a native install leaves its output', () => {
+	it('is the OS temp directory by default, never inside the repository', () => {
+		const root = nativeRoot({});
+		expect(root.startsWith(tmpdir())).toBe(true);
+		expect(root.startsWith(join(import.meta.dirname, '..', '..'))).toBe(false);
+	});
+
+	it('takes CORPUS_NATIVE_DIR when it is set', () => {
+		expect(nativeRoot({ CORPUS_NATIVE_DIR: '/somewhere/else' })).toBe('/somewhere/else');
+	});
+});
+
+describe('the upload request timeout', () => {
+	it('is well above the 15 second default of drangler, which cancelled a long commit', () => {
+		expect(Number(UPLOAD_REQUEST_TIMEOUT_MS)).toBeGreaterThanOrEqual(120_000);
+	});
+});
+
+describe('a package the lock holds on a dev branch', () => {
+	it('is asked for at that branch, not at the newest stable release', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'plan-dev-'));
+		try {
+			writeFileSync(
+				join(dir, 'composer.json'),
+				JSON.stringify({
+					require: { 'drupal/entitygroupfield': '^1.0.x-dev', 'drupal/token': '^1.0' }
+				})
+			);
+			writeFileSync(
+				join(dir, 'composer.lock'),
+				JSON.stringify({
+					packages: [
+						{
+							name: 'drupal/entitygroupfield',
+							version: 'dev-1.0.x',
+							type: 'drupal-module'
+						},
+						{ name: 'drupal/token', version: '1.15.0', type: 'drupal-module' }
+					]
+				})
+			);
+			expect(projectPlan(dir).packages).toEqual({
+				'drupal/entitygroupfield': 'dev-1.0.x',
+				'drupal/token': '1.15.0'
+			});
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe('a branch the lock holds at a commit', () => {
+	it('is asked for at that commit', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'plan-pin-'));
+		try {
+			writeFileSync(
+				join(dir, 'composer.json'),
+				JSON.stringify({ require: { 'drupal/entitygroupfield': '^1.0.x-dev' } })
+			);
+			writeFileSync(
+				join(dir, 'composer.lock'),
+				JSON.stringify({
+					packages: [
+						{
+							name: 'drupal/entitygroupfield',
+							version: 'dev-1.0.x',
+							type: 'drupal-module',
+							source: { reference: '57a1fd42328135560ff1833a9a92d2bc7ab4444d' }
+						}
+					]
+				})
+			);
+			expect(projectPlan(dir).packages).toEqual({
+				'drupal/entitygroupfield': 'dev-1.0.x#57a1fd42328135560ff1833a9a92d2bc7ab4444d'
+			});
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe('the native install script', () => {
+	it('does not let a security advisory against a pinned core stop the install', () => {
+		const script = readFileSync(
+			join(import.meta.dirname, '../../scripts/e2e/corpus-native/install.sh'),
+			'utf8'
+		);
+		expect(script).toContain('"block-insecure":false');
+	});
+
+	it('relaxes the exact core companion pins a project template carries', () => {
+		const script = readFileSync(
+			join(import.meta.dirname, '../../scripts/e2e/corpus-native/install.sh'),
+			'utf8'
+		);
+		expect(script).toContain('core-(composer-scaffold|project-message|recommended)');
+	});
+
+	it('creates a template project without installing it, and keeps a failed patch from stopping the update', () => {
+		const script = readFileSync(
+			join(import.meta.dirname, '../../scripts/e2e/corpus-native/install.sh'),
+			'utf8'
+		);
+		expect(script).toContain('--stability dev --no-install');
+		expect(script).toContain('composer-exit-on-patch-failure');
+	});
+
+	it('updates every package, not only the profile, so a template lock can move core', () => {
+		const script = readFileSync(
+			join(import.meta.dirname, '../../scripts/e2e/corpus-native/install.sh'),
+			'utf8'
+		);
+		expect(script).toContain('composer update --with-all-dependencies');
+	});
+});
+
+describe('what a native install skipped or went past', () => {
+	const log = [
+		'  - Applying patches for drupal/inline_entity_form',
+		'    https://www.drupal.org/files/issues/2022-09-22/47-8.diff (Issue #3271293: Changes are lost)',
+		'   Could not apply patch! Skipping. The error was: Cannot apply patch https://www.drupal.org/files/issues/2022-09-22/47-8.diff',
+		'  Cannot apply patch Issue #3271293: Changes are lost when collapsing a parag  ',
+		'  /issues/2022-09-22/47-8.diff)!',
+		'   Could not apply patch! Skipping. The error was: Cannot apply patch https://www.drupal.org/files/issues/2023-01-01/other.patch'
+	].join('\n');
+
+	it('lists each skipped patch once, by its URL', () => {
+		expect(skippedPatches(log)).toEqual([
+			'https://www.drupal.org/files/issues/2022-09-22/47-8.diff',
+			'https://www.drupal.org/files/issues/2023-01-01/other.patch'
+		]);
+		expect(skippedPatches('  - Installing a/b (1.0.0)')).toEqual([]);
+	});
+
+	it('lists the advisory ids a composer audit reports, and none for output it cannot read', () => {
+		const audit = JSON.stringify({
+			advisories: {
+				'drupal/core': [
+					{ advisoryId: 'SA-CORE-2026-018' },
+					{ advisoryId: 'SA-CORE-2026-017' },
+					{ advisoryId: 'SA-CORE-2026-017' }
+				]
+			}
+		});
+		expect(advisoryIds(audit)).toEqual(['SA-CORE-2026-017', 'SA-CORE-2026-018']);
+		expect(advisoryIds('not json')).toEqual([]);
+		expect(advisoryIds('{"advisories":[]}')).toEqual([]);
+	});
+
+	it('reads both from an install output directory', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'native-notes-'));
+		try {
+			writeFileSync(join(dir, 'install.log'), log);
+			writeFileSync(
+				join(dir, 'audit.json'),
+				JSON.stringify({ advisories: { x: [{ advisoryId: 'SA-CORE-2026-017' }] } })
+			);
+			expect(nativeNotes(dir)).toEqual({
+				patches: [
+					'https://www.drupal.org/files/issues/2022-09-22/47-8.diff',
+					'https://www.drupal.org/files/issues/2023-01-01/other.patch'
+				],
+				advisories: ['SA-CORE-2026-017'],
+				relaxed: [],
+				changed: []
+			});
+			expect(nativeNotes(join(dir, 'missing'))).toEqual({
+				patches: [],
+				advisories: [],
+				relaxed: [],
+				changed: []
+			});
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('writes a note only when something was skipped, and puts it on the install row', () => {
+		expect(
+			nativeNoteText({ patches: [], advisories: [], relaxed: [], changed: [] })
+		).toBeUndefined();
+		const note = nativeNoteText({
+			patches: ['https://x/1.patch'],
+			advisories: ['SA-CORE-2026-017'],
+			relaxed: ['drupal/core-composer-scaffold: 11.3.22 -> *'],
+			changed: ['drupal/core: 11.3.22 -> 11.4.10']
+		});
+		expect(note).toContain('not stock: 1 composer patches did not apply');
+		expect(note).toContain('SA-CORE-2026-017');
+		expect(note).toContain('relaxed constraints (drupal/core-composer-scaffold: 11.3.22 -> *)');
+		expect(note).toContain(
+			"1 packages resolved off the project's lock (drupal/core: 11.3.22 -> 11.4.10)"
+		);
+		const rows = withInstallNote({ install: { state: 'inline', note: 'ok' } }, note);
+		expect(rows['install']?.note).toContain('ok; not stock');
+		expect(withInstallNote({ install: { state: 'inline' } }, undefined)).toEqual({
+			install: { state: 'inline' }
+		});
+	});
+});
+
+describe('where a build differs from the lock of the project', () => {
+	const lock = (pkgs: Record<string, string>) =>
+		JSON.stringify({
+			packages: Object.entries(pkgs).map(([name, version]) => ({ name, version }))
+		});
+
+	it('lists packages at another version and packages the build dropped, ignoring a leading v', () => {
+		const project = lock({ 'a/a': '1.0.0', 'b/b': 'v2.0.0', 'c/c': '3.0.0', 'd/d': '4.0.0' });
+		const site = lock({ 'a/a': '1.1.0', 'b/b': '2.0.0', 'c/c': '3.0.0', 'e/e': '1.0.0' });
+		expect(lockDivergence(project, site)).toEqual([
+			'a/a: 1.0.0 -> 1.1.0',
+			'd/d: 4.0.0 -> absent'
+		]);
+	});
+
+	it('lists nothing for a lock that cannot be read', () => {
+		expect(lockDivergence('', lock({ 'a/a': '1' }))).toEqual([]);
+	});
+
+	it('reads the relaxed constraints and the lock difference from an install directory', () => {
+		const out = mkdtempSync(join(tmpdir(), 'native-div-'));
+		const clone = mkdtempSync(join(tmpdir(), 'native-clone-'));
+		try {
+			mkdirSync(join(out, 'site'));
+			writeFileSync(
+				join(out, 'relaxed.json'),
+				JSON.stringify(['drupal/core-recommended: 11.3.22 -> *'])
+			);
+			writeFileSync(join(clone, 'composer.lock'), lock({ 'a/a': '1.0.0' }));
+			writeFileSync(join(out, 'site', 'composer.lock'), lock({ 'a/a': '1.2.0' }));
+			const notes = nativeNotes(out, clone);
+			expect(notes.relaxed).toEqual(['drupal/core-recommended: 11.3.22 -> *']);
+			expect(notes.changed).toEqual(['a/a: 1.0.0 -> 1.2.0']);
+		} finally {
+			rmSync(out, { recursive: true, force: true });
+			rmSync(clone, { recursive: true, force: true });
+		}
+	});
+});
+
+describe('who refused a request that answered 5xx', () => {
+	const err = (over: Partial<ServerError>): ServerError => ({
+		path: '/admin',
+		status: 503,
+		growthRefused: false,
+		reset: false,
+		...over
+	});
+
+	it('says nothing when the run had no 5xx answer', () => {
+		expect(describeServerErrors([])).toBeUndefined();
+	});
+
+	it('counts the governor header, the object-reset page and neither apart', () => {
+		const text = describeServerErrors([
+			err({ growthRefused: true }),
+			err({ reset: true }),
+			err({ reset: true }),
+			err({ status: 500 })
+		]);
+		expect(text).toBe(
+			'4 5xx answers in the run: 1 with the growth-refused header, 2 with the object-reset page, 1 neither'
+		);
+	});
+
+	it('adds the object-reset and rolled-back headers when an answer carried them', () => {
+		const text = describeServerErrors([err({ objectResetHeader: true })]);
+		expect(text).toContain('1 with the object-reset header, 0 with the rolled-back header');
+		expect(describeServerErrors([err({ rolledBack: 'all' })])).toContain(
+			'1 with the rolled-back header'
+		);
+	});
+
+	it('reads the flush answer for the rollback and the repeat, on a 200 as well', () => {
+		const answer = (init: Record<string, string>) =>
+			new Response(null, { status: 200, headers: init });
+		expect(flushHeaderNote(answer({}).headers)).toBe(
+			'the flush POST: x-cfw-rolled-back none, x-cfw-retried none'
+		);
+		expect(flushHeaderNote(answer({ 'x-cfw-rolled-back': 'all' }).headers)).toBe(
+			'the flush POST: x-cfw-rolled-back all, x-cfw-retried none'
+		);
+		expect(flushHeaderNote(answer({ 'x-cfw-retried': 'abort' }).headers)).toContain(
+			'x-cfw-retried abort'
+		);
+		expect(flushHeaderNote(answer({ 'x-cfw-effects': 'none' }).headers)).toContain(
+			'x-cfw-effects none'
+		);
+		expect(flushHeaderNote(answer({}).headers)).not.toContain('x-cfw-effects');
+	});
+
+	it('says no header is readable when the answer is the platform reset page', () => {
+		expect(flushHeaderNote(new Response(null).headers, true)).toBe(
+			'the flush POST: a platform reset page carries no x-cfw header'
+		);
+	});
+
+	it('notes the rows that did not pass and leaves the passing ones alone', () => {
+		const rows = withServerErrorNote(
+			{
+				install: { state: 'inline' },
+				'cache rebuild': { state: 'unsupported', note: 'the clear answered 503' }
+			},
+			[err({ reset: true })]
+		);
+		expect(rows['install']).toEqual({ state: 'inline' });
+		expect(rows['cache rebuild']?.note).toBe(
+			'the clear answered 503; 1 5xx answers in the run: 0 with the growth-refused header, 1 with the object-reset page, 0 neither'
+		);
+	});
+});
+
+describe('the memory readings kept around a failing row', () => {
+	it('keeps every x-cfw header and retry-after of an answer verbatim', () => {
+		const h = new Headers({
+			'x-cfw-effects': 'none',
+			'x-cfw-rolled-back': 'all',
+			'retry-after': '2',
+			'content-type': 'text/html'
+		});
+		expect(cfwHeaders(h)).toEqual({
+			'x-cfw-effects': 'none',
+			'x-cfw-rolled-back': 'all',
+			'retry-after': '2'
+		});
+	});
+
+	it('keeps the repeat and effects headers of an answer of any status, and ignores the rest', () => {
+		const ok = new Headers({ 'x-cfw-retried': 'abort', 'x-cfw-effects': 'none' });
+		expect(repeatedAnswer('/admin/config?x=1', 200, ok)).toEqual({
+			path: '/admin/config',
+			status: 200,
+			headers: { 'x-cfw-retried': 'abort', 'x-cfw-effects': 'none' }
+		});
+		expect(repeatedAnswer('/a', 503, new Headers({ 'x-cfw-effects': 'some' }))?.status).toBe(
+			503
+		);
+		expect(repeatedAnswer('/a', 200, new Headers({ 'x-cfw-rolled-back': 'all' }))).toBe(
+			undefined
+		);
+		expect(repeatedAnswer('/a', 200, new Headers())).toBe(undefined);
+	});
+
+	it('keeps every reply of a stepped enable whole, in order', async () => {
+		enableSteps.length = 0;
+		const replies = [
+			{ status: 202, json: { done: false, step: 1, calls: 4 } },
+			{ status: 202, json: { done: false, step: 2, trace: ['a'] } },
+			{ status: 200, json: { done: true, ok: true, inflateStats: { n: 3 } } }
+		];
+		const asked: string[] = [];
+		const site = {
+			owned: async (path: string) => {
+				asked.push(path);
+				return replies[asked.length - 1]!;
+			}
+		};
+		const got = await enabler(site, async () => {})('mantle2');
+		expect(got.json['ok']).toBe(true);
+		expect(asked).toEqual(Array(3).fill('/enable?module=mantle2'));
+		expect(enableSteps.map((s) => [s.module, s.status, s.body])).toEqual(
+			replies.map((r) => ['mantle2', r.status, r.json])
+		);
+		expect(enableSteps.every((s) => s.clientMs >= 0)).toBe(true);
+		enableSteps.length = 0;
+	});
+
+	it('keeps the governor and isolate fields of a serve-stats answer and nothing else', () => {
+		const stats = pickStats({
+			rowsToday: 5,
+			growthRefusals: 2,
+			growthRefusalLog: [{ at: 1, from_bytes: 2, to_bytes: 3, cap_bytes: 4 }],
+			isolateBytes: { total: 9, ceiling: 134217728 },
+			freshFirst: { count: 1 },
+			alarmFirings: 3,
+			recycles: 0,
+			incarnation: { instance: 'a' },
+			isolate: { interpreters: 1 },
+			demand: [],
+			demandByPath: {},
+			other: 'x'
+		});
+		expect(Object.keys(stats).sort()).toEqual([
+			'alarmFirings',
+			'demand',
+			'demandByPath',
+			'freshFirst',
+			'growthRefusalLog',
+			'growthRefusals',
+			'incarnation',
+			'isolate',
+			'isolateBytes',
+			'recycles'
+		]);
 	});
 });

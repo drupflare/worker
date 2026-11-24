@@ -1,14 +1,16 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
 	ANACHRON_MOUNT,
 	batchBlobs,
 	buildBundle,
 	deliverAnachron,
+	RETURN_TYPES_OFF,
 	RIG_SETTINGS_SOURCE,
-	sha256
+	sha256,
+	stageModule
 } from '../../scripts/e2e/anachron-deliver';
 
 /**
@@ -229,5 +231,98 @@ describe('delivering to a site', () => {
 		);
 		expect(missing.ok).toBe(false);
 		expect(missing.error).toMatch(/bootstrap\.php is missing/);
+	});
+});
+
+describe('staging a module for upload', () => {
+	const REWRITER = `<?php
+$from = $argv[1];
+$to = $argv[2];
+mkdir($to);
+$code = file_get_contents($from . '/a.php');
+file_put_contents($to . '/a.php', str_replace('count()', 'count(): int', $code));
+echo json_encode(['changed' => ['a.php'], 'refusals' => [['file' => 'b.php', 'class' => 'B', 'method' => 'count', 'line' => 3, 'reason' => 'x']]]);
+`;
+	const SYNTAX = `<?php
+$to = $argv[2];
+mkdir($to, 0777, true);
+$code = file_get_contents($argv[1] . '/a.php');
+file_put_contents($to . '/a.php', str_replace('$s{0}', '$s[0]', $code));
+echo json_encode(['changed' => str_contains($code, '$s{0}') ? ['a.php'] : []]);
+`;
+	const module = (source = '<?php function count() {}') => {
+		const dir = join(mkdtempSync(join(tmpdir(), 'cfw-mod-')), 'strawberryfield');
+		mkdirSync(dir);
+		writeFileSync(join(dir, 'a.php'), source);
+		return dir;
+	};
+
+	it('uploads a rewritten copy named like the module and leaves the source alone', () => {
+		const anachron = checkout({
+			'bin/rewrite-return-types.php': REWRITER,
+			'bin/rewrite-syntax.php': SYNTAX
+		});
+		const source = module();
+		const staged = stageModule(anachron, source, {});
+		expect(staged.dir).not.toBe(source);
+		expect(basename(staged.dir)).toBe('strawberryfield');
+		expect(readFileSync(join(staged.dir, 'a.php'), 'utf8')).toBe(
+			'<?php function count(): int {}'
+		);
+		expect(readFileSync(join(source, 'a.php'), 'utf8')).toBe('<?php function count() {}');
+		expect(staged.changed).toEqual(['a.php']);
+		expect(staged.syntax).toEqual([]);
+		expect(staged.refusals).toEqual([
+			{ file: 'b.php', class: 'B', method: 'count', line: 3, reason: 'x' }
+		]);
+		staged.cleanup();
+		expect(existsSync(staged.dir)).toBe(false);
+	});
+
+	it('returns the module itself when the rewrite is switched off', () => {
+		const source = module();
+		const staged = stageModule('/nonexistent', source, {
+			ANACHRON_RETURN_TYPES: RETURN_TYPES_OFF
+		});
+		expect(staged).toMatchObject({ dir: source, changed: [], syntax: [], refusals: [] });
+	});
+
+	it('refuses a checkout with no rewriter, a failing rewriter and a silent one', () => {
+		expect(() => stageModule('/nonexistent', module(), {})).toThrow(
+			/rewrite-return-types\.php is missing/
+		);
+		const failing = checkout({
+			'bin/rewrite-return-types.php': '<?php fwrite(STDERR, "bad"); exit(2);'
+		});
+		expect(() => stageModule(failing, module(), {})).toThrow(/exited 2: bad/);
+		const silent = checkout({ 'bin/rewrite-return-types.php': '<?php echo "not json";' });
+		const noSyntax = checkout({ 'bin/rewrite-return-types.php': REWRITER });
+		expect(() => stageModule(noSyntax, module(), {})).toThrow(/rewrite-syntax\.php is missing/);
+		expect(() => stageModule(silent, module(), {})).toThrow(/printed no report: not json/);
+	});
+
+	it('uploads the syntax rewrite of a module that uses a curly string offset', () => {
+		const anachron = checkout({
+			'bin/rewrite-return-types.php': REWRITER,
+			'bin/rewrite-syntax.php': SYNTAX
+		});
+		const staged = stageModule(anachron, module('<?php count(); $s{0};'), {});
+		expect(readFileSync(join(staged.dir, 'a.php'), 'utf8')).toBe('<?php count(): int; $s[0];');
+		expect(staged.syntax).toEqual(['a.php']);
+		staged.cleanup();
+	});
+
+	it('refuses a module whose request time sits where PHP evaluates it early', () => {
+		const refusing = `<?php
+mkdir($argv[2], 0777, true);
+echo json_encode(['changed' => [], 'refused' => [['file' => 'a.php', 'line' => 7, 'reason' => 'a parameter default']]]);
+`;
+		const anachron = checkout({
+			'bin/rewrite-return-types.php': REWRITER,
+			'bin/rewrite-syntax.php': refusing
+		});
+		expect(() => stageModule(anachron, module(), {})).toThrow(
+			/a\.php:7 \(a parameter default\)/
+		);
 	});
 });

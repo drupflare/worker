@@ -1,0 +1,24 @@
+rowsPerDay: 100000
+reserve: 0.3
+margin: 1.25
+baseRows: 12000
+defaultDelivery: 8420
+delivery:
+  farmos: 22155
+  govcms: 38949
+  thunder: 525
+fixtures:
+  - farmos
+  - thunder
+  - govcms
+  - localgov_microsites
+  - simple_oauth_21
+  - lagoon_cachebackend
+profileFixtures:
+  - farmos
+  - thunder
+  - govcms
+  - localgov_microsites
+paidFixtures: []
+anachronFixtures:
+  - localgov_microsites

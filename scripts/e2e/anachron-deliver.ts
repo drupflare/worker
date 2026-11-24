@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 
 /** where the library is mounted on the site, under the root the class loader registers from */
 export const ANACHRON_MOUNT = 'vendor/drupflare/anachron';
@@ -62,6 +63,106 @@ function walk(root: string, prefix = ''): string[] {
 		else if (entry.isFile()) out.push(rel);
 	}
 	return out;
+}
+
+/** one method the return type rewrite left alone, with the reason */
+export type ReturnTypeRefusal = {
+	file: string;
+	class: string;
+	method: string;
+	line: number;
+	reason: string;
+};
+
+/** a module tree ready to upload, and what the return type and syntax rewrites did to it */
+export type StagedModule = {
+	dir: string;
+	changed: string[];
+	/** the files whose removed syntax was rewritten */
+	syntax: string[];
+	refusals: ReturnTypeRefusal[];
+	cleanup: () => void;
+};
+
+/** the environment value that uploads a module as it is, with no rewrite */
+export const RETURN_TYPES_OFF = 'off';
+
+/**
+ * Copies a module, adds the return types a current core requires, and rewrites the syntax PHP
+ * removed (curly string offsets), with the checkout's own rewriters. The source is only read. With
+ * `ANACHRON_RETURN_TYPES=off` the module is returned as it is, so an upload of the untouched code
+ * stays one setting away.
+ */
+export function stageModule(
+	anachron: string,
+	moduleDir: string,
+	env: NodeJS.ProcessEnv = process.env
+): StagedModule {
+	const none = {
+		dir: moduleDir,
+		changed: [],
+		syntax: [],
+		refusals: [],
+		cleanup: () => undefined
+	};
+	if (env['ANACHRON_RETURN_TYPES'] === RETURN_TYPES_OFF) return none;
+	const script = join(anachron, 'bin', 'rewrite-return-types.php');
+	if (!existsSync(script))
+		throw new Error(`${script} is missing; is ${anachron} an anachron checkout?`);
+	const root = mkdtempSync(join(tmpdir(), 'cfw-anachron-rt-'));
+	const out = join(root, basename(moduleDir));
+	const run = spawnSync('php', [script, moduleDir, out], { encoding: 'utf8', timeout: 120_000 });
+	if (run.status !== 0) {
+		rmSync(root, { recursive: true, force: true });
+		throw new Error(
+			`return type rewrite exited ${run.status}: ${(run.stderr || run.stdout).slice(0, 300)}`
+		);
+	}
+	let report: { changed: string[]; refusals: ReturnTypeRefusal[] };
+	try {
+		report = JSON.parse(run.stdout) as typeof report;
+	} catch {
+		rmSync(root, { recursive: true, force: true });
+		throw new Error(`return type rewrite printed no report: ${run.stdout.slice(0, 300)}`);
+	}
+	const syntaxScript = join(anachron, 'bin', 'rewrite-syntax.php');
+	if (!existsSync(syntaxScript)) {
+		rmSync(root, { recursive: true, force: true });
+		throw new Error(`${syntaxScript} is missing; is ${anachron} an anachron checkout?`);
+	}
+	const syntaxOut = join(root, 'syntax', basename(moduleDir));
+	const syntaxRun = spawnSync('php', [syntaxScript, out, syntaxOut], {
+		encoding: 'utf8',
+		timeout: 120_000
+	});
+	let syntax: string[];
+	let refused: { file: string; line: number; reason: string }[];
+	try {
+		if (syntaxRun.status !== 0) throw new Error();
+		const parsed = JSON.parse(syntaxRun.stdout) as {
+			changed: string[];
+			refused?: typeof refused;
+		};
+		syntax = parsed.changed;
+		refused = parsed.refused ?? [];
+	} catch {
+		rmSync(root, { recursive: true, force: true });
+		throw new Error(
+			`syntax rewrite exited ${syntaxRun.status}: ${(syntaxRun.stderr || syntaxRun.stdout).slice(0, 300)}`
+		);
+	}
+	if (refused.length > 0) {
+		rmSync(root, { recursive: true, force: true });
+		const named = refused.map((r) => `${r.file}:${r.line} (${r.reason})`).join(', ');
+		throw new Error(`REQUEST_TIME cannot become a call where PHP evaluates it early: ${named}`);
+	}
+	return {
+		dir: syntaxOut,
+		changed: report.changed,
+		syntax,
+		refusals: report.refusals,
+		cleanup: () => rmSync(root, { recursive: true, force: true })
+	};
 }
 
 /** the files and the autoload declaration the site needs to load an anachron checkout */

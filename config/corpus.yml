@@ -20,6 +20,9 @@ repos:
     core: '10.6.15'
     install: project
     root: services/drupal
+    env:
+      WEBCMS_S3_REGION: us-east-1
+      WEBCMS_LOG_GROUP: webcms-corpus
     assessment: structural
     needs:
       [
@@ -242,22 +245,28 @@ repos:
     needs: [sleep]
   - id: strawberryfield
     repo: https://github.com/esmero/strawberryfield
-    sha: 95129453b7ad8d422670a1c8723fdea31ad911b0
+    sha: 340a02c00e4b6ebf11e4bc6b59e50f5c84ca0928
     shape: module
-    core: '^10.3 || ^11'
+    core: '^11'
     install: modify
     modules: [strawberryfield]
     assessment: structural
     needs: [sleep, exec, background-workers]
+    requires:
+      drupal/search_api: '~1.4'
+      drupal/search_api_solr: '^4.3'
     force: [frictionlessdata/datapackage]
     notes:
       install: >-
-        upstream conflict: frictionlessdata/datapackage dev-main requires justinrainbow/json-schema
-        ^5.2, and drupal/core-recommended pins ~6.8.2, so a native Drupal 11 site on
-        core-recommended cannot resolve it either; it is installed past the check and runs against
-        the shipped 6.8.2; enabling it is a fatal on any Drupal 11 as
-        well: its generated ProxyClass\StrawberryfieldMimeService::setMapping(array $mapping = NULL) is
-        not compatible with core's ExtensionMimeTypeGuesser::setMapping(?array $mapping = null): void
+        pinned at the v2.1.0 tag (declares Drupal 11), not the earlier main-branch commit
+        95129453, which is in no tag and carries the DataType and generated-proxy return-type
+        fatals that v2.0.0 and v2.1.0 fix; frictionlessdata/datapackage dev-main requires
+        justinrainbow/json-schema ^5.2 while drupal/core-recommended pins ~6.8.2, so it is
+        installed past the check and runs against the shipped 6.8.2; the module's info file
+        depends on search_api and search_api_solr, which the install delivers; enabling is refused
+        because five config/install Solr field type files carry an id without the _9_0_0 suffix
+        their file names have, and core's config installer throws on a name that differs from the
+        id (the same files are on the module's main branch)
   - id: fairwell
     repo: https://github.com/sealionking/fairwell-drupal
     sha: f1851b473595987b04bc3b83f45e0ec4408d7e79

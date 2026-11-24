@@ -12,8 +12,9 @@ import {
 	reconcileRouterPhp,
 	reconcileToolkitPhp,
 	reconcileUninstallPhp
-} from '../drupal/reconcile-php';
+} from '../drupal/php/reconcile';
 import { firstRow } from '../util/sql';
+import { ANACHRON_PACKAGE_NAME } from './composer/package-install';
 import { DRIVER_DIGEST, DRIVER_ROUTE_PERMISSIONS, DRIVER_ROUTES } from './driver-digest';
 import { UNREAD_NODE_INDEXES } from './node-indexes';
 import { base64Bytes, packedContainerFor, type PackedContainer } from './packed-container';
@@ -149,6 +150,24 @@ export function configMaxAge(sql: ReconcileSql): { config?: number; cached?: num
 		config: read('SELECT data FROM config WHERE name = ?', 'system.performance'),
 		cached: read('SELECT data FROM cache_config WHERE cid = ?', 'system.performance')
 	};
+}
+
+/** the meta key holding the anachron declaration the compiled container was built against */
+export const ANACHRON_MANIFEST_KEY = 'anachron_manifest';
+
+/** the version and autoload map anachron registered, or undefined when the package is absent */
+export function anachronDeclaration(sql: ReconcileSql): string | undefined {
+	try {
+		const row = firstRow(
+			sql.exec(
+				'SELECT version, autoload FROM cfw_package_autoload WHERE package = ?',
+				ANACHRON_PACKAGE_NAME
+			)
+		);
+		return row === undefined ? undefined : `${String(row.version)}:${String(row.autoload)}`;
+	} catch {
+		return undefined;
+	}
 }
 
 /** what the pack ships, and therefore what a reconciled site must converge on */
@@ -508,6 +527,28 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 		// sql, not php: a cache_render row has no other copy and the next render rebuilds it
 		sql(sql) {
 			sql.exec(`DELETE FROM cache_render WHERE ${TAGLESS_TOP_BAR_WHERE}`);
+		}
+	},
+	{
+		id: 'anachron-manifest',
+		freshKernel: true,
+		since: 8,
+		recurring: true,
+		describe:
+			'a compiled container and discovery cache that predate the anachron package revision, so its services and hooks are missing',
+		verdict(sql, host) {
+			const declared = anachronDeclaration(sql);
+			if (declared === undefined) return { state: 'satisfied' };
+			if (host.meta(ANACHRON_MANIFEST_KEY) === declared) return { state: 'satisfied' };
+			return {
+				state: 'owed',
+				detail: 'the anachron declaration moved; the container is stale'
+			};
+		},
+		sql(sql, host) {
+			sql.exec('DELETE FROM cache_container');
+			sql.exec('DELETE FROM cache_discovery');
+			host.setMeta(ANACHRON_MANIFEST_KEY, anachronDeclaration(sql) ?? '');
 		}
 	}
 ];

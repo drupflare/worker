@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { reconcileRouterPhp } from '../../../src/drupal/reconcile-php';
+import { reconcileRouterPhp } from '../../../src/drupal/php/reconcile';
 import {
 	DRIVER_DIGEST,
 	DRIVER_ROUTES,
@@ -919,5 +919,49 @@ describe('a step whose answer moves is never retired', () => {
 			[step]
 		);
 		expect(planned.action).toBe('done');
+	});
+});
+
+describe('the anachron manifest step', () => {
+	const step = RECONCILE_STEPS.find((s) => s.id === 'anachron-manifest') as ReconcileStep;
+	const row = { package: 'drupflare/anachron', version: '0.1.0', autoload: '{"psr-4":{}}' };
+
+	it('has nothing to do on a site that never held the package, or has no table for it', () => {
+		expect(step.verdict(fakeSql({ cfw_package_autoload: [] }), fakeHost(1_000)).state).toBe(
+			'satisfied'
+		);
+		expect(step.verdict(fakeSql({}), fakeHost(1_000)).state).toBe('satisfied');
+	});
+
+	it('owes a site whose container predates the declaration it now holds', () => {
+		const sql = fakeSql({ cfw_package_autoload: [row] });
+		expect(step.verdict(sql, fakeHost(1_000, {})).state).toBe('owed');
+		expect(step.verdict(sql, fakeHost(1_000, { anachron_manifest: 'old' })).state).toBe('owed');
+	});
+
+	it('drops the container and discovery and records the declaration it was rebuilt against', () => {
+		const tables = {
+			cfw_package_autoload: [row],
+			cache_container: [{ cid: 'x' }],
+			cache_discovery: [{ cid: 'y' }]
+		};
+		const sql = fakeSql(tables);
+		const meta: Record<string, string> = {};
+		const host = fakeHost(1_000, meta);
+		step.sql?.(sql, host);
+		expect(sql.deleted).toEqual(['cache_container', 'cache_discovery']);
+		expect(step.verdict(sql, host).state).toBe('satisfied');
+	});
+
+	it('is owed again when a later commit changes the declaration', () => {
+		const sql = fakeSql({
+			cfw_package_autoload: [row],
+			cache_container: [],
+			cache_discovery: []
+		});
+		const host = fakeHost(1_000, {});
+		step.sql?.(sql, host);
+		const moved = fakeSql({ cfw_package_autoload: [{ ...row, version: '0.2.0' }] });
+		expect(step.verdict(moved, host).state).toBe('owed');
 	});
 });

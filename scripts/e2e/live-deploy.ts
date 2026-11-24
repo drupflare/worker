@@ -146,7 +146,8 @@ async function cf<T>(path: string, init: RequestInit = {}): Promise<T> {
 	return body.result as T;
 }
 
-async function inventory(): Promise<Inventory> {
+/** what the account holds right now, by kind */
+export async function inventory(): Promise<Inventory> {
 	const [workers, dos, kv, d1] = await Promise.all([
 		cf<{ id: string }[]>('/workers/scripts'),
 		cf<{ id: string; name: string }[]>('/workers/durable_objects/namespaces?per_page=1000'),
@@ -957,7 +958,7 @@ async function main(): Promise<void> {
  * The backstop for a runner that was cancelled or timed out mid-run, which never reaches the
  * `finally` above. Only names that start with the run's own name are touched.
  */
-async function teardownByName(name: string, root: string): Promise<void> {
+export async function teardownByName(name: string, root: string): Promise<void> {
 	if (!name.startsWith('cfw-e2e-')) throw new Error(`refusing to tear down ${name}`);
 	spawnSync('bunx', ['wrangler', 'delete', '--name', name, '--force'], {
 		cwd: root,

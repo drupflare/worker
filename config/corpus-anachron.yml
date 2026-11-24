@@ -4,6 +4,11 @@ migration_example:
   notes:
     install: >-
       override for the anachron run: the verified corpus records install none for this repository
+panopoly:
+  install: d7-docker
+  notes:
+    install: >-
+      override for the anachron run: the verified corpus records install none for this repository
 fflch:
   install: project
   notes:

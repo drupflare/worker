@@ -42,14 +42,21 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { parse } from 'yaml';
+import { repositoryValue, type Repository } from '../../src/ops/composer/repositories';
 import { startDevServer, type DevServer } from '../dev-server';
-import { deliverAnachron, gitShortSha } from './anachron-deliver';
+import { deliverAnachron, gitShortSha, stageModule, type StagedModule } from './anachron-deliver';
+import { D7_INSTALL, prepareD7, rowAfterEnables } from './corpus-d7';
 import {
+	configIdMismatches,
 	installPath,
 	lockedContrib,
+	nativeNotes,
+	nativeNoteText,
 	nativePlan,
+	nativeRoot,
 	projectPlan,
 	upgradeNote,
+	withRegistryProfile,
 	type ProjectPlan
 } from './corpus-project';
 import {
@@ -71,7 +78,7 @@ export type RepoEntry = {
 	sha: string;
 	shape: string;
 	core: string;
-	install: 'modify' | 'project' | 'profile' | 'none';
+	install: 'modify' | 'project' | 'profile' | 'd7-docker' | 'none';
 	/** the directory of the project inside the repository, when it is not the top */
 	root?: string;
 	modules?: string[];
@@ -96,6 +103,8 @@ export type RepoEntry = {
 	stability?: string;
 	/** packages installed past the pre-check's conflict, whose conflict the fixture's note names */
 	force?: string[];
+	/** environment the project reads with `getenv()`, which its own deployment sets on the server */
+	env?: Record<string, string>;
 	/** the distribution a sub-project runs inside, migrated first with the sub-project on top */
 	base?: string;
 	database?: string;
@@ -170,6 +179,19 @@ export function settleRows(rows: RepoResult['rows']): RepoResult['rows'] {
 				: cell
 		])
 	);
+}
+
+/** puts a native install's note on the install row, so a record of a patched or advisory-bypassed install says so */
+export function withInstallNote(
+	rows: RepoResult['rows'],
+	note: string | undefined
+): RepoResult['rows'] {
+	const install = rows['install'];
+	if (!note || !install) return rows;
+	return {
+		...rows,
+		install: { ...install, note: [install.note, note].filter(Boolean).join('; ') }
+	};
 }
 
 /** merges one run into the file, replacing only the repositories it ran */
@@ -381,6 +403,124 @@ export function renderMatrix(file: Compatibility, corpus: Corpus): string {
 
 // #region driving one site
 
+/** one 5xx answer a run saw, with what says who produced it */
+export type ServerError = {
+	path: string;
+	status: number;
+	/** the growth governor's refusal header was on the answer */
+	growthRefused: boolean;
+	/** the body is the platform's object-reset page */
+	reset: boolean;
+	/** the value of the rolled-back header, when the answer carried one */
+	rolledBack?: string;
+	/** the answer carried the object-reset header */
+	objectResetHeader?: boolean;
+	/** every x-cfw-* header and retry-after on the answer, verbatim */
+	headers?: Record<string, string>;
+};
+
+/** the x-cfw-* headers and retry-after of an answer, for a record that wants them verbatim */
+export function cfwHeaders(headers: Pick<Headers, 'forEach'>): Record<string, string> {
+	const out: Record<string, string> = {};
+	headers.forEach((v, k) => {
+		if (k.startsWith('x-cfw-') || k === 'retry-after') out[k] = v;
+	});
+	return out;
+}
+
+/** an answer of any status that carried the repeat or the effects header */
+export type RepeatedAnswer = { path: string; status: number; headers: Record<string, string> };
+
+/** the answers the front worker repeated, 200 included, so a pass keeps the headers a failure would */
+export const repeatedAnswers: RepeatedAnswer[] = [];
+
+/** the entry for an answer that carries `x-cfw-retried` or `x-cfw-effects`, or undefined for any other */
+export function repeatedAnswer(
+	path: string,
+	status: number,
+	headers: Pick<Headers, 'forEach' | 'has'>
+): RepeatedAnswer | undefined {
+	if (!headers.has('x-cfw-retried') && !headers.has('x-cfw-effects')) return undefined;
+	return { path: path.split('?')[0] ?? path, status, headers: cfwHeaders(headers) };
+}
+
+/** what `/serve-stats` says about memory and the growth governor, kept apart from the rest of its answer */
+export function pickStats(stats: Record<string, unknown>): Record<string, unknown> {
+	const keys = [
+		'growthCap',
+		'growthRefusals',
+		'governedRuns',
+		'rolledBackRuns',
+		'lastGoverned',
+		'growthRefusalLog',
+		'freshFirst',
+		'isolateBytes',
+		'alarmFirings',
+		'recycles',
+		'incarnation',
+		'isolate',
+		'demand',
+		'demandByPath'
+	];
+	return Object.fromEntries(keys.filter((k) => k in stats).map((k) => [k, stats[k]]));
+}
+
+/** the readings taken after a row, for a run that wants to see the memory state around a failure */
+export const statsSnapshots: { after: string; stats: Record<string, unknown> }[] = [];
+
+async function snapshotStats(site: Local, after: string): Promise<void> {
+	const read = await site.owned('/serve-stats');
+	statsSnapshots.push({ after, stats: pickStats(read.json) });
+}
+
+/** the 5xx answers of the repository being driven, so a failing row can say who refused */
+export const serverErrors: ServerError[] = [];
+
+/** the sentence a failing row carries about the 5xx answers of its run, or undefined when there were none */
+export function describeServerErrors(list: readonly ServerError[]): string | undefined {
+	if (list.length === 0) return undefined;
+	const growth = list.filter((e) => e.growthRefused).length;
+	const reset = list.filter((e) => e.reset).length;
+	const header = list.filter((e) => e.objectResetHeader).length;
+	const rolled = list.filter((e) => e.rolledBack !== undefined).length;
+	const extra =
+		header + rolled > 0
+			? `; ${header} with the object-reset header, ${rolled} with the rolled-back header`
+			: '';
+	return `${list.length} 5xx answers in the run: ${growth} with the growth-refused header, ${reset} with the object-reset page, ${list.length - growth - reset} neither${extra}`;
+}
+
+/**
+ * What the flush POST's own answer says about the growth tiers, kept on a pass as well as a
+ * failure: whether a refused run was rolled back and whether the front worker repeated the request.
+ */
+export function flushHeaderNote(headers: Pick<Headers, 'get'>, platformReset = false): string {
+	// the platform's reset page is not ours and carries no x-cfw-* header, so a missing header proves nothing
+	if (platformReset) return 'the flush POST: a platform reset page carries no x-cfw header';
+	const rolled = headers.get('x-cfw-rolled-back') ?? 'none';
+	const retried = headers.get('x-cfw-retried') ?? 'none';
+	const effects = headers.get('x-cfw-effects');
+	const seen = effects === null ? '' : `, x-cfw-effects ${effects}`;
+	return `the flush POST: x-cfw-rolled-back ${rolled}, x-cfw-retried ${retried}${seen}`;
+}
+
+/** puts the run's 5xx summary on every row that did not pass */
+export function withServerErrorNote(
+	rows: RepoResult['rows'],
+	list: readonly ServerError[]
+): RepoResult['rows'] {
+	const note = describeServerErrors(list);
+	if (!note) return rows;
+	return Object.fromEntries(
+		Object.entries(rows).map(([name, cell]) => [
+			name,
+			PASSING.has(cell.state)
+				? cell
+				: { ...cell, note: [cell.note, note].filter(Boolean).join('; ') }
+		])
+	);
+}
+
 class Local {
 	cookie = '';
 	/** restarts the dev server; set once the site has one to restart */
@@ -401,6 +541,24 @@ class Local {
 			fetch(new URL(path, this.origin), { ...init, signal: AbortSignal.timeout(timeoutMs) });
 		try {
 			const res = await once();
+			const repeat = repeatedAnswer(path, res.status, res.headers);
+			if (repeat && repeatedAnswers.length < 200) repeatedAnswers.push(repeat);
+			if (res.status >= 500 && serverErrors.length < 200) {
+				serverErrors.push({
+					path: path.split('?')[0] ?? path,
+					status: res.status,
+					growthRefused: res.headers.get('x-cfw-growth-refused') === '1',
+					rolledBack: res.headers.get('x-cfw-rolled-back') ?? undefined,
+					objectResetHeader: res.headers.has('x-cfw-object-reset'),
+					headers: cfwHeaders(res.headers),
+					reset: (
+						await res
+							.clone()
+							.text()
+							.catch(() => '')
+					).includes('The site restarted')
+				});
+			}
 			// the proxy also reports a lost workerd as a plain 500 with this body, not a thrown error
 			if (this.onLost === null || res.status !== 500) return res;
 			if (!lostServer(new Error(await res.clone().text()))) return res;
@@ -833,7 +991,9 @@ export function contentTypeFrom(html: string): string | null {
 export function nativeCause(lines: readonly string[]): string {
 	const kept = lines.filter((l) => !/Could not apply patch|\[warning\]/i.test(l));
 	const at = kept.findIndex((l) =>
-		/TypeError|PHP Fatal|Uncaught|\[error\]|^In \S+ line \d+:|^Problem \d/.test(l)
+		/TypeError|PHP Fatal|Uncaught|\[error\]|^(?:\w+\\)*\w*Error: |^In \S+ line \d+:|^Problem \d/.test(
+			l
+		)
 	);
 	if (at >= 0) return kept.slice(at, at + 3).join(' | ');
 	const cause = kept.filter((l) =>
@@ -1019,15 +1179,22 @@ export function stampRun(run: string, anachronSha: string | undefined): string {
 	return anachronSha === undefined ? run : `${run}+anachron:${anachronSha}`;
 }
 
+/** drangler's per-request timeout for an upload; its 15 s default cancelled a 164-blob commit that needs about 30 s on a deployed site */
+export const UPLOAD_REQUEST_TIMEOUT_MS = '300000';
+
 /** the `/install` path for one package; `force` skips the shipped-lock pre-check */
 export function installUrl(
 	name: string,
 	want: string | null | undefined,
 	stability: string | undefined,
 	force: boolean,
-	ignoreCore = false
+	ignoreCore = false,
+	repositories: readonly Repository[] = []
 ): string {
-	return `/install?module=${encodeURIComponent(name)}${want ? `&version=${encodeURIComponent(want)}` : ''}&deps=1${stability ? `&stability=${stability}` : ''}${force ? '&force=1' : ''}${ignoreCore ? '&ignore_core=1' : ''}`;
+	const listed = repositories
+		.map((r) => `&repository=${encodeURIComponent(repositoryValue(r))}`)
+		.join('');
+	return `/install?module=${encodeURIComponent(name)}${want ? `&version=${encodeURIComponent(want)}` : ''}&deps=1${stability ? `&stability=${stability}` : ''}${force ? '&force=1' : ''}${ignoreCore ? '&ignore_core=1' : ''}${listed}`;
 }
 
 /** the static GET paths a module's routing file declares, which a workflow check can visit */
@@ -1052,6 +1219,17 @@ export function routePaths(routingYml: string, limit = 6): string[] {
 /** the dependency the installer named in a refusal, or null */
 export function missingDependency(message: string): string | null {
 	return /missing its dependency module ([a-z0-9_]+)/.exec(message)?.[1] ?? null;
+}
+
+/** a project's environment as the worker's `DRUPAL_ENV_<NAME>` vars, which PHP reads with `getenv()` */
+export function projectEnv(env: Record<string, string> | undefined): Record<string, string> {
+	return Object.fromEntries(Object.entries(env ?? {}).map(([k, v]) => [`DRUPAL_ENV_${k}`, v]));
+}
+
+/** the module whose namespace a missing-class refusal names, or null for core and other shapes */
+export function missingClassModule(message: string): string | null {
+	const named = /Class "Drupal\\([A-Za-z0-9_]+)\\[^"]*" not found/.exec(message)?.[1];
+	return named === undefined || /^(core|component)$/i.test(named) ? null : named.toLowerCase();
 }
 
 /** the last error-looking line of wrangler's log, which is the only account of a 500 the page hides */
@@ -1111,7 +1289,7 @@ async function enableWithDeps(
 		`${String(got.json['error'] ?? JSON.stringify(got.json))}${booted ? ` (boot: ${booted.slice(0, 320)})` : ''}${raw ? ` (output: ${raw.slice(0, 240)})` : ''}`;
 	return {
 		ok: false,
-		error: `enabling ${module} was refused: ${why.slice(0, 400)}${got.json['throwAt'] ? ` at ${String(got.json['throwAt'])}` : ''}`
+		error: `enabling ${module} was refused: ${why.slice(0, 400)}${got.json['throwAt'] ? ` at ${String(got.json['throwAt'])}` : ''}${got.json['step'] === undefined ? '' : ` (step ${String(got.json['step'])}, ${String(got.json['next'])} of ${String(got.json['total'])} done)`}`
 	};
 }
 
@@ -1129,7 +1307,8 @@ async function installWithDeps(
 	constraint: string | null | undefined,
 	stability?: string,
 	replaced: Set<string> = new Set(),
-	forced: Set<string> | 'all' = new Set()
+	forced: Set<string> | 'all' = new Set(),
+	repositories: readonly Repository[] = []
 ): Promise<Record<string, unknown>> {
 	const call = (name: string, want: string | null | undefined) =>
 		site.owned(
@@ -1138,7 +1317,8 @@ async function installWithDeps(
 				want,
 				stability,
 				forced === 'all' || forced.has(name),
-				forced === 'all'
+				forced === 'all',
+				repositories
 			),
 			{ method: 'POST' }
 		);
@@ -1179,7 +1359,8 @@ async function deliverModules(
 	revive: () => Promise<void>,
 	supplied: Record<string, string> = {},
 	stability?: string,
-	forced: string[] = []
+	forced: string[] = [],
+	anachron?: string
 ): Promise<{ failures: string[]; enabled: string[] }> {
 	const failures: string[] = [];
 	const wanted = { ...supplied, ...composerRequires(dir), ...infoRequires(dir, modules) };
@@ -1211,6 +1392,20 @@ async function deliverModules(
 			failures.push(`${module}.info.yml is not in the repository at this commit`);
 			continue;
 		}
+		let staged: StagedModule;
+		try {
+			staged =
+				anachron === undefined
+					? { dir: at, changed: [], syntax: [], refusals: [], cleanup: () => undefined }
+					: stageModule(anachron, at);
+		} catch (e) {
+			failures.push(`${module}: ${e instanceof Error ? e.message : String(e)}`);
+			continue;
+		}
+		if (anachron !== undefined)
+			console.error(
+				`[${module}] return types added in ${staged.changed.length} files, ${staged.refusals.length} methods refused`
+			);
 		const upload = spawnSync(
 			'bun',
 			[
@@ -1218,16 +1413,19 @@ async function deliverModules(
 				'modify',
 				'upload',
 				'--dir',
-				at,
+				staged.dir,
 				'--site',
 				site.origin,
 				'--token',
 				site.owner,
 				'--yes',
-				'--json'
+				'--json',
+				'--timeout',
+				UPLOAD_REQUEST_TIMEOUT_MS
 			],
 			{ encoding: 'utf8', timeout: 600_000 }
 		);
+		staged.cleanup();
 		if (upload.status !== 0) {
 			failures.push(
 				`drangler modify upload of ${module} failed: ${(upload.stderr || upload.stdout).slice(0, 240)}`
@@ -1236,9 +1434,17 @@ async function deliverModules(
 		}
 		const on = await enableWithDeps(enable, site, module, reg);
 		if (on.ok) enabled.push(module);
-		else failures.push(on.error);
+		else failures.push(withConfigMismatch(on.error, at));
 	}
 	return { failures, enabled };
+}
+
+/** names the module's own files when an enable was refused for a config name that differs from its id */
+export function withConfigMismatch(error: string, moduleDir: string): string {
+	if (!/does not match the ID/.test(error)) return error;
+	const bad = configIdMismatches(moduleDir);
+	if (bad.length === 0) return error;
+	return `${error}; ${bad.length} config files carry an id that differs from their file name (${bad[0]?.file} has id ${bad[0]?.id}), which core's config installer refuses`;
 }
 
 /** the routes a module suite declares, for a workflow check when the corpus names none */
@@ -1317,14 +1523,37 @@ async function newestNode(site: Local, type: string, title: string): Promise<str
 export const HELD_PACKAGES_SQL =
 	"SELECT group_concat(package, '|') AS v FROM (SELECT DISTINCT package FROM cfw_module_file UNION SELECT package FROM cfw_package_autoload UNION SELECT DISTINCT 'lib:' || substr(path, 11, instr(substr(path, 11), '/') - 1) FROM cfw_module_file WHERE path LIKE 'libraries/%/%')";
 
+/** one reply of the `/enable` route, kept whole so the cost of each step can be read afterwards */
+export type EnableStep = {
+	module: string;
+	status: number;
+	clientMs: number;
+	body: Record<string, unknown>;
+};
+
+/** every `/enable` reply of the run, stepped enables included */
+export const enableSteps: EnableStep[] = [];
+
 /** `/enable` with the restarts the local worker needs, since it never collects the interpreters a drop leaves */
-function enabler(site: Local, revive: () => Promise<void>) {
+export function enabler(site: Pick<Local, 'owned'>, revive: () => Promise<void>) {
 	let sinceBoot = 0;
-	return async (module: string) => {
-		let got = await site.owned(`/enable?module=${encodeURIComponent(module)}`, {
+	const post = async (module: string) => {
+		const started = Date.now();
+		const got = await site.owned(`/enable?module=${encodeURIComponent(module)}`, {
 			method: 'POST'
 		});
+		if (enableSteps.length < 500)
+			enableSteps.push({
+				module,
+				status: got.status,
+				clientMs: Date.now() - started,
+				body: got.json
+			});
 		sinceBoot++;
+		return got;
+	};
+	return async (module: string) => {
+		let got = await post(module);
 		for (
 			let tries = 0;
 			tries < 3 && (got.json['retry'] === true || got.status === 0);
@@ -1334,11 +1563,15 @@ function enabler(site: Local, revive: () => Promise<void>) {
 				await revive();
 				sinceBoot = 0;
 			}
-			got = await site.owned(`/enable?module=${encodeURIComponent(module)}`, {
-				method: 'POST'
-			});
-			sinceBoot++;
+			got = await post(module);
 		}
+		// a stepped enable answers 202 with done false until its last step has committed
+		for (
+			let polls = 0;
+			polls < 100 && (got.json['done'] === false || got.json['retry'] === true);
+			polls++
+		)
+			got = await post(module);
 		// after the enable, not before the next one: the renders that follow boot beside the drop too
 		if (sinceBoot >= REVIVE_EVERY) {
 			await revive();
@@ -1351,6 +1584,17 @@ function enabler(site: Local, revive: () => Promise<void>) {
 /** set by an anachron run, whose packages conflict with the shipped core by design */
 let forceInstalls = false;
 
+/** the repositories to retry a package with when no registry had it and the lock defines it */
+export function inlineRetry(
+	plan: ProjectPlan,
+	pkg: string,
+	failure: string
+): Repository[] | undefined {
+	const definition = plan.inline?.[pkg];
+	if (!definition || !/metadata 404|no version of \S+ matches/.test(failure)) return undefined;
+	return [...(plan.repositories ?? []), { type: 'package', name: pkg, definition }];
+}
+
 /** each locked package through `/install?deps=1`, in the order the plan lists them */
 async function installPackages(
 	site: Local,
@@ -1359,17 +1603,21 @@ async function installPackages(
 	const failures: string[] = [];
 	let packages = 0;
 	for (const [pkg, version] of Object.entries(plan.packages)) {
-		// resumed past the per-call package cap, which a distribution's tree (Open Y) exceeds
-		const got = {
-			json: await installWithDeps(
+		const install = (repositories?: readonly Repository[]) =>
+			installWithDeps(
 				site,
 				pkg,
 				version || null,
 				plan.stability,
 				undefined,
-				forceInstalls ? 'all' : undefined
-			)
-		};
+				forceInstalls ? 'all' : undefined,
+				repositories
+			);
+		// resumed past the per-call package cap, which a distribution's tree (Open Y) exceeds
+		const got = { json: await install(plan.repositories) };
+		const again =
+			got.json['ok'] === true ? undefined : inlineRetry(plan, pkg, installFailure(got.json));
+		if (again) got.json = await install(again);
 		if (got.json['refused'] === 'not-found' || got.json['refused'] === 'unverifiable') {
 			const why = await site.owned(
 				`/installable?module=${encodeURIComponent(pkg)}${version ? `&version=${encodeURIComponent(version)}` : ''}`
@@ -1479,7 +1727,9 @@ async function uploadCustom(
 					'--token',
 					site.owner || 'pw-diagnostics',
 					'--yes',
-					'--json'
+					'--json',
+					'--timeout',
+					UPLOAD_REQUEST_TIMEOUT_MS
 				],
 				{ encoding: 'utf8', timeout: 600_000 }
 			);
@@ -1542,8 +1792,29 @@ async function deliverProject(
 	for (let pass = 0; pass < 4 && pending.length > 0; pass++) {
 		const next: string[] = [];
 		for (const module of pending) {
-			const got = await enable(module);
-			const done = got.json['ok'] === true || got.json['alreadyEnabled'] === true;
+			if (enabled.has(module)) continue;
+			const enabledOk = (r: { json: Record<string, unknown> }) =>
+				r.json['ok'] === true || r.json['alreadyEnabled'] === true;
+			let got = await enable(module);
+			let done = enabledOk(got);
+			// a refusal that names another module's class is cured by enabling that module first
+			const named = done ? null : missingClassModule(String(got.json['throwMessage'] ?? ''));
+			if (
+				named !== null &&
+				named !== module &&
+				pending.includes(named) &&
+				!enabled.has(named)
+			) {
+				const first = await enable(named);
+				console.log(
+					`  enable ${named} (named by the refusal of ${module}): ${enabledOk(first) ? 'ok' : 'refused'}`
+				);
+				if (enabledOk(first)) {
+					enabled.add(named);
+					got = await enable(module);
+					done = enabledOk(got);
+				}
+			}
 			console.log(
 				`  enable ${module}: ${done ? 'ok' : String(got.json['throwMessage'] ?? got.json['error'] ?? 'refused').slice(0, 120)}`
 			);
@@ -1820,6 +2091,8 @@ async function driveCapabilities(
 		);
 	});
 
+	await snapshotStats(site, 'update');
+
 	await guarded('cache rebuild', async () => {
 		const page = await site.page('/admin/config/development/performance', true);
 		// the page carries two forms; the button belongs to the clear-cache one, and posting the
@@ -1859,13 +2132,23 @@ async function driveCapabilities(
 		set(
 			'cache rebuild',
 			ok ? 'inline' : 'unsupported',
-			ok
-				? undefined
-				: cleared
-					? `/ answered ${home.res.status} after the clear`
-					: `the clear answered ${posted.res.status} without the Caches cleared message; ${messagesOf(shown.body)}`
+			[
+				ok
+					? undefined
+					: cleared
+						? `/ answered ${home.res.status} after the clear`
+						: `the clear answered ${posted.res.status} without the Caches cleared message; ${messagesOf(shown.body)}`,
+				flushHeaderNote(
+					posted.res.headers,
+					posted.res.status >= 500 && posted.body.includes('The site restarted')
+				)
+			]
+				.filter(Boolean)
+				.join('; ')
 		);
 	});
+
+	await snapshotStats(site, 'cache rebuild');
 
 	await guarded('config import', async () => {
 		const exportPath =
@@ -1974,11 +2257,12 @@ export function waitForTimingLock(lock = '/tmp/paisley-timing.lock'): void {
 export function nativeInstall(
 	repo: RepoEntry,
 	cloneDir: string,
-	out: string
+	out: string,
+	from: ProjectPlan = projectPlan(cloneDir)
 ): { ok: true; out: string } | { ok: false; why: string } {
 	if (existsSync(join(out, 'site.sqlite'))) return { ok: true, out };
 	waitForTimingLock();
-	const plan = nativePlan(cloneDir, projectPlan(cloneDir));
+	const plan = nativePlan(cloneDir, from);
 	// a failed attempt leaves a tree `create-project` refuses to write into; kept for its log
 	if (existsSync(join(out, 'site')))
 		renameSync(join(out, 'site'), join(out, `site.failed-${Date.now()}`));
@@ -2153,7 +2437,8 @@ async function driveRepo(
 	workRoot: string,
 	port: number,
 	migrated?: { out: string; base?: RepoEntry },
-	anachron?: string
+	anachron?: string,
+	d7Tree?: string
 ): Promise<RepoResult['rows']> {
 	const rows = unknownRows(corpus.rows);
 	const set = (row: string, state: RowState, note?: string) => {
@@ -2167,8 +2452,8 @@ async function driveRepo(
 			.join('; ');
 		rows[row] = text ? { state, note: text } : { state };
 	};
-	const dir = join(workRoot, repo.id);
-	clone(repo, dir);
+	const dir = d7Tree ?? join(workRoot, repo.id);
+	if (d7Tree === undefined) clone(repo, dir);
 	const remote = deployedOrigin(process.argv, process.env);
 	const boot = (stateDir?: string) =>
 		startDevServer({
@@ -2176,6 +2461,7 @@ async function driveRepo(
 			port,
 			vars: {
 				PW_DIAGNOSTICS: '1',
+				...projectEnv(repo.env),
 				...(process.env.CORPUS_PLAN ? { PLAN: process.env.CORPUS_PLAN } : {})
 			},
 			keep: true,
@@ -2212,11 +2498,26 @@ async function driveRepo(
 			console.log(`  anachron ${sent.ok ? `delivered rev ${sent.rev ?? '?'}` : 'failed'}`);
 			if (!sent.ok) return unsettled(corpus.rows, `anachron delivery failed: ${sent.error}`);
 		}
-		for (let i = 0; i < 100; i++) {
+		let migrationDone = false;
+		let lastMigrate = '';
+		for (let i = 0; i < 100 && !migrationDone; i++) {
 			const m = await fetch(new URL('/migrate?all=1', dev.origin));
-			const body = (await m.json().catch(() => ({}))) as { done?: boolean };
-			if (body.done) break;
+			const text = await m.text();
+			lastMigrate = `${m.status} ${text.slice(0, 300)}`;
+			migrationDone = (() => {
+				try {
+					return (JSON.parse(text) as { done?: boolean }).done === true;
+				} catch {
+					return false;
+				}
+			})();
 		}
+		// a database that is still replaying has no router yet, and the claim then fails far from the cause
+		if (!migrationDone && remote)
+			return unsettled(
+				corpus.rows,
+				`the database replay did not finish in 100 calls; the last answer was ${lastMigrate}`
+			);
 		// a migrated database names modules whose code is not delivered yet, and the claim boots a
 		// kernel over it (varbase: Class "ctools_views_config_..." does not exist), so the registry
 		// packages go in first; `/install` is reachable before the claim here because the lane runs
@@ -2303,7 +2604,8 @@ async function driveRepo(
 						revive,
 						repo.requires,
 						repo.stability,
-						repo.force
+						repo.force,
+						anachron
 					)
 				: null;
 		if (modular && modules.length > 0 && modular.enabled.length === 0) {
@@ -2382,6 +2684,15 @@ async function driveRepo(
 				anonOk ? 'inline' : 'unsupported',
 				'the project enables no module, so the container is the one the first boot built'
 			);
+		else if ((delivered && delivered.wanted > 0) || modular) {
+			const cell = rowAfterEnables(
+				anonOk,
+				anon.res.status,
+				'the container was rebuilt by the enables and the site then rendered',
+				'the enables ran and the first render'
+			);
+			set('container build', cell.state, cell.note);
+		}
 
 		const form = await site.page('/user/login');
 		const login = await site.post('/user/login', {
@@ -2502,11 +2813,13 @@ async function driveRepo(
 					? derived
 					: ['/admin/reports/status', '/admin/config'];
 		if (modular && own.length === 0 && derived.length === 0) {
-			set(
-				'module workflow',
-				'inline',
-				`${modular.enabled.join(', ')} enabled and listed; the modules declare no static routes`
+			const cell = rowAfterEnables(
+				anonOk,
+				anon.res.status,
+				`${modular.enabled.join(', ')} enabled and listed; the modules declare no static routes`,
+				`${modular.enabled.join(', ')} enabled, but the site`
 			);
+			set('module workflow', cell.state, cell.note);
 		} else {
 			const failed: string[] = [];
 			const blocked: string[] = [];
@@ -2641,15 +2954,31 @@ async function main(): Promise<void> {
 				continue;
 			}
 			let migrated: { out: string; base?: RepoEntry } | undefined;
+			let nativeNote: string | undefined;
+			let drive = repo;
+			let d7Tree: string | undefined;
+			if (repo.install === D7_INSTALL && anachron !== undefined) {
+				const prepared = prepareD7(repo, work, nativeRoot(), anachron, clone);
+				if (!prepared.ok) {
+					ran[repo.id] = { ...base, rows: unsettled(corpus.rows, prepared.why) };
+					console.log(`${repo.id}: ${prepared.why}`);
+					continue;
+				}
+				if (args.includes('--native-only')) continue;
+				drive = prepared.target.entry;
+				d7Tree = prepared.target.tree;
+				nativeNote = prepared.target.note;
+			}
 			if (repo.install === 'profile' || repo.install === 'project') {
 				const dir = join(work, repo.id);
 				clone(repo, dir);
-				const plan = projectPlan(join(dir, repo.root ?? '.'));
+				const plan = await withRegistryProfile(projectPlan(join(dir, repo.root ?? '.')));
 				if (installPath(repo.install, plan) === 'migration') {
 					const native = nativeInstall(
 						repo,
 						join(dir, repo.root ?? '.'),
-						join(work, '..', 'native', repo.id)
+						join(nativeRoot(), repo.id),
+						plan
 					);
 					if (!native.ok) {
 						ran[repo.id] = { ...base, rows: unsettled(corpus.rows, native.why) };
@@ -2657,6 +2986,9 @@ async function main(): Promise<void> {
 						continue;
 					}
 					if (args.includes('--native-only')) continue;
+					nativeNote = nativeNoteText(
+						nativeNotes(native.out, join(dir, repo.root ?? '.'))
+					);
 					migrated = native;
 				}
 			}
@@ -2669,7 +3001,7 @@ async function main(): Promise<void> {
 				const native = nativeInstall(
 					baseRepo,
 					join(baseDir, baseRepo.root ?? '.'),
-					join(work, '..', 'native', baseRepo.id)
+					join(nativeRoot(), baseRepo.id)
 				);
 				if (!native.ok) {
 					const why = `its base ${baseRepo.id} did not install: ${native.why}`;
@@ -2677,21 +3009,49 @@ async function main(): Promise<void> {
 					console.log(`${repo.id}: ${why}`);
 					continue;
 				}
+				nativeNote = nativeNoteText(
+					nativeNotes(native.out, join(baseDir, baseRepo.root ?? '.'))
+				);
 				migrated = { ...native, base: baseRepo };
 			}
+			if (args.includes('--native-only')) continue;
 			try {
 				// a lost dev server ends the whole repository, so it gets one more run on a fresh state
+				serverErrors.length = 0;
+				repeatedAnswers.length = 0;
+				enableSteps.length = 0;
+				statsSnapshots.length = 0;
 				let driven: RepoResult['rows'];
 				try {
-					driven = await driveRepo(repo, corpus, work, port, migrated, anachron);
+					driven = await driveRepo(drive, corpus, work, port, migrated, anachron, d7Tree);
 				} catch (e) {
 					if (!lostServer(e)) throw e;
-					driven = await driveRepo(repo, corpus, work, port, migrated, anachron);
+					driven = await driveRepo(drive, corpus, work, port, migrated, anachron, d7Tree);
 				}
 				port++;
+				if (process.env.CORPUS_STATS_OUT)
+					writeFileSync(process.env.CORPUS_STATS_OUT, JSON.stringify(statsSnapshots));
+				if (process.env.CORPUS_STATS_OUT)
+					writeFileSync(
+						`${process.env.CORPUS_STATS_OUT}.errors.json`,
+						JSON.stringify(serverErrors)
+					);
+				if (process.env.CORPUS_STATS_OUT)
+					writeFileSync(
+						`${process.env.CORPUS_STATS_OUT}.repeats.json`,
+						JSON.stringify(repeatedAnswers)
+					);
+				if (process.env.CORPUS_STATS_OUT)
+					writeFileSync(
+						`${process.env.CORPUS_STATS_OUT}.enables.json`,
+						JSON.stringify(enableSteps)
+					);
 				ran[repo.id] = {
 					...base,
-					rows: settleRows(driven),
+					rows: withServerErrorNote(
+						withInstallNote(settleRows(driven), nativeNote),
+						serverErrors
+					),
 					...(enabledBy.has(repo.id) ? { enabled: enabledBy.get(repo.id) } : {}),
 					...(deliveredBy.get(repo.id) ?? {})
 				};

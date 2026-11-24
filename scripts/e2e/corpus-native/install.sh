@@ -7,7 +7,8 @@ export COMPOSER_HOME=/out/.composer COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_MEMORY_L
 export GIT_TERMINAL_PROMPT=0 COMPOSER_IGNORE_PLATFORM_REQS=1
 git config --global --add safe.directory "*"
 mkdir -p "$COMPOSER_HOME"
-echo '{"config":{"allow-plugins":true}}' > "$COMPOSER_HOME/config.json"
+# a pinned fixture names the core it ran on, and an advisory against that release must not stop the install
+echo '{"config":{"allow-plugins":true,"audit":{"block-insecure":false}}}' > "$COMPOSER_HOME/config.json"
 exec > >(tee /out/install.log) 2>&1
 cd /out
 FLAGS="--no-interaction --no-progress --ignore-platform-reqs"
@@ -28,13 +29,30 @@ if [ "$KIND" = project ]; then
 	fi
 	composer install $FLAGS
 elif [ -n "${TEMPLATE:-}" ]; then
-	composer create-project "$TEMPLATE" /out/site --stability dev $FLAGS
+	# not installed yet: the template's own lock would pin core to the release it was cut on, and a
+	# patch that no longer applies would stop the install; the update below resolves and installs
+	composer create-project "$TEMPLATE" /out/site --stability dev --no-install $FLAGS
 	cd /out/site
+	php -r '$j = json_decode(file_get_contents("composer.json"), true);
+		$j["extra"]["composer-exit-on-patch-failure"] = false;
+		file_put_contents("composer.json", json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));'
 	# the template resolves the released profile; the pinned clone replaces it through a path
 	# repository so composer resolves the pinned profile's own dependencies too. Copying its files over
 	# the released one left open y's code wanting protected_pages ^3.0 beside a locked 1.9.0
 	composer config repositories.profile "{\"type\":\"path\",\"url\":\"/clone\",\"options\":{\"symlink\":false}}"
-	composer require "$PROFILE_PKG:@dev" -W $FLAGS
+	# the template pins core's companion packages to the release it was cut on, and the pinned profile
+	# can need another core, so the exact pins are relaxed and the profile's own requirement decides
+	php -r '$j = json_decode(file_get_contents("composer.json"), true); $done = [];
+		foreach (array_keys($j["require"] ?? []) as $p)
+			if (preg_match("#^drupal/core-(composer-scaffold|project-message|recommended)$#", $p) && $j["require"][$p] !== "*") {
+				$done[] = $p . ": " . $j["require"][$p] . " -> *"; $j["require"][$p] = "*";
+			}
+		file_put_contents("composer.json", json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+		file_put_contents("/out/relaxed.json", json_encode($done));'
+	# a full update, not -W on the one package: the template's lock holds core at the release it was cut
+	# on, and only an update of every package lets the pinned profile move it
+	composer require --no-update "$PROFILE_PKG:@dev" $FLAGS
+	composer update --with-all-dependencies $FLAGS
 else
 	# the profile pins its own core, so the project has to start on a core it accepts
 	composer create-project "drupal/recommended-project:${CORE:-^11}" /out/site $FLAGS
@@ -59,6 +77,8 @@ else
 		file_put_contents("composer.json", json_encode($root, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));'
 	composer require "$PROFILE_PKG:@dev" drush/drush -W $FLAGS
 fi
+# the advisories composer was told to ignore, for the run's record
+composer audit --locked --no-interaction --format=json > /out/audit.json 2> /dev/null || true
 # a template may move bin-dir, so drush is found where composer put it
 DRUSH="$(composer config bin-dir --absolute)/drush"
 [ -x "$DRUSH" ] || composer require drush/drush -W $FLAGS

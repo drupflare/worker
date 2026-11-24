@@ -25,7 +25,7 @@ Only `/serve` spreads. Every other route pins to the primary. A route wrongly pi
 
 One lane helps only once the single object is saturated. A fixed `REPLICA_COUNT` suits a site that is already contended. Autoscaling provisions lanes only under sustained queueing, which is the regime where even one lane pays. The measurements are on [Replica Lanes](../operating/replica-lanes.md#when-a-lane-helps).
 
-The ceiling is 256 because of arithmetic. A lane mints forwarded row ids from its own residue class modulo the partition (`ID_PARTITION_LANES`, `src/ops/write-forwarding.ts`), and the primary takes class 0. 256 is the largest pool whose writers all hold a class of their own. Past it, two writers would mint the same id.
+The ceiling is 256 because of arithmetic. A lane mints forwarded row ids from its own residue class modulo the partition (`ID_PARTITION_LANES`, `src/ops/replica/write-forwarding.ts`), and the primary takes class 0. 256 is the largest pool whose writers all hold a class of their own. Past it, two writers would mint the same id.
 
 Set `REPLICA_COUNT` no higher than the lanes a site has provisioned. Above that, the router hashes over buckets whose objects do not exist, which costs a wasted hop and a retry on the primary for each one. `REPLICA_COUNT`, `REPLICA_AUTOSCALE` and `REPLICA_MAX_LANES` are all KV-overridable, so a pool can be turned on, resized or turned off without a redeploy.
 
@@ -33,7 +33,7 @@ Set `REPLICA_COUNT` no higher than the lanes a site has provisioned. Above that,
 
 Raising `REPLICA_COUNT` by hand tells the router that lanes exist. It does not create them, so the lanes it routes to hold no data and answer 421 until somebody drives the provisioning loop. Autoscaling is the half that creates one.
 
-The signal is the number of requests that waited for the primary's gate in a window. A Durable Object runs one request at a time and a PHP render holds it for the whole render, so a waiting request is the queue, and a queue is the only thing a pool can fix. The target is one lane per waiter that held across the last three windows (the minimum over them), so a single burst cannot provision a lane that then exists forever. A window with no queue count falls back to peak concurrent in-flight requests, and the target is then the minimum peak across the three windows, minus one (`laneTarget()` in `src/ops/replica-demand.ts`). One quiet window clears the run. The copy is driven a chunk at a time off the alarm, the same way a fresh site migrates, so no firing owns a whole table copy.
+The signal is the number of requests that waited for the primary's gate in a window. A Durable Object runs one request at a time and a PHP render holds it for the whole render, so a waiting request is the queue, and a queue is the only thing a pool can fix. The target is one lane per waiter that held across the last three windows (the minimum over them), so a single burst cannot provision a lane that then exists forever. A window with no queue count falls back to peak concurrent in-flight requests, and the target is then the minimum peak across the three windows, minus one (`laneTarget()` in `src/ops/replica/demand.ts`). One quiet window clears the run. The copy is driven a chunk at a time off the alarm, the same way a fresh site migrates, so no firing owns a whole table copy.
 
 An explicit `REPLICA_COUNT` is a floor rather than a ceiling: a site told to run 2 lanes runs at least 2 and may still grow. `REPLICA_AUTOSCALE=0` is how an operator pins the number instead.
 
@@ -45,7 +45,7 @@ Throughput does not set the cap. Addressing objects directly and summing, effici
 
 Set `REPLICA_AUTOSCALE=0` when measuring against a fixed lane count. Autoscaling builds lanes under the load a benchmark offers, so a control arm provisioned with zero lanes can answer from `r1` and `r2` on its first run. Read `x-cfw-lanes` back at drive time rather than trusting the configured number.
 
-A pool is reached only by isolates that have already seen it. `believedLanes()` is per isolate and is set from the `x-cfw-lanes` the primary reports on a response. The first request a cold isolate makes goes to the primary whatever the pool size. The belief expires after `LANES_TRUST_MS` (60 seconds, `src/ops/replica-routing.ts`). Sustained traffic keeps every isolate warm, while a low-rate or bursty client sees a larger share answered by the primary. Count distinct `x-cfw-replica` values across a burst to read a pool, since a single response cannot show it.
+A pool is reached only by isolates that have already seen it. `believedLanes()` is per isolate and is set from the `x-cfw-lanes` the primary reports on a response. The first request a cold isolate makes goes to the primary whatever the pool size. The belief expires after `LANES_TRUST_MS` (60 seconds, `src/ops/replica/routing.ts`). Sustained traffic keeps every isolate warm, while a low-rate or bursty client sees a larger share answered by the primary. Count distinct `x-cfw-replica` values across a burst to read a pool, since a single response cannot show it.
 
 A lane the router is not choosing falls back to the slow re-arm and hibernates, so an unused lane costs storage and replication catch-up rather than a warming chain.
 
@@ -59,7 +59,7 @@ Two things are worth knowing before turning it off. A write reaches a lane at al
 
 ## `REPLICA_LAG_MS`
 
-The bound on how far behind a serving lane may fall. A `SERVING` lane pulls the primary's log on its own alarm, and `replicaLagMs()` (`src/ops/replica-routing.ts`) sets the interval. The default is 30,000 ms, clamped to 1,000 through 300,000 ms. Below a second a lane spends more on asking than on serving.
+The bound on how far behind a serving lane may fall. A `SERVING` lane pulls the primary's log on its own alarm, and `replicaLagMs()` (`src/ops/replica/routing.ts`) sets the interval. The default is 30,000 ms, clamped to 1,000 through 300,000 ms. Below a second a lane spends more on asking than on serving.
 
 Without this bound, a serving lane re-arms at `KEEP_WARM_MS` (240,000 ms) and can serve a copy four minutes behind the primary. The staleness fence refuses only a caller that states a freshness requirement, and a visitor states none.
 

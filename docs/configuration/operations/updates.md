@@ -22,6 +22,17 @@ How database updates run, how a pack update reaches an existing site, and the sw
 Read `src/ops/updb.ts` before changing any of these; the defaults are what a sliced update was
 measured against.
 
+A unit runs in two beats: a claim beat that commits, then a run beat that enters PHP. Before the run
+beat enters PHP it writes the attempt number to the unit's `entered` column and waits for the write
+to be durable. The next beat then reads one of two things when it finds a unit claimed with no
+in-memory token. With no entry record for that attempt, PHP was never entered and the object was
+evicted between the beats, so the unit resumes. With an entry record, the invocation died inside the
+unit; whether its writes were kept is not known, so the run halts as `unit-unverifiable` with
+maintenance left on, as before. A halted run is continued by rolling back to the snapshot, or by
+setting `UPDB_RETRY_POLICY=core` to accept core's own batch re-run. The tier 0 rollback does not
+cover these units: they run while the growth governor is lifted and outside a slice transaction, so a
+unit's writes can commit before its own result row does.
+
 ## Pack Reconciliation
 
 The pack delivers only at provisioning, so a fix that lands inside it reaches new sites and no

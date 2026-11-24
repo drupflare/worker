@@ -123,7 +123,7 @@ skips with a printed reason on the shipping pack and when the container is down.
 
 ```bash
 docker compose -f docker/compose.yml up -d keycloak
-bun scripts/contrib-fixture.ts --mount # the simplesamlphp phase; restore with --restore
+bun scripts/contrib/fixture.ts --mount # the simplesamlphp phase; restore with --restore
 bunx wrangler dev --var PW_DIAGNOSTICS:1 --var SITE_ID:<site>
 CFW_E2E_SITE=<site> CFW_E2E_OWNER_TOKEN=<token> bunx vitest run --project=e2e tests/e2e/saml.spec.ts
 ```
@@ -210,19 +210,19 @@ CFW_E2E_SITE=e2e bun run test:e2e
 CFW_E2E_FORGE=forgejo CFW_E2E_FORGE_URL=http://127.0.0.1:3400 CFW_E2E_SITE=e2e bun run test:e2e
 ```
 
-`tests/node/git-forge.spec.ts` and `tests/node/git-gitlab.spec.ts` drive `src/ops/git-*.ts` straight
+`tests/node/git/forge.spec.ts` and `tests/node/git/gitlab.spec.ts` drive `src/ops/git/*.ts` straight
 at the server with no worker involved, which is what proves the transport and each provider's API.
 They live in the `node` project because they need `node:child_process` and a real `git` binary.
 
 ## The forge lane
 
-`tests/node/git-forge.spec.ts` takes its server as a parameter, so one file covers both forges.
+`tests/node/git/forge.spec.ts` takes its server as a parameter, so one file covers both forges.
 
 ```bash
 docker compose -f docker/compose.yml up -d gitea forgejo
-bunx vitest run --project=node tests/node/git-forge.spec.ts
+bunx vitest run --project=node tests/node/git/forge.spec.ts
 CFW_E2E_FORGE=forgejo CFW_E2E_FORGE_URL=http://127.0.0.1:3400 \
-  bunx vitest run --project=node tests/node/git-forge.spec.ts
+  bunx vitest run --project=node tests/node/git/forge.spec.ts
 ```
 
 `CFW_E2E_FORGE` names both the compose service and the admin CLI inside it;

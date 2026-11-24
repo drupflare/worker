@@ -15,7 +15,7 @@ is recorded before the swap.
 Two checks stand between the download and the pull request. Each throws, each fails its step, and
 a failed step ends the run: no payload is uploaded and no branch is pushed.
 
-1. **The seam imports what was fetched.** `assertSeamImports()` in `scripts/fetch-interpreter.ts`
+1. **The seam imports what was fetched.** `assertSeamImports()` in `scripts/fetch/interpreter.ts`
    reads the interpreter imports out of the seam `wrangler.jsonc` aliases and requires the fetched
    frame and glue to be among them. On a hydrated tree a fetch for the wrong PHP version otherwise
    builds cleanly, passes the size gate, and measures the incumbent.
@@ -23,7 +23,7 @@ a failed step ends the run: no payload is uploaded and no branch is pushed.
    parses the uncompressed `Total Upload` figure wrangler prints, and throws above 67,108,864 bytes.
    The dry run also proves the entrypoint and the binary alias still resolve.
 
-`tests/node/interp-fetch.spec.ts` covers the first directly.
+`tests/node/interp/fetch.spec.ts` covers the first directly.
 `tests/node/release-payload.spec.ts` covers the KiB-to-bytes conversion and the ceiling arithmetic.
 
 ## Output
@@ -47,7 +47,7 @@ on it. `interpreter.yml` gates the bytes and the bundle.
 To reproduce a pinned interpreter by hand, pass the recorded artifact id:
 
 ```sh
-bun scripts/fetch-interpreter.ts long64 8.5 4102938475 --pin
+bun scripts/fetch/interpreter.ts long64 8.5 4102938475 --pin
 ```
 
 ## Manual Runs

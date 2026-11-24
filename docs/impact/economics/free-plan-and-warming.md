@@ -93,7 +93,7 @@ does not, because the allowances are account-wide: each warm site writes 10,896 
 object requests a day, and a thousand of them write 331 million rows a month against 50 million
 included. The chain is billed for its wall time, 23.3 ms a firing (n=116). `derived`, from the rate
 card and that firing, with a recomputation from the rate card alone pinned in
-`tests/node/economics-energy.spec.ts`:
+`tests/node/economics/energy.spec.ts`:
 
 What you pay with every site kept warm:
 

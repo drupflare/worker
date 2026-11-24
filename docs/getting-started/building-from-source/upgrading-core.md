@@ -11,7 +11,7 @@ outputs, so they keep what is on disk unless `--force` or `--only` says otherwis
 again, and that script reads the version from its own environment.
 
 ```sh
-DRUPAL_VERSION=11.4.5 bun scripts/fetch-drupal-tree.ts --force
+DRUPAL_VERSION=11.4.5 bun scripts/fetch/drupal-tree.ts --force
 DRUPAL_VERSION=11.4.5 bun run build:local -- --force \
   --skip=interpreter,frame,siblings,driver,prefill
 ```
@@ -54,7 +54,7 @@ release is the code-only case, and no route, schema or config default moved.
 
 **`tree-diff.mjs` cannot see the static half.** Its `SHIPPED` regex matches the extensions the PHP
 packs carry, which leaves out `css` and `js`, because `assets:static` serves those. Diffed
-separately, 11 browser-fetchable files changed, of which two match `pack-static.ts`'s own `SERVED`
+separately, 11 browser-fetchable files changed, of which two match `pack/static.ts`'s own `SERVED`
 set and therefore ship: `core/misc/ajax.js` and `core/misc/details.js`. Read `objectsToUpload` as the
 pack half of a rollout, with the static half counted separately.
 
@@ -74,7 +74,7 @@ change these rows**, so after a patch that changes `core/misc/ajax.js`, the site
 `/core/misc/ajax.js` while the query string still carries the old version.
 
 The correction is a cache invalidation: delete both rows and Drupal rebuilds them, at the cost of one
-discovery pass on the first render. `scripts/bake-collectors.php` produced them, and it is not
+discovery pass on the first render. `scripts/bake/collectors.php` produced them, and it is not
 wired into `build:local`. It reads `<root>/sites/default/files/.sqlite`, which the `site` step does
 not create (that step writes `sites/build/files/build-site.sqlite`), and it writes into the build
 database, from which the rows were copied by hand into `site.sqlite`.

@@ -43,6 +43,6 @@ resume, the root frame's `return_value` still pointed at a C local of `zend_eval
 stack held. On 8.5.2 the bytes were dead and nothing showed. On 8.5.12 the write corrupted the
 dispatch state and the next call trapped. The extension now points the root at a slot it owns
 (`park_pin_root()` in `cfwpark.c`). The fix is covered natively (22 pass with the fix; 21 pass and
-1 fail without it) and by `park-interpreter.spec.ts`. It matters here because it is a memory-safety bug in
+1 fail without it) and by `park/interpreter.spec.ts`. It matters here because it is a memory-safety bug in
 code the project wrote, reachable only on a site that arms the park (`REDIS_URL` set, or an OIDC or
 other outbound fetch that parks).

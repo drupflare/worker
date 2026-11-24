@@ -12,7 +12,7 @@ Three layers decide what a value is, most specific first:
 1. **A request parameter**, where the route exposes one (`?prefill=`, `?all=1`).
 2. **The `CONFIG_KV` namespace**, for the plan and the runtime levers on
    [Runtime Overrides](operations/overrides.md#runtime-overrides). No redeploy needed.
-3. **The `vars` entry**, then the per-plan default in `src/ops/plan-profile.ts`, then the constant.
+3. **The `vars` entry**, then the per-plan default in `src/ops/meters/plan-profile.ts`, then the constant.
 
 ## Pages
 
@@ -77,10 +77,10 @@ Every variable and binding on the configuration pages, once each.
 | `SPOOL_EMBEDS`                  | on                                    | [Serving](serving/index.md)                              |
 | `SPOOL_EXCLUDE`                 | empty                                 | [Spool](integrations/spool.md#excluding-paths)           |
 | `NEVER_STALE`                   | unset                                 | [Serving](serving/page-cache.md#never_stale)             |
-| `AGED_SERVE_MAX_MS`             | 60,000                                | [Serving](serving/index.md)                              |
+| `AGED_SERVE_MAX_MS`             | 60,000, 0 on WordPress                | [Serving](serving/index.md)                              |
 | `ASSET_AGGREGATES`              | unset                                 | [Serving](serving/static-assets.md#asset_aggregates)     |
 | `MEMORY_CACHE_BINS`             | unset                                 | [Serving](serving/page-cache.md#memory_cache_bins)       |
-| `WORDPRESS_PAGE_CACHE`          | off                                   | [Serving](serving/page-cache.md#wordpress_page_cache)    |
+| `WORDPRESS_PAGE_CACHE`          | on                                    | [Serving](serving/page-cache.md#wordpress_page_cache)    |
 | `MEMORY_CACHE_MAX_ITEMS`        | 64                                    | [Serving](serving/index.md)                              |
 | `RENDER_BUDGET_MS`              | per plan                              | [Serving](serving/index.md)                              |
 | `FILL_BATCH_SIZE`               | per plan                              | [Serving](serving/index.md)                              |
@@ -101,6 +101,7 @@ Every variable and binding on the configuration pages, once each.
 | `FILE_EVICT_AFTER_MS`           | 900000                                | [Serving](serving/files-and-images.md#the-r2-file-store) |
 | `IMAGE_ENGINE`                  | `tinyimg`                             | [Serving](serving/files-and-images.md#image_engine)      |
 | `EAGER_DERIVATIVES`             | on                                    | [Serving](serving/index.md)                              |
+| `ANACHRON_RETURN_TYPES`         | on                                    | [Runtime](runtime.md#anachron_return_types)              |
 | `DRUPAL_CRON`                   | on                                    | [Runtime](runtime.md)                                    |
 | `CRON_INTERVAL_MS`              | 900,000                               | [Runtime](runtime.md)                                    |
 | `CRON_MAX_UNITS`                | 6                                     | [Runtime](runtime.md)                                    |
@@ -119,6 +120,19 @@ Every variable and binding on the configuration pages, once each.
 | `IDLE_CEILING_MS`               | unset                                 | [Runtime](runtime.md)                                    |
 | `RECYCLE_ABOVE_BYTES`           | 117440512                             | [Runtime](runtime.md)                                    |
 | `ISOLATE_ABOVE_BYTES`           | 130023424                             | [Runtime](runtime.md)                                    |
+| `GROWTH_CAP_BYTES`              | unset (derived)                       | [Runtime](runtime.md#growth-governor)                    |
+| `GROWTH_GOVERNOR`               | on                                    | [Runtime](runtime.md#growth-governor)                    |
+| `GROWTH_ROLLBACK`               | on                                    | [Runtime](runtime.md#refusal-tiers)                      |
+| `GROWTH_RETRY`                  | on                                    | [Runtime](runtime.md#repeating-a-refusal)                |
+| `GROWTH_RETRY_ALLOWANCE_BYTES`  | 8388608                               | [Runtime](runtime.md#repeating-a-refusal)                |
+| `GROWTH_RETRY_CEILING_BYTES`    | 109051904                             | [Runtime](runtime.md#repeating-a-refusal)                |
+| `FRESH_FIRST_ROUTES`            | `abort` (`0` turns it off)            | [Runtime](runtime.md#fresh-first-routes)                 |
+| `STEPPED_OPS`                   | planner (`0`, `always`)               | [Runtime](runtime.md#refusal-tiers)                      |
+| `STEP_BUDGET_MS`                | 20000                                 | [Runtime](runtime.md#refusal-tiers)                      |
+| `STEP_MODULE_COST_MS`           | 12000                                 | [Runtime](runtime.md#refusal-tiers)                      |
+| `STEP_FLOOR_MS`                 | 20000                                 | [Runtime](runtime.md#refusal-tiers)                      |
+| `GROWTH_HEADROOM_BYTES`         | 37748736                              | [Runtime](runtime.md#growth-governor)                    |
+| `GROWTH_MARGIN_BYTES`           | 4194304                               | [Runtime](runtime.md#growth-governor)                    |
 | `FILL_SETTLE_MS`                | 60,000                                | [Runtime](runtime.md)                                    |
 | `RETAIN_INTERPRETER`            | on                                    | [Runtime](runtime.md)                                    |
 | `HEAP_SNAPSHOT`                 | on                                    | [Runtime](runtime.md)                                    |
@@ -128,16 +142,18 @@ Every variable and binding on the configuration pages, once each.
 | `HEAP_RESTORE_CHUNKS`           | all at once                           | [Runtime](runtime.md)                                    |
 | `LAZY_MOUNT`                    | `1` in the canonical config           | [Runtime](runtime.md)                                    |
 | `LAZY_FS_BUDGET_BYTES`          | 20 MiB, 4 MiB in the canonical config | [Runtime](runtime.md)                                    |
-| `COLD_PACK`                     | on                                    | [Runtime](runtime.md)                                    |
+| `COLD_PACK`                     | on; off for WordPress on free         | [Runtime](runtime.md)                                    |
 | `COLD_PACK_CACHE_CHUNKS`        | 8, at most 64                         | [Runtime](runtime.md)                                    |
-| `REFRESH_INSTANCE`              | off                                   | [Runtime](runtime.md)                                    |
-| `REUSE_MOUNT`                   | off                                   | [Runtime](runtime.md)                                    |
+| `LADDER_PROBE`                  | off                                   | [Runtime](runtime.md#the-headroom-ladder)                |
+| `RELEASE_HOST_GRAPH`            | on                                    | [Runtime](runtime.md)                                    |
 | `SITE_DB_PREFIX`                | the packed default                    | [Runtime](runtime.md)                                    |
 | `SQL_CHUNK_PREFIX`              | `drupal-sql`                          | [Runtime](runtime.md)                                    |
 | `MIGRATE_ENGINE`                | `sql`                                 | [Runtime](runtime.md)                                    |
 | `MIGRATE_SELF_DRIVE`            | on                                    | [Runtime](runtime.md)                                    |
 | `MIGRATE_CHUNKS_PER_INVOCATION` | 40 on free, all on paid               | [Runtime](runtime.md)                                    |
 | `OPCACHE_MODE`                  | off                                   | [Runtime](runtime.md#opcache_mode)                       |
+| `VIRTUAL_CLOCK`                 | on                                    | [Runtime](runtime.md#virtual_clock)                      |
+| `VIRTUAL_CLOCK_KAPPA_MS`        | 0.13                                  | [Runtime](runtime.md#virtual_clock)                      |
 | `ARGON2`                        | off                                   | [Runtime](runtime.md#argon2)                             |
 | `SHELL_ASSEMBLY`                | on                                    | [Runtime](runtime.md#shell_assembly)                     |
 | `REPLICA_COUNT`                 | 0                                     | [Replicas](replicas.md#replica_count)                    |

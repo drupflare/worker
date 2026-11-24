@@ -8,13 +8,13 @@ The controls on the request path, outbound requests, uploads and request parsing
 | -------------------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | `__` object routes answer 404 from outside         | front worker, `src/site/entry.ts:174`                                               | route table                                              |
 | Owner routes need the owner token                  | front worker, `src/site/owner.ts`; object check in `src/do/routes/auth.ts`          | policy check, against a stored hash                      |
-| Failed-token budget, 12 per 60 s per IP            | front worker, `src/ops/admin-session.ts`                                            | policy check; in memory, not a brute-force defence       |
+| Failed-token budget, 12 per 60 s per IP            | front worker, `src/ops/owner/admin-session.ts`                                      | policy check; in memory, not a brute-force defence       |
 | `?site=` ignored on visitor routes                 | front worker, `src/site.ts`                                                         | policy check                                             |
 | Forged `x-cfw-*` headers stripped                  | `src/ops/forwarded-headers.ts`                                                      | policy check                                             |
 | Request body capped at 2 MiB, multipart at 100 MiB | `src/site/guards.ts`, `src/ops/body-limit.ts`; a chunked body is read under the cap | policy check                                             |
 | `PLAN` and `CSP_MODE` cannot be written by PHP     | `src/ops/plan.ts`, `src/do/capabilities.ts`                                         | policy check at the writer                               |
 | The outbound guard has no lever                    | `src/ops/outbound-guard.ts`; four spellings tried in `settings-capability.spec.ts`  | read from the operator's environment only                |
-| One Durable Object per site, id from host          | `src/ops/site-id.ts`                                                                | naming convention plus the platform's per-object storage |
+| One Durable Object per site, id from host          | `src/ops/site/id.ts`                                                                | naming convention plus the platform's per-object storage |
 
 A hard boundary is one where the host has no such function. A policy check is one where the
 function exists and a list or a flag decides. The distinction matters for an attacker who can
@@ -23,7 +23,7 @@ function is not.
 
 Before v1.0.4 the request cap exempted multipart bodies and nothing counted a chunked body while it
 streamed, so the only bound was the platform's 100 MB request limit. A declared length is now
-checked up front and a chunked body is read under the cap (`tests/integration/serve-edge.spec.ts`,
+checked up front and a chunked body is read under the cap (`tests/integration/serve/edge.spec.ts`,
 falsified).
 
 ## Outbound Requests
@@ -80,8 +80,8 @@ and the compiled plan. Precedence is the default, then the module's header, then
 `RESPONSE_HEADERS` rule, and a rule value of `""` removes a header. `set-cookie`, `location`,
 `link`, `content-*` and `access-control-*` are never replayed, and a stored value is re-checked on
 read, so a row written through SQL cannot replay a cookie
-(`tests/unit/ops/module-headers.spec.ts` and the tier cases in `serve-chain.spec.ts`,
-`serve-edge.spec.ts` and `edge-read.spec.ts`, falsified).
+(`tests/unit/ops/module/headers.spec.ts` and the tier cases in `serve/chain.spec.ts`,
+`serve/edge.spec.ts` and `edge/read.spec.ts`, falsified).
 
 `CSP_MODE` sets a baseline `Content-Security-Policy` on HTML that carries none:
 `object-src 'none'; base-uri 'self'; frame-ancestors 'self'; report-uri /csp-report`. The default is
@@ -107,4 +107,4 @@ A page whose response varies by `Accept`, `Origin`, `User-Agent` or `*` is not s
 key holds no request header, so storing such a page would hand one visitor's variant to everyone.
 On the stock pack nothing varies: `/` and `/user/login` rendered the same under five header sets,
 and four requests through the front worker with different headers got one body
-(`forwarded-headers.spec.ts`, `serve-edge.spec.ts`, Measured). The refusal is for modules that vary.
+(`forwarded-headers.spec.ts`, `serve/edge.spec.ts`, Measured). The refusal is for modules that vary.

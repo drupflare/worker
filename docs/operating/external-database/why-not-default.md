@@ -25,7 +25,7 @@ answer.
 
 One object per site is what makes the rest of the design work. The Durable Object gives strict
 serializability, which is what the generation counter, the resumable migration cursor in
-`cfw_migrate`, and the chunked restore in `src/db/import-sql.ts` are all built on. Each of those
+`cfw_migrate`, and the chunked restore in `src/db/dump/import.ts` are all built on. Each of those
 assumes a single writer whose transactions cannot interleave with another writer's.
 
 Postgres behind Hyperdrive is a different concurrency model reached over a pooled connection from

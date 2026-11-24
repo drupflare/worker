@@ -19,7 +19,7 @@ staged asset carries its own subject digest, but nothing in this repository runs
 `gh attestation verify` against a downloaded artifact. Add it against
 `--repo drupflare/phasm --signer-workflow drupflare/phasm/.github/workflows/build.yml` to close the
 gap. Behaviour on the deployed site is checked by the health self-test, `BootSelfTest::run()`, which the
-host calls through `runHealthSelfTest()` in `src/drupal/cron-php.ts` from the cron path in
+host calls through `runHealthSelfTest()` in `src/drupal/php/cron.ts` from the cron path in
 `src/ops/cron.ts`.
 
 ## Self-Hosted Sites
@@ -78,7 +78,7 @@ line.
   `src/runtime/opcache.ts` sets it to `/tmp`, which emscripten's MEMFS always creates. Each new build
   still needs its own deploy to prove it renders; the gate proves the bundle builds and fits.
 - **A minor-version bump.** 8.3 to 8.5 moves the glue filename, needs a new seam plus one line in
-  wrangler's `alias`, changes `DEFAULT_PLATFORM.php` in `src/ops/packagist.ts`, and re-runs
+  wrangler's `alias`, changes `DEFAULT_PLATFORM.php` in `src/ops/composer/packagist.ts`, and re-runs
   `tests/node/php-fragments.spec.ts` and `bun run test:health` under the new interpreter. The
   version guard in step 1 of [Verification](verification.md#verification) refuses the fetch until the seam moves
   first.

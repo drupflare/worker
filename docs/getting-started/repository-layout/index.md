@@ -61,14 +61,19 @@ them.
 `bun run backup:cdn` archives a key's remote bytes to `snapshots/<name>.<sha12>` before replacing
 them, so nothing is lost by replacing one, and records the archive in `cdn-manifest.json` in the same
 run, so the manifest is the only file left to commit. It refuses for a tracked file with uncommitted
-changes, where the bytes going up are recorded nowhere. `bun run backup:verify` compares every key by
-size and ETag.
+changes, where the bytes going up are recorded nowhere. `bun run backup:verify` compares every live
+key and every mirror by size and ETag; `--archived` adds the superseded snapshots.
+
+Snapshots pile up, one per replaced key. `bun run backup:prune` lists the snapshots older than the
+newest five of their lineage and deletes nothing; `-- --delete` removes them from the bucket and the
+manifest. It skips mirrors, anything outside `snapshots/`, and any entry marked `"keep": true`. Back up
+the ones you want to keep before the first delete.
 
 ## `.pack-backup/`
 
 7.2 MB, one file, and it stays. It is the rollback point for an earlier lineage of the packed
 database (7,585,792 bytes, against 5,832,704 for the current one), and `bun run bake:pack`
-**overwrites it on its next run** (the `snapshot` step of `scripts/bake-pack.ts`). Its content is also in the
+**overwrites it on its next run** (the `snapshot` step of `scripts/bake/pack.ts`). Its content is also in the
 bucket at `snapshots/site.sqlite.064105ca7223`.
 
 ## Clean Clone to Deploy

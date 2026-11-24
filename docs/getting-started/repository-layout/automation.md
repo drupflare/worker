@@ -8,13 +8,13 @@ Reference counts across `package.json`, `scripts/`, `src/`, `tests/`, `docs/` an
 
 | script                         | refs | state                                                                                                                                                           |
 | ------------------------------ | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/bake-container.php`   | 0    | superseded. `bake-pack.ts` records that rewriting the container key by hand produced a byte-identical render that still missed, which is what this script does. |
+| `scripts/bake/container.php`   | 0    | superseded. `bake/pack.ts` records that rewriting the container key by hand produced a byte-identical render that still missed, which is what this script does. |
 | `scripts/stage-edge-assets.sh` | 1    | superseded by `assets/.assetsignore` for the canonical config, still used by `experiments/wrangler/*`. Keep.                                                    |
 
 `scripts/` is grouped by role, as described in `scripts/README.md`: the live pipeline in TypeScript,
 `bench/` PHP for the native half of a ratio, `probe/` shell pairs, and `measure/` instruments.
-`src/probes/**` holds measurement instruments on the same terms. `release-payload.ts`, `hydrate.ts`
-and `backup-cdn.ts` sit flat alongside `pack-*.ts` and `gen-driver-assets.ts`. `experiments/` holds
+`src/probes/**` holds measurement instruments on the same terms. `release/payload.ts`, `hydrate/run.ts`
+and `backup-cdn.ts` sit flat alongside the `pack/` and `gen/` folders. `experiments/` holds
 configs kept for reproduction and excluded from prettier.
 
 ## Test Coverage of Headline Claims
@@ -39,7 +39,7 @@ Thirteen headline claims from the summary in `TECHNICAL_REPORT.md`, classed by w
 | 10  | cold boot 1,398 ms, `page_cache` hit 1 ms, render 2,127 ms, startup 5 ms | c     | **no.** PHP clocks do not advance across a synchronous PHP run on the edge, so a duration read inside PHP is 0. The absolute time is a real epoch. Durations need a deployed worker's `cpuTime`.                                                                           |
 | 11  | the shipping asset set is exactly what the runtime fetches               | a     | **yes.** `tests/unit/runtime/assets-ignore.spec.ts` through the real `ASSETS` binding, plus the payload's bidirectional check against the same file.                                                                                                                       |
 | 12  | 19 tripwires, and the repair ladder fails closed mid-transaction         | a     | **yes.** `tests/unit/ops/repair.spec.ts`. 12 in `HOST_TRIPWIRES`, 7 under `drupflare/src/Health/Tripwire/`.                                                                                                                                                                |
-| 13  | the render origin is a property of the site, not of the request          | a     | **yes.** `tests/unit/ops/site-origin.spec.ts` and `tests/integration/render-origin.spec.ts`.                                                                                                                                                                               |
+| 13  | the render origin is a property of the site, not of the request          | a     | **yes.** `tests/unit/ops/site/origin.spec.ts` and `tests/integration/render/origin.spec.ts`.                                                                                                                                                                               |
 
 ## Nightly Automation
 

@@ -62,7 +62,7 @@ cannot host two things the suite needs:
 - `node:child_process` is not implemented. A probe calling `execFileSync('php', ...)` fails with
   "The child_process.execFileSync method is not implemented", so any suite whose oracle is a real
   PHP process cannot run in the workers project at all.
-- `node:sqlite` is not available under workerd, and `tests/node/migrate-sql.spec.ts` needs it to diff
+- `node:sqlite` is not available under workerd, and `tests/node/dump/migrate.spec.ts` needs it to diff
   a replayed database against its source.
 
 Without that second project a PHP-oracle suite has to either transliterate the PHP and test the

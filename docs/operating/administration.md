@@ -67,7 +67,7 @@ Drupal owns the URL space. Any path the Worker does not claim is served as a pag
 Drupal does not generate; its diagnostic and owner routes are single-segment names like `/health`
 and `/export`.
 
-Which site a request resolves to is decided in [`src/ops/site-id.ts`](../../src/ops/site-id.ts): a KV
+Which site a request resolves to is decided in [`src/ops/site/id.ts`](../../src/ops/site/id.ts): a KV
 mapping for the host, then the `SITE_ID` var, then the deployment's primary site, then the hostname
 itself, then `site`. One deployment is one site, so a second domain pointed at the worker reaches
 the site already claimed and does not open a new one. A host mapped in KV is an alias: its pages,

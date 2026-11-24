@@ -2,8 +2,8 @@
 
 A site follows as many git repositories as you connect to it. A push installs the module, and the
 result is written back to the provider as a commit status. The page that manages remotes is
-`/_cfw/git`, and it drives three files: `src/ops/git-smart.ts` (the transport),
-`src/ops/git-provider.ts` (the provider layer above it) and `src/ops/git-sync.ts` (the layout and
+`/_cfw/git`, and it drives three files: `src/ops/git/smart.ts` (the transport),
+`src/ops/git/provider.ts` (the provider layer above it) and `src/ops/git/sync.ts` (the layout and
 diff).
 
 ## The Transport
@@ -90,7 +90,7 @@ remote cannot starve the others.
 
 A 429 response sets a backoff. The first is one minute, each refusal doubles it, and a
 `Retry-After` header replaces the calculation when the provider sends one. Both are capped at one
-hour (`src/ops/git-sync.ts`).
+hour (`src/ops/git/sync.ts`).
 
 Webhooks make a push arrive immediately. GitHub, GitLab, Bitbucket, Gitea and Forgejo can register
 one from the page. For any other remote, the page mints a secret and shows the delivery URL to
@@ -169,7 +169,7 @@ flowchart TD
     R --> F[Record the reason on the remote]
 ```
 
-The checks are in `gitVerifyBoot()` (`src/do/git-delivery.ts`). `gitApply()` and `gitRestore()` in
+The checks are in `gitVerifyBoot()` (`src/do/git/delivery.ts`). `gitApply()` and `gitRestore()` in
 the same file write and restore the set.
 
 ## Write-Back

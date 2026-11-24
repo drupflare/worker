@@ -68,7 +68,7 @@ verified on a deployed object only.
 It is one of the owner routes, which the owner token reaches without `PW_DIAGNOSTICS=1`;
 `OWNER_ROUTES` in `src/site/routes.ts` is the list.
 
-The dump is produced host-side by `dumpDatabase()` in `src/db/export-sql.ts`, not by PHP. Every value
+The dump is produced host-side by `dumpDatabase()` in `src/db/dump/export.ts`, not by PHP. Every value
 is read as `typeof()` plus `hex()` and never as the column, because a Durable Object SQLite integer
 read loses precision above 2^53 and a `hex()` of an integer never passes its digits through a double.
 REAL is the one class read directly.
@@ -125,7 +125,7 @@ A mark is a counter row and a journal in the object's own SQLite, so both surviv
 Starting one puts three triggers on every table that counts. A write counts when it lands on an
 application table: every table does except the ones that regenerate (`cache_*`, `cachetags`,
 `sessions`, `semaphore`, `flood`, `queue`, `watchdog`, `history`, `search_*`), the derived and
-host tables in `src/ops/state-inventory.ts`, `sequences`, `batch`, `key_value`, `key_value_expire`
+host tables in `src/ops/replica/state-inventory.ts`, `sequences`, `batch`, `key_value`, `key_value_expire`
 and every `cfw_*` table. An unlisted contrib table counts, because the other choice lets a move look
 undoable after a visitor posted a comment. A replace counts as one insert. A change of key counts
 twice, the old key leaving and the new one arriving. Creating, altering or dropping a counted table

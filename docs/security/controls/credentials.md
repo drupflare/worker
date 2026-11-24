@@ -4,7 +4,7 @@ Drupal's database connection reaches `cfwSqlExec`, which applies no table filter
 can run SQL can read and write every table in the object. These changes move authority out of SQL.
 
 **Sealed storage.** `ctx.storage.kv` is a separate table in the object's SQLite file that the SQL
-bridge cannot read or write. Measured on a local `workerd` 1.20261012.1 (`owner-recovery.spec.ts`):
+bridge cannot read or write. Measured on a local `workerd` 1.20261012.1 (`owner/recovery.spec.ts`):
 `SELECT`, `INSERT`, `UPDATE`, `DELETE` and `DROP` on `_cf_KV` all answer `SQLITE_AUTH`, from the SQL
 bridge and from PHP's `cfw_sql()`; `ATTACH` and `DETACH` are denied; a view, a subquery, a table
 copy and a trigger over `_cf_KV` read nothing; and a table renamed onto the name `_cf_KV` does not
@@ -23,14 +23,14 @@ place that still holds the old one. A site upgraded from a version that kept a p
 deleted, and a sealed value always wins over a row. The git tokens, webhook secrets and Cloudflare
 OAuth grant follow the same path. A restore point from before the upgrade brings the old row back
 and the next wake adopts it again, so rotate through recovery after restoring to one. Verdict:
-contained (Measured, `site-secrets.spec.ts`, `owner-recovery.spec.ts`, `git-remotes.spec.ts`,
+contained (Measured, `site/secrets.spec.ts`, `owner/recovery.spec.ts`, `git-remotes.spec.ts`,
 falsified by mirroring the hash into `cfw_meta` and by removing rotation). Residual: a Cloudflare
-account holder can read the object's storage. The keys that moved are `SEALED_META_KEYS` in `src/ops/site-secrets.ts`, and a legacy row is adopted on wake and at each alarm. The deployed check (a `SELECT` on `cfw_meta` of a live site, and a point-in-time restore) has not run.
+account holder can read the object's storage. The keys that moved are `SEALED_META_KEYS` in `src/ops/site/secrets.ts`, and a legacy row is adopted on wake and at each alarm. The deployed check (a `SELECT` on `cfw_meta` of a live site, and a point-in-time restore) has not run.
 
 **Export and import.** A default export carries none of these values. `/export?secrets=1` carries
 the sealed values as ordinary `cfw_meta` rows (`owner_token_hash`, `cf_oauth_token`, `git_token_*`,
 `git_hooksecret_*`), and an import adopts them on the next wake, so a demo or a migration keeps
-working without a manual step (`serve-restore.spec.ts`, 7 cases). A dump from a pre-sealed worker
+working without a manual step (`serve/restore.spec.ts`, 7 cases). A dump from a pre-sealed worker
 still carries the owner token in the clear.
 
 **Module files.** `mountInstalledModules()` mounts every row of `cfw_module_file` into the
@@ -61,7 +61,7 @@ it is `0` or a deployment environment is set, and not by `HEAP_IMAGE`, which gat
 producer. The digests sat in the same tables as the bytes, so code with SQL write could plant a
 snapshot with matching digests and have its memory restored on the next boot. That was `open` on a
 default site: with the new check bypassed, a planted row restored on the shipping configuration
-(Measured, `heap-restore-autoload.spec.ts`). A SHA-256 root over the stored rows and over the
+(Measured, `heap/restore-autoload.spec.ts`). A SHA-256 root over the stored rows and over the
 metadata that steers a restore (page index, fd table, handle table, generation, sizes) is now sealed
 and verified before any byte, handle or descriptor reaches the instance, and per chunk on a sliced
 restore. A planted, altered or unsealed image is refused and deleted, the site boots from the pack,
@@ -77,7 +77,7 @@ sealed storage, and `cfw_meta` holds none of them. `metaGet` and `metaSet` route
 cannot write one back to SQL. A row from an earlier build is copied over on the first read or at
 wake, read back, then deleted; a run cut off between the copy and the delete repeats with the
 sealed value winning. A dump with `secrets=1` carries the six that are worth restoring and a plain
-dump carries none (`serve-restore.spec.ts`). A point-in-time restore has not been run against it:
+dump carries none (`serve/restore.spec.ts`). A point-in-time restore has not been run against it:
 the local runtime has no change log, and sealed storage shares the database file the restore
 rewinds, which is Inferred.
 

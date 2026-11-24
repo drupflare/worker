@@ -63,6 +63,7 @@ The incident write-ups, measurements and platform facts live in `notes/`, one to
 | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
 | [notes/park.md](notes/park.md)                               | What the park does, how it was measured wrong three times, and what it cannot serve.            |
 | [notes/memory-and-isolates.md](notes/memory-and-isolates.md) | Linear memory, the isolate budget, boots, recycling, heap images and what the platform charges. |
+| [notes/elastic-interpreter.md](notes/elastic-interpreter.md) | The paged translated interpreter, what it cost, and why it was closed.                          |
 | [notes/lanes-and-pool.md](notes/lanes-and-pool.md)           | The pool eviction history, lane state, throughput, and the VPS and host arms.                   |
 | [notes/packs-and-delivery.md](notes/packs-and-delivery.md)   | How the pack, the container row and the published assets are built, updated and reconciled.     |
 | [notes/cache-and-rows.md](notes/cache-and-rows.md)           | Stale tiers, cache bins, and the meters a feature can spend.                                    |
@@ -169,14 +170,14 @@ argument throws, which nothing here passes; `ENV.PHP_VERSION` is set only when t
 `version`, which nothing here does; and the factory is called without `new` unless it is a class,
 which the tuned glue's plain `function(moduleArg)` answers identically either way. Checked rather
 than read: the workers and node gate under 0.2.0 passed 6,489 tests and failed one,
-`heap-image-producer.spec.ts` ("ends the firing after imaging"), which passes alone on both versions
+`heap/image-producer.spec.ts` ("ends the firing after imaging"), which passes alone on both versions
 and failed while a `wrangler dev` boot shared the machine; and a `wrangler dev` boot rendered Drupal.
 
 ## The PHP exists in TWO places, and the SIBLING REPO is the source of truth
 
 1. the sibling repos `../drupflare` and `../rom`, published as `drupflare/drupflare` and
    `drupflare/rom` -- **edit here, always**
-2. **`assets/driver.json`** - packed by `scripts/gen-driver-assets.ts`, and **this is the copy that
+2. **`assets/driver.json`** - packed by `scripts/gen/driver-assets.ts`, and **this is the copy that
    executes on the edge**
 
 Composer never runs on the edge, so the packed copy is what ships, and it has gone silently stale
@@ -187,7 +188,7 @@ siblings, was untracked, and was what the packer read -- so the shipping bytes c
 nothing kept in sync. Measured before deleting it: `CircuitBreaker.php` differed from the sibling,
 and the test copies were 8 assertions behind (`test:health` gave 169 against the sibling's 177) with
 nothing reporting it, because `driver-pack.spec.ts` guards the pack against its inputs and never the
-inputs against upstream. `gen-driver-assets.ts` now reads `../drupflare` and `../rom` directly, the
+inputs against upstream. `gen/driver-assets.ts` now reads `../drupflare` and `../rom` directly, the
 way it already read `../stream-http` -- whose own comment had said why: "a fourth copy is what
 created the drift".
 
@@ -211,7 +212,7 @@ What is no longer checked is `drupal/` against the siblings.
 packed tree IS the vendor directory. `drupflare` requires `drupflare/stream-http` and its
 `HttpsStreamWrapper` extends the packaged class, so the packer mounts `../stream-http/src` at
 `libraries/drupflare-stream-http/src` and the PSR-4 root is registered in **both** autoloader sites
--- `src/site/php/settings-override.php` and the boot fragment in `src/drupal/site-php.ts`.
+-- `src/site/php/settings-override.php` and the boot fragment in `src/drupal/php/site.ts`.
 Adding a dependency means all three steps; the manifest line alone is a fatal on a missing class.
 It is read from the sibling rather than copied under `drupal/`, because a fourth copy is what
 created the drift the subclass removed.
@@ -360,7 +361,7 @@ rebuilds the pack from `drupal-src`, whose `vendor/drupal/DrupalInstalled.php` c
 needs `assets:twig` BEFORE it -- the pack has to carry the baked templates and the manifest is
 compared against them -- and `assets:scrub` AFTER it, because a rebuild puts a `hash_salt` back into
 `sites/default/settings.php` and every site would then share one. Seven assertions across
-`twig-bake.spec.ts` and `pack-secrets.spec.ts` are what catch each half. The order is
+`twig-bake.spec.ts` and `pack/secrets.spec.ts` are what catch each half. The order is
 `assets:twig` -> `assets:pack` -> `assets:scrub`, and running the middle alone is the mistake.
 
 `hydrate` no-ops on a complete tree now unless `--force`. That matters beyond the accident:
@@ -368,19 +369,19 @@ compared against them -- and `assets:scrub` AFTER it, because a rebuild puts a `
 `wrangler deploy` would have done this to a developer's tree.
 
 **AND THE NO-OP GUARD IS NOT ENOUGH, BECAUSE MID-BUILD THE TREE IS LEGITIMATELY INCOMPLETE.**
-`build-local.ts` orders `container` before `sql`, so when the container step spawns
+`build/local.ts` orders `container` before `sql`, so when the container step spawns
 `wrangler dev --local` the tree is still missing `assets/drupal-sql/manifest.json`. The build command
 fires, `missingMarkers()` correctly answers "not hydrated", there is no published release, and hydrate
-falls back to `build-local.ts` -- which reaches the container step and spawns wrangler again. Each
+falls back to `build/local.ts` -- which reaches the container step and spawns wrangler again. Each
 level forks another full Drupal build.
 
 Measured 2026-09-12: Pack Suites, Browser Lane and Class A Metrics all ended in
 _"The runner has received a shutdown signal"_ about three minutes in, three lanes running three
-different commands. `scripts/hydrating.ts` is the flag that closes it; `hydrate-reentry.spec.ts` pins
+different commands. `scripts/hydrate/flag.ts` is the flag that closes it; `hydrate-reentry.spec.ts` pins
 all three links.
 
 **NOTHING NAMED IT, BECAUSE THE INSTRUMENT SWALLOWED THE ONLY OUTPUT THAT COULD.**
-`bake-container.ts` buffered wrangler's stdout into a string and printed it from its `catch`, and a
+`bake/container.ts` buffered wrangler's stdout into a string and printed it from its `catch`, and a
 SIGTERM never reaches a `catch` -- so the logs read as 200 seconds of silence. The run of 2026-09-11
 01:37 is the control: it predates the build command, so wrangler bound, `waitForPort` returned, and
 the next real defect printed as `migrate answered 401: owner token required`. **A long wait on a
@@ -395,7 +396,7 @@ measured both ways with the file parked, 401 without the flag and 200 with it.
 running after `container` also means there is no `assets/drupal-sql/` when the container step asks
 the object to migrate, so `/migrate` answered 200 in 54 ms having replayed nothing, `/fill` drained
 `{"filled":null,"remaining":0}` and the read came back `400 no such table: cache_container`.
-`bake-container.ts` chunks the database itself when nothing has. The stale row inside those chunks is
+`bake/container.ts` chunks the database itself when nothing has. The stale row inside those chunks is
 the point rather than a problem: the boot misses on it and rebuilds the container the script exists
 to capture.
 
@@ -604,14 +605,14 @@ than mere agreement.
 the tracked `site.sqlite` carried a `twig_extension_hash` and a baked container row from the old
 core, the `tree` step refused to replace the tree without `--force`, and every step after it stayed
 skipped because its output was still on disk. Now `tree` passes `--force` and `replacesTree` makes
-every later step rerun, `bake-twig.php` rewrites the shipped twig hash row to the tree's (prefix
+every later step rerun, `bake/twig.php` rewrites the shipped twig hash row to the tree's (prefix
 kept), and the `container` step rebakes when the versions hash or the driver digest the row recorded
 differs. The tracked database is rewritten in a build and republished by hand with
 `bun run backup:manifest` and `bun run backup:cdn`; a stale row costs speed, not correctness.
 
 **11.4.8 stopped BigPipe handling the navigation placeholder** (`NavigationRenderer` denies
 `BigPipeStrategy`), so an admin's navigation is rendered into the page and is no longer one more
-hole than a member has. `shell.spec.ts` and `static-sweep.spec.ts` accept either arrangement.
+hole than a member has. `shell/assembly.spec.ts` and `static-sweep.spec.ts` accept either arrangement.
 
 **It was also a correctness fix.** With no `core-recommended` the root resolved symfony 8.1 while the
 site runs 7.4, so static analysis was reading a different framework. Two things not to break:
@@ -632,7 +633,7 @@ old manifest and lock, same count. Not caused by this.
   brings back the included-files table and `__pw_site_booted` without every global beside them, so
   the `!isset()` guard opens onto an already-included file. Use `require` and guard on the VALUE
   (`!is_object(...)`); composer's `getLoader()` memoizes, so re-requiring costs nothing and
-  re-registers nothing. `tests/integration/heap-restore-autoload.spec.ts` is falsified against it.
+  re-registers nothing. `tests/integration/heap/restore-autoload.spec.ts` is falsified against it.
 - **A backtick inside a comment in a `String.raw` block terminates the block**, and a comment is
   where it is least expected. Writing ``// `require` rather than `require_once` `` inside a PHP
   fragment broke the TypeScript, not the PHP. Rare now that the PHP lives in real files under
@@ -668,7 +669,7 @@ old manifest and lock, same count. Not caused by this.
   `src/site-do.ts`: wrangler aliases that exact string, and any other spelling bundles the default
   seam. `tests/node/import-specifiers.spec.ts` guards it.
   **A file a `node`-run script reaches cannot use one.** Plain node resolves a relative specifier as
-  an exact path, so `src/ops/packed-container.ts` (read by `scripts/pack-sql.ts`) and
+  an exact path, so `src/ops/packed-container.ts` (read by `scripts/pack/sql.ts`) and
   `src/db/heap-store.ts` (timed by `scripts/measure/heap-digest-cost.ts`) keep no relative imports.
   A DRY pass gave both `../util` imports and `build:local` failed with the gate green. The same
   spec walks every script a `node ...` invocation names and fails on a specifier node cannot find.
@@ -678,9 +679,9 @@ old manifest and lock, same count. Not caused by this.
   attempting the statement is.
 - `src/probes/**` are frozen measurement instruments cited by figure in the report. Moving a file
   does not change what it measures; rewriting it might. Do not refactor them.
-- The PHP source lives under `src/site/php/` and is packed by `scripts/gen-assets.ts` into
+- The PHP source lives under `src/site/php/` and is packed by `scripts/gen/assets.ts` into
   `src/site/generated/assets.ts`; run `bun run gen:assets:check` after editing any of it.
-  `src/drupal/*-php.ts` still hold a few `String.raw` blocks (composition helpers go through
+  `src/drupal/php/*.ts` still hold a few `String.raw` blocks (composition helpers go through
   `phpWhen`/`phpScript` in `src/util/php.ts`). A backtick inside a PHP comment truncated a block
   and broke the PHP while leaving the JavaScript valid - this has happened twice.
   `tests/node/php-fragments.spec.ts` runs `php -l` over the compositions; keep it green.
@@ -693,7 +694,7 @@ old manifest and lock, same count. Not caused by this.
   declaration is bound at runtime, not at compile time, so
   `if (!extension_loaded('zlib')) { function gzencode(){} }` compiles clean on a build that HAS
   the extension and the branch never runs. The PHP fragments now live as real files under
-  `src/site/php/` (packed by `scripts/gen-assets.ts` into `src/site/generated/assets.ts`), so
+  `src/site/php/` (packed by `scripts/gen/assets.ts` into `src/site/generated/assets.ts`), so
   `php -l` sees inside every one of them. `src/site/php/mb/fix.php` is the one that still cannot be
   linted STANDALONE, because it redeclares internal `mb_*` functions; the fragment gate lints it
   wrapped in `phpWhen('true', ...)`.

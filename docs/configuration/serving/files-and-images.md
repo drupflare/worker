@@ -184,7 +184,7 @@ rotate. A custom image effect that reads or draws pixels (`imagecolorat`, the dr
 Measured, all locally. Nothing below ran on Cloudflare, and no number here is a Workers CPU figure.
 
 - **Drupal's GD operations end to end.** A real Drupal 11 kernel in the local workerd harness
-  (`tests/integration/image-toolkit.spec.ts`), a 240 by 120 PNG, the shipped `thumbnail` style, toolkit set to `gd`: `image_scale`
+  (`tests/integration/image/toolkit.spec.ts`), a 240 by 120 PNG, the shipped `thumbnail` style, toolkit set to `gd`: `image_scale`
   and `image_convert_avif` both apply, `GDToolkit::save()` returns true, and the derivative reads back as a 100 by 50 AVIF. Each of resize, scale, crop, scale and crop, desaturate, rotate 90 and rotate 30 applied through the toolkit API saves a PNG of the expected size (90 by 40, 120 by 60, 100 by 50, 64 by 64, 240 by 120, 120 by 240, 268 by 224); sizes were checked there, and pixels are compared by the differential below.
 - **The differential.** `tests/gd-differential.php` runs the same calls against native gd and the shim with tinyimg as host, on PHP
   8.3.36 and 8.4.27: 389 rows, 383 PASS, 0 FAIL, 6 REFUSED on both. For `imagegd2`, 32 rows over 7 sources: 29 PASS and 3 REFUSED
@@ -195,7 +195,7 @@ Measured, all locally. Nothing below ran on Cloudflare, and no number here is a 
   `ENABLE_GD_FORMATS=1`, because the Homebrew PHP builds used here have GD2 compiled out and `imagegd2()` there writes no bytes.
   The drawing, readback and text functions are not part of the 40.
 - **Package size.** `assets/driver.json` grew from 1,031,632 to 1,034,458 bytes (+2,826) for `imagegd2`, the canvas-source copy and
-  the GD2 writer; the writer lives in the host (`gd2Encode` in `src/ops/image-runtime.ts`) and adds nothing to the wasm module.
+  the GD2 writer; the writer lives in the host (`gd2Encode` in `src/ops/image/runtime.ts`) and adds nothing to the wasm module.
 - **Derivative build cost, GD against `cfw_images` delivery** (1200 by 800 JPEG of 96,537 bytes to 300 by 200 JPEG at quality 75;
   the GD request is the one the shim emitted for a fresh white canvas and one `imagecopyresampled`; the delivery request is
   `runImageTransform` with the same size; `bun`, local, the module's work counters from `module.measure`):

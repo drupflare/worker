@@ -42,6 +42,13 @@ it.** The Worker size limit is 64 MiB uncompressed, with no compressed limit. `b
 prints the current uncompressed figure. The interpreter travels as a raw `CompiledWasm` import, which
 took startup from 106 ms to 5 ms on a deployed free worker.
 
+`bun run release:check` also runs `bun run check:bootimage` first. It reads each published boot image's
+index in `assets/bootimage/` and compares the driver digest, pack generation, interpreter identity and
+interpreter hash it records with what the tree computes, and for the pack image the module fingerprint
+and config digest too. Any difference fails the check, because a site whose context differs from the
+image's boots plain. The fix is `bun run assets:bootimage`. It needs no network and no wrangler, and it
+skips a variant with no published index.
+
 The step stays because three configs under `experiments/wrangler/` still name the brotli seam, and it
 is the rollback path if the raw import has to be reverted. It is brotli at quality 11 and window 22,
 packed and inflated by `node:zlib`, so producer and consumer are the same implementation. The frame
@@ -72,7 +79,7 @@ version is left alone, because re-extracting it rewrites every mtime, and mtime 
 here: Drupal's `MTimeProtectedFastFileStorage` hashes it into the compiled-Twig directory name.
 
 `site` installs a Drupal site into `sites/build`, then points `sites/default/settings.php` at the
-database it created. Nothing downstream reads that database as content; it exists so `bake-twig.php`
+database it created. Nothing downstream reads that database as content; it exists so `bake/twig.php`
 has a kernel to boot. A release tarball ships `default.settings.php` and no `settings.php` at all, so
 without this step there is no site to boot.
 
@@ -91,7 +98,7 @@ MEMFS directory's mtime is mount time.
 
 ## 9-16, The Assets
 
-`bootstrap` exists because the packers and the bake read each other's output. `bake-twig.php` builds
+`bootstrap` exists because the packers and the bake read each other's output. `bake/twig.php` builds
 `core.list.json` as _the previous `core.json`, minus the compiled-Twig paths, plus the ones it just
 compiled_, so on a checkout with no pack there is no list to build, and `PACK_INDEX=1` has no file
 set. The bootstrap breaks that cycle by globbing the tree under `FULL=1` instead. It is skipped
@@ -103,7 +110,7 @@ non-test file instead, and the bake derives its list from that. The difference i
 profiled set is completed by rules that already reach most of the tree.
 
 Measured on Drupal 11.4.5, a clean clone against the shipping artifacts. The shipped core version is
-`SHIPPED_CORE_VERSION` in `src/ops/shipped-lock.ts`:
+`SHIPPED_CORE_VERSION` in `src/ops/composer/shipped-lock.ts`:
 
 | artifact      | shipped    | source-built | delta            |
 | ------------- | ---------- | ------------ | ---------------- |
@@ -124,7 +131,7 @@ a presence check would skip the repack and ship a pack missing every template th
 `pack` rewrites that blob with every file compressed independently, which is what lets a file be
 materialised when PHP opens it instead of inflating 11,447 files at boot. It then scrubs the pack:
 `core.pf.bin` carries `settings.php` with a real `hash_salt`, Workers assets are served publicly, and
-a packed-but-unscrubbed pack is the state `release-payload.ts` refuses to publish.
+a packed-but-unscrubbed pack is the state `release/payload.ts` refuses to publish.
 
 `static` copies the browser-fetchable half of the tree (`css`, `js`, fonts and images under
 `core/`) into `assets/core/`, where the Workers Assets layer serves it at the `/core/**` URLs

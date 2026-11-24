@@ -6,7 +6,7 @@ A Durable Object runs one request at a time, and a PHP render holds it for the w
 
 A lane removes queueing, not service time. A cached page is answered from the edge cache or the object's own SQLite without booting PHP, so a site taking 100 req/s of cached traffic queues nothing and needs no lane. A site taking 20 req/s of authenticated renders may need several.
 
-Lanes work because an authenticated GET writes no authoritative state under this SAPI. Measured per table on real renders: no `sessions` row, no `users_field_data.access`, no `flood`. Core throttles the access write on `KernelEvents::TERMINATE`, which this SAPI never dispatches. A lane keeps its own copy, sweeps expired rows (`src/ops/replica.ts`) and applies the primary's replication log. It refuses anything authoritative with a 421, and the front worker retries that request on the primary.
+Lanes work because an authenticated GET writes no authoritative state under this SAPI. Measured per table on real renders: no `sessions` row, no `users_field_data.access`, no `flood`. Core throttles the access write on `KernelEvents::TERMINATE`, which this SAPI never dispatches. A lane keeps its own copy, sweeps expired rows (`src/ops/replica/policy.ts`) and applies the primary's replication log. It refuses anything authoritative with a 421, and the front worker retries that request on the primary.
 
 ## Scaling
 
@@ -95,7 +95,7 @@ On an uncached render Drupflare is not the faster side. It competes on the traff
 
 ## Autoscaling
 
-The primary counts, per alarm window, how many requests waited for its gate. Three consecutive windows must all show waiting before a lane is provisioned. The target is the smallest queue depth across those three, one lane per sustained waiter (`laneTarget()` in `src/ops/replica-demand.ts`). A burst that clears inside one window provisions nothing. A quiet window clears the run.
+The primary counts, per alarm window, how many requests waited for its gate. Three consecutive windows must all show waiting before a lane is provisioned. The target is the smallest queue depth across those three, one lane per sustained waiter (`laneTarget()` in `src/ops/replica/demand.ts`). A burst that clears inside one window provisions nothing. A quiet window clears the run.
 
 Autoscaling stops at 32 lanes by default. That bound is per-lane idle cost, which is storage plus replication catch-up, not a throughput limit. A new lane is also refused when the projected day's rows would pass 80% of the plan's daily row limit (`laneFitsRows()`, same file), because each lane rewrites every replicated row. `REPLICA_MAX_LANES` moves the cap, and `REPLICA_AUTOSCALE=0` turns autoscaling off. The variables are listed on [Replica Settings](../configuration/replicas.md).
 
@@ -110,11 +110,11 @@ Autoscaling stops at 32 lanes by default. That bound is per-lane idle cost, whic
 | **Failover**     | a lane that is not `SERVING`, or meets a call it may not perform, answers 421 with a retry-safe flag                                  |
 | **Staleness**    | `REPLICA_LAG_MS` bounds how far behind a serving lane may fall, at 30 s                                                               |
 
-Three refusals hold the copy together. A torn copy, where table A is at generation 12 and table B at 13, is refused by `chunkRefusal()` (`src/ops/replica-restore.ts`), and the position stays in flight until a whole consistent copy lands. A lane cannot pass for one that has finished, because the first chunk declares every table the copy will deliver (`expect`), and the lane holds the driver to that list. No lane is admitted until `system.private_key` arrives from the primary, since two objects each minting their own would issue CSRF tokens the other rejects (`MANDATORY_STATE` in `src/ops/replica-admission.ts`).
+Three refusals hold the copy together. A torn copy, where table A is at generation 12 and table B at 13, is refused by `chunkRefusal()` (`src/ops/replica/restore.ts`), and the position stays in flight until a whole consistent copy lands. A lane cannot pass for one that has finished, because the first chunk declares every table the copy will deliver (`expect`), and the lane holds the driver to that list. No lane is admitted until `system.private_key` arrives from the primary, since two objects each minting their own would issue CSRF tokens the other rejects (`MANDATORY_STATE` in `src/ops/replica/admission.ts`).
 
 ### Lane Stages
 
-A lane's stage is stored in the object's `replica_stage` meta key, and the serve route answers 421 to any lane not at `SERVING` (`src/do/routes/serve.ts`). `ReplicaStage` in `src/ops/replica-admission.ts` names the stages. `setReplicaStage()` in `src/site-do.ts` refuses any move `canTransition()` does not allow.
+A lane's stage is stored in the object's `replica_stage` meta key, and the serve route answers 421 to any lane not at `SERVING` (`src/do/routes/serve.ts`). `ReplicaStage` in `src/ops/replica/admission.ts` names the stages. `setReplicaStage()` in `src/site-do.ts` refuses any move `canTransition()` does not allow.
 
 ```mermaid
 stateDiagram-v2
@@ -136,7 +136,7 @@ stateDiagram-v2
 
 Forward moves go one step at a time. Any stage except `WITHDRAWN` may move to `WITHDRAWN`, and `WITHDRAWN` may move only to `CREATED`. The code takes these moves:
 
-- **CREATED to RESTORING**: the first restore chunk lands (`src/do/replication.ts`).
+- **CREATED to RESTORING**: the first restore chunk lands (`src/do/replica/replication.ts`).
 - **RESTORING to VERIFIED**: the `done` chunk lands, and the mandatory state and every expected table are present.
 - **VERIFIED to CATCHING_UP**: a log pull finds the primary ahead of the lane.
 - **CATCHING_UP to ELIGIBLE to SERVING**: `admissionVerdict()` admits the lane, and the loop in `catchUpOnce()` walks both steps in one call. `ELIGIBLE` is never left stored between calls.
@@ -149,7 +149,7 @@ A restored lane drives itself. Reaching `VERIFIED` arms its alarm. Each firing p
 
 ### Routing a Request
 
-`openContext()` in `src/site/target.ts` picks the object, and `sendHop()` in `src/site/hop.ts` sends the request. `chooseTarget()` in `src/ops/replica-routing.ts` makes the decision.
+`openContext()` in `src/site/target.ts` picks the object, and `sendHop()` in `src/site/hop.ts` sends the request. `chooseTarget()` in `src/ops/replica/routing.ts` makes the decision.
 
 ```mermaid
 flowchart TD
@@ -166,15 +166,15 @@ flowchart TD
     X -->|front worker retries| P
 ```
 
-The lane count is the larger of `REPLICA_COUNT` and the pool size this isolate last learned from the primary's `x-cfw-lanes` header (`src/site/target.ts`, `believedLanes()` in `src/ops/replica-routing.ts`). The affinity key is the path for a request that carries a session, the client address for an anonymous one, and the path when neither is present (`affinityKey()`).
+The lane count is the larger of `REPLICA_COUNT` and the pool size this isolate last learned from the primary's `x-cfw-lanes` header (`src/site/target.ts`, `believedLanes()` in `src/ops/replica/routing.ts`). The affinity key is the path for a request that carries a session, the client address for an anonymous one, and the path when neither is present (`affinityKey()`).
 
 Writes stay on the primary in three cases: `WRITE_FORWARD` is off, the write carries no session (a lane cannot mint one, because its `Set-Cookie` never reaches the client), or the route originates state only the primary may write, such as module installs, settings and uploads (`originationRoute()`).
 
-The front worker retries on the primary only when the 421 carries `x-cfw-requires-primary` and `x-cfw-retry-safe: 1` (`shouldFailover()`, `src/ops/replica-routing.ts`). The replica sets `retry-safe` from `didMutate()`. If a refusal arrives after a mutating call started, the replica answers 500 with `retry-safe: 0` and the request is not retried (`replicaHandoff()`, `src/do/serve.ts`). The router keeps no readiness cache. A lane that is not ready answers 421, and the retry costs one extra hop.
+The front worker retries on the primary only when the 421 carries `x-cfw-requires-primary` and `x-cfw-retry-safe: 1` (`shouldFailover()`, `src/ops/replica/routing.ts`). The replica sets `retry-safe` from `didMutate()`. If a refusal arrives after a mutating call started, the replica answers 500 with `retry-safe: 0` and the request is not retried (`replicaHandoff()`, `src/do/serve.ts`). The router keeps no readiness cache. A lane that is not ready answers 421, and the retry costs one extra hop.
 
 ### The Replication Log
 
-The primary records each invocation's authoritative writes as one log record, sealed at the end of the invocation (`sealGeneration()` in `src/do/replication.ts`). Lanes pull records with `action=log`. Each record holds:
+The primary records each invocation's authoritative writes as one log record, sealed at the end of the invocation (`sealGeneration()` in `src/do/replica/replication.ts`). Lanes pull records with `action=log`. Each record holds:
 
 - **`generation`**: the commit sequence value when the invocation sealed.
 - **`parent`**: the generation of the last sealed record, which this record builds on.
@@ -183,7 +183,7 @@ The primary records each invocation's authoritative writes as one log record, se
 - **`statements`**: the writes in order, each with positional parameters.
 - **`overflowed`**: set when the writes were too many to log. The record then carries no statements, and a lane that meets it must restore.
 
-The record shape and the applier are in `src/ops/replication-log.ts`.
+The record shape and the applier are in `src/ops/replica/replication-log.ts`.
 
 Generations can skip numbers. The sequence advances on invalidation, and one invocation can move it several steps before it seals. A number that no record carries is then skipped. `malformed()` requires only that `generation` be greater than `parent`, and its comment says gaps are normal.
 

@@ -38,7 +38,7 @@ side of it in `src/site/spool.ts`:
 
 A page is replicated only where the object's page store holds that CMS's pages, because the store's
 index is how a purge names the pages a device holds. For WordPress that means `WORDPRESS_PAGE_CACHE`
-is `1`; with it off no WordPress page is decorated, and the media features and spool's own paths
+is not `0`; with it `0` no WordPress page is decorated, and the media features and spool's own paths
 still run. Joomla's store is off, so no Joomla page is replicated.
 
 A WordPress page the rule refuses reaches the visitor exactly as the CMS sent it, with its own
@@ -72,8 +72,8 @@ a file before the Worker runs, and `wrangler.jsonc` sets no `run_worker_first`, 
 not Worker invocations. Paths under `/.spool/` that are not files, the data endpoints, still reach the
 Worker.
 
-`bun scripts/pack-spool.ts` writes the files, taking each one from the worker's own spool handler, so
-the bytes are what a device would get from the Worker. `bun scripts/pack-spool.ts --check` exits 1
+`bun scripts/pack/spool.ts` writes the files, taking each one from the worker's own spool handler, so
+the bytes are what a device would get from the Worker. `bun scripts/pack/spool.ts --check` exits 1
 when a file on disk differs, and the integration spec for spool fails the gate on the same
 difference. Run the packer after any change to the library version or to the spool options in
 `src/site/spool.ts`. The packer removes the page scripts of any other library version.
@@ -121,7 +121,7 @@ next change. Devices holding any earlier generation reset.
 
 Each row is a request a device would otherwise send to the Worker. The options marked build are
 fields of the stub, which the static tier serves as a file, so they are set in `src/site/spool.ts` and
-take effect after `bun scripts/pack-spool.ts`. An environment lever could not change them for a site,
+take effect after `bun scripts/pack/spool.ts`. An environment lever could not change them for a site,
 because the device gets the file and not the Worker's answer.
 
 | Avoidance                                          | Default | Where set                         | Request it removes                                                             |

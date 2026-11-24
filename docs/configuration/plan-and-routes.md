@@ -12,7 +12,7 @@ How the plan selects a limits profile, and which routes extend a site.
 in this project is a free-plan limit, and a typo must not silently grant a 30 s CPU budget to
 something that has 10 ms.
 
-The plan sets five defaults in `src/ops/plan-profile.ts`. Four are numbers, and each has its own var,
+The plan sets five defaults in `src/ops/meters/plan-profile.ts`. Four are numbers, and each has its own var,
 so a paid profile can run on free or the reverse. The fifth, `bootInline`, is not configurable.
 
 | profile field    | var                | free   | paid   |

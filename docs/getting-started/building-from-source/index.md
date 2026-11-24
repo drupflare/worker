@@ -67,12 +67,12 @@ own.
 
 A release also builds the bundle that `wrangler.managed.jsonc` deploys, for the dashboard's engine to
 read. The release job bundles the hydrated tree with `wrangler deploy --dry-run`, and
-`scripts/build-managed-bundle.ts` writes `releases/<tag>/` from that output: `manifest.json`,
+`scripts/build/managed-bundle.ts` writes `releases/<tag>/` from that output: `manifest.json`,
 `metadata.json`, one file per module, and one file per distinct asset named by the first 32 hex
 characters of its sha-256. The asset list is what `assets/.assetsignore` ships, not a walk of
 `assets/`. The manifest records the sha-256 and size of every module.
 
-`scripts/publish-bundle.ts` checks the files against the manifest, uploads them to
+`scripts/publish/bundle.ts` checks the files against the manifest, uploads them to
 `payloads/managed/releases/<tag>/` on the CDN, writes the manifest last, then reads every object back
 and compares it. A prefix whose manifest is already live is refused. Release prefixes stay published: a
 site records the release id it was built from, and an update reads that old manifest too, so nothing
@@ -90,11 +90,11 @@ line. GitHub release assets cannot be added after a release is cut, so v1.0.5's 
 
 After the release is created, the `announce` job posts one signed event to the dashboard's release
 hook. It runs on `master` only. Before that, the payload job writes
-`drupflare-release-manifest-<version>.json` from `SHA256SUMS` with `scripts/release-event.ts
+`drupflare-release-manifest-<version>.json` from `SHA256SUMS` with `scripts/release/event.ts
 manifest`: every release file with its URL and `sha256:` digest, plus the `schemaVersion` and
 `acceptsSchema` from the `schema` field of `package.json`. The manifest rides on the release.
 
-`scripts/release-event.ts post` builds the event (`release.published`, kind `worker`, the manifest's
+`scripts/release/event.ts post` builds the event (`release.published`, kind `worker`, the manifest's
 digest and URL), checks that the manifest URL serves the bytes it hashed, waiting up to 5 minutes for
 the release asset to appear, then sends the body with `x-drupflare-signature: sha256=<hex>`, an
 HMAC-SHA256 of the raw body. A body over 64 KiB is refused. The job needs two settings, and it stops
@@ -105,7 +105,7 @@ before any request when either is missing:
 | `DASHBOARD_RELEASE_SECRET` | repository secret   | the shared key the dashboard verifies against   |
 | `DASHBOARD_RELEASE_URL`    | repository variable | the full https URL of `POST /api/hooks/release` |
 
-`bun scripts/release-event.ts post --dry-run ...` prints the event and sends nothing. The event id is
+`bun scripts/release/event.ts post --dry-run ...` prints the event and sends nothing. The event id is
 `release-<tag>`, so a repeat is answered as a duplicate. A failed announcement turns the `announce`
 job red without holding back the deploy-path check.
 
@@ -114,7 +114,7 @@ job red without holding back the deploy-path check.
 A release also carries `drupflare-box-bundle-<version>.tar.gz`, the Worker a bastion box runs. It is
 the output of `wrangler deploy --dry-run --outdir` for `wrangler.jsonc`, with the modules at the
 archive root: `site.js`, the three `.wasm` modules and the hashed `composer.lock` text module. A box
-lists the top level of the unpacked archive only, so the packer, `scripts/build-box-bundle.ts`,
+lists the top level of the unpacked archive only, so the packer, `scripts/build/box-bundle.ts`,
 refuses a nested folder, a file ending the box does not load, and a module that `site.js` imports
 but the archive lacks. It leaves out source maps.
 
@@ -170,8 +170,8 @@ spends a minute:
 | `git`      | any     | `siblings`             |                                                   |
 | `tar`      | any     | `tree`                 |                                                   |
 
-Two of these run under `node` rather than `bun`. `pack-sql.ts` needs `node:sqlite`.
-`pack-drupal.ts` writes `core.bin.gz` from `gzipSync(blob, { level: 9 })`, and the two runtimes do
+Two of these run under `node` rather than `bun`. `pack/sql.ts` needs `node:sqlite`.
+`pack/drupal.ts` writes `core.bin.gz` from `gzipSync(blob, { level: 9 })`, and the two runtimes do
 not emit the same deflate stream for the same input, so running it under Bun would move a shipped
 asset with nothing reporting it.
 

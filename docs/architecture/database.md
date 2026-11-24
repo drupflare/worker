@@ -125,7 +125,7 @@ moved.
 
 ## The WordPress Database
 
-The WordPress database is baked by `bun scripts/bake-wordpress.ts`, which runs WordPress's own
+The WordPress database is baked by `bun scripts/bake/wordpress.ts`, which runs WordPress's own
 installer through the MySQL translator and cuts the result into `assets/wordpress/sql`. It is a
 separate pack with its own producer. Nothing on this page except this section describes it.
 
@@ -142,7 +142,7 @@ The bake therefore ships statistics for a model site. `scripts/wp/loaded-data.ts
 fixed seed: 20,000 posts (11,000 published posts, 3,500 attachments, 3,200 revisions and the rest),
 100,000 postmeta rows, 2,000 terms, 50,000 comments, 5,000 users and 3,000 options of which 150 load
 on every request. `modelStatistics()` in `scripts/wp/planner-stats.ts` loads that site into the
-installed schema, runs `ANALYZE` and keeps the `sqlite_stat1` rows. `pack-sql.ts` writes them as the
+installed schema, runs `ANALYZE` and keeps the `sqlite_stat1` rows. `pack/sql.ts` writes them as the
 last statements of the last chunk, and the migration replay installs them:
 
 1. `ANALYZE sqlite_master` creates `sqlite_stat1`. The name is reserved, so `CREATE TABLE` is refused.
@@ -150,7 +150,7 @@ last statements of the last chunk, and the migration replay installs them:
 3. `ANALYZE sqlite_master` again. The planner reads the table when the schema loads, so rows written
    directly have no effect until this reload.
 
-The rows are the same on every bake, and `tests/node/wordpress-planner-stats.spec.ts` compares them
+The rows are the same on every bake, and `tests/node/wordpress/planner-stats.spec.ts` compares them
 with the script's output. Run `bun scripts/wp/planner-stats.ts stats` to print them.
 
 ### What a Real Site Does to Them

@@ -17,7 +17,7 @@ These orderings fail silently when reversed, which is why
   naming the file it could not find when there is none.
 - **`twig` before `core`.** `assets:twig` writes `core.list.json` and `PACK_INDEX=1 assets:core`
   takes it verbatim, so on a tree with no list there is no file set at all.
-- **`core` before `pack`.** `pack-perfile.ts` reuses `core.json` and never re-globs, which keeps a
+- **`core` before `pack`.** `pack/perfile.ts` reuses `core.json` and never re-globs, which keeps a
   repack a change of format and leaves the set of shipped files alone.
 - **`pack` before `container`.** The row is keyed to the hash the pack carries, so there has to be a
   pack to read it from.
@@ -63,7 +63,7 @@ ids, because `Html::$seenIds` is a static that `drupal_static_reset()` does not 
 returns a different favicon path, because the packer drops `.ico` and wasm's `file_exists()` answers
 differently. Both renders are valid pages that do not match what the site serves.
 
-The step needs the runtime, and it does not need a deploy. `scripts/bake-prefill.ts` boots
+The step needs the runtime, and it does not need a deploy. `scripts/bake/prefill.ts` boots
 `wrangler dev` locally (workerd, with its own Durable Object, no Cloudflare login), drives
 `/migrate` to completion, renders the five paths through `/serve`, and tears the worker down. The
 state directory is a fresh `--persist-to` under the system temp directory each time, so a run cannot
@@ -82,7 +82,7 @@ To produce or refresh it on its own:
 
 ```sh
 bun run build:local -- --only=prefill
-bun scripts/bake-prefill.ts --port=8802 --keep # or drive it directly
+bun scripts/bake/prefill.ts --port=8802 --keep # or drive it directly
 ```
 
 ## Caching
@@ -95,7 +95,7 @@ The three expensive steps cache individually as well, and each takes `--force`:
 | artifact                 | cached on                                        | rebuild with                                     |
 | ------------------------ | ------------------------------------------------ | ------------------------------------------------ |
 | `.interp/php8.5.wasm`    | sha256 in `cdn-manifest.json`                    | `bun run restore:artifacts -- --force`           |
-| `.interp/php8.5.wasm.br` | mtime against the binary it was packed from      | `bun scripts/pack-wasm-brotli.ts <wasm> --force` |
+| `.interp/php8.5.wasm.br` | mtime against the binary it was packed from      | `bun scripts/pack/wasm-brotli.ts <wasm> --force` |
 | `drupal-src/`            | installed core version matches the requested one | `bun run fetch:drupal -- --force`                |
 
 The `tree` step is satisfied only when the installed core version matches `DRUPAL_VERSION`, or

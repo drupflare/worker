@@ -53,7 +53,7 @@ A recovery never mints. The route reads `owner_token` and never calls `ensureOwn
 which mints on a miss. A recovery on an unclaimed site would otherwise claim it for whoever holds KV
 access. The proof is spent in that case, and the client names `drangler site claim`.
 
-The failure budget is the owner check's. `OWNER_FAIL_LIMIT` in `src/ops/admin-session.ts`: 12
+The failure budget is the owner check's. `OWNER_FAIL_LIMIT` in `src/ops/owner/admin-session.ts`: 12
 failures per 60 seconds, per isolate, keyed on `cf-connecting-ip`, checked before the hop and shared
 with the owner check and the sign-in form. A 404 counts because KV is eventually consistent and a
 fresh record can miss, so the client paces its retries (growing pauses, at most eight attempts) to

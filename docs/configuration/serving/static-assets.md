@@ -14,7 +14,7 @@ and font.
 | `/core/*`, `/modules/*`, `/themes/*` | `public, max-age=31536000`            |
 
 An aggregate's file name is the first 16 hex characters of the SHA-256 of its body
-(`scripts/pack-aggregates.ts`), so a changed file gets a new URL and a year is safe. `/agg/manifest.json`
+(`scripts/pack/aggregates.ts`), so a changed file gets a new URL and a year is safe. `/agg/manifest.json`
 has no hash in its name and keeps the default.
 
 The three Drupal prefixes get a year, which is what Drupal's own `.htaccess` allows
@@ -41,7 +41,7 @@ deploy publishes none of it. Deploy a WordPress site with `--assets assets/wordp
 `assets/robots.txt` is Drupal's static file, and with it published WordPress could not serve its own
 virtual `robots.txt`. `/favicon.ico` is the same, and WordPress redirects it to the site icon.
 
-`bun scripts/pack-wordpress.ts --site` writes the directory from `wordpress-src`, and `bun run
+`bun scripts/pack/wordpress.ts --site` writes the directory from `wordpress-src`, and `bun run
 assets:wordpress` runs it last. The directory holds:
 
 - the stylesheets, scripts, images and fonts of `wp-includes` and `wp-admin`

@@ -6,7 +6,7 @@ Contributed modules, module revisions, and which modules have been run against a
 
 A module that lives on your machine and not on a git host is uploaded through `/modify`. Every
 upload is a revision, and the site keeps the last five per package (`REVISION_RETENTION` in
-`src/ops/module-rev.ts`). Each `/modify` request takes the owner token.
+`src/ops/module/rev.ts`). Each `/modify` request takes the owner token.
 
 A revision is a manifest of files addressed by the hash of their contents. A second upload sends
 only the files that changed. A file the site already holds costs nothing to keep, and dropping a
@@ -108,7 +108,7 @@ re-rendered.
 Every contrib module has one of three states: verified, untested or blocked. A module is verified
 only when the gate enabled it against a real site and asserted an observable the module owns.
 Nothing reaches that state by inspection. A blocked row says which capability is missing.
-`moduleTable()` in `src/ops/module-table.ts` is the census the lists below are rendered from.
+`moduleTable()` in `src/ops/module/table.ts` is the census the lists below are rendered from.
 
 Contrib is a development dependency. The shipped pack carries four modules (`admin_toolbar`,
 `ctools`, `pathauto`, `token`). The rest are verified against a test build and installed by a site

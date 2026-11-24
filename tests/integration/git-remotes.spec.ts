@@ -4,9 +4,9 @@ import {
 	markAdopted,
 	readAllRecords,
 	readPackageRecords
-} from '../../src/ops/module-integrity';
+} from '../../src/ops/module/integrity';
 import { KV_OVERRIDABLE } from '../../src/ops/plan';
-import { OWNER_HASH_KEY } from '../../src/ops/site-secrets';
+import { OWNER_HASH_KEY } from '../../src/ops/site/secrets';
 import type { SitePhpDurableObject } from '../../src/site-do';
 import { fakeCommit, gitFetch, type FakeRepo } from '../helpers/fake-git';
 import { freshSite, inObject } from '../helpers/serve-do';
@@ -14,7 +14,7 @@ import { freshSite, inObject } from '../helpers/serve-do';
 /**
  * The git tier's wiring: where a token is stored, who may reach it, and what a delivery must carry.
  *
- * The provider layer is covered by `unit/ops/git-provider.spec.ts`, which is where the endpoints and
+ * The provider layer is covered by `unit/ops/git/provider.spec.ts`, which is where the endpoints and
  * signature verification live. This is the half that touches the object.
  */
 

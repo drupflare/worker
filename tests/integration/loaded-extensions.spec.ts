@@ -3,7 +3,7 @@ import {
 	NATIVE_PLATFORM,
 	PLATFORM_PHP_VERSION,
 	POLYFILLED_PLATFORM
-} from '../../src/ops/packagist';
+} from '../../src/ops/composer/packagist';
 import { EXTENSION_TABLE } from '../../src/site/shims/extension-table';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
@@ -12,7 +12,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  *
  * THREE CAPABILITY CLAIMS IN THIS PROJECT WERE FALSE AND EACH READ AS VERIFIED. `DEFAULT_PLATFORM`
  * listed `ext-mbstring` two lines under a docblock saying a missing extension is a real conflict,
- * on a build whose `mb-fix.ts` exists precisely because there is no mbstring; `module-tiers.ts`
+ * on a build whose `mb-fix.ts` exists precisely because there is no mbstring; `module/tiers.ts`
  * said focal_point's transform "is GD, which this build has"; and a `driveCron()` note said nothing
  * imported it while `src/site-do.ts` did. None of the three had an instrument that could have
  * disagreed.

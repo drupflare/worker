@@ -1,0 +1,559 @@
+[
+	{
+		"name": "five module classes under ItemList and Map",
+		"expected": "<?php\n\nnamespace Drupal\\mod\\Plugin\\DataType;\n\nuse Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList;\nuse Drupal\\Core\\TypedData\\Plugin\\DataType\\Map;\n\nclass ValuesViaJmesPath extends ItemList {\n\tpublic function offsetExists($offset): bool { return isset($this->list[$offset]); }\n\tpublic function getIterator(): \\ArrayIterator { return new \\ArrayIterator($this->list); }\n\tpublic function count(): int { return count($this->list); }\n}\nclass EntitiesViaJmesPath extends ValuesViaJmesPath {\n\tpublic function offsetExists($offset): bool { return parent::offsetExists($offset); }\n}\nclass ValuesFromJson extends ItemList {\n\tpublic function offsetExists($offset): bool { return true; }\n}\nclass KeysFromJson extends ItemList {\n\tpublic function offsetExists($offset): bool { return false; }\n\tpublic function offsetGet($offset): mixed { return $this->list[$offset]; }\n\tpublic function offsetSet($offset, $value): void { $this->list[$offset] = $value; }\n\tpublic function offsetUnset($offset): void { unset($this->list[$offset]); }\n}\nclass ValuesFromFlavorJson extends Map {\n\tpublic function offsetExists($offset) { return true; }\n\tpublic function getIterator(): \\ArrayIterator { return new \\ArrayIterator([]); }\n\tpublic function count() { return 0; }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "typed methods are left byte for byte",
+		"expected": "<?php\nclass C extends \\Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList {\n\tpublic function count(): int|false { return $this->n; }\n\tpublic function getIterator() : \\Iterator { return new \\ArrayIterator([]); }\n}\n",
+		"refusals": [
+			{
+				"class": "C",
+				"method": "count",
+				"line": 3,
+				"reason": "the declared type int|false is wider than the parent type int and the return on line 3 is not shown to be int"
+			}
+		]
+	},
+	{
+		"name": "inconsistent return refused by name, others rewritten",
+		"expected": "<?php\nclass C extends \\Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList {\n\tpublic function count() { return null; }\n\tpublic function offsetExists($o): bool { return true; }\n\tpublic function getIterator() { yield 1; }\n}\n",
+		"refusals": [
+			{
+				"class": "C",
+				"method": "count",
+				"line": 3,
+				"reason": "a return gives a null literal and the type is int"
+			},
+			{
+				"class": "C",
+				"method": "getIterator",
+				"line": 5,
+				"reason": "the body is a generator and the type is ArrayIterator"
+			}
+		]
+	},
+	{
+		"name": "refused: bare return",
+		"expected": "<?php\nclass C extends \\Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList {\n\tpublic function offsetExists($o) { if ($o) { return; } return true; }\n}\n",
+		"refusals": [
+			{
+				"class": "C",
+				"method": "offsetExists",
+				"line": 3,
+				"reason": "a bare return and the type is bool"
+			}
+		]
+	},
+	{
+		"name": "refused: int literal under bool",
+		"expected": "<?php\nclass C extends \\Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList {\n\tpublic function offsetExists($o) { return 1; }\n}\n",
+		"refusals": [
+			{
+				"class": "C",
+				"method": "offsetExists",
+				"line": 3,
+				"reason": "a return gives a int literal and the type is bool"
+			}
+		]
+	},
+	{
+		"name": "refused: value under void",
+		"expected": "<?php\nclass C extends \\Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList {\n\tpublic function offsetUnset($o) { return $o; }\n}\n",
+		"refusals": [
+			{
+				"class": "C",
+				"method": "offsetUnset",
+				"line": 3,
+				"reason": "a return carries a value and the type is void"
+			}
+		]
+	},
+	{
+		"name": "refused: no return",
+		"expected": "<?php\nclass C extends \\Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList {\n\tpublic function offsetExists($o) { $this->n = 1; }\n}\n",
+		"refusals": [
+			{
+				"class": "C",
+				"method": "offsetExists",
+				"line": 3,
+				"reason": "the body never returns a value and the type is bool"
+			}
+		]
+	},
+	{
+		"name": "wrong arity and not public",
+		"expected": "<?php\nclass C extends \\Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList {\n\tpublic function count($extra) { return 1; }\n\tprotected function getIterator() { return new \\ArrayIterator([]); }\n}\n",
+		"refusals": [
+			{
+				"class": "C",
+				"method": "count",
+				"line": 3,
+				"reason": "takes 1 parameters, the parent takes 0"
+			},
+			{
+				"class": "C",
+				"method": "getIterator",
+				"line": 4,
+				"reason": "the method is not public, so it does not override the parent method"
+			}
+		]
+	},
+	{
+		"name": "static method untouched",
+		"expected": "<?php\nclass C implements \\Countable {\n\tpublic static function count() { return 1; }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "count on a class that is not countable",
+		"expected": "<?php\nclass C {\n\tpublic function count() { return 1; }\n\tpublic function getIterator() { return []; }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "unresolved parent refused",
+		"expected": "<?php\nnamespace M;\nuse Some\\Base;\nclass C extends Base {\n\tpublic function count() { return 1; }\n}\n",
+		"refusals": [
+			{
+				"class": "M\\C",
+				"method": "count",
+				"line": 5,
+				"reason": "ancestor Some\\Base is not in the module and not in the table"
+			}
+		]
+	},
+	{
+		"name": "unreadable interface refused",
+		"expected": "<?php\nclass C implements \\Foo\\SomeInterface {\n\tpublic function count() { return 1; }\n}\n",
+		"refusals": [
+			{
+				"class": "C",
+				"method": "count",
+				"line": 3,
+				"reason": "interface Foo\\SomeInterface is not readable, so the method may be required"
+			}
+		]
+	},
+	{
+		"name": "parent not guessed from the interface",
+		"expected": "<?php\nclass C extends \\Other\\Parent1 implements \\Countable {\n\tpublic function count() { return 1; }\n}\n",
+		"refusals": [
+			{
+				"class": "C",
+				"method": "count",
+				"line": 3,
+				"reason": "ancestor Other\\Parent1 is not in the module and not in the table"
+			}
+		]
+	},
+	{
+		"name": "every php interface",
+		"expected": "<?php\nclass A implements \\ArrayAccess {\n\tpublic function offsetExists($o): bool { return true; }\n\tpublic function offsetGet($o): mixed { return 1; }\n\tpublic function offsetSet($o, $v): void { $this->x = 1; }\n\tpublic function offsetUnset($o): void { $this->x = 1; }\n}\nclass B implements \\Iterator {\n\tpublic function current(): mixed { return 1; }\n\tpublic function key(): mixed { return 1; }\n\tpublic function next(): void { $this->i++; }\n\tpublic function rewind(): void { $this->i = 0; }\n\tpublic function valid(): bool { return true; }\n}\nclass D implements \\IteratorAggregate, \\Countable, \\JsonSerializable {\n\tpublic function getIterator(): \\Traversable { yield 1; }\n\tpublic function count(): int { throw new \\LogicException('no'); }\n\tpublic function jsonSerialize(): mixed { return []; }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "nested functions and anonymous classes do not count",
+		"expected": "<?php\nclass C implements \\Countable {\n\tpublic function count(): int {\n\t\t$f = function () { return; };\n\t\t$g = new class { public function x() { return null; } };\n\t\treturn count($this->items);\n\t}\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "anonymous class extends Map",
+		"expected": "<?php\nnamespace M;\nuse Drupal\\Core\\TypedData\\Plugin\\DataType\\Map;\nclass Outer {\n\tpublic function count() { return 1; }\n\tpublic function make() {\n\t\treturn new class extends Map {\n\t\t\tpublic function getIterator(): \\ArrayIterator { return new \\ArrayIterator([]); }\n\t\t\tpublic function count() { return 2; }\n\t\t};\n\t}\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "new class with arguments",
+		"expected": "<?php\nclass Outer {\n\tpublic function make() {\n\t\treturn new class(1, [2, 3]) extends \\Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList {\n\t\t\tpublic function count(): int { return 2; }\n\t\t};\n\t}\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "comments strings and heredocs are not code",
+		"expected": "<?php\nclass C extends \\Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList {\n\t// public function count() { return 1; }\n\t/* public function getIterator() {} */\n\t# public function offsetExists($o) { return true; }\n\tpublic $a = 'public function count() { return 1; }';\n\tpublic $b = <<<EOT\npublic function offsetExists($o) { return true; }\nEOT;\n\tpublic $c = <<<'EOT'\npublic function count() { return 1; }\nEOT;\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "method name case",
+		"expected": "<?php\nclass C implements \\Countable {\n\tpublic function COUNT(): int { return 1; }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "imports aliases groups",
+		"expected": "<?php\nnamespace M;\nuse Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList;\nclass C extends ItemList {\n\tpublic function count(): int { return 1; }\n}\n\n<?php\nnamespace M;\nuse Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList as Base;\nclass C extends Base {\n\tpublic function count(): int { return 1; }\n}\n\n<?php\nnamespace M;\nuse Drupal\\Core\\TypedData\\Plugin\\DataType\\{Map, ItemList as Base};\nclass C extends Base {\n\tpublic function count(): int { return 1; }\n}\n\n<?php\nnamespace M;\nuse Drupal\\Core\\TypedData\\Plugin\\DataType;\nclass C extends DataType\\ItemList {\n\tpublic function count(): int { return 1; }\n}\n\n<?php\nnamespace M;\nclass C extends \\Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList {\n\tpublic function count(): int { return 1; }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "namespace relative parent through the index",
+		"expected": "<?php\nnamespace M;\nclass C extends namespace\\Base {\n\tpublic function getIterator(): \\ArrayIterator { return new \\ArrayIterator([]); }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "same namespace parent through the index",
+		"expected": "<?php\nnamespace M;\nclass C extends Base {\n\tpublic function getIterator(): \\ArrayIterator { return new \\ArrayIterator([]); }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "same namespace parent without the index",
+		"expected": "<?php\nnamespace M;\nclass C extends Base {\n\tpublic function getIterator() { return new \\ArrayIterator([]); }\n}\n",
+		"refusals": [
+			{
+				"class": "M\\C",
+				"method": "getIterator",
+				"line": 4,
+				"reason": "ancestor M\\Base is not in the module and not in the table"
+			}
+		]
+	},
+	{
+		"name": "chain through the same file and the index",
+		"expected": "<?php\nnamespace M;\nuse Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList;\nclass Parent1 extends ItemList {\n\tpublic function count(): int { return 1; }\n}\nclass Child extends Parent1 {\n\tpublic function count(): int { return 2; }\n}\nclass Grandchild extends Child {\n\tpublic function count(): int { return 3; }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "class constant and interface are not classes",
+		"expected": "<?php\ninterface I { public function count(); }\ntrait T { public function count() { return 1; } }\nenum E { case A; public function count() { return 1; } }\nclass C { public function f() { return Foo::class; } }\n",
+		"refusals": []
+	},
+	{
+		"name": "braces namespace",
+		"expected": "<?php\nnamespace A {\n\tuse Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList;\n\tclass C extends ItemList {\n\t\tpublic function count(): int { return 1; }\n\t}\n}\nnamespace B {\n\tclass D extends ItemList {\n\t\tpublic function count() { return 1; }\n\t}\n}\n",
+		"refusals": [
+			{
+				"class": "B\\D",
+				"method": "count",
+				"line": 10,
+				"reason": "ancestor B\\ItemList is not in the module and not in the table"
+			}
+		]
+	},
+	{
+		"name": "comment between function and name",
+		"expected": "<?php\nclass C implements \\Countable {\n\tpublic function /* c */ count /* d */ (): int { return 1; }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "by reference method is skipped",
+		"expected": "<?php\nclass C implements \\IteratorAggregate {\n\tpublic function &getIterator() { return $this->x; }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "crlf line endings and line numbers",
+		"expected": "<?php\r\nnamespace M;\r\nuse Some\\Base;\r\nclass C extends Base {\r\n\tpublic function count() { return 1; }\r\n}\r\n",
+		"refusals": [
+			{
+				"class": "M\\C",
+				"method": "count",
+				"line": 5,
+				"reason": "ancestor Some\\Base is not in the module and not in the table"
+			}
+		]
+	},
+	{
+		"name": "interpolated string in a default makes the arity 3",
+		"expected": "<?php\nclass C implements \\ArrayAccess {\n\tpublic function offsetSet($a, $b = \"x $c\") { $this->x = 1; }\n}\n",
+		"refusals": [
+			{
+				"class": "C",
+				"method": "offsetSet",
+				"line": 3,
+				"reason": "takes 3 parameters, the parent takes 2"
+			}
+		]
+	},
+	{
+		"name": "interpolated return is not a literal",
+		"expected": "<?php\nclass C implements \\Countable {\n\tpublic function count(): int { return \"a $b\"; }\n}\nclass D implements \\Countable {\n\tpublic function count() { return \"a\"; }\n}\nclass E implements \\Countable {\n\tpublic function count(): int { return 1 + 1; }\n}\n",
+		"refusals": [
+			{
+				"class": "D",
+				"method": "count",
+				"line": 6,
+				"reason": "a return gives a string literal and the type is int"
+			}
+		]
+	},
+	{
+		"name": "heredoc with interpolation and braces in a body",
+		"expected": "<?php\nclass C implements \\Countable {\n\tpublic function count(): int {\n\t\t$x = <<<EOT\n{$this->a['}']} and ${b} and $c[0] and $d->e\nEOT;\n\t\t$y = <<<  \"TAG\"\n  body } {\n  TAG;\n\t\treturn 1;\n\t}\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "attribute in the parameter list",
+		"expected": "<?php\nclass C implements \\ArrayAccess {\n\tpublic function offsetGet(#[Foo] $offset) { return 1; }\n\t#[\\ReturnTypeWillChange]\n\tpublic function offsetExists($o): bool { return true; }\n}\n",
+		"refusals": [
+			{
+				"class": "C",
+				"method": "offsetGet",
+				"line": 3,
+				"reason": "takes 0 parameters, the parent takes 1"
+			}
+		]
+	},
+	{
+		"name": "casts and nested parens in a parameter list",
+		"expected": "<?php\nclass C implements \\ArrayAccess {\n\tpublic function offsetSet($a, $b = (array) 1): void { $this->x = 1; }\n\tpublic function offsetUnset($a = array(1, 2)): void { $this->x = 1; }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "inline html around php",
+		"expected": "<html><?php class C implements \\Countable { public function count(): int { return 1; } } ?>\n<p><?= $x ?></p>\n<?php\nclass D implements \\Countable {\n\tpublic function count(): int { return 2; }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "numbers and strings in returns",
+		"expected": "<?php\nclass A implements \\Countable { public function count(): int { return 0x1F; } }\nclass B implements \\Countable { public function count() { return 1.5; } }\nclass C implements \\Countable { public function count() { return '1'; } }\nclass D implements \\Countable { public function count() { return true; } }\nclass E implements \\Countable { public function count() { return array(); } }\nclass F implements \\Countable { public function count() { return [1]; } }\nclass G implements \\Countable { public function count() { return 9223372036854775808; } }\nclass H implements \\Countable { public function count() { return TRUE; } }\n",
+		"refusals": [
+			{
+				"class": "B",
+				"method": "count",
+				"line": 3,
+				"reason": "a return gives a float literal and the type is int"
+			},
+			{
+				"class": "C",
+				"method": "count",
+				"line": 4,
+				"reason": "a return gives a string literal and the type is int"
+			},
+			{
+				"class": "D",
+				"method": "count",
+				"line": 5,
+				"reason": "a return gives a bool literal and the type is int"
+			},
+			{
+				"class": "E",
+				"method": "count",
+				"line": 6,
+				"reason": "a return gives a array literal and the type is int"
+			},
+			{
+				"class": "F",
+				"method": "count",
+				"line": 7,
+				"reason": "a return gives a array literal and the type is int"
+			},
+			{
+				"class": "G",
+				"method": "count",
+				"line": 8,
+				"reason": "a return gives a float literal and the type is int"
+			},
+			{
+				"class": "H",
+				"method": "count",
+				"line": 9,
+				"reason": "a return gives a bool literal and the type is int"
+			}
+		]
+	},
+	{
+		"name": "non ascii identifiers and strings",
+		"expected": "<?php\nclass Café implements \\Countable {\n\tpublic $naïve = 'é';\n\tpublic function count(): int { return 1; }\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "property named like a keyword and static call",
+		"expected": "<?php\nclass C implements \\Countable {\n\tpublic function count(): int {\n\t\t$this->function = 1; $this->class = 2; $x = $this?->use;\n\t\treturn static::count() + self::class;\n\t}\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "generator under mixed and traversable",
+		"expected": "<?php\nclass A implements \\IteratorAggregate { public function getIterator(): \\Traversable { yield from $this->x; } }\nclass B implements \\Iterator { public function current(): mixed { yield 1; } public function key(): mixed { return 1; } public function next(): void {} public function rewind(): void {} public function valid(): bool { return true; } }\n",
+		"refusals": []
+	},
+	{
+		"name": "abstract and final modifiers and docblocks",
+		"expected": "<?php\nabstract class C implements \\Countable {\n\t/**\n\t * Docs.\n\t */\n\tfinal public function count(): int { return 1; }\n\tabstract public function offsetGet($x);\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "unterminated and odd input",
+		"expected": "<?php\nclass C implements \\Countable {\n\tpublic function count() { return \"abc",
+		"refusals": []
+	},
+	{
+		"name": "empty and no class",
+		"expected": "<?php\n",
+		"refusals": []
+	},
+	{
+		"name": "datastore classes extending DataDefinition and Attribute",
+		"expected": "<?php\nclass A extends \\Drupal\\Core\\TypedData\\DataDefinition { public function offsetGet($o): mixed { return 1; } public function offsetUnset($o): void { unset($this->x); } }\nclass B extends \\Drupal\\Core\\Template\\Attribute { public function jsonSerialize(): string { return ''; } public function getIterator(): \\ArrayIterator { return new \\ArrayIterator([]); } }\nclass E extends \\Drupal\\Core\\Database\\Statement\\StatementBase { public function current(): mixed { return 1; } public function valid(): bool { return true; } public function next(): void { $this->i++; } }\n",
+		"refusals": []
+	},
+	{
+		"name": "normalize narrowed from the full union through a core parent",
+		"expected": "<?php\nnamespace M;\nuse ArrayObject;\nuse Drupal\\serialization\\Normalizer\\FieldItemNormalizer;\nclass N extends FieldItemNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\t$values = parent::normalize($o, $f, $c);\n\t\t$values['a'] = $this->serializer->decode($values['a'], 'json');\n\t\tif (isset($values['b'])) {\n\t\t\t$values['b'] = 1;\n\t\t}\n\t\treturn $values;\n\t}\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "wider declared types narrowed to the parent type",
+		"expected": "<?php\nclass A extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\treturn [];\n\t}\n}\nclass B extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\treturn [];\n\t}\n}\nclass C extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\treturn [];\n\t}\n}\nclass D extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\treturn [];\n\t}\n}\nclass E extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array   /* kept */   {\n\t\treturn [];\n\t}\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "returns shown to be arrays",
+		"expected": "<?php\nclass A extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\treturn array(1, 2);\n\t}\n}\nclass B extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\treturn (array) $o->items[\"a\"];\n\t}\n}\nclass C extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\treturn ( array ) $o;\n\t}\n}\nclass D extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\treturn array_merge($c, [1]);\n\t}\n}\nclass E extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\treturn \\array_values($c);\n\t}\n}\nclass F extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\t$out = [];\n\t\t$out[] = 1;\n\t\t$out[\"b\"] = $o;\n\t\treturn $out;\n\t}\n}\nclass G extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\tif ($f) {\n\t\t\treturn [];\n\t\t}\n\t\tthrow new \\LogicException(\"no\");\n\t}\n}\nclass H extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\t$g = function () {\n\t\t\treturn null;\n\t\t};\n\t\treturn [];\n\t}\n}\nclass I extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\t$v = [];\n\t\tif (isset($v) && count($v) < 1 && is_array($v) && !empty($v)) {\n\t\t\t$v = [1];\n\t\t}\n\t\treturn $v;\n\t}\n}\nclass J extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\t/* return null; */\n\t\t$s = <<<EOT\nreturn null;\nEOT;\n\t\treturn [];\n\t}\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "returns not shown to be arrays are refused",
+		"expected": "<?php\nclass A extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\treturn null;\n\t}\n}\nclass B extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\treturn $this->items;\n\t}\n}\nclass C extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\treturn $o;\n\t}\n}\nclass D extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\treturn;\n\t}\n}\nclass E extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\treturn (array) $o . \"a\";\n\t}\n}\nclass F extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\treturn [1][0];\n\t}\n}\nclass G extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\treturn [1] + $c;\n\t}\n}\nclass H extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\treturn array_pop($c);\n\t}\n}\nclass I extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\treturn $this->array_merge($c);\n\t}\n}\nclass J extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\t$v = [];\n\t\tpreg_match(\"/a/\", \"a\", $v);\n\t\treturn $v;\n\t}\n}\nclass K extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\t$v = [];\n\t\tforeach ($v as &$x) {\n\t\t}\n\t\treturn $v;\n\t}\n}\nclass L extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\t$v = [];\n\t\t$v .= \"a\";\n\t\treturn $v;\n\t}\n}\nclass M extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\t$v = $this->load();\n\t\treturn $v;\n\t}\n}\nclass N extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\treturn $v;\n\t}\n}\nclass O extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\tif ($f) {\n\t\t\treturn $this->x;\n\t\t}\n\t\treturn [];\n\t}\n}\nclass P extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\tif ($f) {\n\t\t\treturn [];\n\t\t}\n\t}\n}\nclass Q extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\tthrow new \\LogicException('no');\n\t}\n}\nclass R extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\tyield 1;\n\t\treturn [];\n\t}\n}\nclass S extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): ArrayObject|array|string|int|float|bool|null {\n\t\treturn \"x{$o}\";\n\t}\n}\n",
+		"refusals": [
+			{
+				"class": "A",
+				"method": "normalize",
+				"line": 3,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 4 is not shown to be array"
+			},
+			{
+				"class": "B",
+				"method": "normalize",
+				"line": 8,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 9 is not shown to be array"
+			},
+			{
+				"class": "C",
+				"method": "normalize",
+				"line": 13,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 14 is not shown to be array: $o is a parameter"
+			},
+			{
+				"class": "D",
+				"method": "normalize",
+				"line": 18,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and a bare return on line 19"
+			},
+			{
+				"class": "E",
+				"method": "normalize",
+				"line": 23,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 24 is not shown to be array"
+			},
+			{
+				"class": "F",
+				"method": "normalize",
+				"line": 28,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 29 is not shown to be array"
+			},
+			{
+				"class": "G",
+				"method": "normalize",
+				"line": 33,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 34 is not shown to be array"
+			},
+			{
+				"class": "H",
+				"method": "normalize",
+				"line": 38,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 39 is not shown to be array"
+			},
+			{
+				"class": "I",
+				"method": "normalize",
+				"line": 43,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 44 is not shown to be array"
+			},
+			{
+				"class": "J",
+				"method": "normalize",
+				"line": 48,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 51 is not shown to be array: $v is used in a way the check cannot follow"
+			},
+			{
+				"class": "K",
+				"method": "normalize",
+				"line": 55,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 59 is not shown to be array: $v is used in a way the check cannot follow"
+			},
+			{
+				"class": "L",
+				"method": "normalize",
+				"line": 63,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 66 is not shown to be array: $v is used in a way the check cannot follow"
+			},
+			{
+				"class": "M",
+				"method": "normalize",
+				"line": 70,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 72 is not shown to be array: $v is assigned a value not shown to be array"
+			},
+			{
+				"class": "N",
+				"method": "normalize",
+				"line": 76,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 77 is not shown to be array: $v is never assigned in the method"
+			},
+			{
+				"class": "O",
+				"method": "normalize",
+				"line": 81,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the return on line 83 is not shown to be array"
+			},
+			{
+				"class": "P",
+				"method": "normalize",
+				"line": 89,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the body can end without a return"
+			},
+			{
+				"class": "Q",
+				"method": "normalize",
+				"line": 96,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the body has no return statement"
+			},
+			{
+				"class": "R",
+				"method": "normalize",
+				"line": 101,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the body is a generator"
+			},
+			{
+				"class": "S",
+				"method": "normalize",
+				"line": 107,
+				"reason": "the declared type ArrayObject|array|string|int|float|bool|null is wider than the parent type array and the body can end without a return"
+			}
+		]
+	},
+	{
+		"name": "declared types that are not a wider supertype are left alone",
+		"expected": "<?php\nclass A extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\treturn null;\n\t}\n}\nclass B extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): int {\n\t\treturn null;\n\t}\n}\nclass C extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): string|null {\n\t\treturn null;\n\t}\n}\nclass D extends \\Other\\Base {\n\tpublic function normalize($o, $f = NULL, array $c = []): array|string {\n\t\treturn null;\n\t}\n}\nclass E extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): (A&B)|array {\n\t\treturn null;\n\t}\n}\nclass F extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tprotected function normalize($o, $f = NULL, array $c = []): array|string {\n\t\treturn null;\n\t}\n}\nclass G extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = [], $x = 1): array|string {\n\t\treturn null;\n\t}\n}\n",
+		"refusals": []
+	},
+	{
+		"name": "parent call is trusted only when no class of the module sits between",
+		"expected": "<?php\nnamespace M;\nuse Drupal\\serialization\\Normalizer\\FieldItemNormalizer;\nclass Mid extends FieldItemNormalizer {\n}\nclass Direct extends FieldItemNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\treturn parent::normalize($o, $f, $c);\n\t}\n}\nclass Through extends Mid {\n\tpublic function normalize($o, $f = NULL, array $c = []): array|string {\n\t\treturn parent::normalize($o, $f, $c);\n\t}\n}\nclass Other extends FieldItemNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array|string {\n\t\treturn parent::other($o, $f, $c);\n\t}\n}\n",
+		"refusals": [
+			{
+				"class": "M\\Through",
+				"method": "normalize",
+				"line": 12,
+				"reason": "the declared type array|string is wider than the parent type array and the return on line 13 is not shown to be array"
+			},
+			{
+				"class": "M\\Other",
+				"method": "normalize",
+				"line": 17,
+				"reason": "the declared type array|string is wider than the parent type array and the return on line 18 is not shown to be array"
+			}
+		]
+	},
+	{
+		"name": "narrowing from a PHP interface and from other scalar parents",
+		"expected": "<?php\nclass A implements \\Countable {\n\tpublic function count(): int { return 1; }\n\tpublic function other() { return 1; }\n}\nclass B extends \\Drupal\\Core\\GeneratedLink {\n\tpublic function count(): int|string { return \"1\"; }\n\tpublic function jsonSerialize(): string { return (string) $this->a; }\n}\nclass C implements \\JsonSerializable {\n\tpublic function jsonSerialize(): mixed { return 1; }\n}\n",
+		"refusals": [
+			{
+				"class": "B",
+				"method": "count",
+				"line": 7,
+				"reason": "the declared type int|string is wider than the parent type int and the return on line 7 is not shown to be int"
+			}
+		]
+	},
+	{
+		"name": "a narrowed method next to an untyped one and a nested class",
+		"expected": "<?php\nnamespace M;\nuse Drupal\\Core\\TypedData\\Plugin\\DataType\\ItemList;\nclass L extends ItemList {\n\tpublic function count(): int { return 1; }\n\tpublic function offsetExists($o): bool { return true; }\n}\nclass W extends \\Drupal\\serialization\\Normalizer\\ComplexDataNormalizer {\n\tpublic function normalize($o, $f = NULL, array $c = []): array {\n\t\t$anon = new class { public function normalize($a, $b = NULL, array $c = []): mixed { return null; } };\n\t\treturn [];\n\t}\n}\n",
+		"refusals": []
+	}
+]

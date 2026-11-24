@@ -1,5 +1,10 @@
-import { detectConflicts, planSync, safeName } from '../ops/git-sync';
-import { digestSource } from '../ops/module-integrity';
+import {
+	type AutoloadDeclaration,
+	commitStalesContainer,
+	parseAutoloadDeclaration
+} from '../ops/composer/package-install';
+import { detectConflicts, planSync, safeName } from '../ops/git/sync';
+import { digestSource } from '../ops/module/integrity';
 import {
 	activeRevision,
 	type Blob,
@@ -22,17 +27,13 @@ import {
 	revisionStatus,
 	setActive,
 	storeBlobs
-} from '../ops/module-rev';
-import {
-	type AutoloadDeclaration,
-	commitStalesContainer,
-	parseAutoloadDeclaration
-} from '../ops/package-install';
+} from '../ops/module/rev';
+import { addWritten, emptyReport, receiptOf, type ReturnTypeReport } from '../ops/return-types';
 import type { SitePhpDurableObject } from '../site-do';
 import { jsonError } from '../util/reply';
 import { firstRow } from '../util/sql';
-import { gitApply, gitRestore, gitVerifyBoot } from './git-delivery';
-import { trustedEntries } from './module-files';
+import { gitApply, gitRestore, gitVerifyBoot } from './git/delivery';
+import { executedFiles, trustedEntries } from './module-files';
 
 /**
  * Eight actions over uploaded module revisions, mirroring `/git`'s single-route shape. Only
@@ -99,7 +100,10 @@ export async function handleModify(
 			const declared = Array.isArray(body.files) ? body.files : [];
 			const blobs = planBlobs(site.sql, declared);
 			// not `planSync`: a declared file with no blob has no source and would read as removed
-			const change = planDeclared(site.sql, site.gitStoredFiles(pkg), declared, options);
+			const stored = site.gitStoredFiles(pkg);
+			const change = planDeclared(site.sql, stored, declared, options, (files) =>
+				executedFiles(site.env, stored, files, emptyReport())
+			);
 			return Response.json({
 				ok: true,
 				package: pkg,
@@ -298,6 +302,7 @@ type PreparedRevision =
 			rewired: boolean;
 			counts: ReturnType<typeof planSync>['counts'];
 			rowsWritten: number;
+			returnTypes: ReturnTypeReport;
 	  }
 	| { ok: false; [key: string]: unknown };
 
@@ -338,9 +343,20 @@ function prepareRevision(
 	}
 	const stored = site.gitStoredFiles(pkg);
 	const before = trustedEntries(site, [...stored.entries()]);
-	const plan = planSync(stored, files);
+	// planned against the bytes that will be stored, so an identical commit writes nothing
+	const done = emptyReport();
+	const plan = planSync(stored, executedFiles(site.env, stored, files, done));
+	const returnTypes = emptyReport();
+	addWritten(returnTypes, done, new Set(plan.writes.map((w) => w.path)));
 	const rewired = gitApply(site, pkg, plan, rev);
-	return { ok: true, before, rewired, counts: plan.counts, rowsWritten: plan.rowsWritten };
+	return {
+		ok: true,
+		before,
+		rewired,
+		counts: plan.counts,
+		rowsWritten: plan.rowsWritten,
+		returnTypes
+	};
 }
 
 /**
@@ -372,7 +388,8 @@ export async function applyRevision(
 		applied: true,
 		rolledBack: false,
 		counts: prepared.counts,
-		rowsWritten: prepared.rowsWritten
+		rowsWritten: prepared.rowsWritten,
+		returnTypes: receiptOf(prepared.returnTypes)
 	};
 }
 

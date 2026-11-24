@@ -1,3 +1,4 @@
+import { portFibers } from '../ops/composer/package-install';
 import {
 	digestBytes,
 	digestSource,
@@ -9,11 +10,19 @@ import {
 	readPackageRecords,
 	recordMatches,
 	writePackageRecords
-} from '../ops/module-integrity';
-import { OWNER_HASH_KEY } from '../ops/site-secrets';
+} from '../ops/module/integrity';
+import { proxyStub } from '../ops/proxy-stub';
+import {
+	addReturnTypes,
+	emptyReport,
+	type ModuleSource,
+	type ReturnTypeReport,
+	returnTypesOff
+} from '../ops/return-types';
+import { OWNER_HASH_KEY } from '../ops/site/secrets';
 import type { SitePhpDurableObject } from '../site-do';
 import { firstRow } from '../util/sql';
-import { trustsModuleFiles } from './role';
+import { trustsModuleFiles } from './replica/role';
 
 /** one file a delivery stores */
 export type ModuleFilePut = { path: string; source: string; version: string };
@@ -26,6 +35,8 @@ export type ModuleFileChange = {
 	/** delete every row of the package first */
 	clear?: boolean;
 	installedAt: number;
+	/** receives what the return type rewrite did to this delivery */
+	returnTypes?: ReturnTypeReport;
 };
 
 /**
@@ -41,11 +52,24 @@ export function changeModuleFiles(
 	change: ModuleFileChange
 ): number {
 	const store = site.secretStore().sealed;
+	// a generated proxy is replaced by a stub, and an extension's untyped overrides gain the return
+	// types core now declares, so the record and the row hold the bytes that run
+	const stubbed = (change.put ?? []).map((file) => ({
+		...file,
+		source: proxyStub(file.path, file.source)
+	}));
+	const put = returnTypesOff(site.env)
+		? stubbed
+		: addReturnTypes(
+				stubbed,
+				change.returnTypes ?? emptyReport(),
+				change.clear ? undefined : () => storedSources(site, pkg)
+			);
 	const records = change.clear ? new Map<string, string>() : readPackageRecords(store, pkg);
 	for (const path of change.remove ?? []) records.delete(path);
 	// a path another package owned changes hands, so the old owner's record goes with it
 	const taken = new Map<string, string[]>();
-	for (const file of change.put ?? []) {
+	for (const file of put) {
 		records.set(file.path, digestSource(file.source));
 		const prior = firstRow(
 			site.sql.exec<{ package: string }>(
@@ -68,7 +92,7 @@ export function changeModuleFiles(
 	for (const path of change.remove ?? []) {
 		site.sql.exec('DELETE FROM cfw_module_file WHERE path = ? AND package = ?', path, pkg);
 	}
-	for (const file of change.put ?? []) {
+	for (const file of put) {
 		site.sql.exec(
 			`INSERT INTO cfw_module_file (path, package, version, source, installed_at)
            VALUES (?, ?, ?, ?, ?)
@@ -85,6 +109,41 @@ export function changeModuleFiles(
 		);
 	}
 	return written;
+}
+
+/**
+ * The files as they will be stored: the Fiber port, the generated-proxy stub and the return types.
+ *
+ * A plan compares these with the stored rows, so a file the pipeline changes reads unchanged on a
+ * second identical delivery. `stored` is what the caller already holds for the package, so the
+ * return type pass resolves a parent in an untouched file without another read. What the pass did
+ * goes to `report` by path.
+ */
+export function executedFiles<T extends ModuleSource>(
+	env: { ANACHRON_RETURN_TYPES?: string } | undefined,
+	stored: ReadonlyMap<string, string>,
+	files: readonly T[],
+	report: ReturnTypeReport
+): T[] {
+	const prepared = files.map((file) => ({
+		...file,
+		source: proxyStub(file.path, portFibers(file.path, file.source))
+	}));
+	if (returnTypesOff(env)) return prepared;
+	return addReturnTypes(prepared, report, () =>
+		[...stored].map(([path, source]) => ({ path, source }))
+	);
+}
+
+/** the files a package holds, which a smaller delivery needs to resolve its parent classes */
+function storedSources(site: SitePhpDurableObject, pkg: string): ModuleSource[] {
+	return site.sql
+		.exec<{ path: string; source: string }>(
+			'SELECT path, source FROM cfw_module_file WHERE package = ?',
+			pkg
+		)
+		.toArray()
+		.map((row) => ({ path: String(row.path), source: String(row.source) }));
 }
 
 /** moves a package's rows and records to another name, as a git branch switch does */

@@ -6,16 +6,20 @@ import {
 	SKIPPED_FILES_PER_PACKAGE,
 	skipReason,
 	zipComment
-} from '../ops/lock-install';
+} from '../ops/composer/lock-install';
 import {
 	checkArchiveDigest,
 	distOf,
 	INSTALL_BATCH,
 	type PackageAutoload,
-	unpackTar,
-	unpackZip
-} from '../ops/package-install';
-import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS, SHIPPED_PROVIDES } from '../ops/shipped-lock';
+	unpackArchive,
+	type UnpackResult
+} from '../ops/composer/package-install';
+import {
+	SHIPPED_CORE_VERSION,
+	SHIPPED_LOCK_VERSIONS,
+	SHIPPED_PROVIDES
+} from '../ops/composer/shipped-lock';
 import type { SitePhpDurableObject } from '../site-do';
 import { BodyLimitExceeded, bodyLimitFor, readBounded } from '../site/guards';
 import { errorMessage } from '../util/errors';
@@ -131,9 +135,6 @@ async function fetchOne(
 	const dist = distOf(entry.raw, entry.name);
 	if (dist === undefined)
 		return { ok: false, error: `${entry.name} has no downloadable archive` };
-	if (dist.type !== 'zip' && dist.type !== 'tar') {
-		return { ok: false, error: `${entry.name} ships a ${dist.type}, which is not read here` };
-	}
 	const archive = await fetch(dist.url, { headers: { 'user-agent': 'drupflare' } });
 	if (!archive.ok) return { ok: false, error: `archive ${archive.status} from ${dist.url}` };
 	const bytes = new Uint8Array(await archive.arrayBuffer());
@@ -155,10 +156,11 @@ async function fetchOne(
 			label = `commit:${reference}`;
 		}
 	}
-	const unpacked =
-		dist.type === 'tar' ? unpackTar(bytes, dist.mount) : unpackZip(bytes, dist.mount);
-	if (unpacked.files.some((f) => f.path.split('/').includes('..'))) {
-		return { ok: false, error: `${entry.name} archive holds a path that leaves its mount` };
+	let unpacked: UnpackResult;
+	try {
+		unpacked = unpackArchive(dist.type, bytes, dist.mount);
+	} catch (e) {
+		return { ok: false, error: `${entry.name} ${errorMessage(e)}` };
 	}
 	const autoload = (entry.raw['autoload'] ?? {}) as PackageAutoload['autoload'];
 	const extension = /^(modules|themes|profiles)\//.test(dist.mount);

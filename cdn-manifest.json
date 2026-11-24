@@ -232,34 +232,6 @@
 			"note": "the rollback point bun run bake:pack overwrites on its next run: change counter 16"
 		},
 		{
-			"key": "snapshots/site.sqlite.a18db26a417b",
-			"bytes": 7585792,
-			"sha256": "a18db26a417b65e163b7a4a5a3ac250d41048e40f2eb84a7e6da51777f5d8974",
-			"md5": "d62c74571fc35f2b0b3559b8f70e2b9d",
-			"note": "change counter 19, superseded by cc27; no mirrors field because it is history now"
-		},
-		{
-			"key": "snapshots/site.sqlite.2259f3f96066",
-			"bytes": 7585792,
-			"sha256": "2259f3f96066719fc3f9a0e9c0c1bfc383a0ebefbbe4900d443da70e9210355a",
-			"md5": "bb6d5813b0638d00835aaeaf522e2e52",
-			"note": "change counter 27, the FIRST page max_age fix; superseded by the committed f97005b9 lineage and kept because an archive is a snapshot"
-		},
-		{
-			"key": "snapshots/site.sqlite.f97005b96889",
-			"bytes": 7585792,
-			"sha256": "f97005b968897b0b16c5c7d1513253f6ca6399682ae970ec2d5c46bde50975e1",
-			"md5": "ea53ebfc02519dfa1bfba6d7220e71fd",
-			"note": "the packed database before the 11.4.6 rebuild at 3e4f2737; the bucket still held it while the tree had moved to 5,349,376 bytes, which is the size-mismatch the scheduled verify reported. Archived by the upload that replaced it"
-		},
-		{
-			"key": "snapshots/site.sqlite.aa7c5cb00024",
-			"bytes": 5349376,
-			"sha256": "aa7c5cb00024ad1a94ba25e534fda9cb98c57c831795fab2e2a2863055eaddde",
-			"md5": "71909c7da0183f3c8e75cc520a75b63e",
-			"note": "the packed database before the 2026-09-25 rebuild against the driver (d8f6097f), whose router lagged it; the bucket still held it while the tree had moved to 5,832,704 bytes. Archived by the upload that replaced it"
-		},
-		{
 			"key": "snapshots/php8.5-worker.mjs.wasm.94d598fc403b",
 			"bytes": 12234575,
 			"sha256": "94d598fc403bf66690b76cf05aff508bb5dc47e641e963dc57dd4c43bcd28458",
@@ -318,27 +290,6 @@
 			"note": "its glue, which the seam imports as PHPFactory"
 		},
 		{
-			"key": "snapshots/site.sqlite.110877375492",
-			"bytes": 5832704,
-			"sha256": "110877375492baacac46e515ff5bd4756596f95e3a70522e97359e2bafef2327",
-			"md5": "fc935bc9e8637af97f8239af7f142084",
-			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-09-30"
-		},
-		{
-			"key": "snapshots/site.sqlite.46255d6586d0",
-			"bytes": 5832704,
-			"sha256": "46255d6586d041bfcc461fa2c9fe013be6cff5a8143b177c94b471b03f1b9495",
-			"md5": "0a8f2d13654027f95eb3982e2c611e12",
-			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-10-16"
-		},
-		{
-			"key": "snapshots/site.sqlite.92bcbdea7054",
-			"bytes": 5832704,
-			"sha256": "92bcbdea7054e67c83d70200cf47ab5c6b78b7d521cf2f002e4527ebe63904c1",
-			"md5": "2dc5e9f31b7604a1db51574f53142fde",
-			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-10-16"
-		},
-		{
 			"key": "snapshots/php8.5-worker.mjs.wasm.fc6a660dec09",
 			"bytes": 13401742,
 			"sha256": "fc6a660dec094cba2daf7461849e3c40ccc270e78f40d7ea289c827f6b7a85ac",
@@ -351,27 +302,6 @@
 			"sha256": "e86ef3e20ff94f136a1bc1ed7ec926fdb171bcd2b08b8a843449911d21f944ae",
 			"md5": "9de83d79aad46b4c4bbada9204e8e69a",
 			"note": "vendor/static-long64/php8.5-worker.mjs as the bucket held it until an upload replaced it on 2026-10-23"
-		},
-		{
-			"key": "snapshots/site.sqlite.27f7b1965297",
-			"bytes": 5832704,
-			"sha256": "27f7b1965297074cedcd1ad7a8753ecfb836631495b68194ceb50f8d896cd0a2",
-			"md5": "99f059a18a9448eb1113d6d7ce344fc8",
-			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-10-23"
-		},
-		{
-			"key": "snapshots/site.sqlite.fbd9d664e5dd",
-			"bytes": 5832704,
-			"sha256": "fbd9d664e5dd64698a60fad2f6c38d1be70e425df82cb40b06ff189ee1005c7c",
-			"md5": "4a2dc7d87a4f49d0b231ba99dbb729d5",
-			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-11-01"
-		},
-		{
-			"key": "snapshots/site.sqlite.bf47f4bf4380",
-			"bytes": 5832704,
-			"sha256": "bf47f4bf43802d4599fef76d807d8b9eba97ec415faa88d5ce997b9fef6bab2a",
-			"md5": "46ec2d4d62f237234f72bc737bd81893",
-			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-11-02"
 		},
 		{
 			"key": "snapshots/site.sqlite.f583d0d942b6",

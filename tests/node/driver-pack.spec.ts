@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { cmsSelection } from '../../scripts/cms.ts';
+import { CMS_VALUES as SCRIPT_CMS_VALUES, cmsSelection } from '../../scripts/cms.ts';
 import {
 	DRIVER_ASSET_PATH,
 	DRIVER_DIGEST_PATH,
@@ -25,12 +25,13 @@ import {
 	driverOutputPaths,
 	serialiseDriverAssets,
 	serialiseDriverDigest
-} from '../../scripts/gen-driver-assets.ts';
+} from '../../scripts/gen/driver-assets.ts';
 import {
 	DRIVER_DIGEST,
 	DRIVER_ROUTES,
 	DRIVER_ROUTE_PERMISSIONS
 } from '../../src/ops/driver-digest.ts';
+import { CMS_VALUES } from '../../src/util/cms.ts';
 
 /**
  * `assets/driver.json` is the copy of the Drupal modules that ACTUALLY EXECUTES on the edge, and
@@ -283,7 +284,7 @@ describe('the packer carries every declaration file a sibling module has', () =>
 
 describe('the packer ships the libraries a page attaches', () => {
 	it('lists .libraries.yml among the parts gen-driver-assets packs', () => {
-		const source = readFileSync(join(root, 'scripts', 'gen-driver-assets.ts'), 'utf8');
+		const source = readFileSync(join(root, 'scripts', 'gen', 'driver-assets.ts'), 'utf8');
 		expect(source).toMatch(/const MODULE_PARTS = \[[^\]]*'\.libraries\.yml'/);
 	});
 });
@@ -383,7 +384,7 @@ describe('the WordPress row set packs the sibling code Drupal skips', () => {
 	});
 
 	it('fails when a shim class is left out of the pack: the control drops one', async () => {
-		const rows = (await import('../../scripts/gen-driver-assets.ts')).WORDPRESS_MODULES;
+		const rows = (await import('../../scripts/gen/driver-assets.ts')).WORDPRESS_MODULES;
 		const without = rows.map((row) =>
 			row.mount.endsWith('/lib')
 				? { ...row, parts: row.parts!.filter((p) => p !== 'Shim/Gd.php') }
@@ -421,7 +422,7 @@ describe('the WordPress row set packs the sibling code Drupal skips', () => {
 	});
 
 	it('moves every path with the mount: a different mount is a different pack', async () => {
-		const rows = (await import('../../scripts/gen-driver-assets.ts')).WORDPRESS_MODULES;
+		const rows = (await import('../../scripts/gen/driver-assets.ts')).WORDPRESS_MODULES;
 		const moved = await buildDriverAssets(
 			'wordpress',
 			rows.map((row) => ({ ...row, mount: `elsewhere/${row.mount}` }))
@@ -459,6 +460,11 @@ describe('the build packs the CMS the shipping config selects', () => {
 		expect(() => cmsSelection('Drupal')).toThrow(/not a CMS this build can pack/);
 		expect(() => cmsSelection('WordPress')).toThrow(/not a CMS this build can pack/);
 		expect(() => buildCms('nope')).toThrow(/nope/);
+	});
+
+	it('reads the build list from the one the shared tables are typed on', () => {
+		expect(SCRIPT_CMS_VALUES).toBe(CMS_VALUES);
+		expect([...CMS_VALUES]).toEqual(['drupal', 'wordpress', 'joomla']);
 	});
 
 	it('accepts wordpress and joomla by name but refuses to pack a CMS with no module set', async () => {

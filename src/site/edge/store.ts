@@ -1,10 +1,10 @@
-import { carriesAuthorization } from '../ops/auth-budget';
-import { moduleHeadersOf } from '../ops/module-headers';
-import { KV_GRANT_HEADER, pageKvEnabled, writePage } from '../ops/page-store';
-import { servingFor } from '../ops/store-rule';
-import { cmsOf } from '../util/cms';
-import { putPage } from './edge-cache';
-import type { AuthState, FrontContext, Learned, StoreOutcome } from './types';
+import { carriesAuthorization } from '../../ops/meters/auth-budget';
+import { moduleHeadersOf } from '../../ops/module/headers';
+import { KV_GRANT_HEADER, pageKvEnabled, writePage } from '../../ops/page/store';
+import { servingFor } from '../../ops/store-rule';
+import { cmsOf } from '../../util/cms';
+import type { AuthState, FrontContext, Learned, StoreOutcome } from '../types';
+import { putPage } from './cache';
 
 /** Offers the answer to the edge cache and the KV page tier, and reports what each decided. */
 export function storeEdge(

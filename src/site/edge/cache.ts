@@ -1,5 +1,5 @@
-import type { SiteEnv } from '../env';
-import { moduleHeadersOf } from '../ops/module-headers';
+import type { SiteEnv } from '../../env';
+import { moduleHeadersOf } from '../../ops/module/headers';
 
 /** how long an edge-cached page stays fresh, in seconds */
 export const EDGE_PAGE_TTL_S = 300;
@@ -144,7 +144,7 @@ export function putPage(
 
 	// cloned now: a clone taken after the caller consumes the body is empty
 	const copy = new Response(res.clone().body, { status: 200, headers });
-	// no memo seed here: it would hide the `EDGE` tier from `serve-edge.spec.ts` to save one
+	// no memo seed here: it would hide the `EDGE` tier from `serve/edge.spec.ts` to save one
 	// 0.65 ms read per isolate per page
 	return {
 		outcome: 'deferred',

@@ -1,11 +1,11 @@
-import { MODULE_HEADER_NAMES } from '../ops/module-headers';
-import { lookupPageMemo, pageMemoHeaders, storePageMemo } from '../ops/page-memo';
-import { readPage, readStalePage } from '../ops/page-store';
-import { servingFor, storesPath } from '../ops/store-rule';
-import { cmsOf } from '../util/cms';
-import { pageKeyUrl, readGeneration } from './edge-cache';
-import { primeLanes } from './memos';
-import type { AuthState, EdgeRead, FrontContext } from './types';
+import { MODULE_HEADER_NAMES } from '../../ops/module/headers';
+import { lookupPageMemo, pageMemoHeaders, storePageMemo } from '../../ops/page/memo';
+import { readPage, readStalePage } from '../../ops/page/store';
+import { servingFor, storesPath } from '../../ops/store-rule';
+import { cmsOf } from '../../util/cms';
+import { primeLanes } from '../memos';
+import type { AuthState, EdgeRead, FrontContext } from '../types';
+import { pageKeyUrl, readGeneration } from './cache';
 
 /** Reads the isolate memo and `caches.default`, and primes the lane pointer on the way. */
 export async function readEdgeTiers(

@@ -2,13 +2,6 @@ import { type LazyFS, mkdirp } from '@drupflare/cartridge/fs';
 import { withMask } from '@drupflare/cartridge/mask';
 import { defaultCache } from '../ops/cache-api';
 import {
-	bytesToSource,
-	sourceBytes,
-	STORED_BYTES_BINDINGS,
-	STORED_BYTES_SQL
-} from '../ops/module-bytes';
-import { type OracleResult, resolveInstallable } from '../ops/oracle';
-import {
 	asksForBranch,
 	ASSET_KEEP,
 	type AutoloadDeclaration,
@@ -26,11 +19,30 @@ import {
 	portFibers,
 	type Registry,
 	type ResolvedPackage,
-	type UnpackResult,
-	unpackZip
-} from '../ops/package-install';
-import { releaseEvicted } from '../ops/release-host';
-import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS, SHIPPED_PROVIDES } from '../ops/shipped-lock';
+	unpackArchive,
+	type UnpackResult
+} from '../ops/composer/package-install';
+import {
+	ASSET_PACKAGIST,
+	inlineDocument,
+	type InlineRepository,
+	isAssetPackage,
+	type Repository,
+	repositoryDocument
+} from '../ops/composer/repositories';
+import {
+	SHIPPED_CORE_VERSION,
+	SHIPPED_LOCK_VERSIONS,
+	SHIPPED_PROVIDES
+} from '../ops/composer/shipped-lock';
+import {
+	bytesToSource,
+	sourceBytes,
+	STORED_BYTES_BINDINGS,
+	STORED_BYTES_SQL
+} from '../ops/module/bytes';
+import { type OracleResult, resolveInstallable } from '../ops/oracle';
+import { emptyReport, receiptOf, type ReturnTypeReport } from '../ops/return-types';
 import type { SitePhpDurableObject } from '../site-do';
 import { errorMessage, isMissingTable } from '../util/errors';
 import { firstRow } from '../util/sql';
@@ -120,7 +132,8 @@ export async function installTree(
 	constraint?: string,
 	budget = { left: INSTALL_BATCH },
 	stability?: string,
-	ignoreCore = false
+	ignoreCore = false,
+	repositories: readonly Repository[] = []
 ): Promise<Record<string, unknown>[]> {
 	const installed = new Set(
 		[
@@ -160,7 +173,9 @@ export async function installTree(
 			continue;
 		}
 		installed.add(pkg);
-		const out = await site.installPackage(registry, pkg, wanted, stability, ignoreCore);
+		const out = await site.installPackage(registry, pkg, wanted, stability, ignoreCore, [
+			...repositories
+		]);
 		results.push(out);
 		if (out['ok'] !== true) continue;
 		const replaces = (out['replaces'] ?? []) as string[];
@@ -178,7 +193,8 @@ export async function installTree(
  * Writes an unpacked package: one row per file, and for a vendor package its autoload map.
  *
  * Nothing here awaits, so a Durable Object commits it as one write. `dropContainer` is false for
- * a caller that drops the compiled container once, after its last package.
+ * a caller that drops the compiled container once, after its last package. `returnTypes` receives
+ * what the return type rewrite did to the extension files.
  */
 export function storePackageFiles(
 	site: SitePhpDurableObject,
@@ -186,12 +202,23 @@ export function storePackageFiles(
 	dist: Pick<ResolvedPackage, 'version' | 'mount'>,
 	autoload: PackageAutoload['autoload'],
 	unpacked: UnpackResult,
-	dropContainer = true
+	dropContainer = true,
+	returnTypes?: ReturnTypeReport
 ): void {
 	const decoder = new TextDecoder();
+	// a different version replaces the tree, or files only the old one had stay beside the new ones
+	const replaced =
+		site.sql
+			.exec(
+				'SELECT 1 FROM cfw_module_file WHERE package = ? AND version != ? LIMIT 1',
+				name,
+				dist.version
+			)
+			.toArray().length > 0;
 	site.rowsSinceFlush =
 		(site.rowsSinceFlush ?? 0) +
 		changeModuleFiles(site, name, {
+			clear: replaced,
 			put: unpacked.files.map((file) => ({
 				path: file.path,
 				version: dist.version,
@@ -199,7 +226,8 @@ export function storePackageFiles(
 					? bytesToSource(file.bytes)
 					: portFibers(file.path, decoder.decode(file.bytes))
 			})),
-			installedAt: site.nowMs()
+			installedAt: site.nowMs(),
+			returnTypes
 		});
 	const extension = /^(modules|themes|profiles)\//.test(dist.mount);
 	if (extension && dropContainer) site.dropCompiledContainer();
@@ -232,7 +260,7 @@ export function storePackageFiles(
  * The host half of `composer require` and of a git-delivered module (PHP cannot block on a
  * socket). Every file is its own row because a Durable Object record caps at 2,199,995 bytes.
  *
- * Reports what it dropped: `unpackZip()` keeps only mountable files.
+ * Reports what it dropped: `unpackArchive()` keeps only mountable files.
  */
 export async function installPackage(
 	site: SitePhpDurableObject,
@@ -240,14 +268,42 @@ export async function installPackage(
 	name: string,
 	constraint?: string,
 	stability?: string,
-	ignoreCore = false
+	ignoreCore = false,
+	repositories: readonly Repository[] = []
 ): Promise<Record<string, unknown>> {
 	site.ensureServeTables();
 	try {
 		let url = metadataUrl(registry, name);
-		let meta = await fetch(url);
+		// asset packagist serves no p2 document, so its names skip the standard lookup
+		const asset = registry === 'composer' && isAssetPackage(name);
+		// a package the project defines itself is that definition, as composer reads a `package` repository
+		const defined = repositories.find(
+			(r): r is InlineRepository =>
+				r.type === 'package' && r.name.toLowerCase() === name.toLowerCase()
+		);
+		let meta = defined
+			? Response.json(inlineDocument(defined, name))
+			: asset
+				? new Response(null, { status: 404 })
+				: await fetch(url);
 		const elsewhere = meta.status === 404 ? fallbackMetadataUrl(registry, name) : undefined;
 		if (elsewhere !== undefined) meta = await fetch((url = elsewhere));
+		if (meta.status === 404 && registry === 'composer') {
+			const listed = await repositoryDocument(
+				[...(asset ? [ASSET_PACKAGIST] : []), ...repositories],
+				name
+			);
+			if (listed !== undefined) meta = Response.json(listed);
+		}
+		// a project with branches only has no tag document, so its branch document is the one
+		if (
+			meta.status === 404 &&
+			registry !== 'npm' &&
+			(asksForBranch(constraint) || stability === 'dev')
+		) {
+			const branches = await fetch(devMetadataUrl(metadataUrl(registry, name)));
+			if (branches.ok) meta = branches;
+		}
 		if (!meta.ok) {
 			return { ok: false, name, error: `metadata ${meta.status} for ${name}` };
 		}
@@ -309,15 +365,6 @@ export async function installPackage(
 		}
 		const dist = distOf(entry, name);
 		if (!dist) return { ok: false, name, error: `${name} has no downloadable archive` };
-		if (dist.type !== 'zip') {
-			// only npm serves tarballs and none is mountable as PHP, so refuse
-			return {
-				ok: false,
-				name,
-				error: `${name} ships a ${dist.type}, which is not read here`
-			};
-		}
-
 		const archive = await fetch(dist.url, { headers: { 'user-agent': 'drupflare' } });
 		if (!archive.ok) {
 			return { ok: false, name, error: `archive ${archive.status} from ${dist.url}` };
@@ -326,14 +373,17 @@ export async function installPackage(
 		// before anything is unpacked; `force` never reaches this function, and nothing waives it
 		const checked = await checkArchiveDigest(dist, archiveBytes);
 		if (!checked.ok) return { ok: false, name, error: checked.error };
-		const unpacked = unpackZip(archiveBytes, dist.mount);
+		const unpacked = unpackArchive(dist.type, archiveBytes, dist.mount);
 
+		const returnTypes = emptyReport();
 		storePackageFiles(
 			site,
 			name,
 			dist,
 			(entry['autoload'] ?? {}) as PackageAutoload['autoload'],
-			unpacked
+			unpacked,
+			true,
+			returnTypes
 		);
 		return {
 			ok: true,
@@ -348,6 +398,7 @@ export async function installPackage(
 			verified: checked.verified,
 			...(checked.digest === undefined ? {} : { digest: checked.digest }),
 			skipped: unpacked.skipped.length,
+			returnTypes: receiptOf(returnTypes),
 			// dropped so the next boot mounts the files (a warm object would fatal on a module
 			// PHP cannot see)
 			note: 'installed; the interpreter is dropped so the next request mounts it'
@@ -408,7 +459,6 @@ export function mountInstalledModules(site: SitePhpDurableObject, binary: SiteBi
 				if (residentBytes <= INSTALLED_FS_BUDGET_BYTES) break;
 				if (other === node || other.cfwDirty) continue;
 				resident.delete(other);
-				releaseEvicted(site.env, other.contents);
 				other.contents = null;
 				other.cfwLoaded = false;
 				residentBytes -= bytes;

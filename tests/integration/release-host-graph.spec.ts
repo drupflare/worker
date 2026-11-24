@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RetentionHost } from '../../src/do/host';
 import { adoptRetained, resetPhp, retainInterpreter, retire } from '../../src/do/retention';
-import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
+import { freshSite, inObject } from '../helpers/serve-do';
 
 /**
- * RELEASE_HOST_GRAPH: an interpreter dropped for good has its filesystem graph released, at every
- * place that forgets one, and never while another object still runs it.
+ * An interpreter dropped for good has its filesystem graph released, at every place that forgets
+ * one, and never while another object still runs it. `RELEASE_HOST_GRAPH=0` turns it off.
  *
  * The mount is a one-file fake; its file's byte length going to 0 is the release.
  */
@@ -43,88 +43,69 @@ function mount() {
 	};
 }
 
-async function armed<T>(site: ServeDo, fn: () => Promise<T> | T, extra: string[] = []): Promise<T> {
-	const names = ['RELEASE_HOST_GRAPH', ...extra];
-	for (const name of names) site.env[name] = '1';
-	// a drop parks the interpreter while restarts are on, which is not a release
-	if (!extra.includes('REFRESH_INSTANCE')) site.env['REFRESH_INSTANCE'] = '0';
-	try {
-		return await fn();
-	} finally {
-		for (const name of names) delete site.env[name];
-		delete site.env['REFRESH_INSTANCE'];
-	}
-}
-
 describe('the setter', () => {
-	it('releases nothing when the flag is unset', async () => {
+	it('releases the graph of the sole owner with no variable set', async () => {
 		const m = mount();
 		await inObject(freshSite(), (site) => {
-			site.env['REFRESH_INSTANCE'] = '0';
 			site.php = m.instance;
 			site.phpOwner = { current: site };
 			site.php = undefined;
-			delete site.env['REFRESH_INSTANCE'];
+		});
+		expect(m.released()).toBe(true);
+	});
+
+	it('releases nothing when the variable is 0', async () => {
+		const m = mount();
+		await inObject(freshSite(), (site) => {
+			site.env['RELEASE_HOST_GRAPH'] = '0';
+			try {
+				site.php = m.instance;
+				site.phpOwner = { current: site };
+				site.php = undefined;
+			} finally {
+				delete site.env['RELEASE_HOST_GRAPH'];
+			}
 		});
 		expect(m.released()).toBe(false);
 	});
 
-	it('releases the graph of the sole owner when the flag is 1', async () => {
-		const m = mount();
-		await inObject(freshSite(), (site) =>
-			armed(site, () => {
-				site.php = m.instance;
-				site.phpOwner = { current: site };
-				site.php = undefined;
-			})
-		);
-		expect(m.released()).toBe(true);
-	});
-
 	it('leaves an instance another object adopted, until that object drops it', async () => {
 		const m = mount();
-		const outcome = await inObject(freshSite(), (site) =>
-			armed(site, () => {
-				const owner = { current: site as unknown };
-				site.php = m.instance;
-				site.phpOwner = owner;
-				owner.current = {};
-				site.php = undefined;
-				const afterStale = m.released();
-				owner.current = site;
-				site.php = m.instance;
-				site.php = undefined;
-				return { afterStale, afterOwner: m.released() };
-			})
-		);
+		const outcome = await inObject(freshSite(), (site) => {
+			const owner = { current: site as unknown };
+			site.php = m.instance;
+			site.phpOwner = owner;
+			owner.current = {};
+			site.php = undefined;
+			const afterStale = m.released();
+			owner.current = site;
+			site.php = m.instance;
+			site.php = undefined;
+			return { afterStale, afterOwner: m.released() };
+		});
 		expect(outcome).toEqual({ afterStale: false, afterOwner: true });
 	});
 
 	it('leaves an instance that still holds parked sockets', async () => {
 		const m = mount();
-		await inObject(freshSite(), (site) =>
-			armed(site, () => {
-				site.php = m.instance;
-				site.phpOwner = { current: site };
-				site.parkSockets = { size: 1 };
-				site.php = undefined;
-			})
-		);
+		await inObject(freshSite(), (site) => {
+			site.php = m.instance;
+			site.phpOwner = { current: site };
+			site.parkSockets = { size: 1 };
+			site.php = undefined;
+		});
 		expect(m.released()).toBe(false);
 	});
 
-	it('parks the instance rather than releasing it when REFRESH_INSTANCE is also 1', async () => {
-		const m = mount();
-		const parked = await inObject(freshSite(), (site) =>
-			armed(site, () => {
-				site.php = m.instance;
-				site.phpOwner = { current: site };
-				site.php = undefined;
-				return site.pendingRefresh === m.instance;
-			}, ['REFRESH_INSTANCE'])
-		);
-		expect(parked).toBe(true);
-		expect(m.released()).toBe(false);
+	it('drops an interpreter whose filesystem lacks the members the release walks', async () => {
+		const bare = { php: {}, binary: { FS: { lookupPath: () => ({ node: {} }) } }, out: [] };
+		const dropped = await inObject(freshSite(), (site) => {
+			site.php = bare as never;
+			site.phpOwner = { current: site };
+			site.php = undefined;
+			return site.php === undefined;
+		});
+		expect(dropped).toBe(true);
 	});
 });
 
@@ -163,7 +144,7 @@ function retainedBy(id: string, env: Record<string, string>) {
 }
 
 describe('the retained copy', () => {
-	const on = { RELEASE_HOST_GRAPH: '1', MEMORY_TRACE: '1' };
+	const on = { MEMORY_TRACE: '1' };
 	const logged = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 	const releases = () =>
 		logged.mock.calls.filter((c) => String(c[0]).includes('host-release')).length;
@@ -212,8 +193,8 @@ describe('the retained copy', () => {
 		expect(releases()).toBe(1);
 	});
 
-	it('is released by none of the three with the flag unset', async () => {
-		const off = {};
+	it('is released by none of the three when the variable is 0', async () => {
+		const off = { RELEASE_HOST_GRAPH: '0', MEMORY_TRACE: '1' };
 		const stale = retainedBy('off-stale-id', off);
 		adoptRetained(asHost(fakeHost('off-stale-id', off, 2)));
 		const reset = retainedBy('off-reset-id', off);

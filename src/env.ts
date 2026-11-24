@@ -8,7 +8,7 @@ import type { SendEmailLike } from './ops/mail';
 export interface SiteEnv extends BaseSiteEnv {
 	/** the serving Worker version, reported on `/health`; absent under `wrangler dev --local` */
 	CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
-	/** the lanes an upload's image styles are rendered on; see `src/ops/render-lane.ts` */
+	/** the lanes an upload's image styles are rendered on; see `src/ops/image/render-lane.ts` */
 	RENDER_LANES?: DurableObjectNamespace;
 	/** `0` stops rendering styles on upload while the binding stays */
 	EAGER_DERIVATIVES?: string;
@@ -29,10 +29,49 @@ export interface SiteEnv extends BaseSiteEnv {
 	 * `RECYCLE_ABOVE_BYTES` reads linear memory alone, but the 128 MiB ceiling covers both.
 	 */
 	ISOLATE_ABOVE_BYTES?: string | number;
-	PREFILL?: string;
 	/**
-	 * WordPress only: `1` lets an anonymous, cookie-free page enter the stores, which hold nothing
-	 * for WordPress otherwise. Off unless `1`; never set in `wrangler.jsonc` or `KV_OVERRIDABLE`.
+	 * Explicit cap in bytes on the interpreter's linear memory; a grow past it is refused and the
+	 * run fails instead of the isolate being reset. Wins over the ledger.
+	 */
+	GROWTH_CAP_BYTES?: string | number;
+	/** the cap is derived from the ledger and on unless this is `0` */
+	GROWTH_GOVERNOR?: string;
+	/** a governed run is one transaction that a refused grow rolls back; `0` keeps partial writes */
+	GROWTH_ROLLBACK?: string;
+	/** `0` stops the front worker repeating a fully rolled-back refusal that left no effect */
+	GROWTH_RETRY?: string;
+	/** bytes past the computed cap that the repeat may grow; default 8 MiB */
+	GROWTH_RETRY_ALLOWANCE_BYTES?: string | number;
+	/** the cap the repeat never passes; default 104 MiB */
+	GROWTH_RETRY_CEILING_BYTES?: string | number;
+	/**
+	 * Routes whose request resets the object first and is repeated once by the front worker on the
+	 * new isolate. Unset or `abort` covers the performance page's cache flush; a comma list of
+	 * `METHOD /path` entries replaces that route; `0` or empty is off
+	 */
+	FRESH_FIRST_ROUTES?: string;
+	/**
+	 * A module enable steps one module per slice, answering 202 until the last lands, when the
+	 * planner predicts it outruns the budget; `always` forces it and `0` turns it off
+	 */
+	STEPPED_OPS?: string;
+	/** predicted PHP ms per module for the planner; default 12000 */
+	STEP_MODULE_COST_MS?: string | number;
+	/** PHP time in ms one invocation may spend on steps before it answers 202; default 20000 */
+	STEP_BUDGET_MS?: string | number;
+	/** the least ms one step is charged against the budget, so an invocation runs one; default 20000 */
+	STEP_FLOOR_MS?: string | number;
+	/** headroom the build holds with the interpreter resident, measured; default 36 MiB */
+	GROWTH_HEADROOM_BYTES?: string | number;
+	/** bytes held back below the headroom; default 4 MiB */
+	GROWTH_MARGIN_BYTES?: string | number;
+	PREFILL?: string;
+	/** `off` stores module code as delivered; otherwise untyped overrides of typed core methods gain the type */
+	ANACHRON_RETURN_TYPES?: string;
+	/**
+	 * WordPress only: an anonymous, cookie-free page enters the stores unless this is `0`, which
+	 * makes them hold nothing for WordPress. On unless `0`; never set in `wrangler.jsonc` or
+	 * `KV_OVERRIDABLE`.
 	 */
 	WORDPRESS_PAGE_CACHE?: string;
 	/** fragment assembly for authenticated GETs; on unless `0` */
@@ -126,24 +165,20 @@ export interface SiteEnv extends BaseSiteEnv {
 	MEMORY_TRACE?: string;
 	/** `1` awaits a storage sync before each reply */
 	COMMIT_SYNC?: string;
-	/** `1` detaches the bytes of an evicted installed file, not only its reference */
-	RELEASE_EVICTED?: string;
-	/** `1` restarts PHP in a dropped interpreter for the next boot instead of building a new one */
-	REFRESH_INSTANCE?: string;
-	/** `1` releases the filesystem graph of an interpreter dropped for good, not only its memory */
+	/** on unless `0`; releases the filesystem graph of an interpreter dropped for good, not only its memory */
 	RELEASE_HOST_GRAPH?: string;
-	/** `1` keeps a restarted interpreter's mount when nothing it was built from has changed */
-	REUSE_MOUNT?: string;
 	/** `1` packs stdout and stderr into chunks instead of one push per byte */
 	PACKED_OUTPUT?: string;
 	/** `1` answers absolute `/drupal/` path lookups from a per-interpreter cache */
 	LOOKUP_MEMO?: string;
 	/** `1` runs the claim's warm phase one unit per invocation, reported as progress */
 	CLAIM_WARM_STEPS?: string;
-	/** on unless `0`; keeps the Drupal pack in the object's storage, not in the isolate */
+	/** on unless `0`, and off by default for WordPress on the free plan; keeps the pack in the object's storage, not in the isolate */
 	COLD_PACK?: string;
 	/** how many 64 KiB chunks of that pack stay in memory; 8 unless set, at most 64 */
 	COLD_PACK_CACHE_CHUNKS?: string;
+	/** `1` turns on the owner route that allocates memory in 4 MiB steps; for measurement only */
+	LADDER_PROBE?: string;
 	/** see `sleepBudgetMs()` */
 	SLEEP_BUDGET_MS?: string;
 	/** the object's own namespace, so a replica lane can reach its primary to pull the log */
@@ -154,6 +189,10 @@ export interface SiteEnv extends BaseSiteEnv {
 	ALARM_DELAY_MS?: string;
 	/** the opcache arm: `file` (shipping), `shm` or `off`; see `src/runtime/opcache.ts` */
 	OPCACHE_MODE?: string;
+	/** PHP's clock advances with host calls inside a run: `1` on, `frozen` stops it, off otherwise */
+	VIRTUAL_CLOCK?: string;
+	/** milliseconds of PHP time per host call when `VIRTUAL_CLOCK` is on; see `src/runtime/virtual-clock.ts` */
+	VIRTUAL_CLOCK_KAPPA_MS?: string;
 	/** argon2id password hashing; off unless `1`, because it rehashes every login */
 	ARGON2?: string;
 	DRUPAL_CRON?: string;

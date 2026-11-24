@@ -8,9 +8,9 @@ import {
 	type SqlBindings,
 	type TxnRequest
 } from '@drupflare/durabledb/do-sqlite';
+import { SqlMigrator, readMigrateCursor, type MigrateCursor } from './db/dump/migrate';
 import type { FileBuckets, MirrorBucket } from './db/file-store';
 import { type HandleIndex } from './db/heap-store';
-import { SqlMigrator, readMigrateCursor, type MigrateCursor } from './db/migrate-sql';
 import { repairWideIntegers, type Row as WideRow } from './db/wide-integers';
 import { markSchemaHook, type MarkState } from './db/write-mark';
 import {
@@ -22,6 +22,16 @@ import {
 } from './db/write-tally';
 import { HeapRestoreIncomplete, type AlarmClass, type HeapRestoreCursor } from './do/alarm';
 import { alarmEntry } from './do/alarm-body';
+import {
+	corruptStoredChunk,
+	handleIndex,
+	heapBytes,
+	pinHandles,
+	snapshotHeap,
+	snapshotStep,
+	tryRestoreHeap
+} from './do/boot/heap-image';
+import { bootPhp, type PhpStatic } from './do/boot/php';
 import { installCapabilities } from './do/capabilities';
 import { fetchRequest } from './do/fetch';
 import {
@@ -61,7 +71,7 @@ import {
 	gitSync,
 	gitWriteStatus,
 	handleGit
-} from './do/git';
+} from './do/git/handler';
 import {
 	gitCredential,
 	gitOwners,
@@ -69,7 +79,8 @@ import {
 	gitRemotes,
 	gitSaveRemotes,
 	gitStoredFiles
-} from './do/git-remotes';
+} from './do/git/remotes';
+import type { GrowthRefusal } from './do/growth/cap';
 import {
 	advisoryVerdict,
 	healthObservation,
@@ -78,15 +89,6 @@ import {
 	observe,
 	supervise
 } from './do/health';
-import {
-	corruptStoredChunk,
-	handleIndex,
-	heapBytes,
-	pinHandles,
-	snapshotHeap,
-	snapshotStep,
-	tryRestoreHeap
-} from './do/heap-image';
 import { cacheTagsIn } from './do/helpers';
 import type {
 	AggregateMemo,
@@ -108,18 +110,6 @@ import {
 import { bumpGeneration, pathsForTags, purgeForTags } from './do/invalidate';
 import { INTERPRETER_IDENTITY, keepSpareMemory } from './do/isolate';
 import { HEAP_IMAGE_ATTEMPTS_KEY } from './do/keys';
-import {
-	applyRestoreChunk,
-	awaitingCopy,
-	catchUpOnce,
-	clearRestore,
-	collectForward,
-	copyBackoffMs,
-	flushForward,
-	laneIsIdle,
-	requestReadmission,
-	sessionReach
-} from './do/lane';
 import { type SiteMountInfo } from './do/lazy-mount';
 import {
 	alarmDelayMs,
@@ -185,17 +175,6 @@ import {
 	pendingTags,
 	settlePendingIfOwed
 } from './do/pending-tags';
-import { bootPhp, type PhpStatic } from './do/php-boot';
-import {
-	autoScaleStep,
-	dequeueLaneRepair,
-	enqueueLaneRepair,
-	laneHeaders,
-	laneRepairQueue,
-	lanesProvisioned,
-	noteLaneServing,
-	provisionLane
-} from './do/pool';
 import {
 	ensureServeTables,
 	migrateChunks,
@@ -234,6 +213,28 @@ import {
 	recycleIfOversized
 } from './do/recycle';
 import {
+	applyRestoreChunk,
+	awaitingCopy,
+	catchUpOnce,
+	clearRestore,
+	collectForward,
+	copyBackoffMs,
+	flushForward,
+	laneIsIdle,
+	requestReadmission,
+	sessionReach
+} from './do/replica/lane';
+import {
+	autoScaleStep,
+	dequeueLaneRepair,
+	enqueueLaneRepair,
+	laneHeaders,
+	laneRepairQueue,
+	lanesProvisioned,
+	noteLaneServing,
+	provisionLane
+} from './do/replica/pool';
+import {
 	advanceCommit,
 	bufferForReplication,
 	commitSeq,
@@ -247,8 +248,7 @@ import {
 	snapshotRows,
 	tableDdl,
 	tableNames
-} from './do/replication';
-import { forgetRetained, resetPhp, retainInterpreter, retire, traceMemory } from './do/retention';
+} from './do/replica/replication';
 import {
 	fenceRefusal,
 	idPartition,
@@ -258,7 +258,8 @@ import {
 	mandatoryGap,
 	replicaStage,
 	setReplicaStage
-} from './do/role';
+} from './do/replica/role';
+import { forgetRetained, resetPhp, retainInterpreter, retire, traceMemory } from './do/retention';
 import { ROUTES } from './do/routes/index';
 import { backgroundHold, run, runJson, settleReply } from './do/run';
 import { adoptOwnerToken, adoptSecrets, readSecret, secretStore, writeSecret } from './do/secrets';
@@ -294,11 +295,10 @@ import {
 	thermalRearmMs,
 	warmCeiling
 } from './do/warming';
-import type { RenderRequest } from './drupal/site-php';
+import type { RenderRequest } from './drupal/php/site';
 import type { SiteEnv } from './env';
 import { type AdvisoryVerdict } from './ops/advisories';
 import { type AggregateIndex } from './ops/aggregates';
-import { type AuthSpend } from './ops/auth-budget';
 import type { CacheTier } from './ops/cache-tiers';
 import {
 	ZERO_ENCOUNTERS,
@@ -306,10 +306,15 @@ import {
 	recordEncounter,
 	type EncounterCounts
 } from './ops/cold-encounter';
+import {
+	autoloadPhp,
+	type AutoloadDeclaration,
+	type PackageAutoload,
+	type Registry
+} from './ops/composer/package-install';
+import { type Repository } from './ops/composer/repositories';
 import { type InvalidationResult } from './ops/core-version';
 import { type CrossingTally } from './ops/crossings';
-import { type DayMeters } from './ops/day-meters';
-import { type Degradation } from './ops/degrade';
 import { deploymentEnv, deploymentEnvPhp } from './ops/deployment-env';
 import { type RangeReport } from './ops/error-probe';
 import { type FleetRow } from './ops/fleet';
@@ -318,53 +323,48 @@ import {
 	type Credential,
 	type PullRequest,
 	type Remote
-} from './ops/git-provider';
-import { type Advertisement, type SmartRemote } from './ops/git-smart';
-import { type PollState } from './ops/git-sync';
+} from './ops/git/provider';
+import { type Advertisement, type SmartRemote } from './ops/git/smart';
+import { type PollState } from './ops/git/sync';
 import { type HeapIntegrityStats } from './ops/heap-integrity';
+import { type DeriveTransport } from './ops/image/render-lane';
 import { type MailEnv } from './ops/mail';
-import { type IntegrityStats } from './ops/module-integrity';
-import { type MountVerdict } from './ops/mount-watch';
+import { type AuthSpend } from './ops/meters/auth-budget';
+import { type DayMeters } from './ops/meters/day-meters';
+import { type Degradation } from './ops/meters/degrade';
+import { type LimitTally } from './ops/meters/platform-limits';
+import { type IntegrityStats } from './ops/module/integrity';
 import type { OidcConfig, OidcProvider } from './ops/oidc';
 import { type OracleResult } from './ops/oracle';
 import { outboundGuardEnabled, refuseOutbound } from './ops/outbound-guard';
-import {
-	autoloadPhp,
-	type AutoloadDeclaration,
-	type PackageAutoload,
-	type Registry
-} from './ops/package-install';
 import { type PackedContainer } from './ops/packed-container';
 import { type ParkInstall } from './ops/park';
 import type { SleepBudget } from './ops/park-drive';
 import { ParkSockets } from './ops/park-drive';
 import { KV_OVERRIDABLE, resolveSettings, type PlanKv } from './ops/plan';
-import { type LimitTally } from './ops/platform-limits';
 import {
 	reconcileReport,
 	recordStep,
 	type ReconcileHost,
 	type ReconcileState
 } from './ops/reconcile';
-import { parkForRefresh, type RefreshRecord } from './ops/refresh-instance';
 import { releaseRetired } from './ops/release-host';
-import { type DeriveTransport } from './ops/render-lane';
-import { ReplicaRequiresPrimary, type ReadOnlyGuard } from './ops/replica';
-import { type ReplicaStage } from './ops/replica-admission';
+import { type ReplicaStage } from './ops/replica/admission';
+import { ReplicaRequiresPrimary, type ReadOnlyGuard } from './ops/replica/policy';
+import { type LogRecord, type LogStore } from './ops/replica/replication-log';
 import {
 	type ProvisionCursor,
 	type ProvisionOutcome,
 	type RestoreChunk
-} from './ops/replica-restore';
-import { type LogRecord, type LogStore } from './ops/replication-log';
-import { SEALED_META_KEYS, readSealed, writeSealed, type SecretStore } from './ops/site-secrets';
+} from './ops/replica/restore';
+import { type ForwardStatement } from './ops/replica/write-forwarding';
+import { SEALED_META_KEYS, readSealed, writeSealed, type SecretStore } from './ops/site/secrets';
 import { SpoolStamps } from './ops/spool';
 import { RingBuffer, type Finding, type Observation } from './ops/supervisor';
 import { type SweepReport } from './ops/sweep';
 import { type TcpResult } from './ops/tcp';
 import { type Arrival, type RenderWindow, type WarmDecision } from './ops/thermal';
 import type { UpdbDeps } from './ops/updb';
-import { type ForwardStatement } from './ops/write-forwarding';
 import type { TagStats } from './wordpress/tag-bridge';
 // the `.js` is load-bearing: wrangler.jsonc aliases the specifier `./runtime/php-binary.js`, and
 // without it esbuild resolves the default seam and bundles an 11 MB probe build over the ceiling
@@ -450,16 +450,6 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 	bootLinear = 0;
 	/** the cold boot under way, which a concurrent {@link ensurePhp} caller shares */
 	private bootInFlight?: Promise<PhpInstance>;
-	/** a dropped interpreter held for the next boot to restart in place; see REFRESH_INSTANCE */
-	pendingRefresh?: PhpInstance;
-	/** set by a fault, so the drop that follows is not parked */
-	restartBlocked = false;
-	/** boots that restarted a parked interpreter instead of building one */
-	instancesRefreshed?: number;
-	/** the last restart attempt, for `/serve-stats` */
-	lastRefresh?: RefreshRecord;
-	/** whether the last restart kept its mount, and why */
-	lastMountReuse?: { at: number } & MountVerdict;
 	/** the last boot that started while another interpreter was still resident in this isolate */
 	bootBesideResident?: { at: number; id: string; interpreters: number; linearBytes: number };
 	/**
@@ -472,14 +462,10 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 	set php(value: PhpInstance | undefined) {
 		const was = this.phpInstance;
 		this.phpInstance = value;
-		if (value !== undefined) this.restartBlocked = false;
 		if (value === undefined && was) {
-			if (!parkForRefresh(this, was)) {
-				keepSpareMemory(was);
-				// an object that adopted this instance runs it still, and keeps its filesystem
-				if (this.phpOwner?.current === this)
-					releaseRetired(this.env, was, this.parkSockets);
-			}
+			keepSpareMemory(was);
+			// an object that adopted this instance runs it still, and keeps its filesystem
+			if (this.phpOwner?.current === this) releaseRetired(this.env, was, this.parkSockets);
 			forgetRetained(this.ctx.id.toString(), was);
 		}
 	}
@@ -698,7 +684,7 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 	lastForward?: unknown;
 	/**
 	 * The read-only guard when `REPLICA_READ_ONLY` is set, undefined on a primary; see
-	 * `src/ops/replica.ts`.
+	 * `src/ops/replica/policy.ts`.
 	 */
 	replicaGuard?: ReadOnlyGuard;
 	/**
@@ -795,6 +781,30 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 	exitedRuns?: number;
 	/** the last run that ended in `exit()`, with the first bytes it printed */
 	lastExit?: { at: number; partial: string };
+	/** the cap in force on the interpreter's linear memory, or undefined while the governor is off */
+	growthCap?: number;
+	/** phases running now that the cap does not apply to: owner routes, provisioning and alarms */
+	growthExempt?: number;
+	/** grows the governor refused; the glue retries smaller sizes, so one failed run can add several */
+	growthRefusals?: number;
+	/** the last refused grow, which a governed run reads back */
+	lastGrowthRefusal?: GrowthRefusal;
+	/** runs a refused grow ended, which dropped the interpreter; see {@link run} */
+	governedRuns?: number;
+	/** the last such run */
+	lastGoverned?: GrowthRefusal & { at: number };
+	/** rows the committed slices of the request in flight wrote; a refusal reads what stays */
+	sliceWrites?: number;
+	/** refused runs whose writes the slice transaction rolled back */
+	rolledBackRuns?: number;
+	/** the route of the request in flight, for the refusal log */
+	growthRoute?: string;
+	/** interpreters booted by this instance; the effects ledger reads it to see a second boot */
+	bootCount?: number;
+	/** the effects ledger's starting point for the request in flight */
+	effectBase?: import('./do/growth/retry').EffectBase;
+	/** whether the request in flight is the front worker's repeat of a refusal */
+	growthRetry?: boolean;
 	/** what the last `_run()` returned: 0 for a normal end or an exit, 1 or 2 for a fatal */
 	lastRet?: number;
 	/** consecutive failing batches, for the capped backoff; reset by any batch that progressed */
@@ -979,6 +989,7 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 		// a second cold caller waits for the first (reconciliation runs outside the gate; two
 		// interpreters in one isolate got it reset)
 		if (this.bootInFlight) return this.bootInFlight;
+		this.bootCount = (this.bootCount ?? 0) + 1;
 		this.bootInFlight = bootPhp(this, opts, {
 			factory: PHPFactory,
 			module: wasmModule as WebAssembly.Module
@@ -1389,9 +1400,19 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 		constraint?: string,
 		budget?: { left: number },
 		stability?: string,
-		ignoreCore?: boolean
+		ignoreCore?: boolean,
+		repositories?: Repository[]
 	): Promise<Record<string, unknown>[]> {
-		return installTree(this, registry, name, constraint, budget, stability, ignoreCore);
+		return installTree(
+			this,
+			registry,
+			name,
+			constraint,
+			budget,
+			stability,
+			ignoreCore,
+			repositories
+		);
 	}
 
 	async installPackage(
@@ -1399,9 +1420,18 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 		name: string,
 		constraint?: string,
 		stability?: string,
-		ignoreCore?: boolean
+		ignoreCore?: boolean,
+		repositories?: Repository[]
 	): Promise<Record<string, unknown>> {
-		return installPackage(this, registry, name, constraint, stability, ignoreCore);
+		return installPackage(
+			this,
+			registry,
+			name,
+			constraint,
+			stability,
+			ignoreCore,
+			repositories
+		);
 	}
 
 	shellCandidates() {
@@ -2276,8 +2306,8 @@ export class SitePhpDurableObject extends SiteDurableObject implements SiteStore
 		return backgroundHold(this);
 	}
 
-	async run(code: string): Promise<string> {
-		return run(this, code);
+	async run(code: string, after?: (out: string) => void): Promise<string> {
+		return run(this, code, after);
 	}
 
 	async runJson(code: string): Promise<Payload> {

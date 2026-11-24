@@ -155,6 +155,16 @@ describe('releaseHostGraph', () => {
 		expect(t.buffers.clean!.byteLength).toBe(4);
 	});
 
+	it('touches nothing when the filesystem has no name table or no stream table', () => {
+		const t = tree();
+		const noTable = { ...t.binary, FS: { ...t.binary.FS!, nameTable: undefined as never } };
+		expect(releaseHostGraph(noTable)).toEqual({ nodes: 0, streams: 0, detachedBytes: 0 });
+		const noStreams = { ...t.binary, FS: { ...t.binary.FS!, streams: undefined as never } };
+		expect(releaseHostGraph(noStreams)).toEqual({ nodes: 0, streams: 0, detachedBytes: 0 });
+		expect(t.buffers.clean!.byteLength).toBe(4);
+		expect(t.nodes.clean!.contents).toBe(t.buffers.clean);
+	});
+
 	it('is safe to run twice', () => {
 		const t = tree();
 		releaseHostGraph(t.binary);
@@ -163,28 +173,23 @@ describe('releaseHostGraph', () => {
 });
 
 describe('releaseRetired', () => {
-	it('releases nothing unless the flag is exactly 1', () => {
-		for (const env of [
-			undefined,
-			{},
-			{ RELEASE_HOST_GRAPH: '0' },
-			{ RELEASE_HOST_GRAPH: 'true' }
-		]) {
+	it('releases nothing when the variable is 0', () => {
+		const t = tree();
+		expect(releaseRetired({ RELEASE_HOST_GRAPH: '0' }, { binary: t.binary })).toBeUndefined();
+		expect(t.buffers.clean!.byteLength).toBe(4);
+	});
+
+	it('releases the graph by default and reports what it freed', () => {
+		for (const env of [undefined, {}, { RELEASE_HOST_GRAPH: '1' }]) {
 			const t = tree();
-			expect(releaseRetired(env, { binary: t.binary })).toBeUndefined();
-			expect(t.buffers.clean!.byteLength).toBe(4);
+			const stats = releaseRetired(env, { binary: t.binary });
+			expect(stats).toMatchObject({ nodes: 6, detachedBytes: 4 });
+			expect(t.buffers.clean!.byteLength).toBe(0);
 		}
 	});
 
-	it('releases the graph when the flag is 1 and reports what it freed', () => {
-		const t = tree();
-		const stats = releaseRetired({ RELEASE_HOST_GRAPH: '1' }, { binary: t.binary });
-		expect(stats).toMatchObject({ nodes: 6, detachedBytes: 4 });
-		expect(t.buffers.clean!.byteLength).toBe(0);
-	});
-
 	it('leaves an interpreter with no binary and one with parked sockets alone', () => {
-		const env = { RELEASE_HOST_GRAPH: '1' };
+		const env = {};
 		expect(releaseRetired(env, {})).toBeUndefined();
 		const t = tree();
 		expect(releaseRetired(env, { binary: t.binary }, { size: 1 })).toBeUndefined();
@@ -192,9 +197,9 @@ describe('releaseRetired', () => {
 		expect(releaseRetired(env, { binary: t.binary }, { size: 0 })).toBeDefined();
 	});
 
-	it('counts the graph and the nodes and bytes it freed when the flag is 1', () => {
+	it('counts the graph and the nodes and bytes it freed', () => {
 		const before = { ...releaseCounts };
-		releaseRetired({ RELEASE_HOST_GRAPH: '1' }, { binary: tree().binary });
+		releaseRetired({}, { binary: tree().binary });
 		expect(releaseCounts.retiredGraphs - before.retiredGraphs).toBe(1);
 		expect(releaseCounts.retiredNodes - before.retiredNodes).toBe(6);
 		expect(releaseCounts.retiredBytes - before.retiredBytes).toBe(4);
@@ -203,20 +208,17 @@ describe('releaseRetired', () => {
 	it('does not count when nothing was released', () => {
 		const before = { ...releaseCounts };
 		releaseRetired({ RELEASE_HOST_GRAPH: '0' }, { binary: tree().binary });
-		releaseRetired({ RELEASE_HOST_GRAPH: '1' }, {});
-		releaseRetired({ RELEASE_HOST_GRAPH: '1' }, { binary: tree().binary }, { size: 1 });
+		releaseRetired({}, {});
+		releaseRetired({}, { binary: tree().binary }, { size: 1 });
 		expect(releaseCounts).toEqual(before);
 	});
 
 	it('logs one line when MEMORY_TRACE is 1', () => {
 		const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 		try {
-			releaseRetired({ RELEASE_HOST_GRAPH: '1' }, { binary: tree().binary });
+			releaseRetired({}, { binary: tree().binary });
 			expect(log).not.toHaveBeenCalled();
-			releaseRetired(
-				{ RELEASE_HOST_GRAPH: '1', MEMORY_TRACE: '1' },
-				{ binary: tree().binary }
-			);
+			releaseRetired({ MEMORY_TRACE: '1' }, { binary: tree().binary });
 			expect(log).toHaveBeenCalledTimes(1);
 			expect(String(log.mock.calls[0]?.[0])).toContain('"cfw":"host-release"');
 		} finally {

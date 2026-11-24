@@ -1,13 +1,13 @@
 import { SELF, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
-import { MIGRATE_TABLE, type SqlLike, ensureMigrateTable } from '../../src/db/migrate-sql';
-import type { RenderRequest } from '../../src/drupal/site-php';
+import { MIGRATE_TABLE, type SqlLike, ensureMigrateTable } from '../../src/db/dump/migrate';
+import type { RenderRequest } from '../../src/drupal/php/site';
 import {
 	ZERO_DAY_METERS,
 	dayMetersKey,
 	readDayMeters,
 	writeDayMeters
-} from '../../src/ops/day-meters';
+} from '../../src/ops/meters/day-meters';
 import type { SitePhpDurableObject } from '../../src/site-do';
 
 /**
@@ -155,21 +155,34 @@ export type ServeDo = {
 	parkInstall?: { state: 'installed' | 'ready' | 'absent' | 'failed'; armed: string[] };
 	runJson: (code: string) => Promise<Record<string, unknown>>;
 	/** the raw fragment seam under `runJson`; a spec reaches it to drive a trap */
-	run: (code: string) => Promise<string>;
-	ensurePhp: () => Promise<{ php: { _run: (code: string) => Promise<unknown> } }>;
+	run: (code: string, after?: (out: string) => void) => Promise<string>;
+	ensurePhp: () => Promise<{
+		php: { _run: (code: string) => Promise<unknown> };
+		binary: { wasmMemory?: WebAssembly.Memory };
+		mysql?: { endRun?(): void };
+	}>;
+	heapNow: () => number;
+	heapBytes: (binary: object) => Uint8Array;
+	/** the cap on linear memory, or undefined while the governor is off */
+	growthCap?: number;
+	growthExempt?: number;
+	growthRefusals?: number;
+	governedRuns?: number;
+	rolledBackRuns?: number;
+	growthRoute?: string;
+	opsJobStep: (
+		name: string,
+		args: string[],
+		options: Record<string, unknown>
+	) => Promise<unknown>;
+	sliceWrites?: number;
+	lastGoverned?: { at: number; fromBytes: number; toBytes: number; capBytes: number };
 	recycleIfOversized: (reason: 'request' | 'alarm') => boolean;
 	dropInterpreter: () => void;
-	/** a dropped interpreter held for the next boot to restart; see REFRESH_INSTANCE */
-	pendingRefresh?: { php: object; binary: object };
-	restartBlocked: boolean;
 	/** what the current interpreter's host closures resolve `this` through */
 	phpOwner?: { current: unknown };
 	parkSockets?: { size: number };
 	trappedRuns?: number;
-	instancesRefreshed?: number;
-	lastRefresh?: { at: number; ok: boolean; ms: number; reason?: string };
-	/** whether the last restart kept its mount, and why */
-	lastMountReuse?: { at: number; kept: boolean; reason: string };
 	mountInfo?: object;
 	heapsReused?: number;
 	lastRecycle?: { at: number; bytes: number; reason: string; rebuild?: boolean };
@@ -261,7 +274,7 @@ export type ServeDo = {
 	enqueueLaneRepair: (lane: number) => number[];
 	dequeueLaneRepair: (lane: number) => number[];
 	/** the replication log's own storage handle, which the position helpers read */
-	logStore: () => import('../../src/ops/replication-log').LogStore;
+	logStore: () => import('../../src/ops/replica/replication-log').LogStore;
 	/** the primary half of replication: buffer during an invocation, seal at the end of it */
 	ensureReplicationLog: () => void;
 	bufferForReplication: (sql: string, params?: unknown) => void;
@@ -294,15 +307,15 @@ export type ServeDo = {
 	tableNames: () => string[];
 	provisionLane: (
 		lane: number,
-		cursor: import('../../src/ops/replica-restore').ProvisionCursor | undefined,
+		cursor: import('../../src/ops/replica/restore').ProvisionCursor | undefined,
 		budget?: number
-	) => Promise<import('../../src/ops/replica-restore').ProvisionOutcome>;
+	) => Promise<import('../../src/ops/replica/restore').ProvisionOutcome>;
 	snapshotRows: (
 		table: string,
 		offset: number,
 		limit: number
 	) => { columns: string[]; rows: unknown[][] };
-	applyRestoreChunk: (chunk: import('../../src/ops/replica-restore').RestoreChunk) => {
+	applyRestoreChunk: (chunk: import('../../src/ops/replica/restore').RestoreChunk) => {
 		ok: boolean;
 		reason: string;
 		stage: string;
@@ -312,7 +325,7 @@ export type ServeDo = {
 	metaGet: (key: string, fallback?: string | null) => string | null;
 	metaSet: (key: string, value: unknown) => void;
 	/** the credentials held in key-value storage, which the SQL bridge cannot reach */
-	secretStore: () => import('../../src/ops/site-secrets').SecretStore;
+	secretStore: () => import('../../src/ops/site/secrets').SecretStore;
 	readSecret: (key: string) => string | null;
 	writeSecret: (key: string, value: string) => void;
 	adoptSecrets: () => Promise<void>;
@@ -366,9 +379,9 @@ export type ServeDo = {
 	lastMeterFlushMs?: number;
 	shouldFlushMeters: (nowMs?: number) => boolean;
 	flushDailyRows: (nowMs?: number) => number;
-	/** the four daily counters as one packed `cfw_meta` row; see `src/ops/day-meters.ts` */
-	storedMeters: (nowMs?: number) => import('../../src/ops/day-meters').DayMeters;
-	flushMeters: (nowMs?: number) => import('../../src/ops/day-meters').DayMeters;
+	/** the four daily counters as one packed `cfw_meta` row; see `src/ops/meters/day-meters.ts` */
+	storedMeters: (nowMs?: number) => import('../../src/ops/meters/day-meters').DayMeters;
+	flushMeters: (nowMs?: number) => import('../../src/ops/meters/day-meters').DayMeters;
 	dailyRows: (nowMs?: number) => number;
 	bumpGeneration: (
 		reason?: string,
@@ -401,7 +414,9 @@ export type ServeDo = {
 	/** the host bridge, so a spec can call a capability the way PHP does */
 	installCapabilities: (binary: Record<string, (json: string) => string>) => void;
 	queueDerivatives: (uri: string) => void;
-	deriveStep: (transport?: import('../../src/ops/render-lane').DeriveTransport) => Promise<void>;
+	deriveStep: (
+		transport?: import('../../src/ops/image/render-lane').DeriveTransport
+	) => Promise<void>;
 	/** the host's own view, handed to the PHP health layer; see `runHealthSelfTest()` */
 	healthObservation: () => Record<string, unknown>;
 	/** the crossing tally; `calls` is the per-statement census log, armed by assigning `[]` */
@@ -421,7 +436,7 @@ export type ServeDo = {
 	lastMailDrain?: import('../../src/util/types').Stamped<Record<string, unknown>>;
 	adoptSettings: () => Promise<void>;
 	handle: (request: Request, url: URL) => Promise<Response>;
-	degradation: (nowMs?: number) => import('../../src/ops/degrade').Degradation;
+	degradation: (nowMs?: number) => import('../../src/ops/meters/degrade').Degradation;
 	shellCandidates: () => {
 		safe: number;
 		unsafe: number;

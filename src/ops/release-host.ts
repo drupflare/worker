@@ -14,32 +14,12 @@ export function releaseOwnedBuffer(buffer: ArrayBuffer): boolean {
 	}
 }
 
-/** what the release flags freed since this isolate started */
+/** what the host graph release freed since this isolate started */
 export const releaseCounts = {
-	evictedFiles: 0,
-	evictedBytes: 0,
 	retiredGraphs: 0,
 	retiredNodes: 0,
 	retiredBytes: 0
 };
-
-/** detaches an evicted file's bytes when RELEASE_EVICTED is 1, if the view covers its buffer */
-export function releaseEvicted(
-	env: { RELEASE_EVICTED?: string },
-	contents: Uint8Array | null
-): boolean {
-	if (env.RELEASE_EVICTED !== '1' || contents === null) return false;
-	if (!(contents.buffer instanceof ArrayBuffer)) return false;
-	if (contents.byteOffset !== 0) return false;
-	if (contents.byteLength !== contents.buffer.byteLength) return false;
-	const bytes = contents.buffer.byteLength;
-	const done = releaseOwnedBuffer(contents.buffer);
-	if (done) {
-		releaseCounts.evictedFiles += 1;
-		releaseCounts.evictedBytes += bytes;
-	}
-	return done;
-}
 
 /** an Emscripten FS node, as far as the release walks it */
 export type GraphNode = {
@@ -74,8 +54,8 @@ export type ReleasableBinary = {
 export type ReleaseStats = { nodes: number; streams: number; detachedBytes: number };
 
 /**
- * Releases the host graph of an interpreter that was dropped for good, when RELEASE_HOST_GRAPH is
- * 1. Undefined when nothing was released.
+ * Releases the host graph of an interpreter that was dropped for good, unless RELEASE_HOST_GRAPH is
+ * 0. Undefined when nothing was released.
  *
  * `sockets` are the owner's parked outbound sockets; an instance that still holds any is left to
  * the collector, since its parked work could wake on a detached buffer.
@@ -85,13 +65,13 @@ export function releaseRetired(
 	php: { binary?: ReleasableBinary },
 	sockets?: { size: number }
 ): ReleaseStats | undefined {
-	if (env?.RELEASE_HOST_GRAPH !== '1' || !php.binary || (sockets?.size ?? 0) > 0)
+	if (env?.RELEASE_HOST_GRAPH === '0' || !php.binary || (sockets?.size ?? 0) > 0)
 		return undefined;
 	const stats = releaseHostGraph(php.binary);
 	releaseCounts.retiredGraphs += 1;
 	releaseCounts.retiredNodes += stats.nodes;
 	releaseCounts.retiredBytes += stats.detachedBytes;
-	if (env.MEMORY_TRACE === '1') console.log(JSON.stringify({ cfw: 'host-release', ...stats }));
+	if (env?.MEMORY_TRACE === '1') console.log(JSON.stringify({ cfw: 'host-release', ...stats }));
 	return stats;
 }
 
@@ -105,7 +85,8 @@ export function releaseRetired(
 export function releaseHostGraph(binary: ReleasableBinary): ReleaseStats {
 	const stats: ReleaseStats = { nodes: 0, streams: 0, detachedBytes: 0 };
 	const FS = binary.FS;
-	if (!FS) return stats;
+	// a glue without these members is left to the collector rather than failing the drop
+	if (!FS || !Array.isArray(FS.nameTable) || !Array.isArray(FS.streams)) return stats;
 	let root: GraphNode;
 	try {
 		root = FS.lookupPath('/drupal').node as GraphNode;

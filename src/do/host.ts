@@ -1,19 +1,19 @@
 import type { Gate } from '@drupflare/cartridge/gate';
 import type { SqlBindings } from '@drupflare/durabledb/do-sqlite';
+import type { MigrateCursor, SqlMigrator } from '../db/dump/migrate';
 import type { FileBuckets, MirrorBucket } from '../db/file-store';
-import type { MigrateCursor, SqlMigrator } from '../db/migrate-sql';
 import type { SiteEnv } from '../env';
 import type { AggregateIndex } from '../ops/aggregates';
 import type { EncounterCounts } from '../ops/cold-encounter';
-import type { Degradation } from '../ops/degrade';
+import type { Degradation } from '../ops/meters/degrade';
 import type { PackedContainer } from '../ops/packed-container';
 import type { ReconcileHost, ReconcileState } from '../ops/reconcile';
-import type { ReplicaStage } from '../ops/replica-admission';
-import type { ProvisionCursor, ProvisionOutcome } from '../ops/replica-restore';
-import type { LogStore } from '../ops/replication-log';
-import type { SecretStore } from '../ops/site-secrets';
+import type { ReplicaStage } from '../ops/replica/admission';
+import type { LogStore } from '../ops/replica/replication-log';
+import type { ProvisionCursor, ProvisionOutcome } from '../ops/replica/restore';
+import type { ForwardStatement } from '../ops/replica/write-forwarding';
+import type { SecretStore } from '../ops/site/secrets';
 import type { Arrival, WarmDecision } from '../ops/thermal';
-import type { ForwardStatement } from '../ops/write-forwarding';
 import type { SitePhpDurableObject } from '../site-do';
 import type { Stamped } from '../util/types';
 import type { SiteMountInfo } from './lazy-mount';
@@ -153,6 +153,8 @@ export interface SteppedJobState {
 export interface SteppedHost extends SiteStore {
 	steppedJobs: SteppedJobState;
 	runJson(code: string): Promise<Payload>;
+	run(code: string, after?: (out: string) => void): Promise<string>;
+	settleReply(reply: Payload): Promise<Payload>;
 	gate: Gate;
 	lastOpsJob?: Payload;
 	lastUpdb?: Stamped<Payload>;
@@ -327,8 +329,23 @@ export interface RunHost
 			| 'lastTrap'
 			| 'exitedRuns'
 			| 'lastExit'
+			| 'growthRefusals'
+			| 'lastGrowthRefusal'
+			| 'governedRuns'
+			| 'lastGoverned'
+			| 'growthCap'
+			| 'growthExempt'
+			| 'mountInfo'
+			| 'growthRoute'
+			| 'crossings'
+			| 'bootCount'
+			| 'effectBase'
+			| 'parkSockets'
+			| 'growthRetry'
+			| 'rowsSinceFlush'
+			| 'sliceWrites'
+			| 'forwardBuffer'
 			| 'phpBootedAt'
-			| 'restartBlocked'
 			| 'ensurePhp'
 			| 'dropInterpreter'
 			| 'run'

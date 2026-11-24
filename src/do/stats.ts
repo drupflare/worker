@@ -1,18 +1,20 @@
 import { storedBytes } from '../db/file-store';
-import { attributeSpend } from '../ops/cost-attribution';
 import { deploymentEnv } from '../ops/deployment-env';
 import { chunkStack, flatFields, isLengthError, type RangeReport } from '../ops/error-probe';
 import { parseFailureLedger, resolveMailTransport } from '../ops/mail';
+import { attributeSpend } from '../ops/meters/cost-attribution';
+import { hitAnyLimit } from '../ops/meters/platform-limits';
 import { reportedRows, type OutboxSql } from '../ops/outbox';
-import { kvWriteBudget, pageKvEnabled } from '../ops/page-store';
-import { hitAnyLimit } from '../ops/platform-limits';
+import { kvWriteBudget, pageKvEnabled } from '../ops/page/store';
 import { releaseCounts } from '../ops/release-host';
-import { meanWaitMs, type DemandWindow } from '../ops/replica-demand';
+import { meanWaitMs, type DemandWindow } from '../ops/replica/demand';
 import type { SitePhpDurableObject } from '../site-do';
 import { cmsOf } from '../util/cms';
 import { errorMessage } from '../util/errors';
 import { wordpressBootStats } from '../wordpress/boot';
 import { unclassifiedCookieStats } from '../wordpress/cookies';
+import { readFreshFirst } from './fresh/first-log';
+import { readGrowthLog } from './growth/log';
 import { laneTimingSummary } from './helpers';
 import { isolateAboveBytes, shimGlobals, spareMemoryBytes } from './isolate';
 import { DEMAND_WINDOWS_KEY, MAIL_FAILURES_KEY } from './keys';
@@ -20,7 +22,7 @@ import { lazyMountBytes, PACK_INDEX_BYTES } from './lazy-mount';
 import { alarmShape } from './levers';
 import { LANE_TIMING_RING, RECENT_ERROR_STACK_CHARS, RECENT_ERRORS_MAX } from './limits';
 import { updbActive } from './reconcile';
-import { laneOf, roleName } from './role';
+import { laneOf, roleName } from './replica/role';
 import type { ErrorNote, Payload } from './types';
 
 /**
@@ -68,10 +70,6 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 		// boots that instantiated into the memory a drop left, rather than beside it
 		heapsReused: site.heapsReused ?? 0,
 		lastReuse: site.lastReuse ?? null,
-		// boots that restarted a parked interpreter, and the last attempt
-		instancesRefreshed: site.instancesRefreshed ?? 0,
-		lastRefresh: site.lastRefresh ?? null,
-		lastMountReuse: site.lastMountReuse ?? null,
 		releaseCounts,
 		spareMemoryBytes: spareMemoryBytes(),
 		// what the last cold boot decided about the published boot image, and why
@@ -102,6 +100,18 @@ export function serveStatsSync(site: SitePhpDurableObject): Payload {
 		// a run that ended in exit() leaves a dead interpreter, which the serve path drops
 		exitedRuns: site.exitedRuns ?? 0,
 		lastExit: site.lastExit ?? null,
+		// the cap on linear memory (null while the governor is off), the grows it refused, and the
+		// runs that ended in one
+		growthCap: site.growthCap ?? null,
+		growthExempt: site.growthExempt ?? 0,
+		growthRefusals: site.growthRefusals ?? 0,
+		governedRuns: site.governedRuns ?? 0,
+		rolledBackRuns: site.rolledBackRuns ?? 0,
+		lastGoverned: site.lastGoverned ?? null,
+		// the durable log: still readable after the object restarted (`growthRefusals` is the count)
+		growthRefusalLog: readGrowthLog(site.sql),
+		// the stored record of the last abort of the fresh-first registry
+		freshFirst: readFreshFirst(site.sql),
 		// the whole isolate: the 128 MiB ceiling covers the JS side as well as linear memory
 		isolateBytes: {
 			linear: site.heapNow(),

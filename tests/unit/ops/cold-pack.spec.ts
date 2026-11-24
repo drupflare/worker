@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import { assetRequestCounts, packCachedEnv } from '../../../src/do/lazy-mount';
 import {
 	coldPackCacheChunks,
 	ColdPackCorrupt,
+	coldPackEnabled,
 	coldPackEnv,
 	type ColdPackEnv
 } from '../../../src/ops/cold-pack';
@@ -12,7 +14,7 @@ import { freshSite, inObject, type ServeDo } from '../../helpers/serve-do';
  * COLD_PACK: the Drupal pack is staged into the object's storage once and read from there.
  *
  * The staging pin is injected (`options.pin`), so the specs run on a three-chunk pack instead of the
- * shipped 13 MB one; the pin the shipped file carries is checked by `gen-core-pack.ts --check`.
+ * shipped 13 MB one; the pin the shipped file carries is checked by `gen/core-pack.ts --check`.
  */
 
 const CHUNK = 65_536;
@@ -122,6 +124,100 @@ describe('coldPackEnv', () => {
 		expect(out).toBe(0);
 	});
 
+	it('stages the WordPress pack from its own prefix and keeps the Drupal pack beside it', async () => {
+		const drupal = packBytes(CHUNK + 3);
+		const wordpress = packBytes(CHUNK * 2 + 9).map((b) => b ^ 0x5a);
+		const out = await inObject(freshSite(), async (obj) => {
+			const urls: string[] = [];
+			const assets = {
+				fetch: async (request: Request) => {
+					urls.push(new URL(request.url).pathname);
+					return new Response(
+						(request.url.includes('wordpress') ? wordpress : drupal).slice()
+					);
+				}
+			} as unknown as Fetcher;
+			const env: ColdPackEnv = { ASSETS: assets };
+			const wrapped = coldPackEnv(siteOf(obj, env), env, {
+				pins: { 'drupal-pf': pinOf(drupal), 'wordpress/pf': pinOf(wordpress) }
+			});
+			await wrapped.SQL_PACK_SOURCE?.('drupal-pf');
+			const source = await wrapped.SQL_PACK_SOURCE?.('wordpress/pf');
+			return {
+				urls,
+				length: source?.length,
+				head: Array.from(source?.subarray(0, 4) ?? []),
+				roots: rowCount(obj, 'cfw_pack_root')
+			};
+		});
+		expect(out.urls).toEqual(['/drupal-pf/core.pf.bin', '/wordpress/pf/core.pf.bin']);
+		expect(out.length).toBe(wordpress.length);
+		expect(out.head).toEqual(Array.from(wordpress.subarray(0, 4)));
+		expect(out.roots).toBe(2);
+	});
+
+	it.each([
+		['Drupal on free', { CMS: 'drupal', PLAN: 'free' }, true],
+		['Drupal with no CMS or plan named', {}, true],
+		['Drupal on paid', { CMS: 'drupal', PLAN: 'paid' }, true],
+		['WordPress on free', { CMS: 'wordpress', PLAN: 'free' }, false],
+		['WordPress with no plan named', { CMS: 'wordpress' }, false],
+		['WordPress on paid', { CMS: 'wordpress', PLAN: 'paid' }, true],
+		['WordPress on free with COLD_PACK=1', { CMS: 'wordpress', COLD_PACK: '1' }, true],
+		['Drupal on paid with COLD_PACK=0', { CMS: 'drupal', PLAN: 'paid', COLD_PACK: '0' }, false]
+	])('stages the pack by default for %s: %s', (_name, vars, expected) => {
+		expect(coldPackEnabled(vars)).toBe(expected);
+	});
+
+	it('hands WordPress on free its own env back and WordPress on paid a source', async () => {
+		const bytes = packBytes(CHUNK);
+		const out = await inObject(freshSite(), async (obj) => {
+			const free = { ASSETS: fakeAssets(bytes).assets, CMS: 'wordpress' } as ColdPackEnv;
+			const paid = { ...free, PLAN: 'paid' } as ColdPackEnv;
+			return [
+				coldPackEnv(siteOf(obj, free), free) === free,
+				coldPackEnv(siteOf(obj, paid), paid) !== paid
+			];
+		});
+		expect(out).toEqual([true, true]);
+	});
+
+	it('defaults the file budget to 4 MiB and lets an explicit value win', async () => {
+		const bytes = packBytes(CHUNK);
+		const out = await inObject(freshSite(), async (obj) => {
+			const unset: ColdPackEnv = { ASSETS: fakeAssets(bytes).assets };
+			const set: ColdPackEnv = { ...unset, LAZY_FS_BUDGET_BYTES: '8388608' };
+			return [
+				coldPackEnv(siteOf(obj, unset), unset, { pin: pinOf(bytes) }).LAZY_FS_BUDGET_BYTES,
+				coldPackEnv(siteOf(obj, set), set, { pin: pinOf(bytes) }).LAZY_FS_BUDGET_BYTES
+			];
+		});
+		expect(out).toEqual(['4194304', '8388608']);
+	});
+
+	it('stages through the original binding, so the pack cache never keeps the fetched pack', async () => {
+		const bytes = packBytes(CHUNK * 2 + 5);
+		const out = await inObject(freshSite(), async (obj) => {
+			const { assets, calls } = fakeAssets(bytes);
+			const raw: ColdPackEnv = { ASSETS: assets };
+			const cached = packCachedEnv(raw);
+			const wrapped = coldPackEnv(siteOf(obj, raw), cached, { pin: pinOf(bytes) });
+			const before = assetRequestCounts();
+			await wrapped.SQL_PACK_SOURCE?.('drupal-pf');
+			const staged = assetRequestCounts();
+			// the control: a pack request through the cache is one the counters see
+			await cached.ASSETS.fetch('https://assets.local/drupal-pf/core.pf.bin');
+			const control = assetRequestCounts();
+			return {
+				fetched: calls.fetched,
+				stagedPack: staged.packFetched - before.packFetched,
+				stagedOther: staged.other - before.other,
+				controlPack: control.packFetched - staged.packFetched
+			};
+		});
+		expect(out).toEqual({ fetched: 2, stagedPack: 0, stagedOther: 0, controlPack: 1 });
+	});
+
 	it('serves the pack it staged, across chunk boundaries and the short last chunk', async () => {
 		const bytes = packBytes(CHUNK * 2 + 1_234);
 		const out = await inObject(freshSite(), async (obj) => {
@@ -173,27 +269,6 @@ describe('coldPackEnv', () => {
 			return source?.residentBytes;
 		});
 		expect(resident).toBe(CHUNK * 2);
-	});
-
-	it('detaches a read range only when RELEASE_EVICTED is 1', async () => {
-		const bytes = packBytes(CHUNK);
-		const out = await inObject(freshSite(), async (obj) => {
-			const read = async (release: string | undefined) => {
-				const env: ColdPackEnv = {
-					ASSETS: fakeAssets(bytes).assets,
-					COLD_PACK: '1',
-					RELEASE_EVICTED: release
-				};
-				const wrapped = coldPackEnv(siteOf(obj, env), env, { pin: pinOf(bytes) });
-				const source = await wrapped.SQL_PACK_SOURCE?.('drupal-pf');
-				const range = source?.subarray(0, 100);
-				if (!source || !range) return -1;
-				source.releaseRange?.(range);
-				return range.byteLength;
-			};
-			return { off: await read(undefined), on: await read('1') };
-		});
-		expect(out).toEqual({ off: 100, on: 0 });
 	});
 
 	it('refuses an asset that differs from the pin, stages nothing, and answers undefined', async () => {

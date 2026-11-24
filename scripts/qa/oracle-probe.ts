@@ -3,7 +3,7 @@ import {
 	newestVersion,
 	verdictFor,
 	type Conflict
-} from '../../src/ops/packagist';
+} from '../../src/ops/composer/packagist';
 import { readLock } from '../lock';
 import { QA_MODULES } from './modules';
 
@@ -13,7 +13,7 @@ import { QA_MODULES } from './modules';
  *   bun scripts/qa/oracle-probe.ts [--url=current|fixed] [--json=out.json]
  *
  * So this drives the REAL `newestVersion` / `checkRequirements` / `verdictFor` out of
- * `src/ops/packagist.ts` -- imported, never reimplemented -- against both the shipped URL and the
+ * `src/ops/composer/packagist.ts` -- imported, never reimplemented -- against both the shipped URL and the
  * corrected one. The difference between the two columns is the cost of the bug.
  *
  * `--url=current` reproduces the shipped behaviour; `--url=fixed` uses the endpoint drupal.org's
@@ -28,7 +28,7 @@ const flag = (name: string): string | undefined => {
 	return hit.includes('=') ? hit.slice(hit.indexOf('=') + 1) : '1';
 };
 
-/** what `src/ops/packagist.ts` builds today */
+/** what `src/ops/composer/packagist.ts` builds today */
 export function shippedUrl(name: string): string {
 	const vendor = String(name ?? '').split('/')[0];
 	return vendor === 'drupal'

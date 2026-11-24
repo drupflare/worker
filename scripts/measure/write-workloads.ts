@@ -10,7 +10,7 @@
  * class gets its own site and the two are reconciled by the allocation check.
  */
 
-import { WRITE_WORKLOADS, type WriteWorkload } from '../../src/drupal/site-php';
+import { WRITE_WORKLOADS, type WriteWorkload } from '../../src/drupal/php/site';
 import {
 	allocationAgreement,
 	cpuUnderstatement,

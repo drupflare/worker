@@ -2,8 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { drifted, driverDrift, installedDriverPackages } from './driver-drift';
-import { installedVersion } from './fetch-drupal-tree';
-import { buildDriverAssets } from './gen-driver-assets';
+import { installedVersion } from './fetch/drupal-tree';
+import { buildDriverAssets } from './gen/driver-assets';
 import { readLock } from './lock';
 
 /**

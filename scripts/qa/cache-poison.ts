@@ -24,7 +24,7 @@ import { createHash } from 'node:crypto';
  *   3. anonymous GET again
  *
  * If (3) differs from (1) and resembles (2), authenticated HTML reached the shared copy. The cookie
- * name matches `SESSION_COOKIE_RE` in `src/ops/auth-budget.ts` -- `S?SESS` plus 32 hex -- because
+ * name matches `SESSION_COOKIE_RE` in `src/ops/meters/auth-budget.ts` -- `S?SESS` plus 32 hex -- because
  * that is the predicate the Worker actually uses to decide a request is authenticated. A cookie
  * shaped any other way tests nothing.
  */

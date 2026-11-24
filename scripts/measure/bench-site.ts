@@ -21,7 +21,7 @@ const paths = (
 /**
  * Whether the target needs a synthetic `Host` to carry site identity.
  *
- * ONLY A LOCAL ONE DOES. `src/ops/site-id.ts` resolves KV, then `SITE_ID`, then the HOSTNAME, so a
+ * ONLY A LOCAL ONE DOES. `src/ops/site/id.ts` resolves KV, then `SITE_ID`, then the HOSTNAME, so a
  * deployed worker's own hostname already IS the site -- and overriding `Host` on an https target
  * makes bun verify the certificate against `<site>.localhost`, which fails as
  * `UNKNOWN_CERTIFICATE_VERIFICATION_ERROR` and reads as a network or account problem rather than as
@@ -45,7 +45,7 @@ const call = (path: string, init?: RequestInit): Promise<Response> =>
 		// script and two of its siblings and in no file under `src/`, so every `--site` here drove
 		// the one object `127.0.0.1` resolves to: a fresh id answered "already migrated" and two
 		// random ids reported the same generation, the same schema and the same 428 rows.
-		// `src/ops/site-id.ts`'s chain is KV, then `SITE_ID`, then the HOSTNAME.
+		// `src/ops/site/id.ts`'s chain is KV, then `SITE_ID`, then the HOSTNAME.
 		headers: { ...siteHeaders, ...(init?.headers ?? {}) }
 	});
 

@@ -19,7 +19,7 @@
  * {@link absorptionFromCounters} computes it the moment an operator supplies them.
  */
 
-import { drainPageMirrors, pageMirrorKey, type PageMirrorSql } from '../../src/ops/page-mirror';
+import { drainPageMirrors, pageMirrorKey, type PageMirrorSql } from '../../src/ops/page/mirror';
 import { DEFAULT_MIX, optimalOffWorker, type TrafficMix } from './free-envelope';
 
 /**

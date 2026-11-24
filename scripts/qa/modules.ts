@@ -6,7 +6,7 @@
  * booting anything.
  *
  * `expected` is a PREDICTION, recorded so the pass can disagree with it. Every value here was
- * reasoned from `src/ops/catalog.ts` and `src/ops/shipped-lock.ts` before the run; where a run
+ * reasoned from `src/ops/catalog.ts` and `src/ops/composer/shipped-lock.ts` before the run; where a run
  * contradicts one, the disagreement is the finding and the prediction stays put as the record of
  * what was believed.
  *

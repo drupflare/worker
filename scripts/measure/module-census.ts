@@ -3,13 +3,13 @@
  *
  *   bun scripts/measure/module-census.ts [--json]
  *
- * Drives `module-census.spec.ts` and tabulates here. A module counts as IDLE on a route when none
+ * Drives `module/census.spec.ts` and tabulates here. A module counts as IDLE on a route when none
  * of its services was instantiated; its included source and its share of the container are the
  * lever's ceiling for that route, since a lazy boot can at most skip what nothing touched.
  */
 import { spawnSync } from 'node:child_process';
 
-const SPEC = 'tests/integration/module-census.spec.ts';
+const SPEC = 'tests/integration/module/census.spec.ts';
 const MARKER = '[module-census]';
 
 type Bucket = { files: number; bytes: number };

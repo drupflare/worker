@@ -78,7 +78,7 @@ export function packInstall(out: string, statistics?: StatRow[]): string {
 		db.close();
 		const pack = spawnSync(
 			'node',
-			[join(ROOT, 'scripts/pack-sql.ts'), file, out, '--cms=wordpress'],
+			[join(ROOT, 'scripts/pack/sql.ts'), file, out, '--cms=wordpress'],
 			{
 				encoding: 'utf8'
 			}

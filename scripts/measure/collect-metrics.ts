@@ -27,8 +27,8 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { markHydrating } from '../hydrating';
-import { ceilingVerdict, parseWranglerGzipBytes, parseWranglerRawBytes } from '../release-payload';
+import { markHydrating } from '../hydrate/flag';
+import { ceilingVerdict, parseWranglerGzipBytes, parseWranglerRawBytes } from '../release/payload';
 import { SIZE_CEILING } from './bundle-size';
 import { DEFAULT_MIX, envelope, scoreWorkload } from './free-envelope';
 import { auditSchema, loadPack } from './index-audit';
@@ -361,7 +361,7 @@ export function collectTests(root: string, opts: { vitest: boolean }): TestsMetr
 			maxBuffer: 1 << 28,
 			// STDERR IS KEPT, and discarding it is why this failure went a week unexplained. The
 			// metric read `vitest list failed: Command failed` with no cause anywhere, because the
-			// child's diagnosis went to /dev/null -- the same shape as `bake-container.ts`
+			// child's diagnosis went to /dev/null -- the same shape as `bake/container.ts`
 			// buffering wrangler and printing only from a `catch` a SIGTERM never reaches. stdout
 			// stays ignored for the reason the comment above gives; it is the one that gets
 			// interleaved with the array.

@@ -1,12 +1,13 @@
+import { CMS_VALUES, type Cms } from '../src/util/cms';
+
 /**
  * The CMS a build packs, selected by the `CMS` var in `wrangler.jsonc`.
  *
  * A name is accepted before its module set exists; the packer refuses one with no module set, so a
- * build never packs Drupal under another name. An unknown value fails the build the same way.
+ * build never packs Drupal under another name. An unknown value fails the build the same way. The
+ * list itself lives in `src/util/cms.ts`, where the shared tables take their type from it.
  */
-export const CMS_VALUES = ['drupal', 'wordpress', 'joomla'] as const;
-
-export type Cms = (typeof CMS_VALUES)[number];
+export { CMS_VALUES, type Cms };
 
 /** refuses anything this build cannot pack, including a missing value */
 export function cmsSelection(raw: unknown): Cms {

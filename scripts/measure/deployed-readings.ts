@@ -56,7 +56,7 @@ const PER_LANE = Number(a['perLane'] ?? 6);
 /**
  * The router's own FNV-1a, copied so the spread is computed against the real function.
  *
- * `src/ops/replica-routing.ts` cannot be imported here: it pulls the worker's module graph.
+ * `src/ops/replica/routing.ts` cannot be imported here: it pulls the worker's module graph.
  * `tests/node/spread-coverage.spec.ts` asserts the two agree, which is what makes a copy safe.
  */
 function laneHash(value: string): number {

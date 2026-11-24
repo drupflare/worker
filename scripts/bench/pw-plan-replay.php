@@ -18,7 +18,7 @@
  * failure.
  *
  * Loaded by `scripts/bench/bench-plan-arms.php` natively and by
- * `tests/integration/render-plan-arms.spec.ts` in wasm, so both sides run the same code.
+ * `tests/integration/render/plan-arms.spec.ts` in wasm, so both sides run the same code.
  */
 
 if (!function_exists('pw_rewrap')) {

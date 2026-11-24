@@ -19,7 +19,7 @@
  * the fourth honestly rather than degrading into a vacuous pass.
  *
  * @see scripts/measure/collect-metrics.ts for the collectors these inputs feed
- * @see scripts/hydrate.ts for the payload route, which this does not take
+ * @see scripts/hydrate/run.ts for the payload route, which this does not take
  */
 
 import { execFileSync } from 'node:child_process';

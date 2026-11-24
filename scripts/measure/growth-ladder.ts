@@ -34,7 +34,7 @@ import { emitVariant, growthLadder } from './growth-glue';
  */
 
 const MIB = 1_048_576;
-const SPEC = 'tests/integration/heap-growth.spec.ts';
+const SPEC = 'tests/integration/heap/growth.spec.ts';
 
 type Arm = {
 	step: number;

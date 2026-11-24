@@ -12,7 +12,7 @@
  *
  * EXTRACTED RATHER THAN INVENTED. `scripts/e2e-lifecycle.ts` and `scripts/qa/module-compat.ts` each
  * carried this: the same `Ready on (\S+)` scrape, the same scratch-directory guard, the same
- * SIGTERM-and-remove shutdown. `scripts/bake-prefill.ts` would have been the third copy, which is
+ * SIGTERM-and-remove shutdown. `scripts/bake/prefill.ts` would have been the third copy, which is
  * where an abstraction stops being speculative. Those two are not converted here -- both are lanes
  * that need a running server to exercise, so moving them is its own change with its own verification.
  *
@@ -62,7 +62,7 @@ export interface DevServerOptions {
  * Refuses a scratch path that is not obviously disposable.
  *
  * `stop()` removes this directory, and the caller does not choose it -- so this guards against a
- * future caller being allowed to, which is the shape of the mistake `pack-drupal.ts` made when its
+ * future caller being allowed to, which is the shape of the mistake `pack/drupal.ts` made when its
  * output directory was one argument away from `assets/`.
  */
 function assertDisposable(stateDir: string, marker: string): void {

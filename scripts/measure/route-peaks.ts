@@ -24,7 +24,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { classifyLimit } from '../../src/ops/platform-limits';
+import { classifyLimit } from '../../src/ops/meters/platform-limits';
 import { OBSERVABILITY_INGEST_LAG_MS } from './bench';
 import {
 	paidCredentials,

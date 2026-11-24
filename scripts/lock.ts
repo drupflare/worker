@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { shippedLock, type ShippedLock } from '../src/ops/lock-map';
+import { shippedLock, type ShippedLock } from '../src/ops/composer/lock-map';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 

@@ -29,16 +29,16 @@
  * work to whoever owns the token.
  *
  * `PHASM_TOKEN` is not used here at all. It reaches the other repository's artifacts API, which is
- * the one thing `GITHUB_TOKEN` cannot do, and `scripts/fetch-interpreter.ts` is where it belongs.
+ * the one thing `GITHUB_TOKEN` cannot do, and `scripts/fetch/interpreter.ts` is where it belongs.
  *
  * @see .github/workflows/interpreter.yml which drives this
- * @see scripts/fetch-interpreter.ts which writes the pin this proposes
+ * @see scripts/fetch/interpreter.ts which writes the pin this proposes
  */
 
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 
-/** where the pin lands; `scripts/fetch-interpreter.ts --pin` is what writes it */
+/** where the pin lands; `scripts/fetch/interpreter.ts --pin` is what writes it */
 export const PIN_PATH = 'interp.lock.json';
 
 /** the state GitHub reports for a pull request, in the spelling `gh pr list --json state` uses */
@@ -370,7 +370,7 @@ export function proposalBody(facts: ProposalFacts): string {
 		'',
 		'**This branch is red until the bytes are published, and that is expected.** It moves',
 		'`interp.lock.json` only. Every clean checkout and every CI run restores `.interp/` from the',
-		'CDN, which still serves the previous binary, so `interp-pin-agreement.spec.ts` reports the',
+		'CDN, which still serves the previous binary, so `interp/pin-agreement.spec.ts` reports the',
 		'two files disagreeing. Publishing is the other half and needs R2 credentials this workflow',
 		'does not carry:',
 		'',
@@ -506,7 +506,7 @@ if (import.meta.main) {
 		process.exit(2);
 	}
 	if (!existsSync(PIN_PATH)) {
-		console.error(`${PIN_PATH} is not present; run fetch-interpreter.ts --pin first`);
+		console.error(`${PIN_PATH} is not present; run fetch/interpreter.ts --pin first`);
 		process.exit(2);
 	}
 

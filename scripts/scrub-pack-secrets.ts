@@ -20,8 +20,8 @@
  * its own slot and the unused tail is zero-filled; a longer result is appended and the old slot
  * zeroed. Either way no byte of the old secret survives, which appending alone would not achieve.
  *
- * @see src/ops/site-secrets.ts for the per-site salt this leaves room for
- * @see scripts/release-payload.ts, whose scanner refuses to publish a payload that still has one
+ * @see src/ops/site/secrets.ts for the per-site salt this leaves room for
+ * @see scripts/release/payload.ts, whose scanner refuses to publish a payload that still has one
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -31,7 +31,7 @@ import { deflateRawSync, inflateRawSync } from 'node:zlib';
 /**
  * One entry of the per-file index: path, offset, stored length, raw length, mtime.
  *
- * `s` marks a member stored VERBATIM, which `pack-perfile.ts` does whenever deflate would grow the
+ * `s` marks a member stored VERBATIM, which `pack/perfile.ts` does whenever deflate would grow the
  * file -- 36 of 11,444 here. Inferring that from `c === l` instead of reading the flag looks
  * equivalent and is not: it is a guess about the format that happens to agree today.
  */
@@ -78,7 +78,7 @@ export const SECRET_REWRITES: readonly {
 		 * `install-site-db.php` writes it, and the from-source bootstrap globs every non-test file
 		 * because the shipped file list came from a traced run a checkout does not have. So the pack
 		 * lane shipped a real salt at `sites/build/settings.php` while `sites/default/settings.php`
-		 * beside it was correctly empty. The DETECTOR was already general -- `pack-secrets.spec.ts`
+		 * beside it was correctly empty. The DETECTOR was already general -- `pack/secrets.spec.ts`
 		 * scans every entry, which is how this surfaced -- and only the rewriter was keyed to one
 		 * literal path.
 		 */
@@ -158,7 +158,7 @@ export function scrubPack(dir: string, check = false): ScrubResult[] {
 		const after = before.replace(rule.find, rule.replace);
 		const raw = new TextEncoder().encode(after);
 		const deflated = new Uint8Array(deflateRawSync(raw, { level: 9 }));
-		// same rule pack-perfile.ts applies: store verbatim when deflate would not shrink it
+		// same rule pack/perfile.ts applies: store verbatim when deflate would not shrink it
 		const verbatim = deflated.length >= raw.length;
 		const packed = verbatim ? raw : deflated;
 		if (verbatim) entry.s = 1;

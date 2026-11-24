@@ -32,7 +32,7 @@ export default { root: '${ROOT}', test: { projects: [workers] } };
 `;
 
 const PROBE_SOURCE = String.raw`import { describe, expect, it } from 'vitest';
-import { BOOT_KERNEL } from '../src/drupal/site-php';
+import { BOOT_KERNEL } from '../src/drupal/php/site';
 import { freshSite, inObject, queuePath, type ServeDo } from '../tests/helpers/serve-do';
 import {
 	STRING_LAYOUTS,

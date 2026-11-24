@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildDriverAssets } from './gen-driver-assets';
+import { buildDriverAssets } from './gen/driver-assets';
 
 /**
  * Whether the driver the pack SHIPS is the driver `composer.lock` NAMES.
  *
  * THIS CLOSES A HOLE IN "THE LOCK IS AUTHORITATIVE". `composer.lock` names
- * `drupflare/drupflare`, `drupflare/rom` and `drupflare/stream-http`, and `gen-driver-assets.ts`
+ * `drupflare/drupflare`, `drupflare/rom` and `drupflare/stream-http`, and `gen/driver-assets.ts`
  * packs `assets/driver.json` from the sibling WORKING TREES beside this repo. Nothing compared the
  * two, so the lock governed Drupal core and said nothing about the driver layer -- a third of the
  * shipping PHP.

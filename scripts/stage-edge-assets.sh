@@ -58,9 +58,9 @@ if [ -d "$SQL_SRC" ]; then
 	mkdir -p "$OUT/drupal-sql"
 	cp "$SQL_SRC"/*.json "$OUT/drupal-sql/"
 else
-	echo "WARNING: no migration chunks at $SQL_SRC -- run scripts/pack-sql.ts first" >&2
+	echo "WARNING: no migration chunks at $SQL_SRC -- run scripts/pack/sql.ts first" >&2
 fi
-# the driver AND drupflare travel in this one file; see gen-driver-assets.ts
+# the driver AND drupflare travel in this one file; see gen/driver-assets.ts
 cp "$ROOT/assets/driver.json" "$OUT/driver.json"
 if [ -f "$ROOT/assets/prefill.json" ]; then
 	cp "$ROOT/assets/prefill.json" "$OUT/prefill.json"

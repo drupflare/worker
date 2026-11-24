@@ -258,7 +258,7 @@ foreach ($configEdits as $name => $values) {
 // `TwigEnvironment::__construct()` mints it lazily and stores `{twig_extension_hash,
 // twig_cache_prefix}` in State, and only when the twig service is actually constructed. A kernel
 // that never renders never asks for it, so a fresh database carried no prefix and
-// `bake-twig.php` refused with "no twig_cache_prefix: pass --prefix= or fix ...". That is the
+// `bake/twig.php` refused with "no twig_cache_prefix: pass --prefix= or fix ...". That is the
 // chicken-and-egg the recipe was missing: the bake READS the prefix and cannot invent one, because
 // a prefix that disagrees with the container's hash makes the runtime mint a fresh uniqid() and
 // orphan every baked template with nothing looking wrong.
@@ -304,7 +304,7 @@ $db = Drupal::database();
 // The installer needs an admin password to complete, and the artifact must not carry it: this
 // database is published, so a hash here is a credential every deployment would share and the
 // build's own `--password` would open every site built from it. The shipped file has always had an
-// empty `pass`, and a rebuild reintroduced a `$2y$12$...` hash that `pack-secrets.spec.ts` caught in
+// empty `pass`, and a rebuild reintroduced a `$2y$12$...` hash that `pack/secrets.spec.ts` caught in
 // `assets/drupal-sql/0061.json`.
 //
 // Empty rather than deleted, because the ROW is what makes uid 1 exist. Drupal's password checker
@@ -378,7 +378,7 @@ foreach ($lazyBins as $bin) {
 // site rebuilds the collection.
 //
 // It is also the only row in the pack with embedded NUL bytes, which makes it the subject of
-// `migrate-sql.spec.ts`'s codec regression test -- `node:sqlite` truncates a TEXT read at the first
+// `dump/migrate.spec.ts`'s codec regression test -- `node:sqlite` truncates a TEXT read at the first
 // NUL, and both sides of an equality check read 117 bytes and agreed. Without the row that guard
 // cannot fire, so losing it costs a warm start AND a check.
 $routeProvider = Drupal::service('router.route_provider');

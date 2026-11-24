@@ -2,8 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { GENERATED_COLLISIONS } from '../src/ops/generated/modules';
-import { SHIPPING_PACK_CONTRIB, moduleTable } from '../src/ops/module-table';
-import { requireNoConflicts, resolvePhases } from './contrib-phases';
+import { SHIPPING_PACK_CONTRIB, moduleTable } from '../src/ops/module/table';
+import { requireNoConflicts, resolvePhases } from './contrib/phases';
 
 /**
  * Installs the contributed-module census into `drupal-src`, which had no producer.
@@ -13,9 +13,9 @@ import { requireNoConflicts, resolvePhases } from './contrib-phases';
  * bun scripts/install-census.ts --check    # report what is missing, install nothing
  * ```
  *
- * WHY THIS EXISTS, AND IT COST A TREE. `src/ops/module-table.ts` records 66 contributed modules with
+ * WHY THIS EXISTS, AND IT COST A TREE. `src/ops/module/table.ts` records 66 contributed modules with
  * what was asserted about each, and 62 of them are dev-only fixtures rather than shipped content --
- * `pack-drupal.ts` gates `modules/contrib` behind `PACK_CONTRIB=1`. They were installed into
+ * `pack/drupal.ts` gates `modules/contrib` behind `PACK_CONTRIB=1`. They were installed into
  * `drupal-src` BY HAND. That directory is gitignored and `composer.lock` names only the four in
  * {@link SHIPPING_PACK_CONTRIB}, so nothing in the repository could put them back: a
  * `fetch:drupal --force` on 2026-09-09 deleted 61 modules and every contributed theme, and the gate
@@ -45,9 +45,9 @@ import { requireNoConflicts, resolvePhases } from './contrib-phases';
  * exists and falls back to the development branch only where none does, which is exactly the rule
  * those three cases wanted.
  *
- * This is a FIXTURE tree. `pack-drupal.ts` gates `modules/contrib` behind `PACK_CONTRIB=1`, so
+ * This is a FIXTURE tree. `pack/drupal.ts` gates `modules/contrib` behind `PACK_CONTRIB=1`, so
  * nothing here reaches a shipped artifact; the four modules that DO ship are pinned exactly in the
- * root `composer.lock` and installed by `fetch-drupal-tree.ts`, not here.
+ * root `composer.lock` and installed by `fetch/drupal-tree.ts`, not here.
  */
 export const CENSUS_STABILITY = { 'minimum-stability': 'dev', 'prefer-stable': true } as const;
 
@@ -67,7 +67,7 @@ export function censusPackages(): string[] {
 
 /**
  * What one lock can hold: the census without the modules that declare a collision. Those install
- * in a phase of `contrib-fixture.ts`, after their colliders' own rows have run.
+ * in a phase of `contrib/fixture.ts`, after their colliders' own rows have run.
  */
 export function basePackages(): string[] {
 	return resolvePhases(censusPackages(), GENERATED_COLLISIONS).base;
@@ -94,7 +94,7 @@ export function missingFrom(root: string, wanted = censusPackages()): string[] {
 	return wanted.filter((name) => !have.has(name));
 }
 
-/** what is on disk, which is what `pack-static.ts` and the contrib lane actually read */
+/** what is on disk, which is what `pack/static.ts` and the contrib lane actually read */
 export function onDisk(root: string): { modules: number; themes: number } {
 	const count = (dir: string): number => {
 		try {

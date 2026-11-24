@@ -4,7 +4,7 @@ import {
 	SqlMigrator,
 	type MigrationChunk,
 	type MigrationManifest
-} from '../../../src/db/migrate-sql';
+} from '../../../src/db/dump/migrate';
 import { executeMysql } from '../../../src/db/sql/exec';
 import { createState, type MysqlState } from '../../../src/db/sql/translate';
 import { generate, SEED, SHAPE } from '../loaded-data';

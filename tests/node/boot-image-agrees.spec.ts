@@ -11,6 +11,7 @@ import {
 	PACK_SQLITE,
 	packConfigDigest
 } from '../../scripts/boot-image-pack';
+import { bootImageDrift, contextPart, type BootImageExpected } from '../../scripts/check/bootimage';
 import {
 	BOOT_IMAGE_VARIANTS,
 	bootImageDir,
@@ -37,6 +38,70 @@ describe('the context key', () => {
 		expect(contextConfig('generation=a|settings=s')).toBeUndefined();
 		expect(contextConfig('generation=a|xconfig=ab')).toBeUndefined();
 		expect(contextConfig('generation=a|config=reset|settings=s')).toBeUndefined();
+	});
+});
+
+describe('the release check against what the tree computes', () => {
+	const expected: BootImageExpected = {
+		driver: 'dddd',
+		packGeneration: 'gggg',
+		interpreter: 'iiii:1024',
+		packModules: '10:ff',
+		packConfig: 'cccc',
+		interpreterSha: 'ssss'
+	};
+	const context = (over: Record<string, string> = {}) => {
+		const p = {
+			gen: 'gggg',
+			mods: '10:ff',
+			interp: 'iiii:1024',
+			driver: 'dddd',
+			config: 'cccc',
+			...over
+		};
+		return `generation=${p.gen}|${p.mods}|${p.interp}|driver=${p.driver}|config=${p.config}|settings=x`;
+	};
+
+	it('splits a context on its keys although the generation holds pipes', () => {
+		expect(contextPart(context(), 'generation')).toBe('gggg|10:ff|iiii:1024');
+		expect(contextPart(context(), 'driver')).toBe('dddd');
+		expect(contextPart(context(), 'missing')).toBeUndefined();
+	});
+
+	it('passes an index whose recorded inputs equal the tree', () => {
+		expect(
+			bootImageDrift('pack', { context: context(), interpreter: 'ssss' }, expected)
+		).toEqual([]);
+		const claimed = context({ mods: '99:aa', config: 'reset' });
+		expect(
+			bootImageDrift('claimed', { context: claimed, interpreter: 'ssss' }, expected)
+		).toEqual([]);
+	});
+
+	it.each([
+		['driver', { driver: 'old' }, /driver digest is old/],
+		['gen', { gen: 'old' }, /pack generation is old/],
+		['interp', { interp: 'old:1024' }, /interpreter identity is old:1024/],
+		['mods', { mods: '1:0' }, /module fingerprint is 1:0/],
+		['config', { config: 'beef' }, /config digest is beef/]
+	])('fails a pack index with a stale %s', (_name, over, message) => {
+		const problems = bootImageDrift(
+			'pack',
+			{ context: context(over), interpreter: 'ssss' },
+			expected
+		);
+		expect(problems).toHaveLength(1);
+		expect(problems[0]).toMatch(message);
+	});
+
+	it('fails a stale interpreter hash and leaves a claimed index free of the pack-only parts', () => {
+		expect(
+			bootImageDrift('pack', { context: context(), interpreter: 'old' }, expected)
+		).toHaveLength(1);
+		const claimed = context({ mods: '1:0', config: 'reset' });
+		expect(
+			bootImageDrift('claimed', { context: claimed, interpreter: 'ssss' }, expected)
+		).toEqual([]);
 	});
 });
 

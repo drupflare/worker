@@ -1,0 +1,360 @@
+import { runDurableObjectAlarm } from 'cloudflare:test';
+import { afterEach, describe, expect, it } from 'vitest';
+import { dropAllSnapshots, ensureHeapTables } from '../../../src/db/heap-store';
+import { RECONCILE_STEPS } from '../../../src/ops/reconcile';
+import { driveAlarms, freshSite, inObject, type ServeDo } from '../../helpers/serve-do';
+
+/**
+ * The producer, which did not exist: `HEAP_SNAPSHOT` gated the restore and nothing wrote an image,
+ * so every boot on every site refused with `no snapshot for this pack generation`.
+ *
+ * IT DRIVES THE REAL ALARM rather than calling `snapshotStep()` directly, and that is the whole
+ * value of this file. Two earlier versions passed a hand-called step and failed on the chain: one
+ * ran after the fill loop, which boots the interpreter on every firing, so it dropped the
+ * interpreter forever and never imaged.
+ */
+
+const TIMEOUT = 1_800_000;
+
+const call = (site: ServeDo, path: string) => site.fetch(new Request(`https://do.local${path}`));
+
+// every case's object shares this isolate, so a later case's imaging boot ran beside three resident
+// interpreters at 262 MB of linear memory and its firing died; a dropped heap is reused instead
+const made: DurableObjectStub[] = [];
+afterEach(async () => {
+	for (const stub of made.splice(0))
+		await inObject(stub, (site) => (site as any).dropInterpreter());
+});
+
+/**
+ * A site in the state the producer waits for: migrated, rendered once so it has its OWN
+ * `cache_container` row, and holding no interpreter -- which is what `/__migrate` and `/__firstrun`
+ * both leave behind on a real site.
+ */
+async function provisioned(): Promise<DurableObjectStub> {
+	const stub = freshSite();
+	made.push(stub);
+	// off while the setup runs, or a setup step images and `latest` is non-null before the subject
+	// arms anything; the default-off decision is pinned separately below
+	await inObject(stub, (site) => {
+		// the boot image restores first when a site matches it, and this spec is the heap restore
+		(site as any).env = { ...(site as any).env, HEAP_IMAGE: '0', BOOT_IMAGE: '0' };
+	});
+	await inObject(stub, (site) => call(site, '/__migrate?all=1&prefill=0'));
+	await inObject(stub, (site) => (site as any).fillOne('/'));
+	// RECONCILED FIRST, because the alarm chain runs it before the image and a step that lands drops
+	// every snapshot. Imaging ahead of it would pay a full heap read the next firing throws away, so
+	// a real site reaches the producer's precondition with reconciliation already settled. Driven to
+	// completion here rather than left to the alarms this spec counts
+	await inObject(stub, async (site) => {
+		// `* 3 + 2` rather than `+ 2`: a step whose apply fails is retried up to STEP_ATTEMPT_LIMIT
+		// times and each attempt costs a pass, so a bound of one-pass-per-step leaves the chain
+		// unfinished and the alarm this spec counts spends its firing reconciling instead of imaging
+		for (let i = 0; i < RECONCILE_STEPS.length * 3 + 2; i++) {
+			const res = await site.fetch(
+				new Request('https://do.local/__reconcile', { method: 'POST' })
+			);
+			if (((await res.json()) as { ran: unknown }).ran === null) break;
+		}
+	});
+	// alternated then proven: an alarm can leave a step the route cleared, and a fixed count of
+	// either is not a settled chain. Throwing here names the cause instead of a null image later
+	let settled = false;
+	for (let round = 0; round < 12 && !settled; round++) {
+		await driveAlarms(stub, () => false, 4);
+		settled = await inObject(stub, async (site) => {
+			for (let i = 0; i < RECONCILE_STEPS.length * 3 + 2; i++) {
+				const res = await site.fetch(
+					new Request('https://do.local/__reconcile', { method: 'POST' })
+				);
+				if (((await res.json()) as { ran: unknown }).ran === null) return true;
+			}
+			return false;
+		});
+	}
+	if (!settled) {
+		throw new Error('reconciliation never settled, so the imaging firing would reconcile too');
+	}
+	await inObject(stub, (site) => {
+		(site as any).env = { ...(site as any).env, HEAP_IMAGE: '1' };
+	});
+	const dropped = await inObject(stub, (site) => {
+		ensureHeapTables((site as any).sql);
+		const n = dropAllSnapshots((site as any).sql);
+		(site as any).sql.exec('DELETE FROM cfw_meta WHERE k = ?', 'heap_image_gen');
+		// the ATTEMPT counter as well, and it is a separate key. A spec asserting the producer did
+		// not have to take an image reads this rather than the image itself, so a count left over
+		// from the setup reads as an attempt the alarm made
+		(site as any).sql.exec('DELETE FROM cfw_meta WHERE k = ?', 'heap_image_attempts');
+		return {
+			n,
+			left: Number(
+				(site as any).sql.exec('SELECT COUNT(*) AS n FROM cfw_heap_snapshot').toArray()[0]
+					?.n ?? 0
+			)
+		};
+	});
+	if (dropped.left !== 0) {
+		throw new Error(`setup left ${dropped.left} snapshots after dropping ${dropped.n}`);
+	}
+	await inObject(stub, (site) => {
+		(site as any).php = undefined;
+	});
+	return stub;
+}
+
+const heapStatus = async (stub: DurableObjectStub) =>
+	(await (
+		await stub.fetch('https://do.local/__heap', { headers: { 'x-cfw-owner': 'test' } })
+	).json()) as Record<string, any>;
+
+const arm = (stub: DurableObjectStub) =>
+	inObject(stub, (site) => site.storage.setAlarm(Date.now() + 1));
+
+describe('the alarm produces this site one heap image', () => {
+	it(
+		'images on a firing that arrives with no interpreter, and a cold boot then restores it',
+		async () => {
+			const stub = await provisioned();
+			expect((await heapStatus(stub)).latest).toBe(null);
+
+			await arm(stub);
+			await driveAlarms(stub, (site) => (site as any).metaGet('heap_image_gen') !== null, 6);
+
+			const status = await heapStatus(stub);
+			expect(status.latest, JSON.stringify(status.lastHeapImage)).not.toBe(null);
+			// the heap generation, not the PACK generation. An image keyed on the pack alone
+			// survives a module install that invalidated its kernel, class loader and container:
+			// four separate symptoms, one disagreement between a restored heap and a current
+			// database
+			expect(status.imagedGeneration).toBe(status.heapGeneration);
+			expect(String(status.heapGeneration).startsWith(String(status.packGeneration))).toBe(
+				true
+			);
+			expect(status.latest.keptPages).toBeGreaterThan(0);
+
+			// the root of what it wrote is sealed outside SQL, and the attempt it cost is readable
+			// back (the counter is written as `<generation> <n>` and read by splitting on that space)
+			const sealed = await inObject(stub, (site) => ({
+				keys: [...(site as any).ctx.storage.kv.list({ prefix: 'heapsum:' })].map(
+					([key]: [string]) => key
+				),
+				attempts: (site as any).imageAttempts(String(status.heapGeneration))
+			}));
+			expect(sealed.keys).toEqual([`heapsum:${status.latest.id}`]);
+			expect(sealed.attempts).toBe(1);
+
+			// the point of all of it -- a cold boot now restores instead of refusing
+			const restored = await inObject(stub, async (site) => {
+				(site as any).php = undefined;
+				(site as any).heapRestoreCursor = undefined;
+				await (site as any).fillOne('/');
+				return (site as any).heapRestore;
+			});
+			expect(restored.restored, JSON.stringify(restored)).toBe(true);
+			expect(restored.bytes).toBeGreaterThan(0);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'never takes the interpreter away from whoever is using it',
+		async () => {
+			// `snapshot-delta.spec.ts` images the LIVE heap after two renders; a producer that
+			// dropped the interpreter to get a clean one moved its differing share 0.7 -> 0.534
+			const stub = await provisioned();
+			await inObject(stub, (site) => (site as any).fillOne('/'));
+			const before = await inObject(stub, (site) => (site as any).php !== undefined);
+			expect(before).toBe(true);
+
+			await arm(stub);
+			await runDurableObjectAlarm(stub);
+
+			expect(await inObject(stub, (site) => (site as any).php !== undefined)).toBe(true);
+			expect((await heapStatus(stub)).latest).toBe(null);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'takes exactly one image and stops asking',
+		async () => {
+			const stub = await provisioned();
+			await arm(stub);
+			await driveAlarms(stub, (site) => (site as any).metaGet('heap_image_gen') !== null, 6);
+			const first = await heapStatus(stub);
+			expect(first.latest).not.toBe(null);
+
+			await inObject(stub, (site) => {
+				(site as any).php = undefined;
+			});
+			await arm(stub);
+			await driveAlarms(stub, () => false, 4);
+			const after = await heapStatus(stub);
+			expect(after.imageAttempts).toBe(first.imageAttempts);
+			expect(after.latest.id).toBe(first.latest.id);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'refuses to write over an image somebody else took',
+		async () => {
+			// `gcHeapSnapshots()` keeps exactly one, so imaging here would replace an operator's
+			// operator-taken `/heap?op=snapshot` without saying so
+			const stub = await provisioned();
+			const res = await stub.fetch('https://do.local/__heap?op=snapshot&fresh=1', {
+				headers: { 'x-cfw-owner': 'test' }
+			});
+			expect(res.status).toBe(200);
+			const mine = (await heapStatus(stub)).latest.id;
+
+			await inObject(stub, (site) => {
+				(site as any).php = undefined;
+			});
+			await arm(stub);
+			await driveAlarms(stub, () => false, 4);
+
+			const after = await heapStatus(stub);
+			expect(after.latest.id).toBe(mine);
+			// the counter is per generation and is written as `<generation> <n>`; an image it did
+			// not have to take leaves it unwritten
+			expect(after.imageAttempts).toBe(null);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'images a site that has never rendered, now that the packed container row is readable',
+		async () => {
+			// The magnitude used to be asserted here as `storedBytes < 20_000_000`, guarding the
+			// stale-container defect that imaged a never-rendered site at 36,634,624 bytes. It is a
+			// PROPERTY now: elision is what makes the image smaller than the heap, and both sides come
+			// from the same run so the assertion survives a feature that grows either one.
+			// `container-cid.spec.ts` is what pins the stale-container regression, and the byte figure
+			// belongs in a measurement script rather than in a ceiling somebody has to keep editing.
+			const stub = freshSite();
+			made.push(stub);
+			await inObject(stub, (site) => {
+				(site as any).env = { ...(site as any).env, HEAP_IMAGE: '1' };
+			});
+			await inObject(stub, (site) => call(site, '/__migrate?all=1&prefill=0'));
+			await inObject(stub, (site) => {
+				(site as any).php = undefined;
+			});
+			const out = (await inObject(stub, (site) => (site as any).snapshotStep())) as Record<
+				string,
+				any
+			> | null;
+			const image = out?.heapImage;
+			expect(image?.ok, JSON.stringify(out)).toBe(true);
+			expect(Number(image?.heapBytes)).toBeGreaterThan(0);
+			expect(Number(image?.storedBytes)).toBeLessThan(Number(image?.heapBytes));
+			expect(Number(image?.keptPages)).toBeLessThan(
+				Math.ceil(Number(image?.heapBytes) / 65_536)
+			);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'stays off when HEAP_SNAPSHOT is 0',
+		async () => {
+			const stub = await provisioned();
+			const out = await inObject(stub, (site) => {
+				(site as any).env = { ...(site as any).env, HEAP_SNAPSHOT: '0' };
+				return (site as any).snapshotStep();
+			});
+			expect(out).toBeUndefined();
+		},
+		TIMEOUT
+	);
+
+	it(
+		'stays off when HEAP_IMAGE is 0',
+		async () => {
+			const stub = await provisioned();
+			const out = await inObject(stub, (site) => {
+				(site as any).env = { ...(site as any).env, HEAP_IMAGE: '0' };
+				return (site as any).snapshotStep();
+			});
+			expect(out).toBeUndefined();
+		},
+		TIMEOUT
+	);
+
+	/**
+	 * The default is OFF, and this is the assertion that keeps it that way.
+	 *
+	 * Restoring an image costs more than booting: two deployed free workers differing only in
+	 * `HEAP_IMAGE`/`HEAP_SNAPSHOT` put the imaged cold render at a median 1,912 ms of cpuTime (n=5,
+	 * 1,561-2,020) against 1,264 unimaged (n=4, 1,113-1,343), ranges not overlapping. It costs storage
+	 * against an account-wide cap on top of that. Every other test in this file opts the producer IN,
+	 * so without this one nothing here would notice the default flipping back.
+	 */
+	it(
+		'produces nothing when nobody asked, because the default is off',
+		async () => {
+			const stub = freshSite();
+			made.push(stub);
+			await inObject(stub, (site) => call(site, '/__migrate?all=1&prefill=0'));
+			await inObject(stub, (site) => (site as any).fillOne('/'));
+			await inObject(stub, (site) => {
+				(site as any).php = undefined;
+			});
+			// no `HEAP_IMAGE` assignment anywhere: this is the shipping configuration
+			const out = await inObject(stub, (site) => (site as any).snapshotStep());
+			expect(out).toBeUndefined();
+			expect((await heapStatus(stub)).latest).toBe(null);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'ends the firing after imaging, so the fill loop never stacks on top of it',
+		async () => {
+			// imaging is a kernel boot plus a full heap read; a fill loop in the same incarnation is
+			// N more workloads and the recycle runs only BETWEEN invocations. At `fillBatchSize` 25
+			// that shape reset four freshly provisioned sites on paid
+			const stub = await provisioned();
+			await inObject(stub, (site) =>
+				site.sql.exec(
+					'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING',
+					'/',
+					Date.now()
+				)
+			);
+			await arm(stub);
+			// one firing on purpose: the subject is that the IMAGING firing ends after imaging
+			await runDurableObjectAlarm(stub);
+
+			// EVERYTHING IN ONE ROUND TRIP, and the alarm cancelled first. The imaging firing
+			// re-arms at +1,000 ms and this pool fires a scheduled alarm on its own -- verified,
+			// a +300 ms alarm raises `alarmFirings` with no `runDurableObjectAlarm` at all. So a
+			// second firing, which images nothing and therefore DOES fill, was racing the assertion
+			// below: it held on an idle machine and drained the queue under a loaded suite.
+			const after = await inObject(stub, async (site) => {
+				await (
+					site.ctx.storage as unknown as { deleteAlarm(): Promise<void> }
+				).deleteAlarm();
+				return {
+					php: (site as any).php !== undefined,
+					outcome: (site as any).lastAlarmOutcome,
+					imaged: (site as any).metaGet('heap_image_gen'),
+					queued: (site as any).queueDepth(),
+					// what separates the ways the firing can decline: a reconcile outcome, the flag
+					// lost with the instance, a failed read, or the attempt cap
+					heapImageFlag: (site as any).env?.HEAP_IMAGE ?? null,
+					attempts: (site as any).metaGet('heap_image_attempts'),
+					firings: (site as any).alarmFirings ?? null
+				};
+			});
+			expect(after.imaged, JSON.stringify(after)).not.toBe(null);
+			expect(after.php).toBe(false);
+			expect(after.outcome?.heapImage?.ok).toBe(true);
+			// the queued page is still queued -- it did not get rendered on the imaging firing
+			expect(after.queued).toBeGreaterThan(0);
+		},
+		TIMEOUT
+	);
+});

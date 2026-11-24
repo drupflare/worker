@@ -1,0 +1,1678 @@
+import { evictDurableObject } from 'cloudflare:test';
+import { describe, expect, it } from 'vitest';
+import { variesByRequest } from '../../../src/do/helpers';
+import { alarmDelayMs } from '../../../src/do/levers';
+import { OWNER_TOKEN_KEY } from '../../../src/ops/site/secrets';
+import { HeapRestoreIncomplete } from '../../../src/site-do';
+import {
+	type FillOutcome,
+	type RenderCall,
+	SESSION_COOKIE,
+	type ServeDo,
+	decodeRenderCall,
+	driveAlarms,
+	freshSite,
+	inObject,
+	markProvisioned,
+	pageFor,
+	provisionedSite,
+	queuePath,
+	seedPage,
+	seedTaggedPage,
+	serveDirect,
+	statsOf,
+	stubRender,
+	tick
+} from '../../helpers/serve-do';
+
+// every subject is provisionedSite(): cold means a cold interpreter and an empty page cache
+// the wrangler.jsonc default: what a miss may spend rendering for the visitor
+const BUDGET_MS = 10000;
+
+/** what `estimateRenderMs()` returns with no interpreter, and with one but no measured render */
+const COLD_ESTIMATE_MS = 4000;
+const FIRST_RENDER_ESTIMATE_MS = 1800;
+
+describe('a cold MISS costs no interpreter and no render', () => {
+	it('still answers 503 and queues when the SITE is not ready, rather than 500', async () => {
+		// `provisionedSite()` stamps the migration cursor and nothing else, so there is no Drupal
+		// database behind it: the render reaches the installer redirect. That used to be
+		// unreachable because free refused to boot at all, and letting it boot turned every
+		// unclaimed site into a 500. A site that is not installed is "a page that is coming",
+		// which is exactly what 503 is for; only a render that THREW earns the exception
+		const stub = await provisionedSite();
+		const cold = await inObject(stub, (site) => serveDirect(site, '/'));
+
+		expect(cold.status).toBe(503);
+		expect(cold.cache).toBe('MISS');
+		expect(cold.queueDepth).toBe(1);
+		expect(cold.body).toContain('warming');
+		// a placeholder must never be cacheable anywhere
+		expect(cold.cacheControl).toBe('no-store');
+		expect(cold.generation).toBe(1);
+		expect(cold.lane).toBe('php-gate');
+	});
+
+	it('BOOTS for the visitor now, which is the trade free used to refuse', async () => {
+		// It answered in under 10 ms by not rendering, and the visitor then waited on the chain.
+		// Measured deployed, that wait is 19,004 ms with only 4 of 8 paths served at all, against
+		// ~3.8 s to boot and render. The cheap answer was cheap for the OBJECT and expensive for
+		// the person waiting, which is the wrong thing to optimise
+		const stub = await provisionedSite();
+		const cold = await inObject(stub, (site) => serveDirect(site, '/'));
+		expect(cold.phpBooted).toBe('1');
+		expect(cold.missMs).toBeGreaterThanOrEqual(0);
+	});
+
+	it('still estimates a BOOT, and the budget now admits one', async () => {
+		const stub = await provisionedSite();
+		const cold = await inObject(stub, (site) => serveDirect(site, '/'));
+		// the estimate is unchanged: with no interpreter it is the BOOT cost, not a render
+		expect(cold.estimateMs).toBe(COLD_ESTIMATE_MS);
+		expect(cold.budgetMs).toBe(BUDGET_MS);
+		// and the arithmetic now goes the other way, which is the whole change: 4,000 fits 10,000.
+		// `inlineBudgetMs` bounds the VISITOR'S PATIENCE rather than a billed resource, and 2 s of
+		// patience was the wrong bound against a 19 s alternative
+		expect(cold.estimateMs).toBeLessThan(cold.budgetMs);
+	});
+
+	it('counts the request and pulls the fill alarm in', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const before = site.serveRequests();
+			await serveDirect(site, '/');
+			return {
+				before,
+				after: site.serveRequests(),
+				alarmAt: await site.ctx.storage.getAlarm(),
+				now: Date.now()
+			};
+		});
+		expect(out.before).toBe(0);
+		// `serveRequests()` rather than the row: the count accumulates in memory and one row pays
+		// for many, because a row per view spent 15% of free's row budget counting something
+		// `pageHits` already counts for nothing
+		expect(out.after).toBe(1);
+		expect(out.alarmAt).not.toBeNull();
+		// armed inside the alarm floor, not for the 240 s keep-warm interval
+		expect(Number(out.alarmAt) - out.now).toBeLessThan(alarmDelayMs() + 1000);
+	});
+
+	it('keeps the counter across an eviction, so an edge-tier assertion can rely on it', async () => {
+		const stub = await provisionedSite();
+		await inObject(stub, (site) => serveDirect(site, '/'));
+		// the +1 ms alarm flushes the accumulator; evicting first would measure the accumulator and read 0
+		// 120 tries, not 25: under a loaded suite the alarm can miss the ~125 ms window
+		await driveAlarms(stub, (site) => site.storedMeters().serveTotal > 0, 120);
+		// driveAlarms gives up silently at its budget; assert the precondition so the failure names the flush
+		const flushed = await inObject(stub, (site) => site.storedMeters().serveTotal);
+		expect(
+			flushed,
+			'the +1 ms alarm never flushed the accumulator before the eviction'
+		).toBeGreaterThan(0);
+		await evictDurableObject(stub);
+		const after = await inObject(stub, (site) => site.serveRequests());
+		expect(after).toBe(1);
+	});
+});
+
+describe('inline rendering off is the free-plan shape and stays reachable', () => {
+	it('returns the placeholder and leaves the work to the alarm chain', async () => {
+		const stub = await provisionedSite();
+		const off = await inObject(stub, (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			return serveDirect(site, '/', '&inline=0');
+		});
+		expect(off.status).toBe(503);
+		// off rather than impossible: the interpreter is up, the operator said no
+		expect(off.inline).toBe('off');
+		expect(off.phpBooted).toBe('1');
+		expect(off.queueDepth).toBe(1);
+		expect(off.missMs).toBeLessThan(10);
+	});
+
+	it('a zero budget disables inline rendering entirely, restoring the always-placeholder shape', async () => {
+		const stub = await provisionedSite();
+		const off = await inObject(stub, (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			return serveDirect(site, '/', '&budget=0');
+		});
+		expect(off.status).toBe(503);
+		expect(off.inline).toBe('off');
+		expect(off.budgetMs).toBe(0);
+	});
+
+	it('a zero budget is still the way to refuse a cold render outright', async () => {
+		// the explicit lever survives the default moving: `budget=0` is the documented always-503
+		// switch and it is what a spec uses to force a MISS
+		const stub = await provisionedSite();
+		const off = await inObject(stub, (site) => serveDirect(site, '/', '&budget=0'));
+		expect(off.inline).toBe('off');
+		expect(off.status).toBe(503);
+		expect(off.phpBooted).toBe('0');
+	});
+});
+
+describe('the alarm chain fills what a MISS queued, unattended', () => {
+	it('fills the path and turns the next request into a HIT', async () => {
+		const stub = await provisionedSite();
+		const calls = await inObject(stub, async (site) => {
+			const recorded = stubRender(site, ({ path }) => pageFor(path));
+			await serveDirect(site, '/', '&inline=0');
+			return recorded;
+		});
+		await driveAlarms(stub, (site) => site.queueDepth() === 0);
+
+		const out = await inObject(stub, async (site) => ({
+			stats: await statsOf(site),
+			hit: await serveDirect(site, '/')
+		}));
+
+		expect(out.stats.alarmFirings).toBeGreaterThan(0);
+		expect(out.stats.queue).toHaveLength(0);
+		expect(out.stats.cached.map((r) => r.path)).toEqual(['/']);
+		expect(out.hit.status).toBe(200);
+		expect(out.hit.cache).toBe('HIT');
+		// the serve is what has to fit the budget; the render never did
+		expect(out.hit.hitMs).toBeGreaterThanOrEqual(0);
+		expect(out.hit.hitMs).toBeLessThan(10);
+		expect(out.hit.body).toContain('<title>/</title>');
+		// the render's own cost, carried through storage to the response
+		expect(out.hit.renderMs).toBe(42);
+		expect(out.hit.contentType).toBe('text/html; charset=utf-8');
+		// the fill asked PHP for the path the visitor missed on, emptying `page` and NOT
+		// `dynamic_page_cache`, which was 6 of the 7 rows a fill charged
+		expect(calls.map((c) => c.path)).toEqual(['/']);
+		expect(calls[0]?.bins).toEqual(['page']);
+	});
+
+	it('fills a BATCH per firing, which is what amortises the re-arm row', async () => {
+		const stub = await provisionedSite();
+		await inObject(stub, (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			for (const path of ['/a', '/b', '/c']) queuePath(site, path);
+		});
+		// one firing, three pages: the re-arm costs one row write for the batch rather than three
+		const ran = await driveAlarms(stub, (site) => site.queueDepth() === 0, 2);
+		const stats = await inObject(stub, (site) => statsOf(site));
+		expect(ran).toBeLessThanOrEqual(1);
+		expect(stats.cached.map((r) => r.path)).toEqual(['/a', '/b', '/c']);
+		expect(stats.queue).toHaveLength(0);
+	});
+
+	it('gives each path its own row rather than serving the first one back', async () => {
+		const stub = await provisionedSite();
+		await inObject(stub, (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			queuePath(site, '/');
+			queuePath(site, '/user/login');
+		});
+		await driveAlarms(stub, (site) => site.queueDepth() === 0);
+		const out = await inObject(stub, async (site) => ({
+			root: await serveDirect(site, '/'),
+			login: await serveDirect(site, '/user/login')
+		}));
+		expect(out.root.cache).toBe('HIT');
+		expect(out.login.cache).toBe('HIT');
+		expect(out.login.body).not.toBe(out.root.body);
+		expect(out.login.body).toContain('<title>/user/login</title>');
+	});
+
+	// both branches: the idle interval decides whether the object stays resident
+	// SITE_WARM is stated rather than left to the predictor, so the operator's choice is what this drives
+	async function idleRearmMs(warm: boolean): Promise<number> {
+		const stub = await provisionedSite();
+		await inObject(stub, (site) => {
+			site.env.SITE_WARM = warm ? '1' : '0';
+			stubRender(site, ({ path }) => pageFor(path));
+			queuePath(site, '/');
+		});
+		await driveAlarms(stub, (site) => site.queueDepth() === 0);
+		const out = await inObject(stub, async (site) => ({
+			alarmAt: await site.ctx.storage.getAlarm(),
+			now: Date.now()
+		}));
+		return Number(out.alarmAt) - out.now;
+	}
+
+	it('re-arms under the hibernation threshold once the queue is empty', async () => {
+		const gap = await idleRearmMs(true);
+		expect(gap).toBeGreaterThan(0);
+		// under 10 s or the object hibernates and the warming buys nothing
+		expect(gap).toBeLessThan(10_000);
+	});
+
+	it('drops back to the keep-warm interval when warming is off', async () => {
+		expect(await idleRearmMs(false)).toBeGreaterThan(60_000);
+	});
+
+	it('refuses to warm a site whose traffic does not pay for it', async () => {
+		// unset SITE_WARM is the predictor's call; 96 renders a day is below the measured crossing of 505
+		const stub = await provisionedSite();
+		await inObject(stub, (site) => {
+			delete (site.env as Record<string, unknown>).SITE_WARM;
+			stubRender(site, ({ path }) => pageFor(path));
+			queuePath(site, '/');
+		});
+		await driveAlarms(stub, (site) => site.queueDepth() === 0);
+		const out = await inObject(stub, async (site) => ({
+			alarmAt: await site.ctx.storage.getAlarm(),
+			now: Date.now(),
+			decision: (site as unknown as { lastWarmDecision?: { warm: boolean } }).lastWarmDecision
+		}));
+		expect(out.decision?.warm).toBe(false);
+		expect(Number(out.alarmAt) - out.now).toBeGreaterThan(60_000);
+	});
+});
+
+// cfw_page has no column for a Location, so a stored 3xx replays as a bodyless redirect to nowhere
+// drupal answers aggregate urls with 301 on a hash mismatch, which is how this is reached
+describe('cron yields to a fill backlog', () => {
+	// the quota ladder is daily and cannot see a visitor waiting; a warming site has an empty page per path
+	it('does not run cron while a fill batch left work behind', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			// more than one batch drains, so the queue is still non-empty when the firing ends
+			await site.storage.put('cronLastRunMs', 0);
+			for (let i = 0; i < 20; i++) await serveDirect(site, `/p${i}`, '&inline=0');
+			const queuedBefore = site.queueDepth();
+			await site.alarm();
+			return {
+				queuedBefore,
+				queuedAfter: site.queueDepth(),
+				ranCron: site.lastCron !== undefined
+			};
+		});
+		expect(out.queuedBefore).toBeGreaterThan(5);
+		// the premise of the assertion below: this firing did not get through the backlog
+		expect(out.queuedAfter).toBeGreaterThan(0);
+		expect(out.ranCron).toBe(false);
+	});
+
+	it('runs it once the queue is empty', async () => {
+		const stub = await provisionedSite();
+		await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			await site.storage.put('cronLastRunMs', 0);
+		});
+		await driveAlarms(stub, (site) => site.queueDepth() === 0);
+		const ran = await inObject(stub, async (site) => {
+			await site.alarm();
+			return site.lastCron !== undefined;
+		});
+		expect(ran).toBe(true);
+	});
+});
+
+describe('a redirect is answered, not stored', () => {
+	it('carries the Location through and writes no cfw_page row', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, () => ({
+				html: '',
+				status: 301,
+				contentType: 'text/html; charset=utf-8',
+				location: '/sites/default/files/css/css_correct.css',
+				renderMs: 3,
+				bytes: 0
+			}));
+			const first = await serveDirect(site, '/sites/default/files/css/css_stale.css');
+			return {
+				first,
+				// the second request proves nothing was stored: a stored 301 answers HIT with no location
+				second: await serveDirect(site, '/sites/default/files/css/css_stale.css'),
+				rows: site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE status >= 300 AND status < 400')
+					.toArray()
+					.map((r) => Number(r.c))[0],
+				queued: site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_fill_queue')
+					.toArray()
+					.map((r) => Number(r.c))[0]
+			};
+		});
+
+		expect(out.first.status).toBe(301);
+		expect(out.first.location).toBe('/sites/default/files/css/css_correct.css');
+		expect(out.first.cache).toBe('RENDER');
+
+		expect(out.second.status).toBe(301);
+		expect(out.second.location, 'a replayed redirect must still point somewhere').toBe(
+			'/sites/default/files/css/css_correct.css'
+		);
+		expect(out.second.cache, 'and must not have come from the page table').toBe('RENDER');
+
+		expect(out.rows, 'no 3xx may be stored').toBe(0);
+		// refusing to store must not strand the path in the queue either
+		expect(out.queued).toBe(0);
+	});
+
+	it('still stores a 200 and a 404, so the guard is a 3xx guard and not a blanket one', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => ({
+				...pageFor(path),
+				status: path === '/gone' ? 404 : 200
+			}));
+			await serveDirect(site, '/here');
+			await serveDirect(site, '/gone');
+			return site.sql
+				.exec('SELECT path, status FROM cfw_page ORDER BY path')
+				.toArray()
+				.map((r) => `${r.path}:${r.status}`);
+		});
+		expect(out).toEqual(['/gone:404', '/here:200']);
+	});
+});
+
+describe('a MISS on a warm object renders inline for the visitor', () => {
+	it('returns the page rather than the placeholder, and says this invocation rendered it', async () => {
+		const stub = await provisionedSite();
+		const inline = await inObject(stub, (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			return serveDirect(site, '/user/password');
+		});
+		expect(inline.status).toBe(200);
+		expect(inline.cache).toBe('RENDER');
+		expect(inline.inline).toBe('1');
+		expect(inline.body).toContain('<title>/user/password</title>');
+		expect(inline.body).not.toContain('warming');
+		// it rendered because the estimate fitted the declared budget
+		expect(inline.estimateMs).toBe(FIRST_RENDER_ESTIMATE_MS);
+		expect(inline.estimateMs).toBeLessThanOrEqual(inline.budgetMs);
+		expect(inline.lane).toBe('php-gate');
+	});
+
+	it('refuses to believe a zero wall-clock delta, which is what the edge reports', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			// freeze the clock: under load a fast render can cross a millisecond and skip the zero branch
+			// the edge really reports 0 here, so pinning it to 0 exercises that branch
+			const realNow = Date.now;
+			const frozen = realNow();
+			globalThis.Date.now = () => frozen;
+			try {
+				const first = await serveDirect(site, '/');
+				return {
+					first,
+					lastRenderMs: site.lastRenderMs,
+					unmeasurable: site.renderClockUnmeasurable,
+					second: await serveDirect(site, '/other')
+				};
+			} finally {
+				globalThis.Date.now = realNow;
+			}
+		});
+		// a synchronous render advances no clock, so the delta is 0
+		expect(out.first.renderClock).toBe('unmeasurable');
+		expect(out.lastRenderMs).toBeUndefined();
+		expect(out.unmeasurable).toBe(true);
+		// and a 0 must not become an estimate of 0, or the budget guard always passes
+		expect(out.second.estimateMs).toBe(FIRST_RENDER_ESTIMATE_MS);
+	});
+
+	it('discards a measurement from a fill that ALSO booted, because it measures the wrong thing', async () => {
+		// a fill that also booted measured asset-fetch wall time (117 ms against 1,398 ms cpu)
+		// a non-zero reading would skip renderClockUnmeasurable and let a 1.4 s boot through the budget guard
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, async ({ path }) => {
+				await tick(3);
+				return pageFor(path);
+			});
+			// fillOne directly: serveDirect refuses to render inline without an interpreter, so only the alarm path boots inside the measurement
+			site.php = undefined;
+			const filled = await site.fillOne('/');
+			return {
+				filled,
+				learned: site.lastRenderMs,
+				bootInclusive: site.lastBootInclusiveMs,
+				unmeasurable: site.renderClockUnmeasurable,
+				second: await serveDirect(site, '/other')
+			};
+		});
+		// the wall clock DID move, so this is not the zero-delta case
+		expect(out.bootInclusive).toBeGreaterThan(0);
+		// but it must not become the warm estimate
+		expect(out.learned).toBeUndefined();
+		expect(out.unmeasurable).toBe(true);
+		// the constant is 4000 with no interpreter and 1800 with one; either way it must never fall to the boot-inclusive wall time
+		expect(out.second.estimateMs).toBeGreaterThanOrEqual(FIRST_RENDER_ESTIMATE_MS);
+		expect(out.second.estimateMs).toBeGreaterThan(out.bootInclusive as number);
+	});
+
+	it('learns from a render it COULD measure, and estimates that next time', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, async ({ path }) => {
+				// a real await, so the wall clock moves and the delta is real
+				await tick(3);
+				return pageFor(path);
+			});
+			const first = await serveDirect(site, '/');
+			return { first, learned: site.lastRenderMs, second: await serveDirect(site, '/other') };
+		});
+		expect(out.first.renderClock).toBe('ok');
+		expect(out.learned).toBeGreaterThan(0);
+		// the last render is the best predictor available, and it is what gets used
+		expect(out.second.estimateMs).toBe(out.learned);
+	});
+});
+
+describe('a render that cannot fit the budget falls back to the placeholder', () => {
+	it('says the estimate exceeded the budget and still queues the path', async () => {
+		const stub = await provisionedSite();
+		const over = await inObject(stub, (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			return serveDirect(site, '/filter/tips', '&budget=1');
+		});
+		expect(over.status).toBe(503);
+		expect(over.inline).toBe('over-budget');
+		expect(over.budgetMs).toBe(1);
+		expect(over.estimateMs).toBeGreaterThan(over.budgetMs);
+		expect(over.queueDepth).toBe(1);
+		expect(over.cacheControl).toBe('no-store');
+	});
+
+	it('and the alarm chain still fills what the fallback queued', async () => {
+		const stub = await provisionedSite();
+		await inObject(stub, (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			return serveDirect(site, '/filter/tips', '&budget=1');
+		});
+		await driveAlarms(stub, (site) => site.queueDepth() === 0);
+		const hit = await inObject(stub, (site) => serveDirect(site, '/filter/tips'));
+		expect(hit.cache).toBe('HIT');
+		expect(hit.body).toContain('<title>/filter/tips</title>');
+	});
+});
+
+describe('a path that can never render is retried and then dropped', () => {
+	it('takes three strikes, records the error, and leaves the queue', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, () => ({ error: 'no route matched' }));
+			queuePath(site, '/definitely-not-a-route');
+			const attempts: FillOutcome[] = [];
+			const rows: (number | undefined)[] = [];
+			for (let i = 0; i < 3; i++) {
+				attempts.push(await site.fillOne());
+				rows.push(
+					site.sql
+						.exec(
+							'SELECT attempts FROM cfw_fill_queue WHERE path = ?',
+							'/definitely-not-a-route'
+						)
+						.toArray()
+						.map((r) => Number(r.attempts))[0]
+				);
+			}
+			return { attempts, rows, stats: await statsOf(site) };
+		});
+
+		expect(out.attempts.map((a) => a.failed)).toEqual([
+			'/definitely-not-a-route',
+			'/definitely-not-a-route',
+			'/definitely-not-a-route'
+		]);
+		expect(out.attempts.map((a) => a.attempts)).toEqual([1, 2, 3]);
+		// retried twice, then the row is gone, so one poisoned path cannot own the alarm chain
+		expect(out.rows).toEqual([1, 2, undefined]);
+		expect(out.attempts[2]?.remaining).toBe(0);
+		expect(out.stats.queue).toHaveLength(0);
+		expect(out.stats.cached).toHaveLength(0);
+	});
+
+	it('logs where the render threw, and keeps it out of the answered error', async () => {
+		const stub = await provisionedSite();
+		const outcome = await inObject(stub, async (site) => {
+			stubRender(site, () => ({
+				error: 'JsonException: Syntax error',
+				at: '/drupal/modules/contrib/x/src/Y.php:42'
+			}));
+			queuePath(site, '/admin/config');
+			return site.fillOne();
+		});
+		expect(outcome.error).toBe('JsonException: Syntax error');
+		expect(outcome.raw).toBe('/drupal/modules/contrib/x/src/Y.php:42');
+	});
+
+	it('records why it failed while the path is still queued', async () => {
+		const stub = await provisionedSite();
+		const queued = await inObject(stub, async (site) => {
+			stubRender(site, () => ({ error: 'no route matched' }));
+			queuePath(site, '/nope');
+			await site.fillOne();
+			return (await statsOf(site)).queue;
+		});
+		expect(queued).toHaveLength(1);
+		expect(queued[0]?.attempts).toBe(1);
+		expect(String(queued[0]?.last_error)).toContain('no route matched');
+	});
+
+	describe('a render that ended in exit()', () => {
+		it('is recorded unstorable and leaves the queue after one attempt', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				const calls = stubRender(site, () => ({
+					error: 'the request ended in exit()',
+					exited: true
+				}));
+				queuePath(site, '/exits');
+				const outcome = await site.fillOne();
+				return {
+					outcome,
+					calls: calls.length,
+					queued: site.sql.exec('SELECT path FROM cfw_fill_queue').toArray().length,
+					unstorable: site.unstorablePaths()
+				};
+			});
+			expect(out.calls).toBe(1);
+			expect(out.queued).toBe(0);
+			expect(out.unstorable).toEqual(['/exits']);
+			expect(out.outcome.failed).toBe('/exits');
+			expect(out.outcome.remaining).toBe(0);
+		});
+
+		it('is not rendered again by later alarm ticks', async () => {
+			const stub = await provisionedSite();
+			const calls = await inObject(stub, async (site) => {
+				const seen = stubRender(site, () => ({
+					error: 'the request ended in exit()',
+					exited: true
+				}));
+				queuePath(site, '/exits');
+				for (let i = 0; i < 3; i++) await site.fillOne();
+				return seen.length;
+			});
+			expect(calls).toBe(1);
+		});
+
+		it('CONTROL: an ordinary failure still takes three strikes and is not marked unstorable', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				const calls = stubRender(site, () => ({ error: 'no route matched' }));
+				queuePath(site, '/plain-failure');
+				for (let i = 0; i < 3; i++) await site.fillOne();
+				return { calls: calls.length, unstorable: site.unstorablePaths() };
+			});
+			expect(out).toEqual({ calls: 3, unstorable: [] });
+		});
+
+		it('CONTROL: a successful render is stored and not marked unstorable', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				stubRender(site, ({ path }) => pageFor(path));
+				queuePath(site, '/fine');
+				const outcome = await site.fillOne();
+				return {
+					filled: outcome.filled,
+					rows: site.sql.exec('SELECT path FROM cfw_page').toArray().length,
+					unstorable: site.unstorablePaths()
+				};
+			});
+			expect(out).toEqual({ filled: '/fine', rows: 1, unstorable: [] });
+		});
+
+		it('still renders for a live request on that path', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				const calls = stubRender(site, () => ({
+					error: 'the request ended in exit()',
+					exited: true
+				}));
+				queuePath(site, '/exits');
+				await site.fillOne();
+				const res = await serveDirect(site, '/exits');
+				return { status: res.status, calls: calls.length };
+			});
+			expect(out.calls).toBe(2);
+			expect(out.status).toBe(500);
+		});
+	});
+
+	describe('a path observed unstorable is not re-queued', () => {
+		const exited = () => ({ error: 'the request ended in exit()', exited: true });
+		const markUnstorable = async (site: ServeDo, path: string) => {
+			stubRender(site, exited);
+			queuePath(site, path, { arm: false });
+			await site.fillOne();
+		};
+
+		it('is not inserted into the queue by a live miss, and the request still renders', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				await markUnstorable(site, '/exits');
+				const depths: number[] = [];
+				stubRender(site, ({ path }) => {
+					depths.push(site.queueDepth());
+					return pageFor(path);
+				});
+				const res = await serveDirect(site, '/exits');
+				return { depths, status: res.status, cache: res.cache, queued: site.queueDepth() };
+			});
+			expect(out.depths).toEqual([0]);
+			expect(out.status).toBe(200);
+			expect(out.cache).toBe('RENDER');
+			expect(out.queued).toBe(0);
+		});
+
+		it('CONTROL: a storable path is still queued by a live miss', async () => {
+			const stub = await provisionedSite();
+			const depths = await inObject(stub, async (site) => {
+				const seen: number[] = [];
+				stubRender(site, ({ path }) => {
+					seen.push(site.queueDepth());
+					return pageFor(path);
+				});
+				await serveDirect(site, '/fine');
+				return seen;
+			});
+			expect(depths).toEqual([1]);
+		});
+
+		it('is queued again once a render stores it', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				await markUnstorable(site, '/changes');
+				const depths: number[] = [];
+				stubRender(site, ({ path }) => {
+					depths.push(site.queueDepth());
+					return pageFor(path);
+				});
+				// the live render of an unstorable path stores it, which clears the observation
+				await serveDirect(site, '/changes');
+				const cleared = site.unstorablePaths();
+				site.sql.exec('DELETE FROM cfw_page WHERE path = ?', '/changes');
+				await serveDirect(site, '/changes');
+				return { depths, cleared };
+			});
+			expect(out.cleared).toEqual([]);
+			expect(out.depths).toEqual([0, 1]);
+		});
+
+		it('is not re-queued by a tag purge', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				seedTaggedPage(site, '/exits', '<html>x</html>', ['node:1']);
+				seedTaggedPage(site, '/fine', '<html>y</html>', ['node:1']);
+				await markUnstorable(site, '/exits');
+				site.purgeForTags(['node:1'], 'cachetags', { bump: false });
+				return site.sql
+					.exec('SELECT path FROM cfw_fill_queue ORDER BY path')
+					.toArray()
+					.map((r) => String(r.path));
+			});
+			expect(out).toEqual(['/fine']);
+		});
+
+		it('is not re-queued by a scoped generation bump', async () => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				seedTaggedPage(site, '/exits', '<html>x</html>', ['node:1']);
+				seedTaggedPage(site, '/fine', '<html>y</html>', ['node:1']);
+				await markUnstorable(site, '/exits');
+				site.bumpGeneration('manual', { scopedTo: ['/exits', '/fine'], arm: false });
+				return site.sql
+					.exec('SELECT path FROM cfw_fill_queue ORDER BY path')
+					.toArray()
+					.map((r) => String(r.path));
+			});
+			expect(out).toEqual(['/fine']);
+		});
+	});
+
+	// a render that threw answers 500; a warming 503 would retry the same failing render forever
+	// a warming 503 is right for a queued page and wrong for one that cannot render
+	it('answers 500 with the exception when the inline render threw', async () => {
+		const stub = await provisionedSite();
+		const failed = await inObject(stub, (site) => {
+			stubRender(site, () => ({ error: 'boom' }));
+			return serveDirect(site, '/broken');
+		});
+		expect(failed.status).toBe(500);
+		expect(failed.cache).toBe('ERROR');
+		expect(String(failed.body)).toContain('boom');
+		// counted against its three strikes already, so the row is still there for the chain
+		expect(failed.queueDepth).toBe(1);
+	});
+
+	it('an html-less reply is a failure, not an empty page', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, () => ({ status: 200, renderMs: 1 }));
+			queuePath(site, '/htmlless');
+			return site.fillOne();
+		});
+		expect(out.filled).toBeNull();
+		expect(String(out.error)).toContain('render produced no html');
+	});
+
+	it('a render that THROWS is struck too, so the chain cannot re-arm forever', async () => {
+		// fillOne's three strikes only run on a reported failure; a render that throws never reports one
+		// on a deployed worker this re-armed at +1 ms: 196 firings in 14 s
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, () => {
+				throw new TypeError('target is not a function');
+			});
+			queuePath(site, '/throws');
+			const rows: Array<number | undefined> = [];
+			const alarms: unknown[] = [];
+			for (let i = 0; i < 3; i++) {
+				alarms.push(await site.alarm());
+				rows.push(
+					site.sql
+						.exec('SELECT attempts FROM cfw_fill_queue WHERE path = ?', '/throws')
+						.toArray()
+						.map((r) => Number(r.attempts))[0]
+				);
+			}
+			return { rows, alarms, nextAlarm: await site.ctx.storage.getAlarm(), now: Date.now() };
+		});
+
+		// struck on every firing, then dropped: the same three strikes a reported failure gets
+		expect(out.rows).toEqual([1, 2, undefined]);
+		// and the chain has gone back to the keep-warm interval rather than +1 ms
+		expect((out.nextAlarm ?? 0) - out.now).toBeGreaterThan(1000);
+	});
+
+	it('strikes the head when the platform retries an alarm, since the render that died cannot', async () => {
+		// a render that resets its isolate dies with the strike it would have recorded, so the
+		// retried alarm counts it; the control is the same firing without `isRetry`
+		const attemptsAfter = async (info?: AlarmInvocationInfo) => {
+			const stub = await provisionedSite();
+			return inObject(stub, async (site) => {
+				stubRender(site, () => {
+					throw new TypeError('target is not a function');
+				});
+				queuePath(site, '/killer');
+				await site.alarm(info);
+				return site.sql
+					.exec('SELECT attempts FROM cfw_fill_queue WHERE path = ?', '/killer')
+					.toArray()
+					.map((r) => Number(r.attempts))[0];
+			});
+		};
+		expect(await attemptsAfter()).toBe(1);
+		expect(await attemptsAfter({ isRetry: true, retryCount: 1, scheduledTime: 0 })).toBe(2);
+	});
+
+	it('reports the throw as the outcome rather than swallowing it', async () => {
+		const stub = await provisionedSite();
+		const outcome = await inObject(stub, async (site) => {
+			stubRender(site, () => {
+				throw new TypeError('target is not a function');
+			});
+			queuePath(site, '/throws');
+			return site.alarm();
+		});
+		expect(JSON.stringify(outcome)).toContain('target is not a function');
+	});
+
+	it('strikeFillHead on an empty queue is a no-op, not a throw', async () => {
+		const stub = await provisionedSite();
+		const struck = await inObject(stub, (site) => site.strikeFillHead('nothing queued'));
+		expect(struck).toBeUndefined();
+	});
+});
+
+describe('/__fill drives one fill synchronously', () => {
+	it('reports the path it filled and what is left', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			queuePath(site, '/one');
+			queuePath(site, '/two');
+			const res = await site.fetch(new Request('https://do.local/__fill'));
+			return (await res.json()) as FillOutcome;
+		});
+		expect(out.filled).toBe('/one');
+		expect(out.remaining).toBe(1);
+	});
+
+	it('answers filled:null on an empty queue instead of entering the interpreter', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			const res = await site.fetch(new Request('https://do.local/__fill'));
+			return { body: (await res.json()) as FillOutcome, calls };
+		});
+		expect(out.body.filled).toBeNull();
+		expect(out.body.remaining).toBe(0);
+		expect(out.calls).toHaveLength(0);
+	});
+});
+
+describe('/__assemble decodes destruct as a tri-state, and re-renders rather than serving', () => {
+	/** the destruct argument as it reaches `cfw_serve($path, ...)` in the emitted fragment */
+	async function assembleDestruct(query: string): Promise<{
+		reported: unknown;
+		call: RenderCall | undefined;
+	}> {
+		const stub = await provisionedSite();
+		return inObject(stub, async (site: ServeDo) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			const res = await site.fetch(
+				new Request(`https://do.local/__assemble?path=%2F${query}`)
+			);
+			const body = (await res.json()) as { destruct: unknown };
+			return { reported: body.destruct, call: calls[0] };
+		});
+	}
+
+	it('treats absent, empty and "0" as off, which is the shipped default', async () => {
+		const absent = await assembleDestruct('');
+		const empty = await assembleDestruct('&destruct=');
+		const zero = await assembleDestruct('&destruct=0');
+		expect(absent.reported).toBe(false);
+		expect(empty.reported).toBe(false);
+		expect(zero.reported).toBe(false);
+		expect(absent.call?.destruct).toBe('false');
+	});
+
+	it('treats "1" as the safe set', async () => {
+		const on = await assembleDestruct('&destruct=1');
+		expect(on.reported).toBe(true);
+		expect(on.call?.destruct).toBe('true');
+	});
+
+	it('passes any other value through as an allowlist to bisect with', async () => {
+		const one = await assembleDestruct('&destruct=theme.registry');
+		expect(one.reported).toBe('theme.registry');
+		expect(one.call?.destruct).toBe('"theme.registry"');
+	});
+
+	it('empties only the bins it was asked for, so dynamic_page_cache can answer', async () => {
+		const stub = await provisionedSite();
+		const calls = await inObject(stub, async (site) => {
+			const recorded = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(new Request('https://do.local/__assemble?path=%2F&bins=page'));
+			return recorded;
+		});
+		expect(calls[0]?.bins).toEqual(['page']);
+	});
+
+	it('deletes the stored row first, so it measures a render rather than a HIT', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path, 7));
+			// a page that would otherwise be served straight back
+			await site.fillOne('/');
+			const res = await site.fetch(new Request('https://do.local/__assemble?path=%2F'));
+			return { body: (await res.json()) as FillOutcome & { phpBooted: boolean }, calls };
+		});
+		expect(out.calls).toHaveLength(2);
+		expect(out.body.filled).toBe('/');
+		expect(out.body.phpBooted).toBe(true);
+	});
+});
+
+describe('the fragment decoder used above is not vacuous', () => {
+	// control: without this, a decoder returning '' for every field would pass the bins and destruct assertions
+	it('reads nothing out of a fragment that carries nothing', () => {
+		const empty = decodeRenderCall('<?php echo 1;');
+		expect(empty.path).toBe('');
+		expect(empty.bins).toEqual([]);
+		expect(empty.destruct).toBe('');
+		expect(empty.origin).toBe('');
+	});
+});
+
+// the pack ships an installed database, so uid 1 has a hash no password matches
+// the claim window is the unprovisioned state, so anyone who finds the url can claim it; the setup page must say so
+describe('a site nobody has claimed serves a setup page', () => {
+	const browser = (path: string) =>
+		new Request(`https://real.example/__serve?path=${encodeURIComponent(path)}`, {
+			headers: { accept: 'text/html,application/xhtml+xml' }
+		});
+
+	it('answers a navigation with the claim page rather than the front page', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			const res = await site.fetch(browser('/'));
+			return {
+				status: res.status,
+				setup: res.headers.get('x-cfw-setup'),
+				robots: res.headers.get('x-robots-tag'),
+				cacheControl: res.headers.get('cache-control'),
+				body: await res.text(),
+				// nothing rendered, so an unclaimed site costs no interpreter either
+				rendered: calls.length
+			};
+		});
+
+		expect(out.status).toBe(200);
+		expect(out.setup).toBe('required');
+		expect(out.robots).toBe('noindex');
+		expect(out.cacheControl).toBe('no-store');
+		expect(out.body).toContain('Claim This Site');
+		expect(out.rendered).toBe(0);
+	});
+
+	// the page is a signpost for a human; a machine client still gets the site
+	it('leaves a non-HTML request on the normal path', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			const res = await site.fetch(new Request('https://real.example/__serve?path=%2F'));
+			return {
+				status: res.status,
+				setup: res.headers.get('x-cfw-setup'),
+				body: await res.text()
+			};
+		});
+
+		expect(out.setup).toBeNull();
+		expect(out.body).toContain('<title>/</title>');
+	});
+
+	it('stops once the site is claimed', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			const before = await site.fetch(browser('/'));
+			site.metaSet('first_run_at', site.nowMs());
+			const after = await site.fetch(browser('/'));
+			return {
+				before: before.headers.get('x-cfw-setup'),
+				after: after.headers.get('x-cfw-setup'),
+				body: await after.text()
+			};
+		});
+
+		expect(out.before).toBe('required');
+		expect(out.after).toBeNull();
+		expect(out.body).toContain('<title>/</title>');
+	});
+
+	// order matters: a site still replaying its migration must not be told to claim itself
+	it('yields to the migration placeholder on a site that is still replaying', async () => {
+		const res = await inObject(freshSite(), (site) => site.fetch(browser('/')));
+		expect(res.status).toBe(503);
+		expect(res.headers.get('x-cfw-setup')).toBeNull();
+		expect(res.headers.get('x-cfw-migrate')).not.toBeNull();
+	});
+});
+
+// drupal builds canonical links, forms and reset links from the origin, so the origin is pinned on first use
+// asserted off the emitted fragment; render/origin.spec.ts checks the markup with a real interpreter
+describe('the render origin is pinned, not believed', () => {
+	it('pins the first real origin it serves and hands it to the render', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(new Request('https://real.example/__serve?path=%2F'));
+			return { calls, pinned: site.metaGet('site_origin') };
+		});
+		expect(out.pinned).toBe('https://real.example');
+		expect(out.calls[0]?.origin).toBe('https://real.example');
+	});
+
+	/** the whole defence: after the pin, a forged Host renders against the pinned host anyway */
+	it('ignores a later origin, so a forged Host cannot move a reset link', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(new Request('https://real.example/__serve?path=%2Fone'));
+			await site.fetch(new Request('https://attacker.example/__serve?path=%2Ftwo'));
+			return { calls, pinned: site.metaGet('site_origin') };
+		});
+		expect(out.pinned).toBe('https://real.example');
+		expect(out.calls.map((c) => c.origin)).toEqual([
+			'https://real.example',
+			'https://real.example'
+		]);
+	});
+
+	// uid is drupal's verdict on who the render was for; a render as the wrong user looks correct by its bytes
+	// so the guard reads uid, not the cookie
+	it('refuses to store a render that came back as somebody', async () => {
+		const stub = await provisionedSite();
+		const rows = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => ({ ...pageFor(path), uid: 1 }));
+			await serveDirect(site, '/leaked');
+			return site.sql
+				.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/leaked')
+				.toArray()[0];
+		});
+		expect(Number(rows?.c ?? -1)).toBe(0);
+	});
+
+	// page_cache_kill_switch says so in Cache-Control; a module opting a page out has no other way to say it
+	it.each(['no-store', 'private, no-store', 'private'])(
+		'refuses to store a render Drupal marked %s',
+		async (header) => {
+			const stub = await provisionedSite();
+			const rows = await inObject(stub, async (site) => {
+				stubRender(site, ({ path }) => ({ ...pageFor(path), cacheControl: header }));
+				await serveDirect(site, '/killed');
+				return site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/killed')
+					.toArray()[0];
+			});
+			expect(Number(rows?.c ?? -1)).toBe(0);
+		}
+	);
+
+	it.each(['no-cache', 'must-revalidate, no-cache', 'max-age=0, NO-CACHE, public'])(
+		'refuses to store a render whose Cache-Control is %s',
+		async (header) => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				stubRender(site, ({ path }) => ({ ...pageFor(path), cacheControl: header }));
+				await serveDirect(site, '/no-cache');
+				const rows = site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/no-cache')
+					.toArray()[0];
+				return { rows: Number(rows?.c ?? -1), unstorable: site.unstorablePaths() };
+			});
+			expect(out).toEqual({ rows: 0, unstorable: ['/no-cache'] });
+		}
+	);
+
+	it.each(['public, max-age=300', 'max-age=300, x-no-cache-extension'])(
+		'CONTROL: a render whose Cache-Control is %s is still stored',
+		async (header) => {
+			const stub = await provisionedSite();
+			const rows = await inObject(stub, async (site) => {
+				stubRender(site, ({ path }) => ({ ...pageFor(path), cacheControl: header }));
+				await serveDirect(site, '/kept-cc');
+				return site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/kept-cc')
+					.toArray()[0];
+			});
+			expect(Number(rows?.c ?? -1)).toBe(1);
+		}
+	);
+
+	// a stored `[]` matches no tag purge, so the row would outlive every content change
+	it.each([
+		['an empty tag list', []],
+		['no tag list', undefined]
+	])(
+		'refuses to store a render with %s and records the path as unstorable',
+		async (_, cacheTags) => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				stubRender(site, ({ path }) => ({ ...pageFor(path), cacheTags }));
+				await serveDirect(site, '/untagged');
+				const rows = site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/untagged')
+					.toArray()[0];
+				return { rows: Number(rows?.c ?? -1), unstorable: site.unstorablePaths() };
+			});
+			expect(out).toEqual({ rows: 0, unstorable: ['/untagged'] });
+		}
+	);
+
+	it('does not mark an untagged 500 unstorable, since that answer is transient', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => ({ ...pageFor(path), status: 500, cacheTags: [] }));
+			await serveDirect(site, '/broken');
+			return site.unstorablePaths();
+		});
+		expect(out).toEqual([]);
+	});
+
+	it('CONTROL: a tagged render is stored with its tags and a checksum', async () => {
+		const stub = await provisionedSite();
+		const row = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => ({
+				...pageFor(path),
+				cacheTags: ['node:1', 'node_list']
+			}));
+			await serveDirect(site, '/tagged');
+			return site.sql
+				.exec('SELECT tags, tag_checksum FROM cfw_page WHERE path = ?', '/tagged')
+				.toArray()[0];
+		});
+		expect(row?.tags).toBe('["node:1","node_list"]');
+		expect(row?.tag_checksum).not.toBeNull();
+	});
+
+	// cfw_page is keyed by path alone, so a response varying by a header the key omits must not be stored
+	// the shipped pack varies only on Cookie (forwarded-headers.spec.ts); a module that varies says so in Vary
+	it.each(['Accept', 'Origin', 'User-Agent', 'Cookie, Accept', '*', 'accept-language'])(
+		'refuses to store a render whose Vary is %s, and renders the next visitor afresh',
+		async (vary) => {
+			const stub = await provisionedSite();
+			const out = await inObject(stub, async (site) => {
+				const calls = stubRender(site, ({ path }) => ({ ...pageFor(path), vary }));
+				await serveDirect(site, '/varies');
+				await serveDirect(site, '/varies');
+				const rows = site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/varies')
+					.toArray()[0];
+				return { renders: calls.length, rows: Number(rows?.c ?? -1) };
+			});
+			expect(out).toEqual({ renders: 2, rows: 0 });
+		}
+	);
+
+	it.each([
+		['Accept', true],
+		['Origin, Cookie', true],
+		['*', true],
+		['User-Agent', true],
+		['Cookie', false],
+		['Accept-Encoding', false],
+		['Cookie, Accept-Encoding', false],
+		['', false],
+		[undefined, false],
+		[null, false],
+		[42, false]
+	])('reads a Vary of %j as varies=%s', (vary, expected) => {
+		expect(variesByRequest(vary)).toBe(expected);
+	});
+
+	it.each(['Cookie', 'cookie, Accept-Encoding', '', undefined])(
+		'CONTROL: a render whose Vary is %j is still stored',
+		async (vary) => {
+			const stub = await provisionedSite();
+			const rows = await inObject(stub, async (site) => {
+				stubRender(site, ({ path }) => ({ ...pageFor(path), vary }));
+				await serveDirect(site, '/kept-vary');
+				return site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/kept-vary')
+					.toArray()[0];
+			});
+			expect(Number(rows?.c ?? -1)).toBe(1);
+		}
+	);
+
+	it('CONTROL: an ordinary public max-age is still stored', async () => {
+		const stub = await provisionedSite();
+		const rows = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => ({
+				...pageFor(path),
+				cacheControl: 'public, max-age=0, must-revalidate'
+			}));
+			await serveDirect(site, '/kept');
+			return site.sql
+				.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/kept')
+				.toArray()[0];
+		});
+		expect(Number(rows?.c ?? -1)).toBe(1);
+	});
+
+	it('CONTROL: an anonymous render of the same path IS stored', async () => {
+		const stub = await provisionedSite();
+		const rows = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => ({ ...pageFor(path), uid: 0 }));
+			await serveDirect(site, '/leaked');
+			return site.sql
+				.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/leaked')
+				.toArray()[0];
+		});
+		expect(Number(rows?.c ?? -1)).toBe(1);
+	});
+
+	// drupal's flood control keys on getClientIp(); one address for the site locks every visitor out of login
+	// cf-connecting-ip is overwritten at the edge, so the object can read it directly
+	it('hands the visitor address to the render, so flood control is per-visitor', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(
+				new Request('https://real.example/__serve?path=%2F', {
+					headers: { 'cf-connecting-ip': '203.0.113.7' }
+				})
+			);
+			return calls;
+		});
+		expect(out[0]?.clientIp).toBe('203.0.113.7');
+	});
+
+	// the accept header decides the shape of an ajax response; ajax.js needs the json unwrapped
+	// request::create() supplies its own text/html default, so the inbound accept must be passed through
+	it('hands the inbound Accept to the render, so an AJAX response is not wrapped for an iframe', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(
+				new Request('https://real.example/__serve?path=%2F', {
+					headers: { accept: 'application/json, text/javascript, */*; q=0.01' }
+				})
+			);
+			return calls;
+		});
+		expect(out[0]?.accept).toBe('application/json, text/javascript, */*; q=0.01');
+	});
+
+	// a headless site authenticates on Authorization, which the render must receive
+	// the serve path used to drop it, so every bearer-token route answered as anonymous
+	it('hands the inbound Authorization and other headers to the render', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(
+				new Request('https://real.example/__serve?path=%2F', {
+					headers: {
+						authorization: 'Bearer visitor-token',
+						'x-api-key': 'k1',
+						'cf-ray': 'plumbing'
+					}
+				})
+			);
+			return calls;
+		});
+		expect(out[0]?.headers).toEqual({
+			authorization: 'Bearer visitor-token',
+			'x-api-key': 'k1'
+		});
+	});
+
+	it('answers a request that carries Authorization from a render, never from the stored page', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			const anonymous = await site.fetch(
+				new Request('https://real.example/__serve?path=%2F')
+			);
+			const first = anonymous.headers.get('x-cfw-cache');
+			const again = await site.fetch(new Request('https://real.example/__serve?path=%2F'));
+			const bearer = await site.fetch(
+				new Request('https://real.example/__serve?path=%2F', {
+					headers: { authorization: 'Bearer visitor-token' }
+				})
+			);
+			return {
+				first,
+				again: again.headers.get('x-cfw-cache'),
+				bearer: bearer.headers.get('x-cfw-cache'),
+				renders: calls.length
+			};
+		});
+		expect(out.again).toBe('HIT');
+		expect(out.bearer).not.toBe('HIT');
+		expect(out.renders).toBeGreaterThanOrEqual(2);
+	});
+
+	it('never hands the owner token to the render', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			site.metaSet(OWNER_TOKEN_KEY, 'owner-secret');
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(
+				new Request('https://real.example/__serve?path=%2F', {
+					headers: { authorization: 'Bearer owner-secret' }
+				})
+			);
+			return calls;
+		});
+		expect(out[0]?.headers).toBeUndefined();
+	});
+
+	it('CONTROL: emits no headers when the request carried only the usual ones', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(new Request('https://real.example/__serve?path=%2F'));
+			return calls;
+		});
+		expect(out[0]?.headers).toBeUndefined();
+	});
+
+	it('CONTROL: emits no address when the request carried none', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(new Request('https://real.example/__serve?path=%2F'));
+			return calls;
+		});
+		expect(out[0]?.clientIp).toBe('');
+	});
+
+	// a local origin is used for links but never pinned
+	// pinning from do.local would fix a real site's canonical url to a developer's laptop
+	it('uses a local origin without pinning it', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await serveDirect(site, '/');
+			return { calls, pinned: site.metaGet('site_origin') };
+		});
+		expect(out.pinned, 'nothing may be written for a local host').toBeNull();
+		expect(out.calls[0]?.origin).toBe('https://do.local');
+	});
+
+	// the alarm chain fills most pages and has no request to read an origin from; without the
+	// default in fillOne() the same page carried a different host depending on which lane made it
+	it('gives the alarm chain the same origin as an inline render', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(new Request('https://real.example/__serve?path=%2Finline'));
+			queuePath(site, '/by-alarm');
+			await site.alarm();
+			return calls.map((c) => `${c.path}=${c.origin}`);
+		});
+		expect(out).toContain('/inline=https://real.example');
+		expect(out).toContain('/by-alarm=https://real.example');
+	});
+});
+
+// #region TEMPORARY assertion counter
+import { afterAll as __afterAll, afterEach as __afterEach } from 'vitest';
+let __asserts = 0;
+__afterEach(() => {
+	__asserts += expect.getState().assertionCalls ?? 0;
+});
+__afterAll(() => {
+	console.log(`ASSERTIONS tests/integration/serve/chain.spec.ts ${__asserts}`);
+});
+// #endregion
+
+describe('a heap restore in flight is not a strike against the queued page', () => {
+	it('leaves the attempt count alone while the restore chain drives itself', async () => {
+		// `ensurePhp()` throws HeapRestoreIncomplete on the boot that applied the first chunk, and
+		// alarm()'s restore branch owns every firing after that. Charging the page for the object's
+		// own boot would drop a perfectly good path after three cold starts.
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, () => {
+				throw new HeapRestoreIncomplete({
+					snapshotId: 1,
+					nextChunk: 1,
+					totalChunks: 41,
+					bytesWritten: 200_000,
+					firings: 1
+				});
+			});
+			queuePath(site, '/restoring');
+			const outcome = await site.alarm();
+			return {
+				outcome,
+				attempts: site.sql
+					.exec('SELECT attempts FROM cfw_fill_queue WHERE path = ?', '/restoring')
+					.toArray()
+					.map((r) => Number(r.attempts))[0]
+			};
+		});
+		expect(out.attempts).toBe(0);
+		expect(JSON.stringify(out.outcome)).toContain('restorePending');
+	});
+});
+
+// a submission is never answered from cfw_page: the cache read ran before the method check
+// /user/password is prefilled, so a stored anonymous GET swallowed every password reset; only a GET may read the page table
+describe('the page cache and non-GET methods', () => {
+	it('serves a GET from the cache', async () => {
+		const site = freshSite();
+		const res = await inObject(site, async (obj) => {
+			markProvisioned(obj);
+			obj.metaSet('first_run_at', String(Date.now()));
+			seedPage(obj, '/user/password', '<html><body>the empty form</body></html>');
+			const url = new URL('https://site.example/__serve?path=/user/password');
+			return obj.handle(new Request(url), url);
+		});
+		expect(res.status).toBe(200);
+		expect(res.headers.get('x-cfw-cache')).toBe('HIT');
+	});
+
+	for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+		it(`never answers a ${method} from the cache, even when the path is cached`, async () => {
+			const site = freshSite();
+			const res = await inObject(site, async (obj) => {
+				markProvisioned(obj);
+				obj.metaSet('first_run_at', String(Date.now()));
+				seedPage(obj, '/user/password', '<html><body>the empty form</body></html>');
+				const url = new URL('https://site.example/__serve?path=/user/password');
+				return obj.handle(new Request(url, { method }), url);
+			});
+			expect(
+				res.headers.get('x-cfw-cache'),
+				`${method} was answered from the page cache`
+			).not.toBe('HIT');
+			expect(await res.text()).not.toContain('the empty form');
+		});
+	}
+});
+
+// concurrent identical readers each paid a render on one object (p50 9,709 ms at 16 readers); coalesce at the object
+// the front worker's map is per isolate, and there is exactly one object per site, so duplicates meet here
+describe('concurrent identical requests collapse to one render', () => {
+	it('renders once for N waiters and answers them all', async () => {
+		const out = await inObject(freshSite(), async (site: ServeDo) => {
+			markProvisioned(site);
+			let renders = 0;
+			stubRender(site, ({ path }) => {
+				renders++;
+				return pageFor(path);
+			});
+			const all = await Promise.all(
+				Array.from({ length: 8 }, () =>
+					serveDirect(site, '/herd', '&inline=1', {
+						headers: { cookie: SESSION_COOKIE }
+					})
+				)
+			);
+			return { renders, statuses: all.map((r) => r.status), bodies: all.map((r) => r.body) };
+		});
+		// every waiter is answered with the same bytes; a shared answer that differed would
+		// mean they were not the same request after all
+		expect(out.statuses.every((s) => s === out.statuses[0])).toBe(true);
+		expect(new Set(out.bodies).size).toBe(1);
+		// and the point: far fewer renders than requests
+		expect(out.renders).toBeLessThan(8);
+	});
+
+	it('does not hand a later request the previous answer', async () => {
+		const out = await inObject(freshSite(), async (site: ServeDo) => {
+			markProvisioned(site);
+			let n = 0;
+			stubRender(site, ({ path }) => pageFor(`${path}|render-${++n}`));
+			// sequential: the first coalescer returned before the shared copy finished buffering
+			// so the entry outlived the render and a later request joined a settled flight
+			const first = await serveDirect(site, '/seq', '&inline=1', {
+				headers: { cookie: SESSION_COOKIE }
+			});
+			const second = await serveDirect(site, '/seq', '&inline=1', {
+				headers: { cookie: SESSION_COOKIE }
+			});
+			return { first: first.body, second: second.body, renders: n };
+		});
+		// the second request must reflect its own render, not the first's
+		expect(out.renders).toBe(2);
+		expect(out.second).not.toBe(out.first);
+	});
+
+	it('never shares across sessions, which is the whole hazard', async () => {
+		const out = await inObject(freshSite(), async (site: ServeDo) => {
+			markProvisioned(site);
+			// a unique body per render: RenderCall carries no cookie, so a constant body passes either way
+			let n = 0;
+			stubRender(site, ({ path }) => pageFor(`${path}|render-${++n}`));
+			const a = `SESS${'a'.repeat(32)}`;
+			const b = `SESS${'b'.repeat(32)}`;
+			const [ra, rb] = await Promise.all([
+				serveDirect(site, '/herd', '&inline=1', { headers: { cookie: a } }),
+				serveDirect(site, '/herd', '&inline=1', { headers: { cookie: b } })
+			]);
+			return { a: ra.body, b: rb.body };
+		});
+		// two different sessions must never be folded into one answer
+		expect(out.a).not.toBe(out.b);
+	});
+});
+
+// a header a drupal module sets is part of the page: stored in the same insert and replayed on every answer
+// the boundary is passThroughHeaders() on the way in and decodeModuleHeaders() on the way out
+describe('module-set headers are stored with the page and replayed by the object', () => {
+	const POLICY = {
+		'content-security-policy': "frame-ancestors 'none'",
+		'x-frame-options': 'DENY'
+	};
+	const NAMES = Object.keys(POLICY);
+	const withHeaders = (passHeaders: Record<string, string>) => (call: RenderCall) => ({
+		...pageFor(call.path),
+		passHeaders
+	});
+	const seen = (probe: { header(name: string): string | null }) =>
+		Object.fromEntries(NAMES.map((name) => [name, probe.header(name)]));
+	const rowHeaders = (site: ServeDo, path: string) =>
+		site.sql.exec('SELECT headers FROM cfw_page WHERE path = ?', path).toArray()[0]?.[
+			'headers'
+		] ?? null;
+
+	it('stores the allow-listed headers and replays them on the render and on the HIT', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(
+				site,
+				withHeaders({
+					...POLICY,
+					'set-cookie': 'a=b',
+					location: 'https://evil.example',
+					'x-powered-by': 'x'
+				})
+			);
+			const render = await serveDirect(site, '/mod');
+			const hit = await serveDirect(site, '/mod');
+			return {
+				render: [render.cache, seen(render)],
+				hit: [hit.cache, seen(hit), hit.header('set-cookie'), hit.location],
+				stored: rowHeaders(site, '/mod')
+			};
+		});
+		expect(out.render).toEqual(['RENDER', POLICY]);
+		expect(out.hit).toEqual(['HIT', POLICY, null, null]);
+		expect(JSON.parse(String(out.stored))).toEqual(POLICY);
+	});
+
+	it('replays them on the AGED answer after a bump', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, withHeaders(POLICY));
+			await site.fillOne('/aged');
+			site.bumpGeneration('aged');
+			const aged = await serveDirect(site, '/aged', '&inline=0');
+			return [aged.cache, seen(aged)];
+		});
+		expect(out).toEqual(['AGED', POLICY]);
+	});
+
+	it('sends them with a render that is not stored, such as a session', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, withHeaders({ ...POLICY, 'set-cookie': 'a=b' }));
+			const res = await serveDirect(site, '/private', '&inline=1', {
+				headers: { cookie: SESSION_COOKIE }
+			});
+			return [seen(res), res.header('set-cookie'), rowHeaders(site, '/private')];
+		});
+		expect(out[0]).toEqual(POLICY);
+		expect(out[1]).toBeNull();
+		expect(out[2]).toBeNull();
+	});
+
+	it('stores no headers column value for a render that set none, and replays none', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, withHeaders({ 'x-drupal-cache': 'HIT', 'set-cookie': 'a=b' }));
+			await serveDirect(site, '/plain');
+			const hit = await serveDirect(site, '/plain');
+			return [rowHeaders(site, '/plain'), seen(hit), hit.header('x-drupal-cache')];
+		});
+		expect(out).toEqual([
+			null,
+			{ 'content-security-policy': null, 'x-frame-options': null },
+			null
+		]);
+	});
+
+	it.each([
+		['a newline', "default-src 'self'\nset-cookie: a=b"],
+		['a character above 255', "default-src 'self' ☃"],
+		['an oversized value', 'a'.repeat(4097)]
+	])('drops a policy header with %s and keeps the others', async (_what, hostile) => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(
+				site,
+				withHeaders({ 'content-security-policy': hostile, 'x-frame-options': 'DENY' })
+			);
+			await serveDirect(site, '/hostile');
+			const hit = await serveDirect(site, '/hostile');
+			return [rowHeaders(site, '/hostile'), seen(hit)];
+		});
+		expect(JSON.parse(String(out[0]))).toEqual({ 'x-frame-options': 'DENY' });
+		expect(out[1]).toEqual({ 'content-security-policy': null, 'x-frame-options': 'DENY' });
+	});
+
+	it('replays none for a legacy row with no value in the column, and does not throw', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			seedPage(site, '/legacy', '<p>legacy</p>');
+			const hit = await serveDirect(site, '/legacy');
+			return [hit.status, hit.cache, seen(hit)];
+		});
+		expect(out).toEqual([
+			200,
+			'HIT',
+			{ 'content-security-policy': null, 'x-frame-options': null }
+		]);
+	});
+
+	it('holds a row written by SQL to the boundary, and survives text that is not JSON', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			seedPage(site, '/planted', '<p>planted</p>');
+			seedPage(site, '/garbage', '<p>garbage</p>');
+			site.sql.exec(
+				'UPDATE cfw_page SET headers = ? WHERE path = ?',
+				JSON.stringify({ 'set-cookie': 'a=b', 'x-frame-options': 'DENY' }),
+				'/planted'
+			);
+			site.sql.exec('UPDATE cfw_page SET headers = ? WHERE path = ?', 'not json', '/garbage');
+			const planted = await serveDirect(site, '/planted');
+			const garbage = await serveDirect(site, '/garbage');
+			return [
+				planted.header('set-cookie'),
+				planted.header('x-frame-options'),
+				garbage.status,
+				garbage.header('x-frame-options')
+			];
+		});
+		expect(out).toEqual([null, 'DENY', 200, null]);
+	});
+
+	it('adds the column to an older table once, and a second boot raises nothing', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			site.sql.exec('DROP TABLE IF EXISTS cfw_page');
+			site.sql.exec(
+				`CREATE TABLE cfw_page (
+					path TEXT PRIMARY KEY,
+					status INTEGER NOT NULL,
+					content_type TEXT,
+					html TEXT NOT NULL,
+					rendered_at INTEGER NOT NULL,
+					render_ms REAL
+				) WITHOUT ROWID`
+			);
+			const columns = () =>
+				site.sql
+					.exec("SELECT name FROM pragma_table_info('cfw_page')")
+					.toArray()
+					.map((r) => String(r['name']));
+			const before = columns().includes('headers');
+			site.serveTablesReady = false;
+			site.ensureServeTables();
+			const once = columns().filter((name) => name === 'headers').length;
+			site.serveTablesReady = false;
+			site.ensureServeTables();
+			const twice = columns().filter((name) => name === 'headers').length;
+			stubRender(site, withHeaders(POLICY));
+			await serveDirect(site, '/upgraded');
+			return [before, once, twice, rowHeaders(site, '/upgraded')];
+		});
+		expect(out.slice(0, 3)).toEqual([false, 1, 1]);
+		expect(JSON.parse(String(out[3]))).toEqual(POLICY);
+	});
+});

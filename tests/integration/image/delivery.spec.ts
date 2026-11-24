@@ -1,0 +1,378 @@
+import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
+import { describe, expect, it } from 'vitest';
+import { normaliseUri } from '../../../src/db/file-store';
+import { transformPath, type Transform } from '../../../src/ops/image/transform';
+import worker, { moduleAssetPath, publicFileUri } from '../../../src/site';
+import { druplicon } from '../../fixtures/png';
+
+/**
+ * The route a browser fetches a derivative from, driven end to end.
+ *
+ * THE CHAIN WAS COMPLETE AND NOTHING HAD EVER RUN IT. `CfwImageToolkit` calls `cfwImageUrl`, the
+ * object builds a path with `transformPath()`, the front worker matches it and `serveImageTransform()`
+ * reads the source through `/__filebytes` and hands it to the wasm encoder. `image/transform.spec.ts`
+ * covers the pure path helpers; `image/toolkit.spec.ts` verifies derivative creation INSIDE the
+ * object and never issues an HTTP request for one. So the last three links -- the route match, the
+ * source read and the encode -- had no coverage at any level.
+ *
+ * That is the profile of the OIDC callback that answered 404 with 25 assertions covering the token
+ * exchange, and of the compiled-plan tier that refused every render with 25 assertions covering the
+ * compiler. A test that drives the producer is not a test that the consumer can reach it.
+ */
+
+const URI = 'public://cat.png';
+const TRANSFORM: Transform = { width: 16, height: 16, fit: 'cover', format: 'webp' };
+
+/** an object that answers `/__filebytes` with real image bytes and counts the reads */
+function fileSpy(
+	status = 200,
+	body: Uint8Array | string = druplicon(),
+	extra: Record<string, string> = {}
+) {
+	const seen: URL[] = [];
+	const cookies: string[] = [];
+	return {
+		seen,
+		cookies,
+		namespace: {
+			idFromName: (name: string) => ({ name, toString: () => name }),
+			newUniqueId: () => ({ toString: () => 'unique' }),
+			get: () => ({
+				fetch: async (r: Request) => {
+					const url = new URL(r.url);
+					seen.push(url);
+					cookies.push(r.headers.get('cookie') ?? '');
+					if (status !== 200) return new Response('no\n', { status });
+					return new Response(body, {
+						status: 200,
+						headers: { 'content-type': 'image/png', ...extra }
+					});
+				}
+			})
+		}
+	};
+}
+
+async function get(
+	path: string,
+	namespace: unknown,
+	headers: Record<string, string> = {},
+	vars: Record<string, string> = {}
+) {
+	const ctx = createExecutionContext();
+	const res = await worker.fetch(
+		new Request(`https://cfw.local${path}`, { headers }),
+		{ ...env, ...vars, SITE: namespace } as unknown as typeof env,
+		ctx
+	);
+	const bytes = new Uint8Array(await res.arrayBuffer());
+	await waitOnExecutionContext(ctx);
+	return {
+		status: res.status,
+		bytes,
+		tier: res.headers.get('x-cfw-image'),
+		file: res.headers.get('x-cfw-file'),
+		disposition: res.headers.get('content-disposition'),
+		csp: res.headers.get('content-security-policy'),
+		nosniff: res.headers.get('x-content-type-options'),
+		contentType: res.headers.get('content-type'),
+		cacheControl: res.headers.get('cache-control')
+	};
+}
+
+describe('a derivative is delivered by the front worker', () => {
+	it('produces one from the path the object hands out', async () => {
+		const spy = fileSpy();
+		const out = await get(transformPath(URI, TRANSFORM), spy.namespace);
+
+		expect(out.status, 'the delivery route did not answer 200').toBe(200);
+		// the encode happened rather than the source being passed through
+		expect(out.contentType).toBe('image/webp');
+		expect(out.bytes.byteLength).toBeGreaterThan(0);
+		expect(out.bytes).not.toEqual(druplicon());
+		// immutable is earned by the identity in the path: a style change mints a new one
+		expect(out.cacheControl).toContain('immutable');
+
+		// it read the source through the object, at the uri the path carried
+		const asked = spy.seen.find((u) => u.pathname === '/__filebytes');
+		expect(asked, 'the route never reached /__filebytes').toBeDefined();
+		expect(asked?.searchParams.get('uri')).toBe(URI);
+	});
+
+	// the rendering lanes stored it on upload, so the front worker transforms nothing
+	it('answers a stored derivative as it is, asking for it on the same read', async () => {
+		const stored = new Uint8Array([1, 2, 3, 4]);
+		const spy = fileSpy(200, stored, {
+			'content-type': 'image/avif',
+			'x-cfw-derivative': 'stored'
+		});
+		const path = transformPath('public://stored.png', TRANSFORM);
+		const out = await get(path, spy.namespace);
+		expect(out.tier).toBe('STORED');
+		expect(out.contentType).toBe('image/avif');
+		expect([...out.bytes]).toEqual([...stored]);
+		expect(spy.seen[0]?.searchParams.get('derivative')).toBe(path.split('/')[2]);
+		expect(spy.seen).toHaveLength(1);
+	});
+
+	it('carries the visitor cookie, because a private:// file is theirs to read or not', async () => {
+		const spy = fileSpy();
+		await get(transformPath('private://secret.png', TRANSFORM), spy.namespace, {
+			cookie: 'SSESSabc=xyz'
+		});
+		expect(spy.cookies[0]).toBe('SSESSabc=xyz');
+	});
+
+	it('answers the second request without reading the source again', async () => {
+		const spy = fileSpy();
+		const path = transformPath('public://twice.png', TRANSFORM);
+		const first = await get(path, spy.namespace);
+		expect(first.tier).not.toBe('HIT');
+		const reads = spy.seen.length;
+
+		const second = await get(path, spy.namespace);
+		expect(second.status).toBe(200);
+		expect(second.tier).toBe('HIT');
+		expect(spy.seen).toHaveLength(reads);
+	});
+
+	it('refuses a path whose identity was edited rather than doing the work', async () => {
+		// the identity is re-derived and compared; without that, editing the query is a way to spend
+		// the site's CPU on transforms nobody asked for
+		const spy = fileSpy();
+		const path = transformPath(URI, TRANSFORM).replace('w=16', 'w=32');
+		const out = await get(path, spy.namespace);
+		expect(out.status).toBe(404);
+		expect(spy.seen).toHaveLength(0);
+	});
+
+	it('passes a refusal from the object through as a refusal', async () => {
+		expect(
+			(await get(transformPath('private://nope.png', TRANSFORM), fileSpy(403).namespace))
+				.status
+		).toBe(403);
+		expect(
+			(await get(transformPath('public://gone.png', TRANSFORM), fileSpy(404).namespace))
+				.status
+		).toBe(404);
+	});
+
+	it('does not answer 200 with something that is not an image', async () => {
+		// the failure this project has shipped before is a 200 carrying the wrong bytes, then cached
+		const out = await get(
+			transformPath('public://broken.png', TRANSFORM),
+			fileSpy(200, 'this is not a png').namespace
+		);
+		expect(out.status).not.toBe(200);
+	});
+});
+
+// Drupal has no route for a public file, so on a deploy with no R2 mirror every original was its 404
+describe('a public file is served by the front worker', () => {
+	const fileReads = (seen: URL[]) =>
+		seen.filter((u) => u.pathname === '/__filebytes').map((u) => u.searchParams.get('uri'));
+
+	it('answers the stored bytes at the path Drupal links', async () => {
+		const spy = fileSpy(200, 'a document', { 'content-type': 'application/pdf' });
+		const out = await get('/sites/default/files/2026-09/report%20one.pdf', spy.namespace);
+		expect(fileReads(spy.seen)).toEqual(['public://2026-09/report one.pdf']);
+		expect(out.status).toBe(200);
+		expect(new TextDecoder().decode(out.bytes)).toBe('a document');
+		expect(out.file).toBe('STORED');
+		expect(out.contentType).toBe('application/pdf');
+		expect(out.disposition).toBe('attachment');
+
+		const again = await get('/sites/default/files/2026-09/report%20one.pdf', spy.namespace);
+		expect(again.status).toBe(200);
+		expect(fileReads(spy.seen), 'the second read reached the object').toHaveLength(1);
+	});
+
+	// the file shares the site's origin, so an uploaded svg rendered inline runs script with its cookies
+	it('renders a raster image inline and sends anything scriptable as a sandboxed download', async () => {
+		const png = await get('/sites/default/files/photo.png', fileSpy().namespace);
+		expect(png.disposition).toBeNull();
+		expect(png.csp).toBeNull();
+		expect(png.nosniff).toBe('nosniff');
+		const svg = await get(
+			'/sites/default/files/drawing.svg',
+			fileSpy(200, '<svg onload="alert(1)"/>', { 'content-type': 'image/svg+xml' }).namespace
+		);
+		expect(svg.disposition).toBe('attachment');
+		expect(svg.csp).toBe("sandbox; default-src 'none'");
+		expect(svg.nosniff).toBe('nosniff');
+	});
+
+	it('serves a WordPress upload from the file store under the path WordPress wrote', async () => {
+		const spy = fileSpy(200, druplicon());
+		const out = await get(
+			'/wp-content/uploads/2026/11/photo-300x200.png',
+			spy.namespace,
+			{},
+			{
+				CMS: 'wordpress'
+			}
+		);
+		expect(fileReads(spy.seen)).toEqual([
+			'public://wp-content/uploads/2026/11/photo-300x200.png'
+		]);
+		expect(out.status).toBe(200);
+		expect(out.file).toBe('STORED');
+		expect(out.disposition).toBeNull();
+
+		const drupal = fileSpy(200, druplicon());
+		await get('/wp-content/uploads/2026/11/photo.png', drupal.namespace);
+		expect(fileReads(drupal.seen), 'a Drupal site has no such root').toEqual([]);
+	});
+
+	it('falls through to Drupal for a file the site does not hold', async () => {
+		const spy = fileSpy(404);
+		await get('/sites/default/files/missing.png', spy.namespace);
+		expect(fileReads(spy.seen)).toEqual(['public://missing.png']);
+		expect(spy.seen.some((u) => u.pathname !== '/__filebytes')).toBe(true);
+	});
+
+	it('leaves image styles to Drupal and refuses a path that climbs out', async () => {
+		const spy = fileSpy();
+		await get('/sites/default/files/styles/thumbnail/public/a.png', spy.namespace);
+		await get('/sites/default/files/..%2F..%2Fsettings.php.txt', spy.namespace);
+		expect(fileReads(spy.seen)).toEqual([]);
+		expect(publicFileUri('POST', '/sites/default/files/a.png')).toBeUndefined();
+		expect(publicFileUri('GET', '/sites/default/files/a.png')).toBe('public://a.png');
+	});
+});
+
+describe('the public file root is a table per CMS and Drupal is the default', () => {
+	// the function as it stood before the root became a table
+	const legacy = (method: string, pathname: string): string | undefined => {
+		const root = '/sites/default/files/';
+		if (method !== 'GET' && method !== 'HEAD') return undefined;
+		if (!pathname.startsWith(root) || pathname.startsWith(`${root}styles/`)) return undefined;
+		try {
+			return normaliseUri(`public://${decodeURIComponent(pathname.slice(root.length))}`);
+		} catch {
+			return undefined;
+		}
+	};
+	const CORPUS: [string, string][] = [
+		['GET', '/sites/default/files/a.png'],
+		['HEAD', '/sites/default/files/a.png'],
+		['POST', '/sites/default/files/a.png'],
+		['PUT', '/sites/default/files/a.png'],
+		['GET', '/sites/default/files/2026-09/report%20one.pdf'],
+		['GET', '/sites/default/files/styles/thumbnail/public/a.png'],
+		['GET', '/sites/default/files/styles/'],
+		['GET', '/sites/default/files/'],
+		['GET', '/sites/default/files/%E0%A4%A'],
+		['GET', '/sites/default/files/a/b/c.txt'],
+		['GET', '/sites/default/files/..%2Fsettings.php'],
+		['GET', '/sites/default/files'],
+		['GET', '/sites/default/filesx/a.png'],
+		['GET', '/sites/default/private/a.png'],
+		['GET', '/wp-content/uploads/a.png'],
+		['GET', '/images/a.png'],
+		['GET', '/'],
+		['GET', '/modules/x/y.css'],
+		['GET', '/SITES/default/files/a.png'],
+		['GET', '/sites/default/files/a.png?x=1'],
+		['GET', '/sites/default/files/sub%20dir/b.jpg'],
+		['GET', '/node/1'],
+		['GET', '/user/login'],
+		['GET', '/sites/default/files//a.png'],
+		['GET', '/sites/default/files/styles']
+	];
+
+	it('gives Drupal the same answer as the old function on every request in the corpus', () => {
+		expect(CORPUS.length).toBeGreaterThanOrEqual(25);
+		for (const [method, path] of CORPUS) {
+			expect(publicFileUri(method, path, 'drupal'), `${method} ${path}`).toBe(
+				legacy(method, path)
+			);
+			expect(publicFileUri(method, path), `${method} ${path}`).toBe(legacy(method, path));
+		}
+	});
+
+	it('roots WordPress at wp-content/uploads and leaves Drupal paths alone', () => {
+		expect(publicFileUri('GET', '/wp-content/uploads/2026/a.png', 'wordpress')).toBe(
+			'public://wp-content/uploads/2026/a.png'
+		);
+		expect(publicFileUri('GET', '/wp-content/uploads/styles/a.png', 'wordpress')).toBe(
+			'public://wp-content/uploads/styles/a.png'
+		);
+		expect(publicFileUri('POST', '/wp-content/uploads/a.png', 'wordpress')).toBeUndefined();
+		expect(publicFileUri('GET', '/sites/default/files/a.png', 'wordpress')).toBeUndefined();
+		expect(publicFileUri('GET', '/images/a.png', 'wordpress')).toBeUndefined();
+	});
+
+	it('roots Joomla at images and leaves Drupal paths alone', () => {
+		expect(publicFileUri('GET', '/images/headers/a.png', 'joomla')).toBe(
+			'public://headers/a.png'
+		);
+		expect(publicFileUri('HEAD', '/images/a.png', 'joomla')).toBe('public://a.png');
+		expect(publicFileUri('PUT', '/images/a.png', 'joomla')).toBeUndefined();
+		expect(publicFileUri('GET', '/sites/default/files/a.png', 'joomla')).toBeUndefined();
+		expect(publicFileUri('GET', '/wp-content/uploads/a.png', 'joomla')).toBeUndefined();
+	});
+
+	it('answers nothing for a CMS name the table does not hold', () => {
+		expect(
+			publicFileUri('GET', '/sites/default/files/a.png', 'plone' as never)
+		).toBeUndefined();
+	});
+});
+
+describe('a delivered module asset is served by the front worker', () => {
+	const reads = (seen: URL[]) =>
+		seen.filter((u) => u.pathname === '/__moduleasset').map((u) => u.searchParams.get('path'));
+	const css = { 'content-type': 'text/plain' };
+
+	it('answers the stored source with the type its extension names', async () => {
+		const spy = fileSpy(200, 'a { color: red }', css);
+		const out = await get('/modules/custom/probe/css/probe.css', spy.namespace);
+		expect(reads(spy.seen)).toEqual(['modules/custom/probe/css/probe.css']);
+		expect(out.status).toBe(200);
+		expect(new TextDecoder().decode(out.bytes)).toBe('a { color: red }');
+		expect(out.file).toBe('MODULE');
+		expect(out.contentType).toBe('text/css; charset=utf-8');
+		expect(out.nosniff).toBe('nosniff');
+		const again = await get('/modules/custom/probe/css/probe.css', spy.namespace);
+		expect(again.status).toBe(200);
+		expect(reads(spy.seen), 'the second read reached the object').toHaveLength(1);
+	});
+
+	it('serves js, svg, images and fonts with their own types, and leaves other roots and types alone', async () => {
+		const spy = fileSpy(200, 'x', css);
+		const js = await get('/themes/custom/t/app.js', spy.namespace);
+		expect(js.contentType).toBe('text/javascript; charset=utf-8');
+		const svg = await get('/libraries/l/i.svg', spy.namespace);
+		expect(svg.contentType).toBe('image/svg+xml');
+		const png = await get('/modules/custom/probe/img/logo.png', spy.namespace);
+		expect(png.contentType).toBe('image/png');
+		expect(png.nosniff).toBe('nosniff');
+		const font = await get('/themes/custom/t/fonts/a.woff2', spy.namespace);
+		expect(font.contentType).toBe('font/woff2');
+		await get('/sites/default/notes.css', spy.namespace);
+		await get('/modules/custom/probe/README.txt', spy.namespace);
+		expect(reads(spy.seen)).toEqual([
+			'themes/custom/t/app.js',
+			'libraries/l/i.svg',
+			'modules/custom/probe/img/logo.png',
+			'themes/custom/t/fonts/a.woff2'
+		]);
+	});
+
+	it('falls through to Drupal for an asset the site does not hold', async () => {
+		const spy = fileSpy(404);
+		await get('/modules/custom/probe/css/none.css', spy.namespace);
+		expect(reads(spy.seen)).toEqual(['modules/custom/probe/css/none.css']);
+		expect(spy.seen.some((u) => u.pathname !== '/__moduleasset')).toBe(true);
+	});
+
+	it('refuses a climbing or doubled path and a write method', () => {
+		expect(moduleAssetPath('GET', '/modules/a/../../settings.css')).toBeUndefined();
+		expect(moduleAssetPath('GET', '/modules/a/%2e%2e/b.css')).toBeUndefined();
+		expect(moduleAssetPath('GET', '/modules//a.css')).toBeUndefined();
+		expect(moduleAssetPath('GET', '/modules/a%00.css')).toBeUndefined();
+		expect(moduleAssetPath('POST', '/modules/a/b.css')).toBeUndefined();
+		expect(moduleAssetPath('GET', '/modules/a/b.css')).toBe('modules/a/b.css');
+	});
+});

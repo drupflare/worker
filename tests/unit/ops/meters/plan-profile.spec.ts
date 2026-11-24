@@ -1,0 +1,126 @@
+import { describe, expect, it } from 'vitest';
+import {
+	FREE_PROFILE,
+	PAID_PROFILE,
+	planProfile,
+	resolvePlanNumber
+} from '../../../../src/ops/meters/plan-profile';
+
+/**
+ * `PLAN=paid` used to reach two decisions and leave five constants sized for a 10 ms cap, so a paid
+ * site paid for headroom and then behaved like a free one. These assertions are the five knobs and
+ * the one outcome, not a restatement of the table.
+ */
+
+describe('the profiles', () => {
+	it('gives free the batch sizes a 10 ms cap bounds, and the patience the visitor needs', () => {
+		expect(FREE_PROFILE).toEqual({
+			fillBatchSize: 5,
+			httpDrainLimit: 3,
+			mirrorLimit: 2,
+			inlineBudgetMs: 10_000,
+			bootInline: true
+		});
+	});
+
+	it('raises the batch budgets paid can actually spend', () => {
+		// `inlineBudgetMs` is NOT in this list any more: it bounds the visitor's patience rather
+		// than a billed resource, and a free visitor's patience is not smaller than a paid one's.
+		// The batch knobs stay plan-shaped because they bound rows and occupancy, which do differ
+		for (const key of ['fillBatchSize', 'httpDrainLimit', 'mirrorLimit'] as const) {
+			expect(PAID_PROFILE[key], key).toBeGreaterThan(FREE_PROFILE[key]);
+		}
+	});
+
+	it('SHORTENS the fill occupancy on paid rather than lengthening it', () => {
+		// the batch is bounded by HIT latency, not by the CPU budget. A fill holds the object's
+		// single thread, so at fillBatchSize 25 a deployed alarm cost 4,337-5,832 ms of cpuTime and
+		// every cache HIT racing it waited 5.0-6.8 s of wall. The alarm re-arms in 130-160 ms while
+		// the queue is non-empty, so a smaller batch costs no throughput
+		expect(PAID_PROFILE.fillBatchSize).toBeLessThan(FREE_PROFILE.fillBatchSize * 2);
+		// 8 fills at a measured 81 ms median render is ~650 ms of worst-case occupancy, and the batch
+		// SIZE is the only thing that bounds it: a wall-clock guard cannot, because the clock does not
+		// advance across a synchronous `php._run()`
+		expect(PAID_PROFILE.fillBatchSize * 100).toBeLessThan(1_500);
+	});
+
+	it('permits a cold boot on BOTH plans, because the refusal cost the visitor more than it saved', () => {
+		// It was false on free against a 10 ms per-invocation cap and an assumed-fast chain. Both
+		// are measured now and both were wrong: a 1,882 ms `cpuTime` object invocation COMPLETED on
+		// a deployed free worker, and time-to-served for an anonymous miss on a cold object was
+		// 19,004 ms with only 4 of 8 paths served at all -- against ~3.8 s to boot and render.
+		// Refusing did not protect a budget; it made the visitor wait fifteen seconds longer and
+		// often lose the page
+		expect(FREE_PROFILE.bootInline).toBe(true);
+		expect(PAID_PROFILE.bootInline).toBe(true);
+	});
+
+	it('keeps paid BOUNDED rather than unlimited', () => {
+		// a DO is single-threaded and a fill holds the gate, so an unbounded batch would block
+		// every request to the object for its duration
+		expect(PAID_PROFILE.fillBatchSize).toBeLessThanOrEqual(50);
+		expect(Number.isFinite(PAID_PROFILE.fillBatchSize)).toBe(true);
+	});
+
+	it('never lets an occupancy bound be raised past what a HIT will tolerate', () => {
+		// paid also bills duration, so a long alarm is a GB-s cost as well as a latency one. There was
+		// a `fillBatchWallMs` beside this and it was DECORATIVE -- resolved per plan, on the KV
+		// allow-list, asserted through the plumbing, and read by nothing. Removed 2026-09-08, because
+		// the guard it configured cannot exist: the clock does not advance across a synchronous
+		// `php._run()`, so wall clock cannot bound a batch from inside one
+		expect(PAID_PROFILE.fillBatchSize).toBeLessThanOrEqual(FREE_PROFILE.fillBatchSize * 2);
+	});
+});
+
+describe('planProfile', () => {
+	it('reads PLAN=paid', () => {
+		expect(planProfile({ PLAN: 'paid' })).toBe(PAID_PROFILE);
+		expect(planProfile({ PLAN: 'PAID' })).toBe(PAID_PROFILE);
+	});
+
+	it('falls to free for absent, empty and misspelled values', () => {
+		// a typo must not silently grant a paid profile to something with a 10 ms cap
+		for (const PLAN of [undefined, '', 'free', 'paidd', 'Paid ', 'pro', '1']) {
+			expect(planProfile({ PLAN }), String(PLAN)).toBe(FREE_PROFILE);
+		}
+		expect(planProfile()).toBe(FREE_PROFILE);
+	});
+});
+
+describe('resolvePlanNumber', () => {
+	it('prefers an explicit override over the profile, on either plan', () => {
+		expect(resolvePlanNumber('11', 'fillBatchSize', 50, { PLAN: 'free' })).toBe(11);
+		expect(resolvePlanNumber('11', 'fillBatchSize', 50, { PLAN: 'paid' })).toBe(11);
+	});
+
+	it('accepts the value as a number as well as a string, because wrangler sends strings', () => {
+		expect(resolvePlanNumber(7, 'httpDrainLimit', 25, undefined)).toBe(7);
+	});
+
+	it('falls to the profile for absent, empty and unparseable values', () => {
+		for (const raw of [undefined, null, '', 'lots', NaN]) {
+			expect(resolvePlanNumber(raw, 'fillBatchSize', 50, { PLAN: 'paid' })).toBe(
+				PAID_PROFILE.fillBatchSize
+			);
+		}
+	});
+
+	it('caps the override, so an operator typo cannot hang the object', () => {
+		expect(resolvePlanNumber('100000', 'fillBatchSize', 50, { PLAN: 'paid' })).toBe(50);
+	});
+
+	it('caps the PROFILE too, not just the override', () => {
+		// the cap bounds one invocation; a profile raised past it later must not slip through
+		expect(resolvePlanNumber(undefined, 'fillBatchSize', 3, { PLAN: 'paid' })).toBe(3);
+	});
+
+	it('honours a zero, because RENDER_BUDGET_MS=0 is the documented always-503 switch', () => {
+		expect(resolvePlanNumber('0', 'inlineBudgetMs', 60_000, { PLAN: 'paid' })).toBe(0);
+	});
+
+	it('refuses a negative rather than treating it as a budget', () => {
+		expect(resolvePlanNumber('-5', 'inlineBudgetMs', 60_000, { PLAN: 'free' })).toBe(
+			FREE_PROFILE.inlineBudgetMs
+		);
+	});
+});

@@ -1,0 +1,101 @@
+import { describe, expect, it } from 'vitest';
+import { CACHE_TIERS, isCacheTier } from '../../../src/ops/cache-tiers';
+import { frontFiles, siteDoFiles, sourceOf } from '../../helpers/source';
+
+/**
+ * The `x-cfw-cache` contract, guarded against the source rather than against a hand-written list.
+ *
+ * A spec that enumerates the tiers by hand goes stale the moment a new one is emitted, and that is
+ * not hypothetical: `RENDER`, `ASSEMBLED` and `KV` were all shipping while the e2e assertion listed
+ * seven values and none of them.
+ */
+
+// `page/memo.ts` joined when the MEM headers moved there: the hit path used to assemble them per
+// request and now the store path does it once, so the only `'x-cfw-cache': 'MEM'` in the tree is
+// in that file. The scan reads the source rather than a list precisely so a move like that is
+// caught, and it was -- as `MEM is declared and nothing emits it`
+const SOURCES = [
+	...frontFiles(),
+	...siteDoFiles(),
+	{ file: 'src/ops/page/memo.ts', text: sourceOf('src/ops/page/memo.ts') }
+];
+const LITERAL = /'x-cfw-cache':\s*'([A-Z]+)'/g;
+const SET_CALL = /set\('x-cfw-cache',\s*'([A-Z]+)'\)/g;
+// `pageResponse()` takes the tier as an argument, so those never appear as a header literal
+const PAGE_RESPONSE = /pageResponse\(\s*\w+,\s*'([A-Z]+)'/g;
+// the shell path chooses between two tiers on the verdict, and BOTH branches ship
+const TERNARY = /'x-cfw-cache':[^,]*?\?\s*'([A-Z]+)'\s*:\s*'([A-Z]+)'/g;
+// the same shape one function over: the storage lane picks AGED or HIT on whether the row a bump
+// superseded is still inside its window, and both branches ship
+const PAGE_RESPONSE_TERNARY = /pageResponse\(\s*\w+,\s*[^,]*?\?\s*'([A-Z]+)'\s*:\s*'([A-Z]+)'/g;
+
+function tiersInSource(): Map<string, string[]> {
+	const found = new Map<string, string[]>();
+	for (const { file, text } of SOURCES) {
+		for (const re of [LITERAL, SET_CALL, PAGE_RESPONSE, TERNARY, PAGE_RESPONSE_TERNARY]) {
+			re.lastIndex = 0;
+			for (const m of text.matchAll(re)) {
+				for (const tier of m.slice(1)) {
+					if (tier === undefined) continue;
+					found.set(tier, [...(found.get(tier) ?? []), file]);
+				}
+			}
+		}
+	}
+	return found;
+}
+
+describe('the cache-tier contract', () => {
+	it('finds tiers in the source at all, or it is asserting nothing', () => {
+		expect(tiersInSource().size).toBeGreaterThan(3);
+	});
+
+	it('every tier the source emits is declared', () => {
+		for (const [tier, files] of tiersInSource()) {
+			expect(
+				CACHE_TIERS as readonly string[],
+				`${tier} emitted by ${files.join(', ')}`
+			).toContain(tier);
+		}
+	});
+
+	it('every declared tier is emitted by something', () => {
+		const emitted = tiersInSource();
+		for (const tier of CACHE_TIERS) {
+			expect(emitted.has(tier), `${tier} is declared and nothing emits it`).toBe(true);
+		}
+	});
+
+	it('recognises a tier case-insensitively and refuses anything else', () => {
+		expect(isCacheTier('render')).toBe(true);
+		expect(isCacheTier('RENDER')).toBe(true);
+		expect(isCacheTier('RENDERED')).toBe(false);
+		expect(isCacheTier(null)).toBe(false);
+		expect(isCacheTier(7)).toBe(false);
+	});
+});
+
+describe('the generation header', () => {
+	/**
+	 * `pageResponse()` documents `x-cfw-generation` as being on every serve response, and the two
+	 * hand-built header sets omitted it. `Number(null)` is 0, so an invalidation test read
+	 * "0 is not greater than 0" rather than "the header is missing".
+	 */
+	it('is set on every response that names a cache tier', () => {
+		const blocks = siteDoFiles().flatMap(({ file, text }) =>
+			text
+				.split(/'x-cfw-cache':/)
+				.slice(1)
+				.map((block) => ({ file, block }))
+		);
+		expect(blocks.length).toBeGreaterThan(2);
+		for (const { file, block } of blocks) {
+			const window = block.slice(0, 600);
+			// not anchored, so a tier picked by a ternary still names itself in the failure
+			const tier = /'([A-Z]+)'/.exec(block.slice(0, 200))?.[1] ?? '?';
+			expect(window, `the ${tier} response in ${file} omits x-cfw-generation`).toContain(
+				'x-cfw-generation'
+			);
+		}
+	});
+});

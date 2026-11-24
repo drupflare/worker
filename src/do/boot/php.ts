@@ -1,59 +1,52 @@
 import { withMask } from '@drupflare/cartridge/mask';
 import { PHP_CODEC } from '@drupflare/durabledb/codec';
 import { PhpBase, type PhpBaseModuleFactory, type PhpRuntimeArgs } from 'php-wasm/PhpBase';
-import { backendNeedsPark, selectBackend, type BackendEnv } from '../db/backend';
-import { HeapChunkDigestError } from '../db/heap-store';
-import { DISABLED, STANDIN_FIX } from '../drupal/standin-fix';
-import { SHIPPED_CAPABILITIES } from '../ops/catalog';
-import { recordEncounter } from '../ops/cold-encounter';
-import { emptyCrossings, wrapCrossings } from '../ops/crossings';
-import { checkMount, mountReuseArmed, stampMount, trimTwigCache } from '../ops/mount-watch';
-import { packOutput, type PhpOutputBuffer } from '../ops/packed-output';
-import { parkEnabled } from '../ops/park';
-import { blockRefresh, refreshParked } from '../ops/refresh-instance';
-import { releaseHostGraph } from '../ops/release-host';
-import { enforceReadOnly } from '../ops/replica';
-import { writeForwardEnabled } from '../ops/write-forwarding';
+import { backendNeedsPark, selectBackend, type BackendEnv } from '../../db/backend';
+import { HeapChunkDigestError } from '../../db/heap-store';
+import { SHIPPED_CAPABILITIES } from '../../ops/catalog';
+import { recordEncounter } from '../../ops/cold-encounter';
+import { emptyCrossings, wrapCrossings } from '../../ops/crossings';
+import { packOutput, type PhpOutputBuffer } from '../../ops/packed-output';
+import { parkEnabled } from '../../ops/park';
+import { enforceReadOnly } from '../../ops/replica/policy';
+import { writeForwardEnabled } from '../../ops/replica/write-forwarding';
 import {
 	DEFAULT_OPCACHE_MODE,
 	opcacheIni,
 	opcacheMode,
 	type OpcacheMode
-} from '../runtime/opcache';
-import type { PhpInstance, SitePhpDurableObject } from '../site-do';
-import { ARGON2_FIX, installArgon2 } from '../site/shims/argon2-fix';
-import { BROTLI_FIX, installBrotli } from '../site/shims/brotli-fix';
-import { CURL_FIX } from '../site/shims/curl-fix';
-import { EXTENSIONS_FIX } from '../site/shims/extensions-fix';
-import { ICONV_FIX } from '../site/shims/iconv-fix';
-import { MB_FIX } from '../site/shims/mb-fix';
-import { OPENSSL_FIX, installSign } from '../site/shims/openssl-fix';
-import { SODIUM_FIX } from '../site/shims/sodium-fix';
-import { installSodium } from '../site/shims/sodium-lib';
-import { XMLWRITER_FIX } from '../site/shims/xmlwriter-fix';
-import { ZLIB_FIX, installZlib } from '../site/shims/zlib-fix';
-import { ZSTD_FIX, installZstd } from '../site/shims/zstd-fix';
-import { errorMessage } from '../util/errors';
-import { installTagBridge } from '../wordpress/tag-bridge';
-import { HeapRestoreIncomplete, heapRestoreChunkBudget, heapSnapshotEnabled } from './alarm';
+} from '../../runtime/opcache';
+import { clockFor, installClock, type PhpClock } from '../../runtime/virtual-clock';
+import type { PhpInstance, SitePhpDurableObject } from '../../site-do';
+import { ARGON2_FIX, installArgon2 } from '../../site/shims/argon2-fix';
+import { BROTLI_FIX, installBrotli } from '../../site/shims/brotli-fix';
+import { CURL_FIX } from '../../site/shims/curl-fix';
+import { EXTENSIONS_FIX } from '../../site/shims/extensions-fix';
+import { ICONV_FIX } from '../../site/shims/iconv-fix';
+import { MB_FIX } from '../../site/shims/mb-fix';
+import { OPENSSL_FIX, installSign } from '../../site/shims/openssl-fix';
+import { SODIUM_FIX } from '../../site/shims/sodium-fix';
+import { installSodium } from '../../site/shims/sodium-lib';
+import { DISABLED, STANDIN_FIX } from '../../site/shims/standin-fix';
+import { XMLWRITER_FIX } from '../../site/shims/xmlwriter-fix';
+import { ZLIB_FIX, installZlib } from '../../site/shims/zlib-fix';
+import { ZSTD_FIX, installZstd } from '../../site/shims/zstd-fix';
+import { errorMessage } from '../../util/errors';
+import { installTagBridge } from '../../wordpress/tag-bridge';
+import { HeapRestoreIncomplete, heapRestoreChunkBudget, heapSnapshotEnabled } from '../alarm';
+import { installGrowthCap, noteGrowthRefusal, syncGrowthCap } from '../growth/cap';
+import { forwardTo } from '../helpers';
+import { INTERPRETER_MEMORY, isolateResidency, shimGlobals, takeSpareMemory } from '../isolate';
+import { installMysqlBridge } from '../mysql-bridge';
+import type { PhpOutputEvent, SiteBinary } from '../types';
 import {
 	bootImageBakeEnabled,
 	planBootImage,
 	planPages,
 	restoreBootImage,
 	type BootImagePlan
-} from './boot-image';
-import { forwardTo } from './helpers';
-import {
-	INTERPRETER_MEMORY,
-	isolateResidency,
-	keepSpareMemory,
-	shimGlobals,
-	takeSpareMemory
-} from './isolate';
-import { installMysqlBridge } from './mysql-bridge';
-import { treeBootFor } from './tree-boot';
-import type { PhpOutputEvent, SiteBinary } from './types';
+} from './image';
+import { treeBootFor } from './tree';
 
 /** the binary seam; site-do.ts imports it because wrangler aliases that exact specifier */
 export type PhpSeam = { factory: unknown; module: WebAssembly.Module };
@@ -66,12 +59,17 @@ export class PhpStatic extends PhpBase {
 	/** the raw entry point php-wasm's published types omit; `run()` is a wrapper over it */
 	declare _run: (code: string) => Promise<unknown>;
 
+	/** the clock PHP reads, when `VIRTUAL_CLOCK` is on */
+	readonly clock?: PhpClock;
+
 	constructor(
 		seam: PhpSeam,
 		args: PhpRuntimeArgs = {},
 		diag: string[] = [],
 		mode: OpcacheMode = DEFAULT_OPCACHE_MODE,
-		memory?: WebAssembly.Memory
+		memory?: WebAssembly.Memory,
+		onMemory?: (memory: WebAssembly.Memory) => void,
+		clock?: PhpClock
 	) {
 		const t0 = Date.now();
 		const note = (m: string) => diag.push(`+${Date.now() - t0}ms ${m}`);
@@ -108,9 +106,15 @@ export class PhpStatic extends PhpBase {
 					) => void
 				) {
 					if (memory) (imports.env as Record<string, unknown>).memory = memory;
+					if (clock) installClock(imports, clock);
 					WebAssembly.instantiate(seam.module, imports)
 						.then((instance) => {
 							receiveInstance(instance, seam.module);
+							// the imported memory, or the one a binary that defines its own exports
+							const own = (instance.exports as { memory?: unknown }).memory;
+							const held =
+								memory ?? (own instanceof WebAssembly.Memory ? own : undefined);
+							if (held) onMemory?.(held);
 							note('instantiated');
 						})
 						.catch((e: any) => note(`FAILED: ${e?.message ?? e}`));
@@ -118,6 +122,15 @@ export class PhpStatic extends PhpBase {
 				}
 			}
 		);
+		if (clock) {
+			this.clock = clock;
+			const run = this._run.bind(this);
+			// each run, parked slices included, starts from the platform's clock
+			this._run = (code) => {
+				clock.resync();
+				return run(code);
+			};
+		}
 	}
 }
 
@@ -150,38 +163,16 @@ export async function bootPhp(
 	site.encounters = recordEncounter(site.encounters, 'cold');
 	site.coldsSinceFlush = (site.coldsSinceFlush ?? 0) + 1;
 	let plan: BootImagePlan = opts.skipRestore ? { reason: 'skipped' } : await planBootImage(site);
-	// a parked interpreter restarts in place; one that fails to is only good for its memory
-	const parked = site.pendingRefresh;
-	site.pendingRefresh = undefined;
-	// an image restores onto a fresh heap, and a restarted one no longer has that layout
-	if (parked && plan.index) keepSpareMemory(parked);
-	const reuse = parked && !plan.index && (await refreshParked(site, parked)) ? parked : undefined;
-	// a mount built from the same inputs, and untouched since, is kept; any other is rebuilt below
-	const verdict =
-		reuse && mountReuseArmed(site.env) && site.mountInfo
-			? checkMount(site, reuse.binary)
-			: undefined;
-	if (verdict) site.lastMountReuse = { at: site.nowMs(), ...verdict };
-	const keepMount = verdict?.kept === true;
-	if (reuse && keepMount) trimTwigCache(reuse.binary);
-	else if (reuse) releaseHostGraph(reuse.binary);
 	// the heap a drop left behind, if any, so this boot never holds a second one beside it
-	const spare = reuse ? undefined : takeSpareMemory();
+	const spare = takeSpareMemory();
 	if (spare) {
 		site.heapsReused = (site.heapsReused ?? 0) + 1;
 		site.lastReuse = { at: site.nowMs(), bytes: spare.buffer.byteLength };
 	}
-	const memory = reuse
-		? reuse.binary.wasmMemory
-		: (spare ?? newInterpreterMemory(seam, planPages(plan)));
+	const memory = spare ?? newInterpreterMemory(seam, planPages(plan));
 	if (plan.index && !memory) plan = { reason: 'the binary defines its own memory' };
 	// the image's heap is larger than the boot memory once the bake's render has grown it
-	let missing = memory ? planPages(plan) - memory.buffer.byteLength / 65_536 : 0;
-	// the glue's heap views follow its own growth only, so a live instance cannot be grown from here
-	if (reuse && missing > 0) {
-		plan = { reason: 'the restarted memory is smaller than the image' };
-		missing = 0;
-	}
+	const missing = memory ? planPages(plan) - memory.buffer.byteLength / 65_536 : 0;
 	if (memory && missing > 0) memory.grow(missing);
 	// an uncollected interpreter still counts toward the isolate's 128 MiB while this one grows
 	const resident = isolateResidency();
@@ -194,30 +185,32 @@ export async function bootPhp(
 	const t0 = Date.now();
 	// every closure installed below goes through `self`, so an adopting instance can take them
 	// over
-	// a restarted interpreter keeps its owner, since its output listeners already forward through it
-	const owner = (reuse && site.phpOwner) || { current: site as SitePhpDurableObject };
-	owner.current = site;
+	const owner = { current: site as SitePhpDurableObject };
 	site.phpOwner = owner;
 	const self = forwardTo(owner);
-	const php =
-		reuse?.php ??
-		new PhpStatic(seam, {}, site.bootDiag, opcacheMode(site.env?.OPCACHE_MODE), memory);
-	// the buffers and listeners outlive a restart, so installing them again would double both
-	if (!reuse) {
-		// php-wasm does not type its output buffers, and packing needs them
-		const { buffers } = php as unknown as {
-			buffers: { stdout: PhpOutputBuffer; stderr: PhpOutputBuffer };
-		};
-		packOutput(site.env, buffers);
-		// braced on purpose: a brace-less arrow returns `push`'s length and workerd warns on every
-		// event
-		php.addEventListener('output', (e) => {
-			self.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []));
-		});
-		php.addEventListener('error', (e) => {
-			self.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []));
-		});
-	}
+	let instantiated: WebAssembly.Memory | undefined;
+	const php = new PhpStatic(
+		seam,
+		{},
+		site.bootDiag,
+		opcacheMode(site.env?.OPCACHE_MODE),
+		memory,
+		(held) => (instantiated = held),
+		clockFor(site.env)
+	);
+	// php-wasm does not type its output buffers, and packing needs them
+	const { buffers } = php as unknown as {
+		buffers: { stdout: PhpOutputBuffer; stderr: PhpOutputBuffer };
+	};
+	packOutput(site.env, buffers);
+	// braced on purpose: a brace-less arrow returns `push`'s length and workerd warns on every
+	// event
+	php.addEventListener('output', (e) => {
+		self.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []));
+	});
+	php.addEventListener('error', (e) => {
+		self.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []));
+	});
 	// the one cast: php-wasm resolves site as a loosely-typed Module, and SiteBinary names
 	// both the FS surface the mounts drive and the cfw* members installed just below
 	const binary = (await php.binary) as unknown as SiteBinary;
@@ -300,12 +293,14 @@ export async function bootPhp(
 	// before any PHP runs: a handle minted before the pin cannot be pinned retroactively
 	site.pinHandles(binary);
 
-	if (!keepMount) {
-		await bootTree(site, binary);
-		if (mountReuseArmed(site.env)) stampMount(site, binary);
-	}
+	await bootTree(site, binary);
 
 	site.php = { php, binary, out: site.out, mysql };
+	// after startup, so a cap below the boot's own needs cannot refuse the interpreter itself
+	installGrowthCap(binary, memory ?? instantiated, undefined, (info) =>
+		noteGrowthRefusal(self, info)
+	);
+	syncGrowthCap(site);
 	site.phpBootedAt = site.nowMs();
 	site.bootMs = Date.now() - t0;
 	site.bootLinear = site.heapNow();
@@ -328,7 +323,6 @@ export async function bootPhp(
 		if (restored.dirty === true) {
 			// bytes landed: the heap has the right length and wrong contents, so boot again plain
 			const refused = site.bootImage;
-			blockRefresh(site);
 			site.php = undefined;
 			const fresh = await bootPhp(site, { skipRestore: true }, seam);
 			site.bootImage = { ...refused, used: false, rebooted: true };
@@ -357,7 +351,6 @@ export async function bootPhp(
 			if (dirty) {
 				// drop the poisoned instance and boot from the pack (`skipRestore` stops a
 				// retry refusing the same chunk)
-				blockRefresh(site);
 				site.php = undefined;
 				// directly: through `ensurePhp()` this would wait on the boot it is part of
 				const fresh = await bootPhp(site, { skipRestore: true }, seam);

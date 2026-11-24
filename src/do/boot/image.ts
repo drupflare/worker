@@ -6,8 +6,8 @@ import {
 	replayStreams,
 	WASM_PAGE_BYTES,
 	type StreamFS
-} from '../db/heap-store';
-import type { SiteEnv } from '../env';
+} from '../../db/heap-store';
+import type { SiteEnv } from '../../env';
 import {
 	applyBootImage,
 	BOOT_IMAGE_VARIANTS,
@@ -21,16 +21,16 @@ import {
 	settingsDigest,
 	type BootImageIndex,
 	type BootImageVariant
-} from '../ops/boot-image';
-import { DRIVER_DIGEST } from '../ops/driver-digest';
-import { opcacheMode } from '../runtime/opcache';
-import type { SitePhpDurableObject } from '../site-do';
-import * as siteAssets from '../site/generated/assets';
-import { BOOT_IMAGE_REKEY_PHP } from '../site/generated/assets';
-import { cmsOf } from '../util/cms';
-import { errorMessage } from '../util/errors';
-import { phpRender } from '../util/php';
-import type { Payload, SiteBinary } from './types';
+} from '../../ops/boot-image';
+import { DRIVER_DIGEST } from '../../ops/driver-digest';
+import { opcacheMode } from '../../runtime/opcache';
+import type { SitePhpDurableObject } from '../../site-do';
+import * as siteAssets from '../../site/generated/assets';
+import { BOOT_IMAGE_REKEY_PHP } from '../../site/generated/assets';
+import { cmsOf } from '../../util/cms';
+import { errorMessage } from '../../util/errors';
+import { phpRender } from '../../util/php';
+import type { Payload, SiteBinary } from '../types';
 
 /** whether a cold boot may restore the published boot image; on unless `0` */
 export function bootImageEnabled(env?: SiteEnv): boolean {

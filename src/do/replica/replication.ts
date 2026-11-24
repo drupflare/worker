@@ -1,14 +1,14 @@
 import { type SqlBindings, toPositional } from '@drupflare/durabledb/do-sqlite';
-import { writeTargetTable } from '../db/write-tally';
-import { planRestore } from '../ops/replica-restore';
-import { type LogRecord } from '../ops/replication-log';
-import { fingerprintState, readStateRows } from '../ops/state-fingerprint';
-import { classifyState } from '../ops/state-inventory';
-import type { SitePhpDurableObject } from '../site-do';
-import { firstRow } from '../util/sql';
-import type { ReplicationLogHost } from './host';
-import { COMMIT_SEQ_KEY } from './keys';
-import { REPLICATION_RECORD_MAX_STATEMENTS } from './limits';
+import { writeTargetTable } from '../../db/write-tally';
+import { type LogRecord } from '../../ops/replica/replication-log';
+import { planRestore } from '../../ops/replica/restore';
+import { fingerprintState, readStateRows } from '../../ops/replica/state-fingerprint';
+import { classifyState } from '../../ops/replica/state-inventory';
+import type { SitePhpDurableObject } from '../../site-do';
+import { firstRow } from '../../util/sql';
+import type { ReplicationLogHost } from '../host';
+import { COMMIT_SEQ_KEY } from '../keys';
+import { REPLICATION_RECORD_MAX_STATEMENTS } from '../limits';
 
 /**
  * Collects the statements a replica would have to apply to reach this generation.

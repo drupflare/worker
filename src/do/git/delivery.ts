@@ -1,6 +1,7 @@
-import { BOOT_KERNEL, VERIFY_MODULES } from '../drupal/site-php';
-import type { Remote } from '../ops/git-provider';
-import { fetchCommit } from '../ops/git-smart';
+import { BOOT_KERNEL, VERIFY_MODULES } from '../../drupal/php/site';
+import { portFibers } from '../../ops/composer/package-install';
+import type { Remote } from '../../ops/git/provider';
+import { fetchCommit } from '../../ops/git/smart';
 import {
 	detectConflicts,
 	planSync,
@@ -8,11 +9,11 @@ import {
 	safeName,
 	selectFiles,
 	type SyncPlan
-} from '../ops/git-sync';
-import { portFibers } from '../ops/package-install';
-import type { SitePhpDurableObject } from '../site-do';
-import { errorMessage } from '../util/errors';
-import { changeModuleFiles, trustedEntries } from './module-files';
+} from '../../ops/git/sync';
+import { addWritten, emptyReport, receiptOf, type ReturnTypeReport } from '../../ops/return-types';
+import type { SitePhpDurableObject } from '../../site-do';
+import { errorMessage } from '../../util/errors';
+import { changeModuleFiles, executedFiles, trustedEntries } from '../module-files';
 
 /**
  * Fetches one commit, plans it against what is installed, and optionally applies it.
@@ -45,7 +46,11 @@ export async function gitSync(
 	}
 
 	const stored = site.gitStoredFiles(remote.id);
-	const plan = planSync(stored, selection.files);
+	// planned against the bytes that will be stored, so an identical pull writes nothing
+	const done = emptyReport();
+	const plan = planSync(stored, executedFiles(site.env, stored, selection.files, done));
+	const returnTypes = emptyReport();
+	addWritten(returnTypes, done, new Set(plan.writes.map((w) => w.path)));
 	const conflicts = detectConflicts(selection.files, site.gitOwners(), remote.id);
 	const summary = {
 		ok: true,
@@ -90,7 +95,7 @@ export async function gitSync(
 	site.metaSet(`git_lasterror_${remote.id}`, '');
 	site.metaSet(`git_previewof_${remote.id}`, opts.previewOf ?? '');
 	site.metaSet(`git_lastplan_${remote.id}`, JSON.stringify(plan.counts));
-	return { ...summary, applied: true, rolledBack: false };
+	return { ...summary, applied: true, rolledBack: false, returnTypes: receiptOf(returnTypes) };
 }
 
 /**
@@ -104,7 +109,8 @@ export function gitApply(
 	site: SitePhpDurableObject,
 	id: string,
 	plan: SyncPlan,
-	sha: string
+	sha: string,
+	returnTypes?: ReturnTypeReport
 ): boolean {
 	const rewired = [...plan.deletes, ...plan.writes.map((w) => w.path)].some((path) =>
 		/\.(info|services|routing)\.yml$/.test(path)
@@ -119,7 +125,8 @@ export function gitApply(
 				version: sha,
 				source: portFibers(file.path, file.source)
 			})),
-			installedAt: now
+			installedAt: now,
+			returnTypes
 		});
 	});
 	site.rowsSinceFlush = (site.rowsSinceFlush ?? 0) + plan.rowsWritten + records;

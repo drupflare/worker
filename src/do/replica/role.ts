@@ -1,11 +1,11 @@
-import { hasSessionCookie } from '../ops/auth-budget';
-import { fenceAllows, replicaReadOnly } from '../ops/replica';
-import { canTransition, missingMandatory, type ReplicaStage } from '../ops/replica-admission';
-import { replicaOf } from '../ops/replica-routing';
-import { type LogStore } from '../ops/replication-log';
-import { readStateRows } from '../ops/state-fingerprint';
-import { ID_PARTITION_LANES, writeForwardEnabled } from '../ops/write-forwarding';
-import type { RoleHost, SiteStore } from './host';
+import { hasSessionCookie } from '../../ops/meters/auth-budget';
+import { canTransition, missingMandatory, type ReplicaStage } from '../../ops/replica/admission';
+import { fenceAllows, replicaReadOnly } from '../../ops/replica/policy';
+import { type LogStore } from '../../ops/replica/replication-log';
+import { replicaOf } from '../../ops/replica/routing';
+import { readStateRows } from '../../ops/replica/state-fingerprint';
+import { ID_PARTITION_LANES, writeForwardEnabled } from '../../ops/replica/write-forwarding';
+import type { RoleHost, SiteStore } from '../host';
 
 /**
  * Moves this object's replica stage through {@link canTransition}, or refuses the move.

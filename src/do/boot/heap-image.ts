@@ -14,21 +14,21 @@ import {
 	streamRestoreInto,
 	toStorableBytes,
 	writeHeapSnapshot
-} from '../db/heap-store';
-import { BOOT_KERNEL } from '../drupal/site-php';
-import { hasDeploymentEnv } from '../ops/deployment-env';
+} from '../../db/heap-store';
+import { BOOT_KERNEL } from '../../drupal/php/site';
+import { hasDeploymentEnv } from '../../ops/deployment-env';
 import {
 	checkHeapSnapshot,
 	emptyHeapIntegrityStats,
 	noteHeapCheck,
 	pruneHeapRecords,
 	sealHeapSnapshot
-} from '../ops/heap-integrity';
-import type { SitePhpDurableObject } from '../site-do';
-import { firstRow } from '../util/sql';
-import { heapRestoreChunkBudget, heapSnapshotEnabled } from './alarm';
-import { HEAP_IMAGE_ATTEMPTS_KEY, HEAP_IMAGE_KEY } from './keys';
-import type { HandleTableOps, Payload, SiteBinary } from './types';
+} from '../../ops/heap-integrity';
+import type { SitePhpDurableObject } from '../../site-do';
+import { firstRow } from '../../util/sql';
+import { heapRestoreChunkBudget, heapSnapshotEnabled } from '../alarm';
+import { HEAP_IMAGE_ATTEMPTS_KEY, HEAP_IMAGE_KEY } from '../keys';
+import type { HandleTableOps, Payload, SiteBinary } from '../types';
 
 const PIN_STATE = Symbol('resident handle pinning');
 

@@ -14,7 +14,7 @@ import {
 	remoteId,
 	smartAuth,
 	statusRequest
-} from '../ops/git-provider';
+} from '../../ops/git/provider';
 import {
 	type Advertisement,
 	branchNames,
@@ -22,17 +22,17 @@ import {
 	refSha,
 	requestRefs,
 	type SmartRemote
-} from '../ops/git-smart';
-import { clampInterval, DEFAULT_POLL_MINUTES, duePolls, safeMount } from '../ops/git-sync';
-import type { SitePhpDurableObject } from '../site-do';
-import { errorMessage } from '../util/errors';
-import { jsonError } from '../util/reply';
+} from '../../ops/git/smart';
+import { clampInterval, DEFAULT_POLL_MINUTES, duePolls, safeMount } from '../../ops/git/sync';
+import type { SitePhpDurableObject } from '../../site-do';
+import { errorMessage } from '../../util/errors';
+import { jsonError } from '../../util/reply';
 
-import { gitBackoff, gitClearBackoff, gitCredential } from './git-remotes';
-import type { GitHost } from './host';
-import { changeModuleFiles, renameModulePackage } from './module-files';
+import type { GitHost } from '../host';
+import { changeModuleFiles, renameModulePackage } from '../module-files';
+import { gitBackoff, gitClearBackoff, gitCredential } from './remotes';
 
-export { gitApply, gitRestore, gitSync, gitVerifyBoot } from './git-delivery';
+export { gitApply, gitRestore, gitSync, gitVerifyBoot } from './delivery';
 
 /** the per-remote keys held in sealed storage, where the SQL bridge cannot read them */
 const SEALED_KEYS = new Set(['token', 'hooksecret']);

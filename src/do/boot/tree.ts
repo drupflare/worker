@@ -1,7 +1,7 @@
-import { bootDrupalTree } from '../drupal/boot';
-import type { SitePhpDurableObject } from '../site-do';
-import { bootWordpressTree } from '../wordpress/boot';
-import type { SiteBinary } from './types';
+import { bootDrupalTree } from '../../drupal/boot';
+import type { SitePhpDurableObject } from '../../site-do';
+import { bootWordpressTree } from '../../wordpress/boot';
+import type { SiteBinary } from '../types';
 
 /** thrown for a CMS value the worker has no boot for, so it never falls through to Drupal */
 export class CmsHasNoBootError extends Error {

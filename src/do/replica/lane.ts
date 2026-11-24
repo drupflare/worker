@@ -1,9 +1,7 @@
-import { writeTargetTable } from '../db/write-tally';
-import { sessionCookieValue } from '../ops/auth-budget';
-import { drupalSessionRowId, statementAllowedOnReplica } from '../ops/replica';
-import { admissionVerdict, type ReplicaStage } from '../ops/replica-admission';
-import { chunkRefusal, type RestoreChunk, restoreStatements } from '../ops/replica-restore';
-import { replicaLagMs } from '../ops/replica-routing';
+import { writeTargetTable } from '../../db/write-tally';
+import { sessionCookieValue } from '../../ops/meters/auth-budget';
+import { admissionVerdict, type ReplicaStage } from '../../ops/replica/admission';
+import { drupalSessionRowId, statementAllowedOnReplica } from '../../ops/replica/policy';
 import {
 	applyRecord,
 	landPosition,
@@ -11,27 +9,29 @@ import {
 	markInflight,
 	positionTrust,
 	readPosition
-} from '../ops/replication-log';
-import { ORIGIN_KEY, pinnable } from '../ops/site-origin';
-import { assertSalt, HASH_SALT_KEY } from '../ops/site-secrets';
-import { fingerprintState, readStateRows } from '../ops/state-fingerprint';
+} from '../../ops/replica/replication-log';
+import { chunkRefusal, type RestoreChunk, restoreStatements } from '../../ops/replica/restore';
+import { replicaLagMs } from '../../ops/replica/routing';
+import { fingerprintState, readStateRows } from '../../ops/replica/state-fingerprint';
 import {
 	type ForwardStatement,
 	LANE_HIGH_PREFIX,
 	laneHighWater,
 	partitionedTables
-} from '../ops/write-forwarding';
-import type { LaneHost } from './host';
+} from '../../ops/replica/write-forwarding';
+import { ORIGIN_KEY, pinnable } from '../../ops/site/origin';
+import { assertSalt, HASH_SALT_KEY } from '../../ops/site/secrets';
+import type { LaneHost } from '../host';
 import {
 	COMMIT_SEQ_KEY,
 	READMIT_ASKS_KEY,
 	RESTORE_EXPECT_KEY,
 	RESTORE_GENERATION_KEY,
 	RESTORE_SEEN_KEY
-} from './keys';
-import { CATCH_UP_INTERVAL_MS, SESSION_CATCHUP_MS } from './limits';
+} from '../keys';
+import { CATCH_UP_INTERVAL_MS, SESSION_CATCHUP_MS } from '../limits';
+import type { ForwardOutcome } from '../types';
 import { laneOf } from './role';
-import type { ForwardOutcome } from './types';
 
 /**
  * Whether this lane is empty and waiting for the primary's copy (`CREATED` with a readmission

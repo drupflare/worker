@@ -1,27 +1,27 @@
-import { dailyLimit, REDUCE_AT } from '../ops/degrade';
+import { dailyLimit, REDUCE_AT } from '../../ops/meters/degrade';
 import {
 	type DemandWindow,
 	laneFitsRows,
 	nextLaneToProvision,
 	recordWindow,
 	type RowBudget
-} from '../ops/replica-demand';
+} from '../../ops/replica/demand';
 import {
 	planRestore,
 	type ProvisionCursor,
 	type ProvisionOutcome,
 	type RestoreChunk
-} from '../ops/replica-restore';
+} from '../../ops/replica/restore';
 import {
 	formatLanesPointer,
 	LANES_EPOCH_HEADER,
 	LANES_HEADER,
 	lanesKvKey,
 	replicaName
-} from '../ops/replica-routing';
-import { ensureHashSalt } from '../ops/site-secrets';
-import { firstRow } from '../util/sql';
-import type { PoolHost, SiteStore } from './host';
+} from '../../ops/replica/routing';
+import { ensureHashSalt } from '../../ops/site/secrets';
+import { firstRow } from '../../util/sql';
+import type { PoolHost, SiteStore } from '../host';
 import {
 	DEMAND_WINDOWS_KEY,
 	LANE_CURSOR_KEY,
@@ -29,9 +29,9 @@ import {
 	LANE_REPAIR_KEY,
 	LANES_EPOCH_KEY,
 	LANES_PROVISIONED_KEY
-} from './keys';
+} from '../keys';
+import type { Payload, Row } from '../types';
 import { refusesPoolOwner } from './role';
-import type { Payload, Row } from './types';
 
 /**
  * Grows the pool when the site has been contended for several windows running, or repairs a

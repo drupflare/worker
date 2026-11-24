@@ -1,7 +1,7 @@
-import { type Credential, type Remote } from '../ops/git-provider';
-import { backoffMs, clampInterval, DEFAULT_POLL_MINUTES, type PollState } from '../ops/git-sync';
+import { type Credential, type Remote } from '../../ops/git/provider';
+import { backoffMs, clampInterval, DEFAULT_POLL_MINUTES, type PollState } from '../../ops/git/sync';
 
-import type { GitHost, SiteStore } from './host';
+import type { GitHost, SiteStore } from '../host';
 
 /** every configured remote; the list is one meta row so an add is one write */
 export function gitRemotes(host: SiteStore): Remote[] {

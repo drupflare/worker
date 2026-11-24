@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { constantName, readAssets, renderAssets } from '../../scripts/gen-assets';
+import { constantName, readAssets, renderAssets } from '../../scripts/gen/assets';
 import * as generated from '../../src/site/generated/assets';
 
 describe('src/site/generated/assets.ts', () => {

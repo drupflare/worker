@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptyTally } from '../../src/db/write-tally';
 import { ABSORBED_HEADER } from '../../src/ops/cold-encounter';
-import { dayMetersKey } from '../../src/ops/day-meters';
+import { dayMetersKey } from '../../src/ops/meters/day-meters';
 import { freshSite, inObject, markProvisioned, seedPage, type ServeDo } from '../helpers/serve-do';
 
 /**

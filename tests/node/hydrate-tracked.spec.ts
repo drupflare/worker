@@ -16,7 +16,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
  * **The same defect was already fixed once, in `restore-artifacts.ts`.** A `cdn-manifest.json`
  * entry overwrote the tracked `assets/drupal/site.sqlite` on every `bun install` and turned
  * `container-cid.spec.ts` red on a tree nobody had edited; that entry is marked `tracked` and the
- * restore verifies it and leaves it alone. `hydrate.ts` never got the same treatment, and the
+ * restore verifies it and leaves it alone. `hydrate/run.ts` never got the same treatment, and the
  * published payload names two tracked paths.
  *
  * `assets/driver.json` is tracked for a second reason worth stating: it is built from the sibling
@@ -48,7 +48,7 @@ describe('hydrate leaves the repository its own files', () => {
 	});
 
 	it('asks git for the set rather than carrying a list that can drift', () => {
-		const src = readFileSync(join(root, 'scripts', 'hydrate.ts'), 'utf8');
+		const src = readFileSync(join(root, 'scripts', 'hydrate', 'run.ts'), 'utf8');
 		expect(src).toContain("'ls-files'");
 		// and it must SKIP rather than copy when a path is tracked
 		expect(src).toMatch(/tracked\.has\(file\.path\)/);
@@ -58,7 +58,7 @@ describe('hydrate leaves the repository its own files', () => {
 		// a tracked file the payload also carries is a real disagreement when the bytes differ, and
 		// it means the payload was built from a different tree; the pack and the database it was
 		// baked against have to agree or every first kernel boot rebuilds the container
-		const src = readFileSync(join(root, 'scripts', 'hydrate.ts'), 'utf8');
+		const src = readFileSync(join(root, 'scripts', 'hydrate', 'run.ts'), 'utf8');
 		expect(src).toContain('differs from the payload');
 	});
 });

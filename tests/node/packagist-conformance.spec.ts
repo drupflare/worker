@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DRUPAL_METADATA_URL, packagistUrl } from '../../src/ops/packagist';
+import { DRUPAL_METADATA_URL, packagistUrl } from '../../src/ops/composer/packagist';
 
 /**
  * The metadata endpoint, checked against DRUPAL.ORG rather than against ourselves.

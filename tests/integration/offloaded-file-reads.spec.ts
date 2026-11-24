@@ -11,7 +11,7 @@ import {
 	type FileBucket
 } from '../../src/db/file-store';
 import { file } from '../../src/do/routes/file';
-import { drupalOp } from '../../src/drupal/site-php';
+import { drupalOp } from '../../src/drupal/php/site';
 import type { SitePhpDurableObject } from '../../src/site-do';
 import { druplicon } from '../fixtures/png';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';

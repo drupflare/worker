@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { PLATFORM_PHP_VERSION } from '../../src/ops/packagist';
+import { PLATFORM_PHP_VERSION } from '../../src/ops/composer/packagist';
 
 /**
  * The build command a one-click deploy runs must work on a CLEAN CLONE.

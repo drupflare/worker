@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { FALLBACK_ORIGIN } from '../../src/ops/site-origin';
+import { FALLBACK_ORIGIN } from '../../src/ops/site/origin';
 import { e2eGate, ENDPOINT } from './helpers/endpoint';
 import {
 	invalidate,

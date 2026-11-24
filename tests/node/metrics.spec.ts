@@ -208,7 +208,7 @@ describe('the case count does not move with what this machine has on disk', () =
 		expect(excluded.sort()).toEqual([...uncollectable].sort());
 
 		// AND THE PACK BOUNDARY IS OVERRIDDEN, which is what the flag is for -- but only for a spec
-		// that is ONLY on that boundary. `render-buckets.spec.ts` is on BOTH lists, and a spec that
+		// that is ONLY on that boundary. `render/buckets.spec.ts` is on BOTH lists, and a spec that
 		// cannot be collected stays excluded however cheap running it would have been; the stricter
 		// of the two boundaries wins, and it has to
 		const packOnly = ARTIFACT_SPECS.filter((spec) => !(spec in PROBE_IMPORTS));

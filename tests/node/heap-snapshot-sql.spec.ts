@@ -48,7 +48,7 @@ function corruptedChunkBytes(length: number): Uint8Array {
  * because the arithmetic being right is not the same as the round trip being right: bound BLOB
  * parameters, `RETURNING id`, row order, and integer widening are all engine behaviour, and every
  * one of them has produced a defect in this project. `node:sqlite` is the same engine family as
- * Durable Object SQLite and `tests/node/migrate-sql.spec.ts` already relies on it, so this is a
+ * Durable Object SQLite and `tests/node/dump/migrate.spec.ts` already relies on it, so this is a
  * closer instrument than a hand-written fake.
  *
  * It is NOT a substitute for the platform limits, which only a deployed object can confirm. Those

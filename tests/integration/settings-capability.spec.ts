@@ -8,7 +8,7 @@ import {
 	SETTINGS_KV_KEY,
 	writeSettings
 } from '../../src/ops/plan';
-import { classifyCapability } from '../../src/ops/replica';
+import { classifyCapability } from '../../src/ops/replica/policy';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**

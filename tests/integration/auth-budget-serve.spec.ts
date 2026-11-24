@@ -5,7 +5,7 @@ import {
 	AUTH_REASON_HEADER,
 	authAllowance,
 	utcDayKey
-} from '../../src/ops/auth-budget';
+} from '../../src/ops/meters/auth-budget';
 import { SESSION_COOKIE, provisionedNamedSite } from '../helpers/serve-do';
 
 /**

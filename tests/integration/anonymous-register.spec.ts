@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { drupalOp, renderPage, type RenderRequest } from '../../src/drupal/site-php';
+import { drupalOp, renderPage, type RenderRequest } from '../../src/drupal/php/site';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**

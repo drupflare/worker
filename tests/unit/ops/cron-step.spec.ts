@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cronHookList, runCronHook, runCronQueue } from '../../../src/drupal/cron-php';
+import { cronHookList, runCronHook, runCronQueue } from '../../../src/drupal/php/cron';
 import {
 	advanceCursor,
 	CRON_HOOKS,

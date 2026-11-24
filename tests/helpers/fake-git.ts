@@ -3,7 +3,7 @@ import { zlibSync } from 'fflate';
 /**
  * A git server small enough to live in a test.
  *
- * `tests/node/git-smart.spec.ts` drives the client against the real `git upload-pack` binary, which
+ * `tests/node/git/smart.spec.ts` drives the client against the real `git upload-pack` binary, which
  * is the authority on the format. This exists so the workers lane -- which has no child processes --
  * can still exercise the object end to end over a byte-identical wire.
  */

@@ -54,7 +54,7 @@ describe('the producer that only failed on the runner', () => {
 		const out = join(fixture(), 'drupal-sql');
 		const printed = execFileSync(
 			'node',
-			['scripts/pack-sql.ts', 'assets/drupal/site.sqlite', out],
+			['scripts/pack/sql.ts', 'assets/drupal/site.sqlite', out],
 			{ cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 26 }
 		);
 		expect(printed).toMatch(/(\d+) collations rewritten/);

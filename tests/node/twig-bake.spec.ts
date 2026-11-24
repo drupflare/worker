@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readJsonc } from '../../scripts/release-payload';
+import { readJsonc } from '../../scripts/release/payload';
 import { artifactGate } from './helpers/artifact-gate';
 
 /**
@@ -15,7 +15,7 @@ import { artifactGate } from './helpers/artifact-gate';
  * out of State, a class name that hashes the loader cache key together with the RUNTIME's PHP minor
  * version, and a storage class whose path does not depend on a directory mtime the mount invents.
  *
- * Every one of those was wrong before `scripts/bake-twig.php` existed, and none of them looked
+ * Every one of those was wrong before `scripts/bake/twig.php` existed, and none of them looked
  * wrong: the pack shipped 26 compiled files under the correct prefix, the runtime asked for 14
  * different keys, missed all of them, recompiled, and served a byte-identical page. The only
  * visible trace was 14 extra `twig:` rows in `cache_default`.

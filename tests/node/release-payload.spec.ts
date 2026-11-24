@@ -8,7 +8,7 @@ import {
 	missingMarkers,
 	readManifest,
 	verifyExtracted
-} from '../../scripts/hydrate.ts';
+} from '../../scripts/hydrate/run.ts';
 import { SIZE_CEILING } from '../../scripts/measure/bundle-size.ts';
 import {
 	ASSET_FILE_BYTES_LIMIT,
@@ -27,7 +27,7 @@ import {
 	payloadPlan,
 	scanSeededCredentials,
 	shippedPaths
-} from '../../scripts/release-payload.ts';
+} from '../../scripts/release/payload.ts';
 
 /**
  * The release payload is a contract between two machines, and every part of it that can be wrong
@@ -305,7 +305,7 @@ describe('the manifest is what pins the bytes', () => {
  */
 const BCRYPT = '$2y$12$sPGjxCwWWyT.hC9s.A5gHOiLAdvgEc57cNw5i7M5auuPlyHWklg.S';
 
-/** Writes a per-file pack the way `pack-perfile.ts` does: raw-deflated members, an offset index. */
+/** Writes a per-file pack the way `pack/perfile.ts` does: raw-deflated members, an offset index. */
 function packFixture(root: string, members: Record<string, string>): void {
 	const dir = join(root, 'assets/drupal-pf');
 	mkdirSync(dir, { recursive: true });

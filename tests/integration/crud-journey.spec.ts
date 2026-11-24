@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderPage, type RenderRequest } from '../../src/drupal/site-php';
+import { renderPage, type RenderRequest } from '../../src/drupal/php/site';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -40,7 +40,7 @@ const json = (site: ServeDo, path: string, init?: RequestInit) =>
  *
  * Direct rather than through `/__serve` so the journey is not at the mercy of the inline render
  * budget: a free-plan MISS answers 503 and queues, which is correct product behaviour and useless
- * for asserting what Drupal did. `serve-lanes.spec.ts` owns that decision; this owns Drupal.
+ * for asserting what Drupal did. `serve/lanes.spec.ts` owns that decision; this owns Drupal.
  */
 const render = (site: ServeDo, path: string, request: RenderRequest = {}) =>
 	site.runJson(renderPage(path, [], false, request)) as Promise<Payload>;

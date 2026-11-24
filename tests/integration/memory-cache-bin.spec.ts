@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderPage } from '../../src/drupal/site-php';
+import { renderPage } from '../../src/drupal/php/site';
 import { DEFAULT_MEMORY_CACHE_BINS, memoryCacheBins, recycleAboveBytes } from '../../src/site-do';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 

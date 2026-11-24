@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BOOT_PHASES } from '../../src/drupal/site-php';
+import { BOOT_PHASES } from '../../src/drupal/php/site';
 
 /**
  * What the cold path is made of, and what a shared-runtime split could therefore recover.

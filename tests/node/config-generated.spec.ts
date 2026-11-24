@@ -8,14 +8,14 @@ import {
 	readWpPackagesConfig,
 	renderModules,
 	renderWpPackages
-} from '../../scripts/gen-config';
+} from '../../scripts/gen/config';
 import { censusPackages } from '../../scripts/install-census';
-import { PREFILL_PATHS } from '../../scripts/lift-prefill';
+import { PREFILL_PATHS } from '../../scripts/lift/prefill';
 import { FREE_QUOTAS } from '../../scripts/measure/free-envelope';
 import { TRAFFIC_MIX } from '../../scripts/measure/verdict-math';
 import { CRON_HOOKS, KNOWN_CRON_HOOKS } from '../../src/ops/cron';
-import { SHIPPING_PACK_CONTRIB, moduleTable } from '../../src/ops/module-table';
-import { MODULE_TIER_NOTES } from '../../src/ops/module-tiers';
+import { SHIPPING_PACK_CONTRIB, moduleTable } from '../../src/ops/module/table';
+import { MODULE_TIER_NOTES } from '../../src/ops/module/tiers';
 import { compareVersions, resolvePinned } from '../../src/wordpress/registry';
 
 /**

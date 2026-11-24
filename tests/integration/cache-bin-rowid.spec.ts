@@ -7,7 +7,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * A rowid table gives a `TEXT PRIMARY KEY` its own unique index, so one stored row is charged twice
  * on the meter that binds regeneration. Every bin `DatabaseBackend` creates keys on a TEXT `cid`,
  * and `scripts/measure/index-audit.ts` reports 13 of the 14 with NO secondary index -- so that
- * autoindex WAS their entire index cost. `scripts/pack-sql.ts` emits them `WITHOUT ROWID`.
+ * autoindex WAS their entire index cost. `scripts/pack/sql.ts` emits them `WITHOUT ROWID`.
  *
  * **MEASURED AS A CONVERSION BEFORE IT SHIPPED**, on one object and paired: a steady-state render
  * went **8 charged rows -> 6** and the bins' index charge **3 -> 0**, n=3 with zero spread. Both arms

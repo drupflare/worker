@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { drupalOp } from '../../src/drupal/site-php';
+import { drupalOp } from '../../src/drupal/php/site';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**

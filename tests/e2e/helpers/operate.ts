@@ -161,7 +161,7 @@ export function files(
 /**
  * A session cookie the Worker's own predicate accepts as a login.
  *
- * `SESSION_COOKIE_RE` in `src/ops/auth-budget.ts` is `/^S?SESS[0-9a-f]{32}$/`, so the name has to be
+ * `SESSION_COOKIE_RE` in `src/ops/meters/auth-budget.ts` is `/^S?SESS[0-9a-f]{32}$/`, so the name has to be
  * `SESS` plus exactly 32 hex characters. A cookie shaped any other way is classified anonymous and
  * the request being made is not the request intended.
  *

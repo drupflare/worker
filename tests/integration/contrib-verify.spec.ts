@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it, type TestContext } from 'vitest';
-import { BOOT_KERNEL, drupalOp, renderPage } from '../../src/drupal/site-php';
+import { BOOT_KERNEL, drupalOp, renderPage } from '../../src/drupal/php/site';
 import { vectorFor } from '../../src/ops/capability-contract';
 import { SHIPPED_CAPABILITIES, tierFor } from '../../src/ops/catalog';
 import {
@@ -27,7 +27,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 /**
  * Contrib modules, enabled and then asked to DO something.
  *
- * Contrib is a DEV DEPENDENCY here: `scripts/pack-drupal.ts` puts `modules/contrib` behind
+ * Contrib is a DEV DEPENDENCY here: `scripts/pack/drupal.ts` puts `modules/contrib` behind
  * `PACK_CONTRIB=1`, so the shipping artifact carries four modules and the rest are verified against a
  * build that has them. `bun run test:contrib` is that build -- it swaps a fixture pack into
  * `assets/drupal-pf`, runs this file, and puts the shipping pack back.
@@ -737,7 +737,7 @@ const CASES: readonly Case[] = [
 	 *
 	 * It ships no config and creates no table, so the CONTAINER is the observable -- the same shape
 	 * as `facets`. What is asserted is the four backends it adds; whether a cache get reaches a real
-	 * Redis is a separate question, measured in `tests/integration/park-interpreter.spec.ts` against
+	 * Redis is a separate question, measured in `tests/integration/park/interpreter.spec.ts` against
 	 * the rig rather than here.
 	 */
 	{
@@ -762,7 +762,7 @@ const CASES: readonly Case[] = [
 	 * The refusal was real and is closed: the token POST goes through `ParkFetchHandler`, which
 	 * yields to the Zend park, and the park declined under the one internal frame Drupal's dispatch
 	 * puts in the chain. `park_flatten()` splices that frame out. What this case still asserts is the
-	 * plugin surface; the LOGIN is `park-oidc.spec.ts`, which drives a real authorization code from
+	 * plugin surface; the LOGIN is `park/oidc.spec.ts`, which drives a real authorization code from
 	 * the rig Keycloak through this module's own client and reads the `authmap` row back.
 	 */
 	{
@@ -993,10 +993,10 @@ const CASES: readonly Case[] = [
  * this is where an addition is answered explicitly.
  */
 const COVERED_ELSEWHERE: Readonly<Record<string, string>> = {
-	admin_toolbar: 'shipping pack; tests/integration/module-behaviour.spec.ts',
-	ctools: 'shipping pack; tests/integration/module-behaviour.spec.ts',
-	pathauto: 'shipping pack; tests/integration/module-behaviour.spec.ts',
-	token: 'shipping pack; tests/integration/module-behaviour.spec.ts',
+	admin_toolbar: 'shipping pack; tests/integration/module/behaviour.spec.ts',
+	ctools: 'shipping pack; tests/integration/module/behaviour.spec.ts',
+	pathauto: 'shipping pack; tests/integration/module/behaviour.spec.ts',
+	token: 'shipping pack; tests/integration/module/behaviour.spec.ts',
 	js_cookie: 'a dependency of cas, which contrib-generic.spec.ts covers',
 	contact: 'a dependency of contact_storage, whose message round trip below needs it'
 };

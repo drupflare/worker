@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mintOwnerToken } from '../../src/ops/site-secrets';
+import { mintOwnerToken } from '../../src/ops/site/secrets';
 import { LEDGER_MAX_ROWS } from '../../src/ops/supervisor';
 import { inObject, provisionedNamedSite, type ServeDo } from '../helpers/serve-do';
 

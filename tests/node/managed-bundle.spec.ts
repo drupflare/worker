@@ -9,9 +9,9 @@ import {
 	readModules,
 	readShippedAssets,
 	uploadMetadata
-} from '../../scripts/build-managed-bundle';
+} from '../../scripts/build/managed-bundle';
 import { bundleTarballName, managedKeyBase } from '../../scripts/payload-cdn';
-import { plan } from '../../scripts/publish-bundle';
+import { plan } from '../../scripts/publish/bundle';
 
 const enc = (text: string) => new TextEncoder().encode(text);
 const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');

@@ -27,11 +27,11 @@ import {
 	type LocalStep,
 	type StepId,
 	type ToolId
-} from '../../scripts/build-local.ts';
-import { devBranch, resolvePayloadSource } from '../../scripts/hydrate.ts';
-import { PREFILL_PATHS } from '../../scripts/lift-prefill.ts';
+} from '../../scripts/build/local.ts';
+import { devBranch, resolvePayloadSource } from '../../scripts/hydrate/run.ts';
+import { PREFILL_PATHS } from '../../scripts/lift/prefill.ts';
 import { readLock } from '../../scripts/lock';
-import { packVersionsHash } from '../../scripts/pack-hash';
+import { packVersionsHash } from '../../scripts/pack/hash';
 import {
 	devKeyBase,
 	devLabel,
@@ -39,7 +39,7 @@ import {
 	readSums,
 	releaseKeyBase
 } from '../../scripts/payload-cdn.ts';
-import { PAYLOAD_ASSETS, payloadName } from '../../scripts/release-payload.ts';
+import { PAYLOAD_ASSETS, payloadName } from '../../scripts/release/payload.ts';
 
 /**
  * A clean checkout can build itself, and the ORDER is the product.
@@ -202,11 +202,11 @@ describe('the pipeline order, which is what a from-source build gets wrong', () 
 		expect(at('site')).toBeLessThan(at('patch'));
 		// the bake boots a kernel that must already resolve PhpWasmSyncFiber and read the storage pin
 		expect(at('patch')).toBeLessThan(at('twig'));
-		// bake-twig.php builds core.list.json out of an EXISTING core.json, so one has to exist first
+		// bake/twig.php builds core.list.json out of an EXISTING core.json, so one has to exist first
 		expect(at('bootstrap')).toBeLessThan(at('twig'));
 		// assets:twig writes core.list.json, which PACK_INDEX=1 assets:core takes verbatim
 		expect(at('twig')).toBeLessThan(at('core'));
-		// pack-perfile reuses core.json rather than re-globbing the tree
+		// pack/perfile reuses core.json rather than re-globbing the tree
 		expect(at('core')).toBeLessThan(at('pack'));
 	});
 
@@ -555,7 +555,7 @@ describe('the sibling checkouts the driver pack is built from', () => {
 		expect(rom?.path).toBe(join(root, '.siblings/rom'));
 	});
 
-	it('mounts stream-http from its src/, which is what gen-driver-assets reads', () => {
+	it('mounts stream-http from its src/, which is what gen/driver-assets reads', () => {
 		const root = scratch();
 		const http = resolveSiblings(root, {}).find((s) => s.name === 'stream-http');
 		expect(http?.value).toMatch(/\/stream-http\/src$/);
@@ -566,10 +566,10 @@ describe('the sibling checkouts the driver pack is built from', () => {
 		expect(siblingEnv(scratch(), env).STREAM_HTTP_SRC).toBe('.siblings/stream-http/src');
 	});
 
-	it('sets exactly the three variables gen-driver-assets.ts reads', () => {
-		const source = readFileSync(join(ROOT, 'scripts/gen-driver-assets.ts'), 'utf8');
+	it('sets exactly the three variables gen/driver-assets.ts reads', () => {
+		const source = readFileSync(join(ROOT, 'scripts/gen/driver-assets.ts'), 'utf8');
 		for (const name of Object.keys(siblingEnv(scratch(), {}))) {
-			expect(source, `gen-driver-assets.ts never reads ${name}`).toContain(name);
+			expect(source, `gen/driver-assets.ts never reads ${name}`).toContain(name);
 		}
 	});
 
@@ -908,7 +908,7 @@ describe('the commands the docs and package.json promise', () => {
 	};
 
 	it('wires the source route under its own name', () => {
-		expect(pkg.scripts['build:local']).toContain('build-local.ts');
+		expect(pkg.scripts['build:local']).toContain('build/local.ts');
 		expect(pkg.scripts['build:plan']).toContain('--dry-run');
 	});
 

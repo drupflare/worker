@@ -15,7 +15,7 @@ import { e2eGate, ENDPOINT, SITE } from './helpers/endpoint';
  * `docker/keycloak-realm.json`:
  *
  *   docker compose -f docker/compose.yml up -d keycloak
- *   bun scripts/contrib-fixture.ts --mount
+ *   bun scripts/contrib/fixture.ts --mount
  *   CFW_E2E_SITE=<site> CFW_E2E_OWNER_TOKEN=<token> bunx vitest run --project=e2e tests/e2e/saml.spec.ts
  *
  * The spec uploads `fixtures/ssp-rig` through `/modify`, which holds only what a site owner supplies:

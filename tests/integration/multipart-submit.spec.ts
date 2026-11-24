@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carriesUpload, drupalOp, phpBodyExpression, requestBody } from '../../src/drupal/site-php';
+import { carriesUpload, drupalOp, phpBodyExpression, requestBody } from '../../src/drupal/php/site';
 import { druplicon } from '../fixtures/png';
 import { claimSite, hiddenFields, loginJar, render } from '../helpers/drupal-forms';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderPage } from '../../src/drupal/site-php';
+import { renderPage } from '../../src/drupal/php/site';
 import {
 	deploymentEnv,
 	deploymentEnvPhp,

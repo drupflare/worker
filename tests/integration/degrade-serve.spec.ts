@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dailyLimit, READ_ONLY_AT, REDUCE_AT } from '../../src/ops/degrade';
+import { dailyLimit, READ_ONLY_AT, REDUCE_AT } from '../../src/ops/meters/degrade';
 import {
 	type ServeDo,
 	freshSite,

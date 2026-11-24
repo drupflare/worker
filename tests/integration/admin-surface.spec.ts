@@ -1,6 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { ADMIN_COOKIE } from '../../src/ops/admin-session';
+import { ADMIN_COOKIE } from '../../src/ops/owner/admin-session';
 import worker, { routeTable } from '../../src/site';
 import {
 	ADMIN_PAGES,

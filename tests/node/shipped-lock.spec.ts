@@ -2,14 +2,14 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { contribPins } from '../../scripts/fetch-drupal-tree';
+import { contribPins } from '../../scripts/fetch/drupal-tree';
 import { readLock } from '../../scripts/lock';
-import { shippedLock } from '../../src/ops/lock-map';
+import { shippedLock } from '../../src/ops/composer/lock-map';
 import {
 	SHIPPED_CORE_VERSION,
 	SHIPPED_LOCK_VERSIONS,
 	SHIPPED_PROVIDES
-} from '../../src/ops/shipped-lock';
+} from '../../src/ops/composer/shipped-lock';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 
@@ -85,7 +85,7 @@ describe('shippedLock', () => {
 	// bun resolves a bare `.lock` import to a file path, and every workflow resolves the Drupal
 	// version through a script that reaches this module, so the import has to say it is text
 	it('resolves under bun, which is what the workflows run', () => {
-		const out = execFileSync('bun', ['scripts/fetch-drupal-tree.ts', '--print-version'], {
+		const out = execFileSync('bun', ['scripts/fetch/drupal-tree.ts', '--print-version'], {
 			cwd: ROOT,
 			encoding: 'utf8'
 		});

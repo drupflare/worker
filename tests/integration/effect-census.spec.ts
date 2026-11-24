@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { emptyTally } from '../../src/db/write-tally';
-import { renderPage } from '../../src/drupal/site-php';
+import { renderPage } from '../../src/drupal/php/site';
 import {
 	buildProfile,
 	effectCensus,

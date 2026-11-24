@@ -7,7 +7,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  *
  * One site is one Durable Object is one thread, and `php._run()` is a single SYNCHRONOUS wasm call,
  * so the isolate is occupied for a whole render and nothing else can be processed meanwhile --
- * `serve-lanes.spec.ts` established that with `x-cfw-gate-active` reading 0 on every raced HIT.
+ * `serve/lanes.spec.ts` established that with `x-cfw-gate-active` reading 0 on every raced HIT.
  *
  * Measured idle: one render 31 ms, eight concurrent 193 ms, and the eight finish STAGGERED at
  * roughly 1x..8x the unit cost (slowest/fastest 7.72). That is total serialisation.

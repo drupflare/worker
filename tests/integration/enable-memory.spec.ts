@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CEILING_STEP } from '../../scripts/measure/growth-glue';
 import { INITIAL_BYTES } from '../../scripts/measure/initial-pages';
-import { renderPage } from '../../src/drupal/site-php';
+import { renderPage } from '../../src/drupal/php/site';
 import { freshSite, inObject, seedPage, type ServeDo } from '../helpers/serve-do';
 
 /**

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { planBootImage } from '../../src/do/boot-image';
-import { BOOT_KERNEL, saveNode } from '../../src/drupal/site-php';
-import { ensureHashSalt } from '../../src/ops/site-secrets';
+import { planBootImage } from '../../src/do/boot/image';
+import { BOOT_KERNEL, saveNode } from '../../src/drupal/php/site';
+import { ensureHashSalt } from '../../src/ops/site/secrets';
 import { phpScript } from '../../src/util/php';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 

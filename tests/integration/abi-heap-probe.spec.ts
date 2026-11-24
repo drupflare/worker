@@ -4,7 +4,7 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
 /**
  * The heap through migrate, install and a render, on whichever pointer ABI the lane was given.
  *
- * TEMPORARY, for the wasm64 measurement. `heap-growth.spec.ts` opens every profile with
+ * TEMPORARY, for the wasm64 measurement. `heap/growth.spec.ts` opens every profile with
  * `/__migrate?all=1`, which does the whole migration in ONE invocation and does not complete on
  * wasm64 -- and it takes the invocation with it, so nothing can be read afterwards. Measured here,
  * the same migration driven in CHUNKS completes on wasm64 at a flat 96.00 MiB, so `all=1` is what
@@ -19,7 +19,7 @@ const AUTH_PASS = 'cfw-Growth-Pass-8821';
  * Only runs when an ABI arm was asked for.
  *
  * It drives 40 migrate chunks and a render, which is ~40 s the default lane should not spend to
- * re-measure the arm it already covers in `heap-growth.spec.ts`. Kept rather than deleted because
+ * re-measure the arm it already covers in `heap/growth.spec.ts`. Kept rather than deleted because
  * re-deriving it is what separated "wasm64 runs out of memory" from what actually happens.
  */
 declare const __DRUPFLARE_ABI__: string;

@@ -51,7 +51,7 @@ export function artifactGate(paths: string[]): boolean {
 /**
  * Whether the artifacts in this tree were BUILT rather than shipped.
  *
- * `build-local.ts` produces a SUPERSET of the published pack -- 19.74 MB against 11.49 -- because the
+ * `build/local.ts` produces a SUPERSET of the published pack -- 19.74 MB against 11.49 -- because the
  * shipped file list came from a traced run a checkout does not have, so the bootstrap globs every
  * non-test file. `assets:container` then rewrites `assets/drupal/site.sqlite` in place, which is a
  * TRACKED artifact with a `cdn-manifest.json` entry.

@@ -53,7 +53,7 @@ function userTables(sql: Sql): string[] {
 /**
  * A digest of one table computed INSIDE sqlite, over every column.
  *
- * `hex()` per column rather than a JS read, for the reason `migrate-sql.spec.ts` records: a TEXT
+ * `hex()` per column rather than a JS read, for the reason `dump/migrate.spec.ts` records: a TEXT
  * value containing a NUL is truncated at the first one on the way out, so two different tables
  * would agree on the prefix and the comparison would pass on nothing.
  */

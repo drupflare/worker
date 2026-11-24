@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { BOOT_KERNEL } from '../../src/drupal/site-php';
+import { BOOT_KERNEL } from '../../src/drupal/php/site';
 import { GENERATED_COLLISIONS } from '../../src/ops/generated/modules';
 import {
 	BLOCKED_MODULES,
@@ -21,11 +21,11 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * written from memory, so the case can only claim what the module itself says it provides. A
  * hand-written row in `contrib-verify.spec.ts` stays the stronger form where one exists.
  *
- * Like that spec, it needs a fixture pack (`bun scripts/contrib-fixture.ts --mount`), and a module
+ * Like that spec, it needs a fixture pack (`bun scripts/contrib/fixture.ts --mount`), and a module
  * the shipping pack does not carry is skipped there and a failure against a fixture pack.
  */
 
-/** modules that install in a phase of `contrib-fixture.ts`; absent from the base pack they skip */
+/** modules that install in a phase of `contrib/fixture.ts`; absent from the base pack they skip */
 const SEPARATE_LOCK = Object.entries(GENERATED_COLLISIONS)
 	.filter(([, c]) => !c.require)
 	.map(([name]) => name);
@@ -385,7 +385,7 @@ describe('generic enable-and-assert from the module own declaration', () => {
 			async (ctx) => {
 				if (!(await reachable(name))) {
 					ctx.skip(
-						`${name} is not in the shipping pack; \`bun scripts/contrib-fixture.ts --mount\` mounts one`
+						`${name} is not in the shipping pack; \`bun scripts/contrib/fixture.ts --mount\` mounts one`
 					);
 					return;
 				}

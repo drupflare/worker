@@ -3,8 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { cronHookList, runCronHook, runCronQueue } from '../../src/drupal/cron-php';
-import { settingsOverride } from '../../src/drupal/settings';
+import { cronHookList, runCronHook, runCronQueue } from '../../src/drupal/php/cron';
 import {
 	abandonTransaction,
 	BOOT_KERNEL,
@@ -30,10 +29,10 @@ import {
 	saveNode,
 	WRITE_WORKLOADS,
 	writeWorkload
-} from '../../src/drupal/site-php';
-import { STANDIN_FIX } from '../../src/drupal/standin-fix';
-import { tcpLive } from '../../src/drupal/tcp-php';
-import { UPDB_VERIFY, updbPlan, updbUnit } from '../../src/drupal/updb-php';
+} from '../../src/drupal/php/site';
+import { tcpLive } from '../../src/drupal/php/tcp';
+import { UPDB_VERIFY, updbPlan, updbUnit } from '../../src/drupal/php/updb';
+import { settingsOverride } from '../../src/drupal/settings';
 import {
 	DIAG_BRIDGE_PHP,
 	DIAG_EXEC_COUNTERS_PHP,
@@ -48,6 +47,7 @@ import { ICONV_FIX } from '../../src/site/shims/iconv-fix';
 import { MB_ASCII, MB_FIX, MB_SANITIZE } from '../../src/site/shims/mb-fix';
 import { OPENSSL_FIX } from '../../src/site/shims/openssl-fix';
 import { SODIUM_FIX } from '../../src/site/shims/sodium-fix';
+import { STANDIN_FIX } from '../../src/site/shims/standin-fix';
 import { UNICODE_TABLES } from '../../src/site/shims/unicode-tables';
 import { XMLWRITER_FIX } from '../../src/site/shims/xmlwriter-fix';
 import { ZLIB_FIX } from '../../src/site/shims/zlib-fix';

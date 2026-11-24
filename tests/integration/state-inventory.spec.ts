@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { renderPage } from '../../src/drupal/site-php';
-import { classifyState } from '../../src/ops/state-inventory';
+import { renderPage } from '../../src/drupal/php/site';
+import { classifyState } from '../../src/ops/replica/state-inventory';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**

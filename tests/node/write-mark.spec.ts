@@ -3,14 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { dumpDatabase } from '../../src/db/export-sql';
-import { storeImport, storedImportLoader } from '../../src/db/import-sql';
+import { dumpDatabase } from '../../src/db/dump/export';
+import { storeImport, storedImportLoader } from '../../src/db/dump/import';
 import {
 	SqlMigrator,
 	readMigrateCursor,
 	type SqlLike,
 	type StorageLike
-} from '../../src/db/migrate-sql';
+} from '../../src/db/dump/migrate';
 import {
 	WRITE_JOURNAL_CAP,
 	changeManifest,

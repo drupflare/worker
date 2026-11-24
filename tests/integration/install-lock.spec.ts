@@ -2,9 +2,9 @@ import { gzipSync, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import { changeModuleFiles } from '../../src/do/module-files';
 import { installLock, install as installRoute } from '../../src/do/routes/packages';
-import { sourceBytes } from '../../src/ops/module-bytes';
-import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS } from '../../src/ops/shipped-lock';
-import { randomKeyBase64, rotateOwnerToken } from '../../src/ops/site-secrets';
+import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS } from '../../src/ops/composer/shipped-lock';
+import { sourceBytes } from '../../src/ops/module/bytes';
+import { randomKeyBase64, rotateOwnerToken } from '../../src/ops/site/secrets';
 import type { SitePhpDurableObject } from '../../src/site-do';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 

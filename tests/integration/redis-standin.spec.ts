@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BOOT_KERNEL } from '../../src/drupal/site-php';
+import { BOOT_KERNEL } from '../../src/drupal/php/site';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**

@@ -53,7 +53,7 @@ describe.skipIf(skip)(`the serving chain at ${ENDPOINT}`, () => {
 		const tier = res.headers.get('x-cfw-cache');
 		expect(tier).not.toBeNull();
 		// imported rather than written out: the hand-written list named three tiers the source
-		// does not emit and omitted three it does, and `tests/node/cache-tiers.spec.ts` holds
+		// does not emit and omitted three it does, and `tests/node/cache/tiers.spec.ts` holds
 		// the const to what `src/` actually sets
 		expect(CACHE_TIERS as readonly string[]).toContain(String(tier).toUpperCase());
 	});

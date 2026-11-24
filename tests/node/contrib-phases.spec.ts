@@ -15,8 +15,8 @@ import {
 	summarise,
 	usageShare,
 	type Report
-} from '../../scripts/contrib-phases';
-import { readModulesConfig, renderModules } from '../../scripts/gen-config';
+} from '../../scripts/contrib/phases';
+import { readModulesConfig, renderModules } from '../../scripts/gen/config';
 import { censusPackages } from '../../scripts/install-census';
 import { GENERATED_COLLISIONS } from '../../src/ops/generated/modules';
 

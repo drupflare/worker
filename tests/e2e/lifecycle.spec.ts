@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { FALLBACK_ORIGIN } from '../../src/ops/site-origin';
+import { FALLBACK_ORIGIN } from '../../src/ops/site/origin';
 import { ENDPOINT, e2eGate } from './helpers/endpoint';
 import {
 	assemble,
@@ -203,7 +203,7 @@ describe.skipIf(skip)(`the Drupal lifecycle at ${ENDPOINT} (site ${site})`, () =
 		// worker and this render uses the endpoint's own origin, so the two differ by exactly the
 		// length of that string.
 		//
-		// THE BAKE ORIGIN CARRIES A PORT AND IT IS NOT ALWAYS THE SAME ONE. `lift-prefill.ts`
+		// THE BAKE ORIGIN CARRIES A PORT AND IT IS NOT ALWAYS THE SAME ONE. `lift/prefill.ts`
 		// defaults to `http://localhost:8801`; the shipped artifact here was baked at `:8812`.
 		// Masking `FALLBACK_ORIGIN` alone strips the host and leaves the port, which is how this
 		// read `<origin>/rss.xml` against `<origin>:8801/rss.xml` in CI. So the origins are read

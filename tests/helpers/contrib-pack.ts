@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import { GENERATED_COLLISIONS } from '../../src/ops/generated/modules';
-import { SHIPPING_PACK_CONTRIB } from '../../src/ops/module-table';
+import { SHIPPING_PACK_CONTRIB } from '../../src/ops/module/table';
 import { BLOCKED_MODULES } from './contrib-blocked';
 import type { ServeDo } from './serve-do';
 
@@ -47,7 +47,7 @@ export const isFixturePack = (packed: Set<string>) =>
 
 declare const __DRUPFLARE_CONTRIB_FIXTURE__: boolean;
 
-/** set by `contrib-fixture.ts` for its vitest child, whatever pack ended up mounted */
+/** set by `contrib/fixture.ts` for its vitest child, whatever pack ended up mounted */
 export const fixtureRun =
 	typeof __DRUPFLARE_CONTRIB_FIXTURE__ === 'boolean' ? __DRUPFLARE_CONTRIB_FIXTURE__ : false;
 
@@ -55,7 +55,7 @@ export const fixtureRun =
 export const mustCarry = (packed: Set<string>, fixture = fixtureRun) =>
 	fixture || isFixturePack(packed);
 
-/** short names of modules that install in a phase of `contrib-fixture.ts`, absent from the base pack */
+/** short names of modules that install in a phase of `contrib/fixture.ts`, absent from the base pack */
 export const PHASE_OWNERS = Object.entries(GENERATED_COLLISIONS)
 	.filter(([, c]) => !c.require)
 	.map(([name]) => name.replace('drupal/', ''));

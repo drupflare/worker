@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BATCHABLE, CROSSING_NAMES } from '../../src/ops/crossings';
-import { REPLICA_SAFE_CAPABILITIES } from '../../src/ops/replica';
+import { REPLICA_SAFE_CAPABILITIES } from '../../src/ops/replica/policy';
 import { siteDoText } from '../helpers/source';
 
 /**
@@ -84,7 +84,7 @@ describe('and the cost the binding does NOT bring with it', () => {
 
 	it('stores the queue WITHOUT ROWID, so it is one row and not two', () => {
 		// a `TEXT PRIMARY KEY` on a rowid table gets an automatic index, and the insert charges both
-		const mirror = readFileSync(resolve(ROOT, 'src', 'ops', 'page-mirror.ts'), 'utf8');
+		const mirror = readFileSync(resolve(ROOT, 'src', 'ops', 'page', 'mirror.ts'), 'utf8');
 		expect(mirror).toMatch(/cfw_page_mirror_queue[\s\S]*?WITHOUT ROWID/);
 	});
 });

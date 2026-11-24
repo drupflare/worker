@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptyTally } from '../../src/db/write-tally';
-import { renderPage } from '../../src/drupal/site-php';
-import { authoritativeWrites, expiryGcTable } from '../../src/ops/replica';
+import { renderPage } from '../../src/drupal/php/site';
+import { authoritativeWrites, expiryGcTable } from '../../src/ops/replica/policy';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -24,7 +24,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * authoritative; sweeping expired ones is not. Same table, two effects, which is the `key_value`
  * lesson pointed somewhere new.
  *
- * The classification itself is driven in `tests/unit/ops/replica.spec.ts`, which needs no
+ * The classification itself is driven in `tests/unit/ops/replica/policy.spec.ts`, which needs no
  * interpreter. What is here is the half only the real binary can answer: that the sweep is armed and
  * that it emits exactly the statement the intermittent reported.
  */
@@ -115,7 +115,7 @@ describe('the probabilistic session sweep', () => {
 			expect(seen.ini['divisor']).toBe('100');
 			expect(seen.forced['class']).toBe('Drupal\\Core\\Session\\SessionHandler');
 
-			// the signature, matched against what `replica-invariant.spec.ts` reported: one statement,
+			// the signature, matched against what `replica/invariant.spec.ts` reported: one statement,
 			// no rows, because the only session on this site is minutes old
 			expect(seen.tally.statementsByTable['sessions']).toBe(1);
 			expect(seen.tally.byTable['sessions'] ?? 0).toBe(0);

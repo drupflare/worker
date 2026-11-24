@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { drupalOp } from '../../src/drupal/site-php';
-import { fenceAllows } from '../../src/ops/replica';
+import { drupalOp } from '../../src/drupal/php/site';
+import { fenceAllows } from '../../src/ops/replica/policy';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**

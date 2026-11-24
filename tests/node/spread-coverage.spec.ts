@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { coveringSpread } from '../../scripts/measure/deployed-readings';
-import { affinityKey, chooseTarget } from '../../src/ops/replica-routing';
+import { affinityKey, chooseTarget } from '../../src/ops/replica/routing';
 
 /**
  * The load generator has to reach every lane it claims to measure.

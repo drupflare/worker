@@ -19,7 +19,7 @@ import {
 	SIGNATURE_HEADER,
 	waitForManifest,
 	type Io
-} from '../../scripts/release-event';
+} from '../../scripts/release/event';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const SECRET = 'fake-hook-secret-for-tests';
@@ -387,7 +387,7 @@ describe('the command line', () => {
 		return root;
 	}
 	const args = (root: string, command: string, ...more: string[]) => [
-		join(ROOT, 'scripts/release-event.ts'),
+		join(ROOT, 'scripts/release/event.ts'),
 		command,
 		`--dist=${root}`,
 		'--tag=v1.1.0',

@@ -72,7 +72,7 @@ describe('every specifier reaching a gitignored artifact has an ambient declarat
 describe('every workflow that packs the Drupal modules can reach them', () => {
 	const files = readdirSync(WORKFLOWS).filter((f) => f.endsWith('.yml'));
 
-	/** the sibling checkouts and env vars `scripts/gen-driver-assets.ts` needs */
+	/** the sibling checkouts and env vars `scripts/gen/driver-assets.ts` needs */
 	const REQUIRED = [
 		'DRUPFLARE_SRC: .siblings/drupflare',
 		'ROM_SRC: .siblings/rom',

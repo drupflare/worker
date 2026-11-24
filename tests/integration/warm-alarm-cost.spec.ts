@@ -185,7 +185,7 @@ describe('an idle tick with the idle fade on', () => {
  * The constants are the reason a warmed site spent 1,440 rows a day recording a counter that moves
  * by one per tick. `meterFlushBudget()` scales both triggers with the remaining budget, and this
  * asserts the OBJECT reads it -- a policy function nothing calls is this repository's most repeated
- * defect, and the arithmetic is already pinned in `tests/unit/ops/day-meters.spec.ts`.
+ * defect, and the arithmetic is already pinned in `tests/unit/ops/meters/day-meters.spec.ts`.
  */
 describe('the checkpoint the object actually applies', () => {
 	it(

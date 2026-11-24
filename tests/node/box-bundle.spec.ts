@@ -20,11 +20,11 @@ import {
 	packBox,
 	readBoxModules,
 	sumsLine
-} from '../../scripts/build-box-bundle';
-import { PAYLOAD_ASSETS, readJsonc } from '../../scripts/release-payload';
+} from '../../scripts/build/box-bundle';
+import { PAYLOAD_ASSETS, readJsonc } from '../../scripts/release/payload';
 
 const ROOT = resolve(import.meta.dirname, '../..');
-const SCRIPT = join(ROOT, 'scripts/build-box-bundle.ts');
+const SCRIPT = join(ROOT, 'scripts/build/box-bundle.ts');
 const enc = (text: string) => new TextEncoder().encode(text);
 
 const ENTRY =

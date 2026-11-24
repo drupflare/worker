@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { GD_CONSTANTS, GD_FUNCTIONS, STANDIN_FIX } from '../../src/drupal/standin-fix';
 import { SHIM_CLAIMS } from '../../src/site/shims/extension-table';
-import { nativePhp } from '../helpers/sodium-harness';
+import { GD_CONSTANTS, GD_FUNCTIONS, STANDIN_FIX } from '../../src/site/shims/standin-fix';
+import { nativePhp } from '../helpers/sodium/harness';
 
 /**
  * The gd stand-in's declared table against the `Shim\Gd` class it routes to. The table is copied

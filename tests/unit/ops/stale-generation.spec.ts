@@ -7,7 +7,7 @@ import {
 	staleAllowed,
 	writePage,
 	type PageStoreEnv
-} from '../../../src/ops/page-store';
+} from '../../../src/ops/page/store';
 
 /**
  * The previous generation is already in KV, and nothing was reading it.

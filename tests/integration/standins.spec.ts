@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BOOT_KERNEL, drupalOp, renderPage } from '../../src/drupal/site-php';
-import { BATCH_YIELD_OPS, GD_CONSTANTS, GD_FUNCTIONS } from '../../src/drupal/standin-fix';
+import { BOOT_KERNEL, drupalOp, renderPage } from '../../src/drupal/php/site';
+import { BATCH_YIELD_OPS, GD_CONSTANTS, GD_FUNCTIONS } from '../../src/site/shims/standin-fix';
 import { DRUPLICON_PNG_BASE64 } from '../fixtures/png';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 

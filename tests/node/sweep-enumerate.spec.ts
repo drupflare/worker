@@ -83,7 +83,7 @@ const ENTITY_DDL = [
 	'CREATE TABLE cfw_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL) WITHOUT ROWID'
 ];
 
-/** the `exec(text, ...params)` shape over a node handle, as `tests/node/module-rev.spec.ts` does */
+/** the `exec(text, ...params)` shape over a node handle, as `tests/node/module/rev.spec.ts` does */
 function open(ddl: string[]): SweepSql & { db: DatabaseSync; close(): void } {
 	const db = new DatabaseSync(':memory:');
 	for (const statement of ddl) db.exec(statement);

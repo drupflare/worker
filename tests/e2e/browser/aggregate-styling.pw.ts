@@ -130,7 +130,7 @@ test.beforeAll(async () => {
 test('the aggregated page names aggregates, serves them, and is styled', async ({ page }) => {
 	// the aggregates pull fonts and icons of their own, and a relative `url()` inside one resolves
 	// against /agg/ rather than against the directory it was written in. That was 270 broken targets
-	// across 408 aggregates until `pack-aggregates.ts` rebased them
+	// across 408 aggregates until `pack/aggregates.ts` rebased them
 	const failed: string[] = [];
 	page.on('response', (res) => {
 		if (res.status() >= 400) failed.push(`${res.status()} ${new URL(res.url()).pathname}`);

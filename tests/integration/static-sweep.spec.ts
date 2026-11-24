@@ -8,7 +8,7 @@ import {
 	leakOutputBuffer,
 	renderPage,
 	TRANSLATE_ENGLISH
-} from '../../src/drupal/site-php';
+} from '../../src/drupal/php/site';
 import {
 	claimSite,
 	cookieJar,

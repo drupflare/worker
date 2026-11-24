@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { dumpNativeApi } from '../../scripts/gen-sodium-api';
+import { dumpNativeApi } from '../../scripts/gen/sodium-api';
 import { SODIUM_API } from '../../src/site/generated/sodium-api';
 import { SODIUM_MANIFEST } from '../../src/site/generated/sodium-manifest';
 import {
@@ -16,8 +16,8 @@ import {
 	manifestOf,
 	runConformance,
 	type Conformance
-} from '../helpers/sodium-conformance';
-import { nativePhp, shimReflection } from '../helpers/sodium-harness';
+} from '../helpers/sodium/conformance';
+import { nativePhp, shimReflection } from '../helpers/sodium/harness';
 
 /**
  * The sodium stand-in against the native extension, and the rule that lets it answer

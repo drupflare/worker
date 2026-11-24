@@ -8,7 +8,7 @@ import {
 	installedVersion,
 	missingContrib,
 	tarballUrl
-} from '../../scripts/fetch-drupal-tree';
+} from '../../scripts/fetch/drupal-tree';
 import { readLock } from '../../scripts/lock';
 
 /**
@@ -135,12 +135,12 @@ describe('the release tarball is core only, so the contrib pins are part of the 
 
 describe('CI and a developer run the same producer', () => {
 	it('is wired into package.json', () => {
-		expect(PKG.scripts['fetch:drupal']).toBe('bun scripts/fetch-drupal-tree.ts');
+		expect(PKG.scripts['fetch:drupal']).toBe('bun scripts/fetch/drupal-tree.ts');
 	});
 
 	it('is what the workflow calls, and the workflow keys its cache on the same version', () => {
 		expect(WORKFLOW).toContain('bun run fetch:drupal');
-		expect(WORKFLOW).toContain('bun scripts/fetch-drupal-tree.ts --print-version');
+		expect(WORKFLOW).toContain('bun scripts/fetch/drupal-tree.ts --print-version');
 	});
 
 	it('has no second mechanism hiding in the workflow', () => {

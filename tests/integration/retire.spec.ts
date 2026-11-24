@@ -5,17 +5,17 @@ import {
 	waitOnExecutionContext
 } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DEPLOYMENT_KEY, resetDeploymentMemo } from '../../src/ops/deployment-site';
+import { ensureFleetTable, listSites, reportSite, type FleetDb } from '../../src/ops/fleet';
 import {
 	OWNER_FAIL_LIMIT,
 	ownerRefusedForNow,
 	resetOwnerFailures
-} from '../../src/ops/admin-session';
-import { DEPLOYMENT_KEY, resetDeploymentMemo } from '../../src/ops/deployment-site';
-import { ensureFleetTable, listSites, reportSite, type FleetDb } from '../../src/ops/fleet';
-import { verifyAuditChain } from '../../src/ops/owner-audit';
+} from '../../src/ops/owner/admin-session';
+import { verifyAuditChain } from '../../src/ops/owner/audit';
 import { RETIRE_LOG_KEY } from '../../src/ops/retire';
-import { resetHostMemo, siteKvKey } from '../../src/ops/site-id';
-import { mintOwnerToken } from '../../src/ops/site-secrets';
+import { resetHostMemo, siteKvKey } from '../../src/ops/site/id';
+import { mintOwnerToken } from '../../src/ops/site/secrets';
 import worker from '../../src/site';
 import { inObject, namedSite, provisionedNamedSite, type ServeDo } from '../helpers/serve-do';
 

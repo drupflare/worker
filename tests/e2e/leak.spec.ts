@@ -36,7 +36,7 @@ function maskPair(first: string, second: string) {
  * The identity leak differential: does one identity's content ever reach another's response?
  *
  * **The highest-severity finding available in this project, and it has happened.** The uid-1
- * poisoning is recorded in `saveNode()`'s own docblock in `src/drupal/site-php.ts`: an unrestored
+ * poisoning is recorded in `saveNode()`'s own docblock in `src/drupal/php/site.ts`: an unrestored
  * `\Drupal::currentUser()` made the alarm chain render `/` as uid 1, the front page went from 12,296
  * to 90,038 bytes, and that ADMIN HTML was stored in the anonymous page cache and served to
  * visitors. One unrestored global.
@@ -47,7 +47,7 @@ function maskPair(first: string, second: string) {
  * changed because of what preceded it, which is the definition of the bug.
  *
  * **WHAT THIS CAN AND CANNOT ESTABLISH, stated up front so a green run is not over-read.** The
- * cookies here satisfy `SESSION_COOKIE_RE` in `src/ops/auth-budget.ts`, so the WORKER classifies
+ * cookies here satisfy `SESSION_COOKIE_RE` in `src/ops/meters/auth-budget.ts`, so the WORKER classifies
  * these requests as authenticated: the budget is charged, `x-cfw-auth-mode` is set, and the
  * personalised branch is taken. They are not real Drupal session records, so Drupal itself renders
  * every one of them as anonymous. Therefore:

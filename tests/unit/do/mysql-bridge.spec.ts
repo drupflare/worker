@@ -9,7 +9,7 @@ import {
 	MYSQL_SERVER_VERSION
 } from '../../../src/do/mysql-bridge';
 import { emptyCrossings, wrapCrossings } from '../../../src/ops/crossings';
-import { enforceReadOnly } from '../../../src/ops/replica';
+import { enforceReadOnly } from '../../../src/ops/replica/policy';
 import { refusedStatements } from '../../helpers/refused-statements';
 import { freshSite, inObject, type ServeDo } from '../../helpers/serve-do';
 

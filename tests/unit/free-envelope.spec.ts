@@ -708,7 +708,7 @@ describe('THE ANSWER: the realRender default is CONSERVATIVE once the classes ar
 });
 
 // the off-worker lever has a maximum: past the crossing, mirroring more spends r2 reads to save worker requests
-// optimalOffWorker() derives the share from envelope(), so the report and page-mirror.ts cannot drift apart
+// optimalOffWorker() derives the share from envelope(), so the report and page/mirror.ts cannot drift apart
 describe('the optimal mirror share', () => {
 	it('reproduces the 77% / 432,900 the report quotes, from the model rather than a constant', () => {
 		const o = optimalOffWorker();

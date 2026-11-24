@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DISABLED } from '../../src/drupal/standin-fix';
+import { DISABLED } from '../../src/site/shims/standin-fix';
 import { freshSite, inObject } from '../helpers/serve-do';
 import { closedProblems, runAttempts } from '../helpers/vrzno-bridge';
 

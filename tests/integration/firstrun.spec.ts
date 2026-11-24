@@ -1,8 +1,8 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { firstRunConfig } from '../../src/drupal/site-php';
-import { MANDATORY_STATE } from '../../src/ops/replica-admission';
-import { OWNER_TOKEN_KEY } from '../../src/ops/site-secrets';
+import { firstRunConfig } from '../../src/drupal/php/site';
+import { MANDATORY_STATE } from '../../src/ops/replica/admission';
+import { OWNER_TOKEN_KEY } from '../../src/ops/site/secrets';
 import worker from '../../src/site';
 import { freshSite, inObject, markProvisioned, provisionedSite } from '../helpers/serve-do';
 
@@ -234,7 +234,7 @@ describe('a claim waits for the database replay', () => {
 /**
  * Claiming a site also fixes the host it renders absolute URLs against.
  *
- * The render origin is trust-on-first-use (`src/ops/site-origin.ts`), which leaves one window open:
+ * The render origin is trust-on-first-use (`src/ops/site/origin.ts`), which leaves one window open:
  * the first request after a deploy pins it, and that request is not necessarily the owner's. This
  * closes it from the other end -- the owner is here, on the host they mean -- and it
  * overwrites whatever a first visitor pinned.

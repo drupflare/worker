@@ -9,7 +9,7 @@ import {
 	resetCspReportBudget
 } from '../../src/ops/csp';
 import { edgePlanEnabled, resetEdgePlans } from '../../src/ops/edge-plan';
-import { imageEngine } from '../../src/ops/image-transform';
+import { imageEngine } from '../../src/ops/image/transform';
 import { mailDrainLimit, resolveMailTransport, type MailEnv } from '../../src/ops/mail';
 import {
 	KV_OVERRIDABLE,
@@ -25,9 +25,9 @@ import {
 	replicaCount,
 	replicaLagMs,
 	resetLaneBeliefs
-} from '../../src/ops/replica-routing';
-import { locationHint } from '../../src/ops/site-id';
-import { writeForwardEnabled } from '../../src/ops/write-forwarding';
+} from '../../src/ops/replica/routing';
+import { writeForwardEnabled } from '../../src/ops/replica/write-forwarding';
+import { locationHint } from '../../src/ops/site/id';
 import { opcacheIni, opcacheMode } from '../../src/runtime/opcache';
 import worker from '../../src/site';
 import {

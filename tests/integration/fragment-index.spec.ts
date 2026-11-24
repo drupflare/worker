@@ -5,7 +5,7 @@ import {
 	renderFragments,
 	renderPage,
 	type RenderRequest
-} from '../../src/drupal/site-php';
+} from '../../src/drupal/php/site';
 import {
 	dirtyFragments,
 	ensureFragmentTables,

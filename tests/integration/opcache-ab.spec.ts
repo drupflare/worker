@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SHIPPING_STEP } from '../../scripts/measure/growth-glue';
 import { layerPath, serialiseOpcachePack, systemIdOf } from '../../scripts/opcache-layer';
-import { memfsCensus, renderPage } from '../../src/drupal/site-php';
+import { memfsCensus, renderPage } from '../../src/drupal/php/site';
 import {
 	DEFAULT_OPCACHE_MODE,
 	OPCACHE_MODES,

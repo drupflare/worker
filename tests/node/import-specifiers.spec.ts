@@ -49,7 +49,7 @@ describe('module specifiers', () => {
 
 	// node resolves a relative specifier as an exact path, while tsc, vite and esbuild infer the
 	// extension; an extensionless import added under a node-run script broke `build:local` in
-	// `pack-sql.ts` and `heap-digest-cost.ts` with the whole suite green
+	// `pack/sql.ts` and `heap-digest-cost.ts` with the whole suite green
 	it('resolves every relative import a node-run script reaches', () => {
 		const files = tracked().filter(
 			(f) =>

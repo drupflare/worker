@@ -5,8 +5,8 @@ import {
 	KV_READ_TIMEOUT_MS,
 	resetDeploymentMemo
 } from '../../src/ops/deployment-site';
-import { resetHostMemo, resolveSite, siteKvKey } from '../../src/ops/site-id';
-import { ORIGIN_KEY } from '../../src/ops/site-origin';
+import { resetHostMemo, resolveSite, siteKvKey } from '../../src/ops/site/id';
+import { ORIGIN_KEY } from '../../src/ops/site/origin';
 import worker from '../../src/site';
 import { deploymentReport } from '../../src/site/deployment';
 import type { SiteWorkerEnv } from '../../src/site/types';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BOOT_PHASES, bootPhaseFragment } from '../../../src/drupal/site-php';
+import { BOOT_PHASES, bootPhaseFragment } from '../../../src/drupal/php/site';
 
 /**
  * The per-phase boot instrument.

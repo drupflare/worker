@@ -51,7 +51,7 @@ describe('the BLAKE2b bridge, from PHP', () => {
 			]);`);
 
 		// the wiring: false here means src/site-do.ts stopped installing the bridge
-		expect(out.declared, 'php-boot.ts must install cfwSodium before this fragment runs').toBe(
+		expect(out.declared, 'boot/php.ts must install cfwSodium before this fragment runs').toBe(
 			true
 		);
 		expect(out.abc256).toBe(ABC_256);

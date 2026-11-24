@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
-import { BOOT_KERNEL } from '../../src/drupal/site-php';
+import { BOOT_KERNEL } from '../../src/drupal/php/site';
 import { DRIVER_DIGEST } from '../../src/ops/driver-digest';
 import type { PackedContainer } from '../../src/ops/packed-container';
 import { PACK_VERSION, RECONCILE_STEPS, SHIPPED_PAGE_MAX_AGE } from '../../src/ops/reconcile';

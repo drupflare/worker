@@ -37,7 +37,7 @@ import {
  * What this lane can establish is the LOOP: that a parked call is classified, answered and resumed in
  * the right order, and that an op the host cannot answer ends the run instead of hanging. What it
  * cannot establish is that the interpreter parks at all -- that needs the real binary and lives in
- * `tests/integration/park-interpreter.spec.ts`.
+ * `tests/integration/park/interpreter.spec.ts`.
  */
 
 const res = (id: number) => ({ res: id });

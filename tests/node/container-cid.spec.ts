@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bakeIsCurrent, type BakeState } from '../../scripts/container-current';
-import { packVersionsHash } from '../../scripts/pack-hash';
+import { packVersionsHash } from '../../scripts/pack/hash';
 import { artifactGate } from './helpers/artifact-gate';
 
 /**

@@ -184,7 +184,7 @@ export async function provision(t: Transport): Promise<ServeStats> {
  * a race with the runtime's alarm scheduling: measured at 1 call on an idle machine and at more
  * than 40 -- chunk 78 of 79 -- with three other workers competing for the same host. A lifecycle
  * run must not fail for that reason, and the chunking contract is already covered exhaustively in
- * the gate lane by `tests/integration/serve-migration.spec.ts`.
+ * the gate lane by `tests/integration/serve/migration.spec.ts`.
  *
  * The poll loop stays anyway: `all=1` returning a PARTIAL pass is a legal answer the route can give
  * (the chunked engine reports `ok: true` with `done: false`), and treating that as migrated would

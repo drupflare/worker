@@ -24,7 +24,7 @@ import {
 	sessionCookieValue,
 	spendForToday,
 	utcDayKey
-} from '../../src/ops/auth-budget';
+} from '../../src/ops/meters/auth-budget';
 import { frontText, sourceOf } from '../helpers/source-raw';
 
 /**
@@ -563,7 +563,7 @@ describe('the wiring in the front worker', () => {
 
 	it('refuses to STORE a personalised page in the edge cache, structurally', () => {
 		// two independent signals: the request was authenticated, and the response is per-user
-		const edgeCache = sourceOf('src/site/edge-cache.ts');
+		const edgeCache = sourceOf('src/site/edge/cache.ts');
 		expect(/if \(isAuthenticated\) return \w*\(?'skipped:authenticated'/.test(edgeCache)).toBe(
 			true
 		);
@@ -583,7 +583,7 @@ describe('the wiring in the front worker', () => {
 	 */
 	it('keeps every store refusal ahead of the deferred write', () => {
 		// `putPage` is the last declaration in its file
-		const edgeCache = sourceOf('src/site/edge-cache.ts');
+		const edgeCache = sourceOf('src/site/edge/cache.ts');
 		const body = edgeCache.slice(edgeCache.indexOf('function putPage('));
 		const lastRefusal = body.lastIndexOf("'skipped:set-cookie'");
 		const write = body.indexOf('cache.put(');

@@ -17,7 +17,7 @@ import {
 /**
  * Quarantine and rollback, the ladder's top two rungs. The ladder has declared them all along and
  * nothing executed them, because a rollback with no restore point is not a rollback -- `/export` produced a dump nothing could replay until
- * `src/db/import-sql.ts`.
+ * `src/db/dump/import.ts`.
  *
  * Almost every assertion here is a REFUSAL, which is the design rather than caution. Rollback discards
  * everything written since the restore point, so the failure that matters is not "it declined to repair"

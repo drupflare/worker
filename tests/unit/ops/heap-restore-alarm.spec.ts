@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { delegatingHandleTable } from '../../../src/do/heap-image';
+import { delegatingHandleTable } from '../../../src/do/boot/heap-image';
 import {
 	FAILURE_BACKOFF_FLOOR_MS,
 	HeapRestoreIncomplete,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { drupalOp } from '../../src/drupal/site-php';
-import { dailyLimit, READ_ONLY_AT, REDUCE_AT } from '../../src/ops/degrade';
+import { drupalOp } from '../../src/drupal/php/site';
+import { dailyLimit, READ_ONLY_AT, REDUCE_AT } from '../../src/ops/meters/degrade';
 import { freshSite, inObject, seedDailyRows, type ServeDo } from '../helpers/serve-do';
 
 /**

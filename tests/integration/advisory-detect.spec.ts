@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { drupalOp } from '../../src/drupal/site-php';
+import { drupalOp } from '../../src/drupal/php/site';
 import { ADVISORY_STATE_KEY } from '../../src/ops/advisories';
 import { writeCursor, type StoredCursor } from '../../src/ops/cron';
 import { DEFAULT_CRON_BUDGET, driveCron } from '../../src/ops/cron-drive';

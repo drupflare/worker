@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderPage, type RenderRequest } from '../../src/drupal/site-php';
+import { renderPage, type RenderRequest } from '../../src/drupal/php/site';
 import { type CrossingTally } from '../../src/ops/crossings';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 

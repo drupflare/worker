@@ -38,8 +38,8 @@ const SHIPPING = [
 	['/prefill.json', 'prefill seed, src/site-do.ts'],
 	['/drupal-pf/core.pf.json', 'mountDrupalLazy, src/runtime/lazy-fs.ts'],
 	['/drupal-pf/core.pf.bin', 'mountDrupalLazy, src/runtime/lazy-fs.ts'],
-	['/drupal-sql/manifest.json', 'assetChunkLoader, src/db/migrate-sql.ts'],
-	['/drupal-sql/0000.json', 'assetChunkLoader, src/db/migrate-sql.ts']
+	['/drupal-sql/manifest.json', 'assetChunkLoader, src/db/dump/migrate.ts'],
+	['/drupal-sql/0000.json', 'assetChunkLoader, src/db/dump/migrate.ts']
 ] as const;
 
 /**
@@ -47,7 +47,7 @@ const SHIPPING = [
  *
  * A different failure from the rest of this file, and it is the reason `/core/` is served at all:
  * every pack SKIPs `css|js|woff2|...` because PHP never opens them, and nothing serves a file out of
- * the PHP MEMFS over HTTP -- so before `scripts/pack-static.ts` these 404'd and the site rendered
+ * the PHP MEMFS over HTTP -- so before `scripts/pack/static.ts` these 404'd and the site rendered
  * unstyled with no fonts. One of each kind, because the three arrive by different Drupal mechanisms:
  * a `<script>` from a library definition, a `<link>` from the theme, and a `url()` inside that
  * stylesheet.

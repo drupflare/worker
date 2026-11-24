@@ -1,19 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { LOCAL_STEPS } from '../../scripts/build-local';
-import { markHydrating, reentered, REENTRY_VAR } from '../../scripts/hydrating';
-import { readJsonc } from '../../scripts/release-payload';
+import { LOCAL_STEPS } from '../../scripts/build/local';
+import { markHydrating, reentered, REENTRY_VAR } from '../../scripts/hydrate/flag';
+import { readJsonc } from '../../scripts/release/payload';
 
 /**
  * The cycle that took three CI lanes down on 2026-09-12, pinned at each of its three links.
  *
  * `wrangler.jsonc` runs `bun run hydrate` before every `dev` and every `--dry-run`. The container
  * step spawns `wrangler dev --local` while the tree is still missing a marker the LATER `sql` step
- * produces, so hydrate reads it as incomplete, finds no release, and re-enters `build-local.ts`.
+ * produces, so hydrate reads it as incomplete, finds no release, and re-enters `build/local.ts`.
  * Each level forked another Drupal build until the runner was reclaimed.
  *
- * Removing `markHydrating()` from `build-local.ts` fails the third case here.
+ * Removing `markHydrating()` from `build/local.ts` fails the third case here.
  */
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
@@ -51,17 +51,17 @@ describe('the three links of the cycle', () => {
 
 	it('marks the flag in every script that spawns wrangler as part of a build', () => {
 		for (const script of [
-			'scripts/build-local.ts',
-			'scripts/bake-container.ts',
+			'scripts/build/local.ts',
+			'scripts/bake/container.ts',
 			'scripts/measure/collect-metrics.ts',
-			'scripts/release-payload.ts'
+			'scripts/release/payload.ts'
 		]) {
 			expect(readFileSync(resolve(ROOT, script), 'utf8')).toContain('markHydrating(');
 		}
 	});
 
 	it('declines rather than building when the flag is already set', () => {
-		const source = readFileSync(resolve(ROOT, 'scripts/hydrate.ts'), 'utf8');
+		const source = readFileSync(resolve(ROOT, 'scripts/hydrate/run.ts'), 'utf8');
 		// before the marker check, or an incomplete tree reaches the source route first
 		expect(source.indexOf('reentered()')).toBeLessThan(source.indexOf('missingMarkers(root)'));
 	});
@@ -77,8 +77,8 @@ describe('the three links of the cycle', () => {
  * `400 no such table: cache_container`. Every dev machine carries the chunks from an earlier build,
  * which is why only a clean checkout could see it.
  */
-describe('what bake-container needs before it spawns wrangler', () => {
-	const source = readFileSync(resolve(ROOT, 'scripts/bake-container.ts'), 'utf8');
+describe('what bake/container needs before it spawns wrangler', () => {
+	const source = readFileSync(resolve(ROOT, 'scripts/bake/container.ts'), 'utf8');
 
 	it('chunks the database itself when nothing else has', () => {
 		expect(source).toContain('function ensureChunks');
@@ -169,7 +169,7 @@ describe('the release lane hydrates from the payload it just built', () => {
 	});
 
 	it('forces the hydrate, or the step is a no-op on the tree it just built', () => {
-		const step = /bun scripts\/hydrate\.ts([^\n]*)/.exec(release)?.[1] ?? '';
+		const step = /bun scripts\/hydrate\/run\.ts([^\n]*)/.exec(release)?.[1] ?? '';
 		expect(step, 'the release hydrate step is missing').not.toBe('');
 		expect(step).toContain('--from=');
 		expect(step, 'without --force this exits on "already hydrated"').toContain('--force');
@@ -179,7 +179,7 @@ describe('the release lane hydrates from the payload it just built', () => {
 		// named by SCRIPT rather than by step name or env var. This asserted `REQUIRE_ARTIFACTS: '1'`
 		// until 2026-09-19, when the second full suite came out of this lane and took that env block
 		// with it -- `indexOf` then answered -1 and the comparison passed the wrong way round.
-		const hydrate = release.indexOf('bun scripts/hydrate.ts');
+		const hydrate = release.indexOf('bun scripts/hydrate/run.ts');
 		expect(hydrate).toBeGreaterThanOrEqual(0);
 		for (const check of ['release:check', 'release:smoke']) {
 			const at = release.indexOf(check);

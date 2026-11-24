@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DAILY_ROWS_QUOTA, ROWS_PER_AUTH_RENDER } from '../../../src/ops/auth-budget';
-import { REDUCE_AT } from '../../../src/ops/degrade';
+import { DAILY_ROWS_QUOTA, ROWS_PER_AUTH_RENDER } from '../../../src/ops/meters/auth-budget';
+import { REDUCE_AT } from '../../../src/ops/meters/degrade';
 import {
 	SWEEP_MAX_FRACTION,
 	SWEEP_QUEUE_ROWS,
@@ -51,7 +51,7 @@ type FakeTables = {
  * A stand-in for the object's SQL surface.
  *
  * Tables are plain arrays and the six statements the module issues are matched by prefix, which is
- * the same trade `page-mirror.spec.ts` takes: the contract is the statements, not the engine.
+ * the same trade `page/mirror.spec.ts` takes: the contract is the statements, not the engine.
  * `tests/node/sweep-enumerate.spec.ts` drives the identical calls against real SQLite, so a SQL
  * mistake this cannot see fails there.
  */

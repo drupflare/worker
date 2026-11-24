@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { payloadUrl } from '../../scripts/hydrate';
+import { payloadUrl } from '../../scripts/hydrate/run';
 
 /**
  * A payload is fetched from a URL carrying its own digest, and that is a correctness property.

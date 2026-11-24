@@ -1,4 +1,4 @@
-import { renderPage, type RenderRequest } from '../../src/drupal/site-php';
+import { renderPage, type RenderRequest } from '../../src/drupal/php/site';
 import type { ServeDo } from './serve-do';
 
 /**

@@ -423,7 +423,7 @@ describe('the decomposition the audit reports', () => {
  *
  * `chargePerInsertedRow()` parses shipped DDL, which is the right instrument for an artifact and the
  * wrong one for a running object: a module enable creates tables no pack contains, and
- * `write-amplification.spec.ts` decomposes a workload measured inside a Durable Object. So the two
+ * `write/amplification.spec.ts` decomposes a workload measured inside a Durable Object. So the two
  * have to agree wherever both can answer, and that agreement is what makes either one quotable.
  */
 describe('chargeFactorsFromSchema, the same model against the engine', () => {

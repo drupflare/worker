@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BOOT_KERNEL, GUZZLE_HANDLER_CHECK } from '../../src/drupal/site-php';
+import { BOOT_KERNEL, GUZZLE_HANDLER_CHECK } from '../../src/drupal/php/site';
 import { deferredKey, ttlFor } from '../../src/ops/deferred-post';
 import { freshSite, inObject, provisionedSite, type ServeDo } from '../helpers/serve-do';
 

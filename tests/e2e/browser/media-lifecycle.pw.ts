@@ -5,7 +5,7 @@ import { BASE_URL, expect, gotoPage, loginAsAdmin, SITE, test } from './utils/fi
 /**
  * An image through Drupal's own upload form, and what an edit does to the cache around it.
  *
- * The derivative route has a route-level spec (`tests/integration/image-delivery.spec.ts`) that
+ * The derivative route has a route-level spec (`tests/integration/image/delivery.spec.ts`) that
  * drives it end to end with a spy object. What that cannot see is the half a person performs: a file
  * chosen in a form, written by Drupal, rendered into a page as an `<img>` whose `src` the theme
  * built, and fetched by a browser that will report a broken one as a console error.

@@ -4,7 +4,7 @@ import {
 	laneTarget,
 	meanWaitMs,
 	type DemandWindow
-} from '../../../src/ops/replica-demand';
+} from '../../../src/ops/replica/demand';
 
 /**
  * Sizing the pool from QUEUEING rather than from concurrency.

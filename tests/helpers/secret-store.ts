@@ -1,4 +1,4 @@
-import type { SecretStore } from '../../src/ops/site-secrets';
+import type { SecretStore } from '../../src/ops/site/secrets';
 
 /** an in-memory {@link SecretStore}: `rows` stands for `cfw_meta`, `sealed` for key-value storage */
 export type MemorySecretStore = SecretStore & {

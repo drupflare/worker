@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cronPhase } from '../../src/do/alarm/cron';
-import { kernelBoot, runCronHook } from '../../src/drupal/cron-php';
+import { kernelBoot, runCronHook } from '../../src/drupal/php/cron';
 import { writeCursor, type StoredCursor } from '../../src/ops/cron';
 import { DEFAULT_CRON_BUDGET, driveCron, lostFiringCursor } from '../../src/ops/cron-drive';
 import { OUTBOX_POLICIES, openOutbox } from '../../src/ops/outbox';

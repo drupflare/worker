@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { capabilityVectors } from '../../src/drupal/site-php';
+import { capabilityVectors } from '../../src/drupal/php/site';
 import {
 	CAPABILITY_GROUPS,
 	VECTORS,

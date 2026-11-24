@@ -1,5 +1,5 @@
-import { SODIUM_API } from '../../src/site/generated/sodium-api';
-import type { Arg, Case, Enc, Outcome } from './sodium-harness';
+import { SODIUM_API } from '../../../src/site/generated/sodium-api';
+import type { Arg, Case, Enc, Outcome } from './harness';
 
 /** reproducible bytes as hex */
 export const hex = (n: number, mul = 1, add = 7): string =>

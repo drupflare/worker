@@ -2,9 +2,9 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SODIUM_API } from '../../src/site/generated/sodium-api';
-import { SODIUM_FIX } from '../../src/site/shims/sodium-fix';
-import { sodiumHostCall } from '../../src/site/shims/sodium-lib';
+import { SODIUM_API } from '../../../src/site/generated/sodium-api';
+import { SODIUM_FIX } from '../../../src/site/shims/sodium-fix';
+import { sodiumHostCall } from '../../../src/site/shims/sodium-lib';
 
 /** one argument of a case; bytes travel as hex */
 export type Arg =

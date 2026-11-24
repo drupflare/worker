@@ -1,7 +1,7 @@
-import { SODIUM_API } from '../../src/site/generated/sodium-api';
-import { SODIUM_FIX, sodiumConstantsPhp } from '../../src/site/shims/sodium-fix';
-import { agree, battery, flows, fuzz, hex, SETUP } from './sodium-cases';
-import { nativePhp, runBatch, type Arg, type Case, type Outcome } from './sodium-harness';
+import { SODIUM_API } from '../../../src/site/generated/sodium-api';
+import { SODIUM_FIX, sodiumConstantsPhp } from '../../../src/site/shims/sodium-fix';
+import { agree, battery, flows, fuzz, hex, SETUP } from './cases';
+import { nativePhp, runBatch, type Arg, type Case, type Outcome } from './harness';
 
 /** constants whose value is the native library's own version, which a shim cannot match by itself */
 export const VERSION_CONSTANTS = new Set([

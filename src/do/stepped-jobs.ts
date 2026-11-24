@@ -1,4 +1,5 @@
-import { opsRun } from '../drupal/site-php';
+import { opsRun } from '../drupal/php/site';
+import { parseJsonReply } from '../ops/json-reply';
 import { updbOptions, updbStep, type UpdbDeps } from '../ops/updb';
 import { errorMessage } from '../util/errors';
 import type { SteppedHost } from './host';
@@ -37,20 +38,22 @@ export async function opsJobStep(
 	args: string[],
 	options: OpsJob['options']
 ): Promise<Payload> {
-	const ran = (await host.runJson(opsRun(name, args, options))) ?? {
+	const continues = (reply: Payload) => reply['ok'] !== false && reply['done'] !== true;
+	const { payload: _first, ...rest } = options;
+	const job: OpsJob = { name, args, options: rest };
+	// the cursor is written inside the step's transaction, so a reset between the step's commit and
+	// the cursor cannot repeat the step
+	const text = await host.run(opsRun(name, args, options), (out) => {
+		const reply = parseJsonReply(out);
+		if (continues(reply)) host.metaSet(OPS_JOB_KEY, JSON.stringify(job));
+		else host.sql.exec('DELETE FROM cfw_meta WHERE k = ?', OPS_JOB_KEY);
+	});
+	const ran = (await host.settleReply(parseJsonReply(text))) ?? {
 		ok: false,
 		error: 'no reply'
 	};
-	const more = ran['ok'] !== false && ran['done'] !== true;
-	if (more) {
-		const { payload: _first, ...rest } = options;
-		const job: OpsJob = { name, args, options: rest };
-		host.metaSet(OPS_JOB_KEY, JSON.stringify(job));
-		host.steppedJobs.cache = { job };
-	} else if (readOpsJob(host) !== undefined) {
-		host.sql.exec('DELETE FROM cfw_meta WHERE k = ?', OPS_JOB_KEY);
-		host.steppedJobs.cache = {};
-	}
+	const more = continues(ran);
+	host.steppedJobs.cache = more ? { job } : {};
 	host.lastOpsJob = { name, at: host.nowMs(), more, ...ran };
 	return ran;
 }
@@ -79,7 +82,8 @@ export function updbDeps(host: SteppedHost): UpdbDeps {
 		// no `phpReady`: a unit boots a cold interpreter itself (free's 10 ms cap does not fail
 		// a DO invocation)
 		txn: (fn: () => void) => host.storage.transactionSync(fn),
-		nowMs: () => host.nowMs()
+		nowMs: () => host.nowMs(),
+		sync: () => host.storage.sync()
 	} satisfies UpdbDeps;
 }
 

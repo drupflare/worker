@@ -1,8 +1,20 @@
+import {
+	FRESH_FIRST_RETRY_HEADER,
+	FRESH_FIRST_RETRY_VALUE,
+	isFreshFirstAbort
+} from '../do/fresh/first';
+import { GROWTH_REFUSED_HEADER, ROLLED_BACK_HEADER } from '../do/growth/cap';
+import {
+	EFFECTS_HEADER,
+	GROWTH_RETRY_BODY_MAX_BYTES,
+	GROWTH_RETRY_VALUE,
+	growthRetryEnabled
+} from '../do/growth/retry';
 import { ATTEMPT_HEADER } from '../ops/attempt';
-import { AUTH_REQUEST_HEADER } from '../ops/auth-budget';
 import { ABSORBED_HEADER } from '../ops/cold-encounter';
-import { shouldFailover } from '../ops/replica-routing';
-import { siteStubOptions } from '../ops/site-id';
+import { AUTH_REQUEST_HEADER } from '../ops/meters/auth-budget';
+import { shouldFailover } from '../ops/replica/routing';
+import { siteStubOptions } from '../ops/site/id';
 import { objectResetPage, resetRecovery, writesOnGet } from './guards';
 import { drainAbsorbed } from './memos';
 import { DO_ROUTE } from './routes';
@@ -50,6 +62,8 @@ export async function buildHop(f: FrontContext, auth: AuthState): Promise<HopReq
 	innerRequest.headers.delete(AUTH_REQUEST_HEADER);
 	innerRequest.headers.delete(ABSORBED_HEADER);
 	innerRequest.headers.delete(ATTEMPT_HEADER);
+	// only the front worker's own repeat after an abort may carry this
+	innerRequest.headers.delete(FRESH_FIRST_RETRY_HEADER);
 	// a lane forwards its writes elsewhere, so only the primary's serve route may be repeated
 	const attempt =
 		buffered !== undefined && inner.pathname === '/__serve' && laneOf().role !== 'replica'
@@ -76,7 +90,7 @@ export async function sendHop(f: FrontContext, hop: HopRequest): Promise<Respons
 	const { env, site, laneOf, stubOf } = f;
 	const { innerRequest, buffered, attempt } = hop;
 	// a GET that runs cron is retried only with an attempt id, and a GET has none
-	const writes = writesOnGet(f.url.pathname);
+	const writes = writesOnGet(f.visitorPath);
 	const recovery = (e: unknown) =>
 		resetRecovery(e, innerRequest.method, attempt !== undefined, writes);
 	const resetPage = () => objectResetPage(innerRequest.method, writes);
@@ -95,6 +109,7 @@ export async function sendHop(f: FrontContext, hop: HopRequest): Promise<Respons
 					});
 	let res: Response;
 	let retriedReset = false;
+	let retriedAbort = false;
 	const rebuilt = () =>
 		buffered === undefined
 			? new Request(innerRequest)
@@ -107,21 +122,53 @@ export async function sendHop(f: FrontContext, hop: HopRequest): Promise<Respons
 	try {
 		res = await stubOf().fetch(innerRequest);
 	} catch (e) {
-		// a reset object throws out of the hop, and uncaught that is the visitor's 1101
-		if (recovery(e) !== 'retry') return resetPage();
+		// a reset object throws out of the hop, and uncaught that is the visitor's 1101; the
+		// object's own abort for a fresh-first route is repeated for any method, because it
+		// aborts before anything has run
+		const aborted = isFreshFirstAbort(e);
+		if (!aborted && recovery(e) !== 'retry') return resetPage();
 		f.forgetStub();
 		retriedReset = true;
 		try {
-			res = await stubOf().fetch(rebuilt());
+			const again = rebuilt();
+			if (aborted) again.headers.set(FRESH_FIRST_RETRY_HEADER, FRESH_FIRST_RETRY_VALUE);
+			res = await stubOf().fetch(again);
 		} catch {
 			return resetPage();
 		}
+		if (aborted) retriedAbort = true;
 	}
 	// the repeat found its first try had started, so it may have been saved
 	if (res.headers.get(ATTEMPT_HEADER) === 'started') return resetPage();
+	// a refused grow already dropped the interpreter, so a safe method meets a fresh one
+	const safeMethod = innerRequest.method === 'GET' || innerRequest.method === 'HEAD';
+	// any method repeats only when the object proves nothing was saved and nothing left it, and the
+	// body is one buffer small enough to replay
+	const provenClean =
+		res.headers.get(ROLLED_BACK_HEADER) === 'all' && res.headers.get(EFFECTS_HEADER) === 'none';
+	const replayable = buffered !== undefined && buffered.byteLength <= GROWTH_RETRY_BODY_MAX_BYTES;
+	if (
+		!retriedReset &&
+		res.headers.get(GROWTH_REFUSED_HEADER) === '1' &&
+		!writes &&
+		(safeMethod || (provenClean && replayable && growthRetryEnabled(f.env)))
+	) {
+		try {
+			const repeat = rebuilt();
+			// the repeat carries the header only this worker can set, which gives the object the
+			// fresh-attempt allowance, and a new attempt id: the first one was marked before it ran
+			repeat.headers.set(FRESH_FIRST_RETRY_HEADER, GROWTH_RETRY_VALUE);
+			if (!safeMethod) repeat.headers.set(ATTEMPT_HEADER, crypto.randomUUID());
+			const again = await stubOf().fetch(repeat);
+			res = new Response(again.body, again);
+		} catch {
+			return resetPage();
+		}
+		res.headers.set('x-cfw-retried', 'growth');
+	}
 	if (retriedReset) {
 		res = new Response(res.body, res);
-		res.headers.set('x-cfw-retried', 'reset');
+		res.headers.set(FRESH_FIRST_RETRY_HEADER, retriedAbort ? FRESH_FIRST_RETRY_VALUE : 'reset');
 	}
 	// the lane that handed back, so the header names the object that answered, not the routed one
 	let failedOverFrom: number | undefined;

@@ -1,9 +1,9 @@
-import { carriesAuthorization, isAuthenticatedRequest } from '../ops/auth-budget';
 import type { CacheTier } from '../ops/cache-tiers';
 import { ABSORBED_HEADER, foldAbsorbed, recordEncounter } from '../ops/cold-encounter';
-import { decodeModuleHeaders } from '../ops/module-headers';
-import { KV_GRANT_HEADER, kvWriteBudget, pageKvEnabled } from '../ops/page-store';
-import { ReplicaRequiresPrimary } from '../ops/replica';
+import { carriesAuthorization, isAuthenticatedRequest } from '../ops/meters/auth-budget';
+import { decodeModuleHeaders } from '../ops/module/headers';
+import { KV_GRANT_HEADER, kvWriteBudget, pageKvEnabled } from '../ops/page/store';
+import { ReplicaRequiresPrimary } from '../ops/replica/policy';
 import { claimed, needsSetup } from '../ops/setup-page';
 import { servingFor, storesPath } from '../ops/store-rule';
 import { recordArrival } from '../ops/thermal';
@@ -89,7 +89,7 @@ export function replicaHandoff(
 				'x-cfw-requires-primary': refusal.capability,
 				'x-cfw-retry-safe': '1',
 				'x-cfw-cache': 'REFUSED',
-				// every response naming a tier carries the generation (`cache-tiers.spec.ts`)
+				// every response naming a tier carries the generation (`cache/tiers.spec.ts`)
 				'x-cfw-generation': String(site.generation())
 			}
 		}
@@ -263,7 +263,7 @@ export async function route(site: SitePhpDurableObject, request: Request): Promi
 	site.renderFlights.set(key, shareable);
 	try {
 		// await the buffering before dropping the entry, or the next sequential request joins a
-		// settled flight and gets the previous answer (`shell.spec.ts`)
+		// settled flight and gets the previous answer (`shell/assembly.spec.ts`)
 		const shared = await shareable;
 		if (shared === undefined) return await entered;
 		return new Response(shared.body, {

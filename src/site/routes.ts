@@ -1,6 +1,6 @@
 import { CSP_REPORT_PATH } from '../ops/csp';
-import { IMAGE_ROUTE_PREFIX } from '../ops/image-runtime';
-import { RECOVER_PATH } from '../ops/owner-recovery';
+import { IMAGE_ROUTE_PREFIX } from '../ops/image/runtime';
+import { RECOVER_PATH } from '../ops/owner/recovery';
 import { isSpoolPath } from '../ops/spool';
 import { ADMIN_PAGES, LOGIN_PATH, LOGOUT_PATH, SURFACE_PREFIX } from '../ui/admin';
 
@@ -125,6 +125,8 @@ export const OWNER_ROUTES = new Set([
 	'/migrate',
 	// repair levers with no diagnostics path: a fresh interpreter, and the ledger cut to its cap
 	'/recycle',
+	// allocates memory until the isolate is replaced; answers 404 unless `LADDER_PROBE` is set
+	'/ladder',
 	'/ledger-gc',
 	// Strata's statement capture; the one Drupal config value an owner route writes
 	'/strata-config',
@@ -277,6 +279,7 @@ export const DO_ROUTE: Record<string, string> = {
 	'/modify': '/__modify',
 	'/audit': '/__audit',
 	'/recycle': '/__recycle',
+	'/ladder': '/__ladder',
 	'/ledger-gc': '/__ledger-gc',
 	'/strata-config': '/__strata-config',
 	'/strata-store': '/__strata-store',

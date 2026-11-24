@@ -1,9 +1,20 @@
-import { degradeHeaders } from '../ops/degrade';
-import { noteLimit } from '../ops/platform-limits';
-import { ReplicaRequiresPrimary } from '../ops/replica';
+import { degradeHeaders } from '../ops/meters/degrade';
+import { noteLimit } from '../ops/meters/platform-limits';
+import { ReplicaRequiresPrimary } from '../ops/replica/policy';
 import type { SitePhpDurableObject } from '../site-do';
 import { jsonError } from '../util/reply';
 import { recordInDeployment } from './fleet';
+import { FRESH_FIRST_RETRY_HEADER, FRESH_FIRST_RETRY_VALUE } from './fresh/first';
+import {
+	GrowthRefused,
+	enterGrowthExempt,
+	growthPhaseExempt,
+	growthRefusedResponse,
+	leaveGrowthExempt,
+	syncGrowthCap
+} from './growth/cap';
+import { growthRouteOf } from './growth/log';
+import { GROWTH_RETRY_VALUE, effectsSince, growthRetryEnabled } from './growth/retry';
 import { alarmShape, sleepBudgetMs } from './levers';
 import { adoptRetained } from './retention';
 import { auditOwnerCall } from './routes/audit';
@@ -29,6 +40,24 @@ export async function fetchRequest(
 	// saturates and the handoff stops after 20 refusals)
 	const refusalsBefore = site.replicaRefusalsTotal;
 	const forwardBefore = site.lastForward;
+	site.sliceWrites = 0;
+	site.effectBase = undefined;
+	// only the front worker sets this header (the hop strips an inbound one), so only its repeat of a
+	// refusal or of an abort runs under the fresh-attempt allowance
+	site.growthRetry =
+		growthRetryEnabled(site.env) &&
+		[GROWTH_RETRY_VALUE, FRESH_FIRST_RETRY_VALUE].includes(
+			request.headers.get(FRESH_FIRST_RETRY_HEADER) ?? ''
+		);
+	const requestUrl = new URL(request.url);
+	site.growthRoute = growthRouteOf(
+		request.method,
+		requestUrl.pathname,
+		requestUrl.searchParams.get('path')
+	);
+	const exempt = growthPhaseExempt(request);
+	if (exempt) enterGrowthExempt(site);
+	else syncGrowthCap(site);
 	try {
 		const linearBefore = site.heapNow();
 		const reusedBefore = site.heapsReused ?? 0;
@@ -54,6 +83,20 @@ export async function fetchRequest(
 		await auditOwnerCall(site, request, res.status);
 		return withKvGrant(site, request, withDegradeHeaders(site, res));
 	} catch (e) {
+		// the interpreter is already dropped; the front worker repeats a safe method on a fresh one
+		if (e instanceof GrowthRefused) {
+			if (e.rolledBack) site.rolledBackRuns = (site.rolledBackRuns ?? 0) + 1;
+			const writes = !e.rolledBack
+				? 'unknown'
+				: (site.sliceWrites ?? 0) > 0
+					? 'earlier'
+					: 'none';
+			return growthRefusedResponse(
+				request.method,
+				writes,
+				effectsSince(site, site.effectBase)
+			);
+		}
 		// a replica meeting work it may not do is the guard working; send the caller to the
 		// primary
 		// an uncommitted forward is retry-safe (the lane rolled back and the primary refused
@@ -68,7 +111,10 @@ export async function fetchRequest(
 		await auditOwnerCall(site, request, 500);
 		throw e;
 	} finally {
+		if (exempt) leaveGrowthExempt(site);
+		site.growthRetry = false;
 		site.inflight = Math.max(0, (site.inflight ?? 1) - 1);
+		if (site.inflight === 0) site.growthRoute = undefined;
 		site.releaseArming();
 		// a failed move must not fail the request
 		if (alarmShape(site.env) === 'end-sync') await site.settleAlarmEnd().catch(() => {});

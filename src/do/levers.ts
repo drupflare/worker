@@ -1,6 +1,7 @@
 import type { SiteEnv } from '../env';
+import { resolvePlanNumber } from '../ops/meters/plan-profile';
 import { planFlag } from '../ops/plan';
-import { resolvePlanNumber } from '../ops/plan-profile';
+import { cmsOf } from '../util/cms';
 import { leverInt } from '../util/lever';
 
 /** how many pages one alarm firing may fill before re-arming; 5 on free, 25 on paid */
@@ -261,10 +262,14 @@ export function phpStringList(values: readonly string[]): string {
  * window rather than setting freshness: a page still aged after a minute means the refill chain
  * stopped, and that should be a 503. Tighter than the KV tier's {@link STALE_MAX_AGE_MS} (24 hours,
  * answered from a previous generation).
+ *
+ * WordPress defaults to 0: a render there is seconds, so a superseded page waits for the refill
+ * queue in the order it was queued, and the first read of a page renders it at once instead.
  */
 export function agedServeMaxMs(env?: SiteEnv): number {
-	const n = Number(env?.AGED_SERVE_MAX_MS ?? 60_000);
-	return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 60_000;
+	const fallback = cmsOf(env) === 'wordpress' ? 0 : 60_000;
+	const n = Number(env?.AGED_SERVE_MAX_MS ?? fallback);
+	return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
 }
 
 /**

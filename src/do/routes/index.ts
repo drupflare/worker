@@ -18,6 +18,7 @@ import {
 import { file } from './file';
 import { armfill, assembleRoute, bump, fill, invalidate, plan, shell, sweep } from './fill';
 import { bootphase, heap, opcache } from './heap';
+import { ladder } from './ladder';
 import {
 	adminpassword,
 	dbconsole,
@@ -129,6 +130,7 @@ export const ROUTES: Record<string, Route> = {
 	'/__migrate': migrate,
 	'/__armfill': armfill,
 	'/__recycle': recycle,
+	'/__ladder': ladder,
 	'/__ledger-gc': ledgergc,
 	'/__strata-config': strataconfig,
 	'/__strata-store': stratastore,

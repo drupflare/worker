@@ -1,5 +1,9 @@
-import { carriesUpload, type RenderRequest, requestBody } from '../../drupal/site-php';
+import { carriesUpload, type RenderRequest, requestBody } from '../../drupal/php/site';
 import { ATTEMPT_HEADER, attemptKey } from '../../ops/attempt';
+import { cronIntervalMs, drupalCronEnabled } from '../../ops/cron-drive';
+import { forwardedHeaders } from '../../ops/forwarded-headers';
+import { heapIntegrityReport } from '../../ops/heap-integrity';
+import { hibernationEligible } from '../../ops/hibernation';
 import {
 	authAllowance,
 	type AuthSpend,
@@ -9,20 +13,16 @@ import {
 	ROLES_HEADER,
 	secondsUntilUtcReset,
 	spendForToday
-} from '../../ops/auth-budget';
-import { cronIntervalMs, drupalCronEnabled } from '../../ops/cron-drive';
-import { readOnlyResponse } from '../../ops/degrade';
-import { forwardedHeaders } from '../../ops/forwarded-headers';
-import { heapIntegrityReport } from '../../ops/heap-integrity';
-import { hibernationEligible } from '../../ops/hibernation';
-import { integrityReport } from '../../ops/module-integrity';
+} from '../../ops/meters/auth-budget';
+import { readOnlyResponse } from '../../ops/meters/degrade';
+import { planProfile } from '../../ops/meters/plan-profile';
+import { integrityReport } from '../../ops/module/integrity';
 import { isPaid } from '../../ops/plan';
-import { planProfile } from '../../ops/plan-profile';
-import { ReplicaRequiresPrimary } from '../../ops/replica';
+import { ReplicaRequiresPrimary } from '../../ops/replica/policy';
 import { claimed, needsSetup, setupResponse } from '../../ops/setup-page';
-import { bearerToken, ownerTokenMatches } from '../../ops/site-secrets';
+import { bearerToken, ownerTokenMatches } from '../../ops/site/secrets';
 import { storesPath } from '../../ops/store-rule';
-import { warmingResponse } from '../../ops/warming-page';
+import { warmingResponse } from '../../ops/warm/page';
 import type { SitePhpDurableObject } from '../../site-do';
 import { DIAG_EXEC_COUNTERS_PHP } from '../../site/generated/assets';
 import { type Cms, cmsOf } from '../../util/cms';
@@ -30,10 +30,12 @@ import { phpScript } from '../../util/php';
 import { jsonError } from '../../util/reply';
 import { firstRow } from '../../util/sql';
 import { noteUnclassifiedCookies } from '../../wordpress/cookies';
-import { isolateResidency, retainInterpreterEnabled } from '../isolate';
+import { FRESH_FIRST_RETRY_HEADER } from '../fresh/first';
+import { runFreshFirst } from '../fresh/first-run';
+import { incarnation, isolateResidency, retainInterpreterEnabled } from '../isolate';
 import { alarmDelayMs, alarmShape, fillSettleMs, shellAssemblyEnabled } from '../levers';
 import { CFW_HEADER_VERSION, FILL_QUEUE_MAX, SERVE_REQUESTS_FLUSH } from '../limits';
-import { handsBackSession } from '../role';
+import { handsBackSession } from '../replica/role';
 import type { PageRow } from '../types';
 
 /** the values of `x-cfw-phase` a WordPress request may carry, sent by the owner token only */
@@ -345,9 +347,16 @@ export async function serve(
 			});
 		}
 		site.pendingAttempt = attempt;
-		const outcome = await site
-			.fillOne(path, undefined, undefined, inbound)
-			.finally(() => (site.pendingAttempt = undefined));
+		// the registry may reset the object before the run, and a lock may hold a POST render
+		const outcome = await runFreshFirst(site, {
+			method: request.method,
+			path,
+			retryHeader: request.headers.get(FRESH_FIRST_RETRY_HEADER),
+			render: () =>
+				site
+					.fillOne(path, undefined, undefined, inbound)
+					.finally(() => (site.pendingAttempt = undefined))
+		});
 		// a lane without the session hands back rather than serving anonymous (the row arrives by
 		// replication: 41 of 240 logged out on a 16-lane pool); a uid 0 `GET` mutated nothing
 		if (
@@ -564,6 +573,7 @@ export async function serveStats(
 		heapIntegrity: heapIntegrityReport(site.heapIntegrity),
 		// other objects' interpreters share this isolate's 128 MiB
 		isolate: isolateResidency(),
+		incarnation: incarnation(site, site.php, site.phpBootedAt),
 		retention: {
 			enabled: retainInterpreterEnabled(site.env),
 			adoptions: site.retentionAdoptions,

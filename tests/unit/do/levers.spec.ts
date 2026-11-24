@@ -104,6 +104,13 @@ describe('serving a superseded page', () => {
 		expect(agedServeMaxMs(env({ AGED_SERVE_MAX_MS: '-1' }))).toBe(60_000);
 	});
 
+	it('answers none on WordPress unless the operator asks, and keeps Drupal at 60 s', () => {
+		expect(agedServeMaxMs(env({ CMS: 'wordpress' }))).toBe(0);
+		expect(agedServeMaxMs(env({ CMS: 'wordpress', AGED_SERVE_MAX_MS: '30000' }))).toBe(30_000);
+		expect(agedServeMaxMs(env({ CMS: 'wordpress', AGED_SERVE_MAX_MS: '-1' }))).toBe(0);
+		expect(agedServeMaxMs(env({ CMS: 'drupal' }))).toBe(60_000);
+	});
+
 	it('refuses a path under an operator NEVER_STALE entry and nothing else', () => {
 		const e = env({ NEVER_STALE: '/cart, /checkout ,' });
 		expect(agedServeAllowed('/cart', e)).toBe(false);

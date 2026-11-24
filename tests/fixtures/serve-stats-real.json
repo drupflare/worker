@@ -1,0 +1,71 @@
+{
+	"crossings": { "total": -5, "byName": { "cfwSqlExec": -5 } },
+	"crossingsTotal": 56,
+	"crossingCapabilities": [
+		"cfwSqlExec",
+		"cfwSqlTxn",
+		"cfwMysqlExec",
+		"cfwWpTags",
+		"cfwZlib",
+		"cfwLog",
+		"cfwStats",
+		"cfwServeStats",
+		"cfwFetch",
+		"cfwHttpCacheGet",
+		"cfwQueueFetch",
+		"cfwMail",
+		"cfwImageUrl",
+		"cfwFileRead",
+		"cfwFileWrite",
+		"cfwFileDelete",
+		"cfwFileList",
+		"cfwFileStat",
+		"cfwFilePublicBase",
+		"cfwFileRename",
+		"cfwOidcClaims",
+		"cfwTcp",
+		"cfwSettings",
+		"cfwModules"
+	],
+	"isolateBytes": {
+		"linear": 67108864,
+		"mount": 0,
+		"index": 0,
+		"resident": 1000707,
+		"total": 68109571,
+		"ceiling": 134217728,
+		"dropAbove": 130023424
+	},
+	"demand": [
+		{
+			"path": "/user/login",
+			"method": "GET",
+			"before": 0,
+			"after": 67108864,
+			"reused": false,
+			"bridge": {
+				"in": 88950,
+				"out": 50275,
+				"maxIn": 25353,
+				"maxOut": 36966,
+				"maxName": "cfwSqlExec"
+			},
+			"renderBytes": 18427
+		},
+		{
+			"path": "/",
+			"method": "GET",
+			"before": 0,
+			"after": 67108864,
+			"reused": true,
+			"bridge": {
+				"in": 72674,
+				"out": 28757,
+				"maxIn": 25344,
+				"maxOut": 7674,
+				"maxName": "cfwSqlExec"
+			},
+			"renderBytes": 17686
+		}
+	]
+}

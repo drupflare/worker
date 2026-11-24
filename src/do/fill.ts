@@ -1,24 +1,25 @@
 import { putFile, readFile } from '../db/file-store';
-import { drupalOp, renderPage, type RenderRequest } from '../drupal/site-php';
+import { drupalOp, renderPage, type RenderRequest } from '../drupal/php/site';
 import { substituteAggregates } from '../ops/aggregates';
 import { crossingsSince, emptyCrossings, snapshotCrossings } from '../ops/crossings';
 import { isIdempotent } from '../ops/deferred-post';
 import { tagChecksum } from '../ops/fragment-index';
-import { parseTransformPath } from '../ops/image-transform';
-import { encodeModuleHeaders } from '../ops/module-headers';
-import { queuePageMirror } from '../ops/page-mirror';
 import {
 	derivativeUri,
 	type DeriveTransport,
 	eagerDerivativesEnabled,
 	laneTransport
-} from '../ops/render-lane';
+} from '../ops/image/render-lane';
+import { parseTransformPath } from '../ops/image/transform';
+import { encodeModuleHeaders } from '../ops/module/headers';
+import { queuePageMirror } from '../ops/page/mirror';
 import { servingFor } from '../ops/store-rule';
 import { recordArrival } from '../ops/thermal';
 import type { SitePhpDurableObject } from '../site-do';
 import { WINDOW_HEADER } from '../site/fill-window';
 import { cmsOf } from '../util/cms';
 import { errorMessage } from '../util/errors';
+import { phpDouble } from '../util/php';
 import { firstRow } from '../util/sql';
 import { wordpressRender } from '../wordpress/site-php';
 import { pageTagList, passThroughHeaders, variesByRequest } from './helpers';
@@ -484,7 +485,7 @@ export async function deriveStep(
 	const listed = (await site.runJson(
 		drupalOp(`$out['urls'] = [];
 foreach (\\Drupal\\image\\Entity\\ImageStyle::loadMultiple() as $style) {
-  $out['urls'][] = $style->buildUrl(json_decode(${JSON.stringify(JSON.stringify(uri))}));
+  $out['urls'][] = $style->buildUrl(json_decode(${phpDouble(JSON.stringify(uri))}));
 }`)
 	)) as { urls?: unknown[]; error?: string };
 	const styles = (Array.isArray(listed.urls) ? listed.urls : [])

@@ -17,8 +17,9 @@ import { restorePhase } from './alarm/restore';
 import { restorePartsPhase } from './alarm/restore-parts';
 import { opsJobPhase, updbPhase } from './alarm/stepped';
 import { recordInDeployment } from './fleet';
-import { keepLaneReplicating } from './lane';
+import { enterGrowthExempt, leaveGrowthExempt } from './growth/cap';
 import { fillBatchSize, sleepBudgetMs } from './levers';
+import { keepLaneReplicating } from './replica/lane';
 import { adoptRetained } from './retention';
 import { noteAlarmDemand } from './stats';
 
@@ -111,6 +112,7 @@ export async function alarmEntry(
 	site.resetBridgeBytes();
 	site.holdArming();
 	site.alarmDepth += 1;
+	enterGrowthExempt(site);
 	try {
 		const outcome = await alarmBody(site, info);
 		noteAlarmDemand(site, outcome, linearBefore);
@@ -133,6 +135,7 @@ export async function alarmEntry(
 		} finally {
 			site.releaseArming();
 			site.alarmDepth = Math.max(0, site.alarmDepth - 1);
+			leaveGrowthExempt(site);
 		}
 	}
 }

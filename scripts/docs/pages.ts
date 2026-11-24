@@ -8,55 +8,6 @@ export const REPORT = 'technical-report';
 /** the published host, from docs/CNAME */
 export const HOST = 'docs.drupflare.com';
 
-/** the top-level entries: each folder's index page and the report, in navigation order */
-export const TOP: { name: string; text: string }[] = [
-	{
-		name: 'getting-started/index',
-		text: 'From a clean clone to a running site, claiming it, updating it, and building from source.'
-	},
-	{
-		name: 'operating/index',
-		text: 'Administration, recovery, git remotes, external databases, interpreter updates and replica lanes.'
-	},
-	{
-		name: 'architecture/index',
-		text: 'How a request is answered, what the build packs, measurement classes, compatibility and limits.'
-	},
-	{
-		name: 'configuration/index',
-		text: 'Every variable and binding in the two wrangler configs, and the page each lives on.'
-	},
-	{
-		name: 'security/index',
-		text: 'What the architecture removes and what it leaves, the controls in place, and incidents.'
-	},
-	{
-		name: 'impact/index',
-		text: 'Energy, carbon, water and cost, with the label and reference behind every figure.'
-	},
-	{ name: 'audiences/index', text: 'Pages for a specific procurement or compliance reader.' },
-	{
-		name: REPORT,
-		text: 'The engineering record: architecture, platform limits, costs and measurements.'
-	}
-];
-
-/** the header nav: the top-level entries only; a folder's children are reached from its index */
-export const NAV = TOP.map((entry) => entry.name);
-
-/** the header menus: every NAV entry once, then the generated API and PHP references */
-export const NAV_MENUS: { label: string; items: string[] }[] = [
-	{ label: 'Run', items: ['getting-started/index', 'operating/index', 'configuration/index'] },
-	{
-		label: 'Understand',
-		items: ['architecture/index', 'security/index', 'impact/index', 'audiences/index']
-	},
-	{ label: 'Reference', items: [REPORT, 'api', 'php'] }
-];
-
-/** nav labels where the page's H1 is too long for the bar */
-export const NAV_LABEL: Record<string, string> = { [REPORT]: 'Technical Report' };
-
 /** the folder-qualified name of the index of each ancestor folder of a page, outermost first */
 export function ancestors(name: string): string[] {
 	const parts = name.split('/');
@@ -64,21 +15,9 @@ export function ancestors(name: string): string[] {
 	return folders.map((_, i) => `${folders.slice(0, i + 1).join('/')}/index`);
 }
 
-/** the first paragraph after the title as plain text, cut at a sentence end near 200 characters */
-export function leadOf(markdown: string): string {
-	const body = markdown.replace(/^# .+$/m, '').trimStart();
-	const paragraph = body.split(/\n\s*\n/)[0] ?? '';
-	if (/^(#|\||```|[-*] )/.test(paragraph.trimStart())) return '';
-	const plain = paragraph
-		.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-		.replace(/[`*_]/g, '')
-		.replace(/\s+/g, ' ')
-		.trim();
-	if (plain.length <= 200) return plain;
-	const cut = plain.slice(0, 200);
-	const end = Math.max(cut.lastIndexOf('. '), 0);
-	return end > 40 ? cut.slice(0, end + 1) : `${cut.slice(0, cut.lastIndexOf(' '))}...`;
-}
+/** text safe inside an element or a double-quoted attribute */
+export const escapeHtml = (text: string) =>
+	text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
 
 /** the ids a page's headings carry once rendered */
 export function headingIds(markdown: string): Set<string> {
@@ -158,10 +97,8 @@ export function titleOf(markdown: string, name: string): string {
 	return title;
 }
 
-/** fails when a nav entry names a page that does not exist, or a folder has no index page */
+/** fails when a folder has no index page */
 export function checkPages(docs: string[]): void {
-	for (const name of NAV)
-		if (!docs.includes(name)) throw new Error(`${sourcePath(name)} does not exist`);
 	for (const name of docs)
 		for (const parent of ancestors(name))
 			if (!docs.includes(parent)) throw new Error(`${sourcePath(parent)} does not exist`);

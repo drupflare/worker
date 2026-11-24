@@ -48,19 +48,22 @@ longer than about 250 lines becomes a folder of its own with an `index.md` and s
 `docs/operating/recovery.md` publishes as `operating/recovery.html`, and a folder's index publishes
 as `<folder>/index.html`. `docs/README.md` is a map for the repository and is not published.
 
-The published navigation lists only the top-level entries, which are each folder's index and the
-technical report, and each page's contents list holds its `##` headings only. A page is reached from
-its folder's index and from links in the text. A new page goes in the folder it belongs to and needs
-a `# ` title and a lead paragraph, which becomes its description. A new folder needs an `index.md`
-and an entry in `TOP` in `scripts/docs/pages.ts`.
+`docs/nav.json` lists every page once, in groups that follow the folders, with a one-sentence
+description for each. The sidebar, the header menus, the home page cards and each page's description
+come from it, and the build fails when a page is missing from it or it lists a page that does not
+exist. Each page's contents list holds its `##` headings only. A new page goes in the folder it
+belongs to, needs a `# ` title and an entry in `docs/nav.json`. A new folder needs an `index.md` and
+a group or section in `docs/nav.json`. Sidebar links to other sites, such as the sibling
+repositories, are entries with a `url` in the same file.
 
 Moving or splitting a page means adding its old name to `scripts/docs/moves.json`, which writes a
 redirect page at the old URL. An entry is a new page name, or `{ "to": ..., "anchors": { ... } }`
 where `anchors` sends a heading that moved to another page to that page, so a link to the heading
 keeps working. Fix every link to the old path as well.
-`tests/node/docs-site.spec.ts` fails on a folder with no index, a page with no lead or title, a moved
-page with no redirect, a redirect or anchor that does not resolve, and a relative link that does not
-resolve.
+`tests/node/docs-site.spec.ts` fails on a folder with no index, a page with no title or description,
+a page missing from the manifest, a moved page with no redirect, a redirect or anchor that does not
+resolve, and a relative link that does not resolve. `bun run docs:check` reads the built site, and
+`bun run docs:browse` drives it in a browser; `scripts/README.md` describes both.
 
 ## `experiments/`
 
@@ -112,7 +115,7 @@ not carry. `DRUPAL_VERSION` overrides the version; `--force` replaces a tree tha
 different one. A second run on a satisfied tree downloads nothing.
 
 `.github/workflows/build.yml` calls the same script, resolving the version with
-`bun scripts/fetch-drupal-tree.ts --print-version`, so a developer and the gate lane hold the same tree.
+`bun scripts/fetch/drupal-tree.ts --print-version`, so a developer and the gate lane hold the same tree.
 `tests/node/drupal-tree.spec.ts` fails if the workflow grows a second producer.
 
 The tarball is core only. `SHIPPED_LOCK_VERSIONS` names `admin_toolbar`, `ctools`, `pathauto` and

@@ -3,24 +3,22 @@ import { gfmHeadingId } from 'marked-gfm-heading-id';
 import { cpSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { createHighlighter, type BundledLanguage } from 'shiki';
+import { assemblePage, checkNav, itemHref, loadNav, navItems, type PageOptions } from './nav';
 import {
 	ancestors,
 	checkPages,
 	contentsOf,
-	leadOf,
+	escapeHtml,
 	loadMoves,
-	NAV_LABEL,
-	NAV_MENUS,
 	pageHref,
 	pageOf,
 	redirectStubs,
 	REPORT,
-	rootPrefix,
 	sourcePath,
 	titleOf,
-	TOP,
 	walkDocs
 } from './pages';
+import { linkReferences } from './references';
 
 const root = new URL('../..', import.meta.url).pathname;
 const out = process.env.DOCS_OUT ?? join(root, 'typedoc');
@@ -41,11 +39,10 @@ const language = (lang: string | undefined): BundledLanguage | 'text' => {
 	return LANGUAGES.includes(aliased) ? aliased : 'text';
 };
 
-const escapeHtml = (text: string) =>
-	text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('"', '&quot;');
-
 const docs = walkDocs(root);
 checkPages(docs);
+const items = navItems(loadNav(root));
+checkNav(items, docs);
 const moves = loadMoves(root);
 
 /** a link written in the source file `from`, as a site link or else a repository URL */
@@ -100,45 +97,7 @@ const template = readFileSync(join(root, 'docs/template.html'), 'utf8');
 if (!template.includes(PLACEHOLDER))
 	throw new Error(`docs/template.html has no ${PLACEHOLDER} line`);
 
-function nav(current: string, titles: Record<string, string>): string {
-	const prefix = rootPrefix(current);
-	const here = (name: string) =>
-		name === current || (name.endsWith('/index') && current.startsWith(name.slice(0, -5)));
-	const link = (href: string, label: string, page?: string) =>
-		`<a href="${href}"${page && here(page) ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`;
-	const entry = (name: string) =>
-		name === 'api' || name === 'php'
-			? link(`${prefix}${name}/index.html`, name.toUpperCase())
-			: link(`${prefix}${name}.html`, NAV_LABEL[name] ?? titles[name] ?? name, name);
-	const menu = ({ label, items }: (typeof NAV_MENUS)[number]) => {
-		const open = items.some(here);
-		return [
-			`<details class="menu"${open ? ' data-current' : ''}>`,
-			`<summary>${escapeHtml(label)}</summary>`,
-			`<div class="panel">${items.map(entry).join('')}</div>`,
-			'</details>'
-		].join('');
-	};
-	return [...NAV_MENUS.map(menu), link(repo, 'GitHub')].join('\n\t\t\t\t');
-}
-
-function page(options: {
-	title: string;
-	description: string;
-	current: string;
-	hero: string;
-	body: string;
-	titles: Record<string, string>;
-	crumbs?: string;
-}): string {
-	return template
-		.replaceAll('<!-- base -->', rootPrefix(options.current))
-		.replaceAll('<!-- title -->', escapeHtml(options.title))
-		.replaceAll('<!-- description -->', escapeHtml(options.description))
-		.replace('<!-- nav -->', () => nav(options.current, options.titles))
-		.replace('<!-- hero -->', () => options.hero)
-		.replace(PLACEHOLDER, () => `${options.crumbs ?? ''}${options.body.trimEnd()}`);
-}
+const page = (options: PageOptions) => assemblePage(template, items, options, repo);
 
 const sources = Object.fromEntries(
 	docs.map((name) => [name, readFileSync(join(root, sourcePath(name)), 'utf8')])
@@ -152,25 +111,19 @@ const badges = header.match(/<img src="https:\/\/img\.shields\.io[^>]*>/g) ?? []
 
 const card = (href: string, label: string, text: string) =>
 	`<a class="card" href="${href}"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(text)}</span></a>`;
+const featured = items.filter((item) => item.entry.menu);
 const groups = [
 	[
 		'Documentation',
-		TOP.map(({ name, text }) => card(`${name}.html`, titles[name]!, text))
+		featured
+			.filter((item) => item.kind === 'page')
+			.map((item) => card(itemHref(item, 'index'), item.entry.title, item.entry.description))
 	] as const,
 	[
 		'Code',
-		[
-			card(
-				'api/index.html',
-				'API Reference',
-				'The TypeScript modules under src/, from TypeDoc.'
-			),
-			card(
-				'php/index.html',
-				'PHP Reference',
-				'The PHP the interpreter runs, under src/site/php/.'
-			)
-		]
+		featured
+			.filter((item) => item.kind === 'reference')
+			.map((item) => card(itemHref(item, 'index'), item.entry.title, item.entry.description))
 	] as const
 ];
 const cards = groups
@@ -219,10 +172,9 @@ emit(
 	page({
 		title: 'Drupflare',
 		description: tagline,
-		current: '',
+		current: 'index',
 		hero,
-		body: await render('README.md', readme.slice(header.length)),
-		titles
+		body: await render('README.md', readme.slice(header.length))
 	})
 );
 /** the folder indexes above a page, outermost first, as a line of links */
@@ -242,12 +194,11 @@ for (const name of docs) {
 		`${name}.html`,
 		page({
 			title: `${titles[name]} - Drupflare`,
-			description: leadOf(sources[name]!) || titles[name]!,
+			description: items.find((item) => item.name === name)!.entry.description,
 			current: name,
 			hero: '',
 			body: contentsOf(body),
-			crumbs: crumbs(name, titles),
-			titles
+			crumbs: crumbs(name, titles)
 		})
 	);
 }
@@ -258,6 +209,7 @@ for (const [file, html] of redirectStubs(moves, titles)) emit(file, html);
 for (const asset of ['CNAME', 'drupflare.ico', 'drupflare.png', 'drupflare_128.png'])
 	cpSync(join(root, 'docs', asset), join(out, asset));
 cpSync(join(root, 'scripts/docs/render.js'), join(out, 'render.js'));
+linkReferences(out);
 
 const broken = brokenLinks();
 if (broken.length) throw new Error(`broken docs links:\n${broken.join('\n')}`);

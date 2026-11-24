@@ -1,0 +1,9 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"types": ["node", "@cloudflare/workers-types"],
+		"moduleDetection": "force"
+	},
+	"include": ["../../build/docs-fences/**/*.ts"],
+	"exclude": []
+}

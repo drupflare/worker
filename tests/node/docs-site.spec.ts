@@ -1,16 +1,42 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, normalize, posix, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
+import { checkSite } from '../../scripts/docs/check';
+import {
+	checkFences,
+	docSlug,
+	extractFences,
+	formatProblem,
+	planFences,
+	writeFences
+} from '../../scripts/docs/fences';
+import {
+	assemblePage,
+	checkNav,
+	loadNav,
+	navItems,
+	navMenus,
+	pagerHtml,
+	sidebarHtml,
+	type Entry,
+	type Manifest
+} from '../../scripts/docs/nav';
 import {
 	ancestors,
 	checkPages,
 	contentsOf,
 	headingIds,
 	HOST,
-	leadOf,
 	loadMoves,
-	NAV,
-	NAV_MENUS,
 	pageHref,
 	pageOf,
 	redirectStubs,
@@ -18,15 +44,19 @@ import {
 	rootPrefix,
 	sourcePath,
 	titleOf,
-	TOP,
 	walkDocs
 } from '../../scripts/docs/pages';
+import { linkBack } from '../../scripts/docs/references';
 
-/** the docs site generator: the folder walk, the move map and the redirect stubs for old URLs */
+/** the docs site generator: the folder walk, the move map, the navigation manifest and its checks */
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const docs = walkDocs(ROOT);
 const moves = loadMoves(ROOT);
+const manifest = loadNav(ROOT);
+const items = navItems(manifest);
+const pageItems = items.filter((item) => item.kind === 'page');
+const repo = 'https://github.com/drupflare/worker';
 
 describe('the docs walk', () => {
 	it('finds nested pages under their folder-qualified name and keeps flat pages flat', () => {
@@ -80,31 +110,99 @@ describe('a nested page output path', () => {
 	});
 });
 
-describe('navigation', () => {
-	it('lists only top-level entries: a folder index at depth one, or a root page', () => {
-		for (const name of NAV) expect(name.split('/').length, name).toBeLessThanOrEqual(2);
-		expect(
-			NAV.filter((name) => name.includes('/')).every((name) => name.endsWith('/index'))
-		).toBe(true);
+describe('the navigation manifest', () => {
+	const entry = (path: string): Entry => ({ title: 'T', path, description: 'D.' });
+	const withPage = (path: string): Manifest => ({
+		groups: [{ title: 'G', pages: [...manifest.groups.flatMap((g) => g.pages), entry(path)] }]
 	});
 
-	it('names every top-level folder of docs/ and the report, and nothing else', () => {
+	it('lists every page the walk finds, once', () => {
+		const names = pageItems.map((item) => item.name!);
+		expect(new Set(names).size).toBe(names.length);
+		for (const name of docs) expect(names, name).toContain(name);
+		expect(names.filter((name) => !docs.includes(name))).toEqual(['index']);
+		expect(() => checkNav(items, docs)).not.toThrow();
+	});
+
+	it('fails when a page is missing from the manifest, naming its file', () => {
+		expect(() => checkNav(items, [...docs, 'impact/new-page'])).toThrow(
+			/docs\/impact\/new-page\.md is not listed in docs\/nav\.json/
+		);
+		expect(() => checkNav(items, docs)).not.toThrow();
+	});
+
+	it('fails when the manifest lists a page that does not exist', () => {
+		expect(() => checkNav(navItems(withPage('docs/gone/page.md')), docs)).toThrow(
+			/docs\/nav\.json lists docs\/gone\/page\.md, which does not exist/
+		);
+	});
+
+	it('fails on a page listed twice', () => {
+		expect(() => checkNav(navItems(withPage('docs/impact/index.md')), docs)).toThrow(
+			/lists impact\/index more than once/
+		);
+	});
+
+	it('fails on an entry with no description, a link that is not https and a path that is no page', () => {
+		const broken = (patch: Partial<Entry>): Manifest => ({
+			groups: [
+				{ title: 'G', pages: [...manifest.groups.flatMap((g) => g.pages), patch as Entry] }
+			]
+		});
+		expect(() =>
+			checkNav(
+				navItems(broken({ title: 'X', url: 'https://a.test', description: ' ' })),
+				docs
+			)
+		).toThrow(/"X" has no description/);
+		expect(() =>
+			checkNav(
+				navItems(broken({ title: 'X', url: 'http://a.test', description: 'D.' })),
+				docs
+			)
+		).toThrow(/not https/);
+		expect(() =>
+			checkNav(navItems(broken({ title: 'X', path: 'notes/a.md', description: 'D.' })), docs)
+		).toThrow(/not a page/);
+		expect(() => navItems(broken({ title: 'X', description: 'D.' }))).toThrow(
+			/neither path nor url/
+		);
+	});
+
+	it('gives every folder of docs/ a group entry with its index, and the report one too', () => {
 		const folders = readdirSync(join(ROOT, 'docs'), { withFileTypes: true })
-			.filter((entry) => entry.isDirectory())
-			.map((entry) => `${entry.name}/index`);
-		expect([...NAV].sort()).toEqual([...folders, REPORT].sort());
-		expect(TOP.map((entry) => entry.name)).toEqual(NAV);
+			.filter((dirent) => dirent.isDirectory())
+			.map((dirent) => `${dirent.name}/index`);
+		const featured = pageItems.filter((item) => item.entry.menu).map((item) => item.name);
+		expect([...featured].sort()).toEqual([...folders, REPORT].sort());
 	});
 
-	it('groups every nav entry into exactly one header menu, beside the generated references', () => {
-		const items = NAV_MENUS.flatMap((menu) => menu.items);
-		expect([...items].sort()).toEqual([...NAV, 'api', 'php'].sort());
-		expect(NAV_MENUS.length).toBeLessThanOrEqual(4);
+	it('builds the header menus from the manifest, each entry once, with the references', () => {
+		const menus = navMenus(items);
+		const listed = menus.flatMap((menu) => menu.items.map((item) => item.name));
+		expect(new Set(listed).size).toBe(listed.length);
+		expect(listed).toEqual(expect.arrayContaining([REPORT, 'api', 'php']));
+		expect(menus.length).toBeLessThanOrEqual(4);
+		expect(menus.map((menu) => menu.label)).toEqual(['Run', 'Understand', 'Reference']);
 	});
 
-	it('names every nav entry as a real page', () => {
-		for (const name of NAV) expect(docs).toContain(name);
-		expect(() => checkPages(docs)).not.toThrow();
+	it('puts the sibling repositories under On GitHub, each at a drupflare URL', () => {
+		const group = manifest.groups.find((g) => g.title === 'On GitHub')!;
+		expect(group.pages.length).toBeGreaterThanOrEqual(10);
+		for (const link of group.pages)
+			expect(link.url, link.title).toMatch(
+				new RegExp(`^https://github\\.com/drupflare/${link.title}$`)
+			);
+		expect(group.pages.map((link) => link.title)).toEqual(
+			expect.arrayContaining([
+				'worker',
+				'drupflare',
+				'rom',
+				'phasm',
+				'anachron',
+				'stream-http'
+			])
+		);
 	});
 
 	it('fails on a folder with no index page', () => {
@@ -149,25 +247,417 @@ describe('the contents list of a page', () => {
 });
 
 describe('page descriptions', () => {
-	it('come from the first paragraph under the title', () => {
-		expect(leadOf('# T\n\nOne [link](x.md) and `code`. Two.\n\n## H\n')).toBe(
-			'One link and code. Two.'
+	it('exist in the manifest for every page and link', () => {
+		for (const item of items) {
+			expect(item.entry.title.trim(), item.entry.path ?? item.entry.url).not.toBe('');
+			expect(item.entry.description.trim(), item.entry.title).not.toBe('');
+		}
+	});
+
+	it('fit one line of a search result', () => {
+		for (const item of items)
+			expect(item.entry.description.length, item.entry.title).toBeLessThanOrEqual(170);
+	});
+});
+
+describe('the sidebar', () => {
+	const at = 'configuration/runtime';
+
+	it('marks one current page and opens only its group and section', () => {
+		const html = sidebarHtml(items, 'configuration/serving/page-cache');
+		expect(html).toContain('id="docs-sidebar"');
+		expect(html).toContain('popover');
+		expect(html.match(/aria-current="page"/g)).toHaveLength(1);
+		expect(html).toContain('<details class="docs-group" open><summary>Configuration</summary>');
+		expect(html).toContain('<details class="docs-section" open><summary>Serving and Caching');
+		expect(html).toContain('<details class="docs-group"><summary>Security</summary>');
+		expect(html).toContain('<details class="docs-section"><summary>Operations');
+	});
+
+	it('moves the open group with the current page', () => {
+		const home = sidebarHtml(items, 'index');
+		expect(home).toContain('<details class="docs-group" open><summary>Getting Started');
+		expect(home).toContain('<details class="docs-group"><summary>Configuration</summary>');
+		expect(home.match(/aria-current="page"/g)).toHaveLength(1);
+	});
+
+	it('marks an external link, gives it rel noopener and shows its description', () => {
+		const html = sidebarHtml(items, at);
+		const anchors = html.match(/<a [^>]*href="https:\/\/[^"]*"[^>]*>/g) ?? [];
+		expect(anchors.length).toBeGreaterThanOrEqual(10);
+		for (const anchor of anchors) {
+			expect(anchor).toContain('rel="noopener"');
+			expect(anchor).toContain('class="docs-ext"');
+		}
+		expect(html).toContain('<span class="docs-sr"> (external link)</span>');
+		expect(html).toContain('<span class="docs-desc">The Drupflare project site.</span>');
+	});
+
+	it('does not give an internal link a noopener, and links relative to the page', () => {
+		const html = sidebarHtml(items, at);
+		expect(html).toContain('<a href="../architecture/index.html">Architecture</a>');
+		expect(html).toContain('<a href="../api/index.html">API Reference</a>');
+		expect(html).toContain('<a href="serving/index.html">Serving and Caching Settings</a>');
+		expect(sidebarHtml(items, REPORT)).toContain('<a href="api/index.html">API Reference</a>');
+		expect(html).not.toMatch(/<a href="\.\.\/architecture[^>]*rel=/);
+	});
+
+	it('shows the description of the current page and no other page', () => {
+		const html = sidebarHtml(items, at);
+		expect(html).toContain('Settings for cron, warming, the interpreter lifecycle');
+		expect(html).not.toContain('Settings for replica lanes: count');
+	});
+
+	it('escapes a title', () => {
+		const odd: Manifest = {
+			groups: [
+				{
+					title: 'G',
+					pages: [{ title: 'A <b> & "c"', url: 'https://a.test', description: 'D.' }]
+				}
+			]
+		};
+		const html = sidebarHtml(navItems(odd), 'index');
+		expect(html).toContain('A &lt;b> &amp; &quot;c&quot;');
+		expect(html).not.toContain('<b>');
+	});
+
+	it('gives a page its neighbours with their descriptions, and the ends one side', () => {
+		const first = pageItems[0]!.name!;
+		const last = pageItems.at(-1)!.name!;
+		const middle = pagerHtml(items, pageItems[3]!.name!);
+		expect(middle).toContain('rel="prev"');
+		expect(middle).toContain('rel="next"');
+		expect(middle).toContain(pageItems[4]!.entry.description);
+		expect(pagerHtml(items, first)).not.toContain('rel="prev"');
+		expect(pagerHtml(items, last)).not.toContain('rel="next"');
+		expect(pagerHtml(items, 'api')).toBe('');
+	});
+});
+
+describe('a built page', () => {
+	const template = readFileSync(join(ROOT, 'docs/template.html'), 'utf8');
+	const build = (current: string) =>
+		assemblePage(
+			template,
+			items,
+			{
+				title: `T - Drupflare`,
+				description: 'A "quoted" description.',
+				current,
+				hero: '',
+				body: '<h2 id="a">A</h2>'
+			},
+			repo
 		);
-		expect(leadOf('# T\n\n## H\n')).toBe('');
+
+	it('carries the sidebar, the header menus, the pager and one current link', () => {
+		const html = build('configuration/runtime');
+		expect(html).toContain('<div class="docs-sidebar" id="docs-sidebar" popover>');
+		expect(html).toContain('<nav class="docs-nav" aria-label="Documentation">');
+		expect(html).toContain('class="docs-menu"');
+		expect(html).toContain('<details class="menu" data-current>');
+		expect(html).toContain('<nav class="docs-pager"');
+		expect(html.match(/<a [^>]*aria-current="page"/g)).toHaveLength(1);
+		expect(build('configuration/index').match(/<a [^>]*aria-current="page"/g)).toHaveLength(2);
+		expect(
+			html.match(/<div class="docs-sidebar"[\s\S]*?<\/nav>/)![0].match(/aria-current/g)
+		).toHaveLength(1);
+		expect(html).not.toMatch(
+			/<!-- (nav|sidebar|pager|hero|readme|file|base|title|description) -->/
+		);
 	});
 
-	it('are cut at a sentence end', () => {
-		const long = `${'Sentence one is here. '.repeat(12)}end`;
-		expect(leadOf(`# T\n\n${long}`).length).toBeLessThanOrEqual(200);
-		expect(leadOf(`# T\n\n${long}`).endsWith('.')).toBe(true);
+	it('keeps the title, description and Open Graph tags in step', () => {
+		const html = build('impact/energy/index');
+		expect(html).toContain('<title>T - Drupflare</title>');
+		expect(html.match(/content="A &quot;quoted&quot; description\."/g)).toHaveLength(2);
+		expect(html).toContain('content="https://docs.drupflare.com/impact/energy/index.html"');
+		expect(html).toContain('href="https://docs.drupflare.com/impact/energy/index.html"');
+		expect(build('index')).toContain('content="https://docs.drupflare.com/"');
 	});
 
-	it('exist for every page', () => {
-		for (const name of docs)
-			expect(
-				leadOf(readFileSync(join(ROOT, sourcePath(name)), 'utf8')),
-				`${sourcePath(name)} needs a lead paragraph`
-			).not.toBe('');
+	it('wires the favicon files from the page depth', () => {
+		expect(build('impact/energy/index')).toContain('href="../../drupflare.ico"');
+		expect(build('impact/energy/index')).toContain('href="../../drupflare_128.png"');
+		expect(build(REPORT)).toContain('href="drupflare.ico"');
+		for (const icon of ['drupflare.ico', 'drupflare.png', 'drupflare_128.png'])
+			expect(existsSync(join(ROOT, 'docs', icon)), icon).toBe(true);
+	});
+});
+
+describe('the site check', () => {
+	const MINI: Manifest = {
+		groups: [
+			{
+				title: 'Guides',
+				pages: [
+					{ title: 'Overview', path: 'README.md', description: 'The overview.' },
+					{
+						title: 'Start',
+						path: 'docs/start/index.md',
+						menu: 'Run',
+						description: 'Where to begin.'
+					},
+					{
+						title: 'API Reference',
+						path: 'api',
+						menu: 'Reference',
+						description: 'The API.'
+					},
+					{ title: 'Source', url: repo, description: 'The code.' }
+				]
+			}
+		]
+	};
+	const template = readFileSync(join(ROOT, 'docs/template.html'), 'utf8');
+	const made: string[] = [];
+	afterAll(() => {
+		for (const dir of made) rmSync(dir, { recursive: true, force: true });
+	});
+
+	function site() {
+		const dir = mkdtempSync(join(tmpdir(), 'docs-site-'));
+		made.push(dir);
+		const root = join(dir, 'root');
+		const out = join(dir, 'out');
+		mkdirSync(join(root, 'docs'), { recursive: true });
+		mkdirSync(join(out, 'start'), { recursive: true });
+		mkdirSync(join(out, 'api'), { recursive: true });
+		writeFileSync(join(root, 'docs/nav.json'), JSON.stringify(MINI));
+		for (const target of [root + '/docs', out]) {
+			writeFileSync(join(target, 'CNAME'), `${HOST}\n`);
+			for (const icon of ['drupflare.ico', 'drupflare.png', 'drupflare_128.png'])
+				writeFileSync(join(target, icon), 'x');
+		}
+		writeFileSync(join(out, 'render.js'), '');
+		const mini = navItems(MINI);
+		for (const name of ['index', 'start/index'])
+			writeFileSync(
+				join(out, `${name}.html`),
+				assemblePage(
+					template,
+					mini,
+					{
+						title: `${name} - Drupflare`,
+						description: `About ${name}.`,
+						current: name,
+						hero: '',
+						body: '<h1>Title</h1><h2 id="a">A</h2><p><a href="#a">a</a></p>'
+					},
+					repo
+				)
+			);
+		writeFileSync(
+			join(out, 'api/index.html'),
+			linkBack('<html><head></head><body></body></html>', 'api/index.html')
+		);
+		return { root, out };
+	}
+	const edit = (file: string, from: string, to: string) =>
+		writeFileSync(file, readFileSync(file, 'utf8').replace(from, to));
+
+	it('passes a complete site', () => {
+		const { root, out } = site();
+		expect(checkSite(out, root)).toEqual({ problems: [], pages: 2, links: expect.any(Number) });
+	});
+
+	it('fails a page the manifest lists that was not built, and one built but not listed', () => {
+		const { root, out } = site();
+		rmSync(join(out, 'start/index.html'));
+		expect(checkSite(out, root).problems).toContain(
+			'docs/nav.json lists docs/start/index.md, which was not built'
+		);
+		const fresh = site();
+		writeFileSync(join(fresh.out, 'extra.html'), readFileSync(join(fresh.out, 'index.html')));
+		expect(checkSite(fresh.out, fresh.root).problems).toContain(
+			'extra.html was built but is not listed in docs/nav.json'
+		);
+	});
+
+	it('fails a stale link and a stale anchor', () => {
+		const { root, out } = site();
+		edit(
+			join(out, 'index.html'),
+			'<a href="#a">a</a>',
+			'<a href="start/gone.html">x</a><a href="start/index.html#nope">y</a>'
+		);
+		const problems = checkSite(out, root).problems;
+		expect(problems).toContain('index.html: start/gone.html does not exist');
+		expect(problems).toContain('index.html: start/index.html#nope has no such heading');
+	});
+
+	it('fails an external link with no rel noopener, and passes one that has it', () => {
+		const { root, out } = site();
+		const page = join(out, 'index.html');
+		edit(page, '</main>', '<a class="docs-ext" href="https://a.test/">x</a></main>');
+		expect(checkSite(out, root).problems.join('\n')).toMatch(
+			/external link has no rel="noopener"/
+		);
+		edit(
+			page,
+			'class="docs-ext" href="https://a.test/"',
+			'class="docs-ext" href="https://a.test/" rel="noopener"'
+		);
+		expect(checkSite(out, root).problems).toEqual([]);
+	});
+
+	it('fails a page whose description and Open Graph description differ', () => {
+		const { root, out } = site();
+		edit(
+			join(out, 'index.html'),
+			'property="og:description"\n\t\t\tcontent="About index."',
+			'property="og:description"\n\t\t\tcontent="Other."'
+		);
+		expect(checkSite(out, root).problems).toContain(
+			'index.html: og:description differs from the description'
+		);
+	});
+
+	it('fails a missing favicon, CNAME and Guides link', () => {
+		const { root, out } = site();
+		rmSync(join(out, 'drupflare.ico'));
+		rmSync(join(out, 'CNAME'));
+		edit(join(out, 'api/index.html'), 'class="docs-guides"', 'class="other"');
+		const problems = checkSite(out, root).problems;
+		expect(problems).toContain('drupflare.ico was not published');
+		expect(problems).toContain('CNAME was not published');
+		expect(problems).toContain('api/index.html: no Guides link back to the docs');
+	});
+
+	it('fails a sidebar with no current link', () => {
+		const { root, out } = site();
+		edit(join(out, 'index.html'), 'aria-current="page"', 'data-x');
+		expect(checkSite(out, root).problems.join('\n')).toMatch(
+			/index\.html: the sidebar has 0 current links/
+		);
+	});
+});
+
+describe('the generated references', () => {
+	const bare = '<html><head></head><body></body></html>';
+
+	it('get a Guides link back that resolves from their folder', () => {
+		expect(linkBack(bare, 'api/index.html')).toContain(
+			'<a class="docs-guides" href="../index.html">'
+		);
+		expect(linkBack(bare, 'api/classes/a.html')).toContain('href="../../index.html">Guides');
+	});
+
+	it('resolve from the base element where the page sets one', () => {
+		const php = '<html><head><base href="../"/></head><body></body></html>';
+		expect(linkBack(php, 'php/classes/a.html')).toContain('href="../index.html">Guides');
+		expect(linkBack(php.replace('../', './'), 'php/index.html')).toContain(
+			'href="../index.html">Guides'
+		);
+	});
+
+	it('add the favicon links only where a page has none, and only once', () => {
+		const once = linkBack(bare, 'api/index.html');
+		expect(once).toContain('href="../drupflare.ico"');
+		expect(linkBack(once, 'api/index.html')).toBe(once);
+		const icon = '<html><head><link rel="icon" href="x.ico"/></head><body></body></html>';
+		expect(linkBack(icon, 'api/index.html')).not.toContain('drupflare.ico');
+	});
+});
+
+describe('the docs fences', () => {
+	const fence = (code: string, info = '') => `\`\`\`ts ${info}\n${code}\n\`\`\``;
+
+	it('are found in lists and quotes, with their line and flags, and other languages skipped', () => {
+		const page = [
+			'# T',
+			'',
+			fence('const a = 1;'),
+			'',
+			'- item',
+			'',
+			'  ```ts no-check',
+			'  const b = ;',
+			'  ```',
+			'',
+			'```sh',
+			'ls',
+			'```'
+		].join('\n');
+		const found = extractFences(page, 'x.md');
+		expect(found.map((f) => [f.line, f.flags])).toEqual([
+			[3, []],
+			[9, ['no-check']]
+		]);
+		expect(found[1]!.code).toBe('const b = ;\n');
+	});
+
+	it('are named by a first-line path or else by position, and a no-check fence is left out', () => {
+		const found = extractFences(
+			[
+				fence('// a/b.ts\nconst a = 1;'),
+				fence('const c = 2;', 'no-check'),
+				fence('const d = 3;')
+			].join('\n'),
+			'docs/x/y.md'
+		);
+		expect(planFences('docs/x/y.md', found).map((p) => p.out)).toEqual([
+			'x-y/a/b.ts',
+			'x-y/3.ts'
+		]);
+		expect(docSlug('README.md')).toBe('readme');
+	});
+
+	it('refuse to write outside the output folder', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'docs-fences-'));
+		try {
+			const [bad] = planFences('x.md', extractFences(fence('const a = 1;'), 'x.md'));
+			expect(() => writeFences(dir, [{ ...bad!, out: '../escape.ts' }])).toThrow(/outside/);
+			expect(() => writeFences(dir, [bad!])).not.toThrow();
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('fail a stale snippet at its position in the page, and pass a good one', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'docs-fences-'));
+		try {
+			mkdirSync(join(dir, 'scripts/docs'), { recursive: true });
+			writeFileSync(
+				join(dir, 'scripts/docs/tsconfig.fences.json'),
+				JSON.stringify({
+					compilerOptions: {
+						lib: ['es5'],
+						types: [],
+						strict: true,
+						noEmit: true,
+						target: 'es5',
+						moduleDetection: 'force'
+					},
+					include: ['../../build/docs-fences/**/*.ts']
+				})
+			);
+			writeFileSync(
+				join(dir, 'good.md'),
+				`# T\n\n${fence('const n: number = 1;\nexport {};')}\n`
+			);
+			writeFileSync(
+				join(dir, 'stale.md'),
+				`# T\n\n${fence('const n: number = "x";\nexport {};')}\n`
+			);
+			expect(checkFences(dir, { docs: ['good.md'] }).problems).toEqual([]);
+			const report = checkFences(dir, { docs: ['stale.md'] });
+			expect(report.problems).toHaveLength(1);
+			expect(report.problems[0]).toMatch(/^stale\.md:4:7 error TS2322/);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('format a compile error in page coordinates', () => {
+		const [planned] = planFences('p.md', extractFences(fence('x'), 'p.md'));
+		expect(formatProblem(planned, { line: 2, column: 5 }, 2322, 'm')).toBe(
+			'p.md:3:5 error TS2322: m'
+		);
+		expect(formatProblem(undefined, undefined, 1005, 'm', 'f.ts:1:1')).toBe(
+			'f.ts:1:1 error TS1005: m'
+		);
 	});
 });
 

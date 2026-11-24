@@ -1,0 +1,679 @@
+{
+	"groups": [
+		{
+			"title": "Getting Started",
+			"pages": [
+				{
+					"title": "Overview",
+					"path": "README.md",
+					"description": "What Drupflare is, how to deploy it and where each part of the documentation lives."
+				},
+				{
+					"title": "Getting Started",
+					"path": "docs/getting-started/index.md",
+					"menu": "Run",
+					"description": "From a clean clone to a running site, then claiming it and moving an existing one in."
+				},
+				{
+					"title": "Claiming and Managing a Site",
+					"path": "docs/getting-started/claim-and-log-in.md",
+					"description": "How the first owner claims a freshly provisioned site, logs in and finds the surfaces that manage it."
+				},
+				{
+					"title": "Updating a Site",
+					"path": "docs/getting-started/updating.md",
+					"description": "How a deployed worker takes a new release and which parts of the site an update does not cover."
+				},
+				{
+					"title": "Testing",
+					"path": "docs/getting-started/testing.md",
+					"description": "The test lanes, what each one can and cannot see, and how to add a test."
+				},
+				{
+					"title": "Reproducing Panopoly",
+					"path": "docs/getting-started/reproduce-panopoly.md",
+					"description": "Build Panopoly, a Drupal 7 distribution, install it with Drupal 7's own installer and deliver its modules through anachron."
+				},
+				{
+					"title": "Reproducing Thunder",
+					"path": "docs/getting-started/reproduce-thunder.md",
+					"description": "Install the Thunder distribution, land its database in the worker and score it on your own machine."
+				}
+			],
+			"sections": [
+				{
+					"title": "Building From Source",
+					"pages": [
+						{
+							"title": "Building From Source",
+							"path": "docs/getting-started/building-from-source/index.md",
+							"description": "The two commands that turn a clean clone into a deployable tree, and why they are not interchangeable."
+						},
+						{
+							"title": "The Steps",
+							"path": "docs/getting-started/building-from-source/steps.md",
+							"description": "The build steps in order, and how a re-run after a failure resumes."
+						},
+						{
+							"title": "Build Order and Caching",
+							"path": "docs/getting-started/building-from-source/build-order.md",
+							"description": "Why the steps run in this order, what the build caches and how to rebuild only part of the tree."
+						},
+						{
+							"title": "Upgrading Drupal Core",
+							"path": "docs/getting-started/building-from-source/upgrading-core.md",
+							"description": "Replace the Drupal tree for a new core version, then rebuild every artifact made from it."
+						}
+					]
+				},
+				{
+					"title": "Repository Layout",
+					"pages": [
+						{
+							"title": "Repository Layout",
+							"path": "docs/getting-started/repository-layout/index.md",
+							"description": "Every path in the repository, how it arrives on a clean clone and what breaks without it."
+						},
+						{
+							"title": "Tracked and Generated Paths",
+							"path": "docs/getting-started/repository-layout/paths.md",
+							"description": "Which paths the repository tracks, which it generates and what each top-level directory holds."
+						},
+						{
+							"title": "Scripts and Automation",
+							"path": "docs/getting-started/repository-layout/automation.md",
+							"description": "The scripts nothing calls, the tests behind the headline claims and the nightly jobs."
+						}
+					]
+				}
+			]
+		},
+		{
+			"title": "Operating",
+			"pages": [
+				{
+					"title": "Operating",
+					"path": "docs/operating/index.md",
+					"menu": "Run",
+					"description": "Pages for the person who runs a site: owner surfaces, recovery, git delivery, databases and interpreter updates."
+				},
+				{
+					"title": "Administration",
+					"path": "docs/operating/administration.md",
+					"description": "The surfaces an owner uses to operate a site, and how each is authorised."
+				},
+				{
+					"title": "Recovery",
+					"path": "docs/operating/recovery.md",
+					"description": "The four primitives that move a site backwards, and which failure each one answers."
+				},
+				{
+					"title": "Git Remotes",
+					"path": "docs/operating/git-remotes.md",
+					"description": "Connect git repositories to a site so that a push installs a module and the result returns as a commit status."
+				},
+				{
+					"title": "Replica Lanes",
+					"path": "docs/operating/replica-lanes.md",
+					"description": "Read replicas for a site, each a separate Durable Object filled from the primary."
+				}
+			],
+			"sections": [
+				{
+					"title": "External Databases",
+					"pages": [
+						{
+							"title": "External Databases and Hyperdrive",
+							"path": "docs/operating/external-database/index.md",
+							"description": "Why a site lives in its Durable Object by default, and how an external database attaches instead."
+						},
+						{
+							"title": "Why the Default Is Not External",
+							"path": "docs/operating/external-database/why-not-default.md",
+							"description": "The limit or measurement behind each reason the Durable Object stays the default store."
+						}
+					]
+				},
+				{
+					"title": "PHP Interpreter Updates",
+					"pages": [
+						{
+							"title": "PHP Interpreter Update Delivery",
+							"path": "docs/operating/php-update-delivery/index.md",
+							"description": "How an interpreter built by phasm reaches this repository and what is proved before anything consumes it."
+						},
+						{
+							"title": "Verification and Output",
+							"path": "docs/operating/php-update-delivery/verification.md",
+							"description": "What is proved about a new interpreter, what the pipeline produces and how to run it by hand."
+						},
+						{
+							"title": "Rollback and Staged Rollout",
+							"path": "docs/operating/php-update-delivery/rollback.md",
+							"description": "How a bad interpreter is rolled back and how a good one reaches sites in stages."
+						},
+						{
+							"title": "Trust, Cost and Scope",
+							"path": "docs/operating/php-update-delivery/trust-and-cost.md",
+							"description": "What the pipeline asks a site to trust, what it costs and which designs were rejected."
+						}
+					]
+				}
+			]
+		},
+		{
+			"title": "Architecture",
+			"pages": [
+				{
+					"title": "Architecture",
+					"path": "docs/architecture/index.md",
+					"menu": "Understand",
+					"description": "How a request is answered, what the build packs and how a site repairs itself."
+				},
+				{
+					"title": "The Site Database",
+					"path": "docs/architecture/database.md",
+					"description": "The tracked database every new site is created from, and how it is built."
+				},
+				{
+					"title": "Measurement Classes",
+					"path": "docs/architecture/measurement-classes.md",
+					"description": "The four classes a number belongs to, and what each class allows an instrument to do."
+				},
+				{
+					"title": "WordPress",
+					"path": "docs/architecture/wordpress.md",
+					"description": "What runs, how it differs from Drupal, the measurements read so far, plugin evidence and where Joomla stands."
+				},
+				{
+					"title": "Compatibility",
+					"path": "docs/architecture/compatibility.md",
+					"description": "The codebases run against the worker, generated from the compatibility record."
+				},
+				{
+					"title": "Modules",
+					"path": "docs/architecture/modules.md",
+					"description": "Contributed modules, module revisions and which modules have run against a real site."
+				},
+				{
+					"title": "Limitations",
+					"path": "docs/architecture/limitations.md",
+					"description": "What does not run, what runs differently and the platform limit behind each."
+				}
+			]
+		},
+		{
+			"title": "Configuration",
+			"pages": [
+				{
+					"title": "Configuration",
+					"path": "docs/configuration/index.md",
+					"menu": "Run",
+					"description": "Every variable and binding in the wrangler configs, with the working default for each."
+				},
+				{
+					"title": "Site Identity and Origin",
+					"path": "docs/configuration/site-identity.md",
+					"description": "The variable that selects the CMS, and the variables that name a site and fix its origin."
+				},
+				{
+					"title": "Runtime Settings",
+					"path": "docs/configuration/runtime.md",
+					"description": "Settings for cron, warming, the interpreter lifecycle, replica mode, boot and storage."
+				},
+				{
+					"title": "Replica Settings",
+					"path": "docs/configuration/replicas.md",
+					"description": "Settings for replica lanes: count, autoscaling, write forwarding and lag."
+				},
+				{
+					"title": "Plan and Extensibility Routes",
+					"path": "docs/configuration/plan-and-routes.md",
+					"description": "How the plan selects a limits profile, and which routes extend a site."
+				},
+				{
+					"title": "Diagnostics",
+					"path": "docs/configuration/diagnostics.md",
+					"description": "The variables that turn on the diagnostic surfaces and set how much PHP logs."
+				},
+				{
+					"title": "Migrated Project Settings",
+					"path": "docs/configuration/migrated-settings.md",
+					"description": "The five names that carry environment variables, config overrides, header rules and redirects from another host."
+				}
+			],
+			"sections": [
+				{
+					"title": "Serving and Caching",
+					"pages": [
+						{
+							"title": "Serving and Caching Settings",
+							"path": "docs/configuration/serving/index.md",
+							"description": "Settings for page caching, static assets, prefill, files and images, and the R2 page origin."
+						},
+						{
+							"title": "Page Cache Settings",
+							"path": "docs/configuration/serving/page-cache.md",
+							"description": "Settings for the KV page tier, stale serving, the in-memory cache bins and the compiled plan tier."
+						},
+						{
+							"title": "Static Asset Settings",
+							"path": "docs/configuration/serving/static-assets.md",
+							"description": "Cache lifetimes for static assets, the response headers a request carries and asset aggregation."
+						},
+						{
+							"title": "Files, Images and Prefill",
+							"path": "docs/configuration/serving/files-and-images.md",
+							"description": "How prefill warms a site, where files are served from and how image styles are delivered."
+						},
+						{
+							"title": "R2 Page Origin Caching",
+							"path": "docs/configuration/serving/r2-page-origin.md",
+							"description": "Mirror pages to R2 so that a public bucket on a custom domain serves them off the Worker."
+						},
+						{
+							"title": "Request Limits",
+							"path": "docs/configuration/serving/request-limits.md",
+							"description": "The guard on outbound requests and the cap on request bodies."
+						}
+					]
+				},
+				{
+					"title": "Operations",
+					"pages": [
+						{
+							"title": "Operations Settings",
+							"path": "docs/configuration/operations/index.md",
+							"description": "Settings for maintenance, owner access, audit, runtime overrides, database updates and pack reconciliation."
+						},
+						{
+							"title": "Runtime Overrides",
+							"path": "docs/configuration/operations/overrides.md",
+							"description": "The names that can be overridden from the config KV namespace as one JSON object."
+						},
+						{
+							"title": "Owner Access and Audit",
+							"path": "docs/configuration/operations/owner-access.md",
+							"description": "How an owner recovers a lost token and how owner actions are logged."
+						},
+						{
+							"title": "Updates and Reconciliation",
+							"path": "docs/configuration/operations/updates.md",
+							"description": "How database updates run, how a pack update reaches an existing site and the sweep over addressable state."
+						},
+						{
+							"title": "Discovery Document",
+							"path": "docs/configuration/operations/discovery.md",
+							"description": "The JSON document a site serves to tell the dashboard what it can do."
+						},
+						{
+							"title": "WordPress Packages",
+							"path": "docs/configuration/operations/wordpress-packages.md",
+							"description": "Why a WordPress site keeps file modification disabled, and how plugins and themes arrive instead."
+						}
+					]
+				},
+				{
+					"title": "Integrations",
+					"pages": [
+						{
+							"title": "Integration Settings",
+							"path": "docs/configuration/integrations/index.md",
+							"description": "Settings for outbound mail, TCP, Workers AI, OIDC login and Spool."
+						},
+						{
+							"title": "Outbound Mail",
+							"path": "docs/configuration/integrations/mail.md",
+							"description": "How Drupal's mail plugin hands a message to the Worker, which resolves a transport and sends it from the alarm."
+						},
+						{
+							"title": "Outbound TCP",
+							"path": "docs/configuration/integrations/tcp.md",
+							"description": "How Drupal declares a whole TCP exchange and reads the answer on a later invocation."
+						},
+						{
+							"title": "Workers AI",
+							"path": "docs/configuration/integrations/workers-ai.md",
+							"description": "Inference as a queued tier: a model call is declared, run between invocations and read later."
+						},
+						{
+							"title": "OIDC Login",
+							"path": "docs/configuration/integrations/oidc-login.md",
+							"description": "How the Worker completes a login, so that PHP receives a decided result."
+						},
+						{
+							"title": "Spool",
+							"path": "docs/configuration/integrations/spool.md",
+							"description": "The client-side replica that lets a visitor's browser keep a public page and show it again."
+						}
+					]
+				}
+			]
+		},
+		{
+			"title": "Security",
+			"pages": [
+				{
+					"title": "Security",
+					"path": "docs/security/index.md",
+					"menu": "Understand",
+					"description": "Unmodified Drupal 11 on PHP compiled to WebAssembly inside a Durable Object, and what that changes about exposure."
+				},
+				{
+					"title": "How Much Safer",
+					"path": "docs/security/how-much-safer.md",
+					"description": "A comparison of exposure against a conventional host, and the sources it rests on."
+				},
+				{
+					"title": "What It Does Not Remove",
+					"path": "docs/security/not-removed.md",
+					"description": "The risks the architecture leaves: application bugs, sandbox memory corruption, shared data, side channels and platform failure."
+				},
+				{
+					"title": "Security Incidents and Planned Work",
+					"path": "docs/security/incidents.md",
+					"description": "How named vulnerabilities and incident classes map onto the architecture, and the work still planned."
+				}
+			],
+			"sections": [
+				{
+					"title": "Controls",
+					"pages": [
+						{
+							"title": "Security Controls",
+							"path": "docs/security/controls/index.md",
+							"description": "What Drupflare provides today, control by control, from the host surface to the build."
+						},
+						{
+							"title": "Request Controls",
+							"path": "docs/security/controls/requests.md",
+							"description": "Controls on the request path, outbound requests, uploads, request parsing and response headers."
+						},
+						{
+							"title": "Credentials and Persistence",
+							"path": "docs/security/controls/credentials.md",
+							"description": "The changes that move authority out of SQL, so code that can run SQL cannot read every table."
+						},
+						{
+							"title": "Build and Patching Controls",
+							"path": "docs/security/controls/build-and-patching.md",
+							"description": "Controls on how the interpreter is built and how patches reach a site."
+						}
+					]
+				}
+			]
+		},
+		{
+			"title": "Impact",
+			"pages": [
+				{
+					"title": "Impact",
+					"path": "docs/impact/index.md",
+					"menu": "Understand",
+					"description": "What a site costs in electricity, carbon, water and money, and how far each figure can be trusted."
+				},
+				{
+					"title": "What This Does Not Claim",
+					"path": "docs/impact/limits.md",
+					"description": "The limits of the impact figures, each with the reason behind it."
+				},
+				{
+					"title": "Carbon",
+					"path": "docs/impact/carbon.md",
+					"description": "Carbon figures for Drupflare and the hosts it is compared with."
+				},
+				{
+					"title": "Water",
+					"path": "docs/impact/water.md",
+					"description": "Water figures for Drupflare and the hosts it is compared with."
+				},
+				{
+					"title": "Embodied Carbon",
+					"path": "docs/impact/embodied.md",
+					"description": "Embodied carbon of the hardware a site runs on."
+				},
+				{
+					"title": "Reproducing the Numbers",
+					"path": "docs/impact/reproducing.md",
+					"description": "The commands that regenerate the impact figures, so a reader can check a number against its instrument."
+				},
+				{
+					"title": "References",
+					"path": "docs/impact/references.md",
+					"description": "The numbered references the impact pages cite, with stable numbers."
+				}
+			],
+			"sections": [
+				{
+					"title": "Energy",
+					"pages": [
+						{
+							"title": "Energy",
+							"path": "docs/impact/energy/index.md",
+							"description": "How much electricity a site uses against the hosting it replaces, and where the saving comes from."
+						},
+						{
+							"title": "Energy Per Request",
+							"path": "docs/impact/energy/per-request.md",
+							"description": "Measured package and core energy per request on bare metal, with the method and sample sizes."
+						},
+						{
+							"title": "Energy Per View",
+							"path": "docs/impact/energy/views.md",
+							"description": "The energy of one page view, how often each host renders one and what a visitor's device spends."
+						},
+						{
+							"title": "Where the Figures Come From",
+							"path": "docs/impact/energy/inputs.md",
+							"description": "The three deployments behind the figures, and how observable each one is."
+						},
+						{
+							"title": "Operating States",
+							"path": "docs/impact/energy/operating-states.md",
+							"description": "The states a site operates in, and which part of the work accounts for the saving."
+						},
+						{
+							"title": "Production Baseline",
+							"path": "docs/impact/energy/production-baseline.md",
+							"description": "How oversupplied enterprise Drupal runs, and the idle draw of those nodes."
+						},
+						{
+							"title": "Fleet Energy",
+							"path": "docs/impact/energy/fleet.md",
+							"description": "The energy of many sites at once: a fleet against shared hosting, and the saving as the site count grows."
+						}
+					]
+				},
+				{
+					"title": "Economics",
+					"pages": [
+						{
+							"title": "Economics",
+							"path": "docs/impact/economics/index.md",
+							"description": "What a site costs to run against the hosting it replaces, at each traffic level."
+						},
+						{
+							"title": "The Shape of the Bills",
+							"path": "docs/impact/economics/bills.md",
+							"description": "How the two bills differ in shape more than in total."
+						},
+						{
+							"title": "Conventional Hosts",
+							"path": "docs/impact/economics/conventional-hosts.md",
+							"description": "What conventional hosts cost and need, and what running Drupflare showed."
+						},
+						{
+							"title": "Drupflare vs a Traditional VPS",
+							"path": "docs/impact/economics/vps-comparison.md",
+							"description": "Latency, throughput and cost against nginx with PHP-FPM on the same tree and database."
+						},
+						{
+							"title": "The Free Plan and Warming",
+							"path": "docs/impact/economics/free-plan-and-warming.md",
+							"description": "What a site costs on the free plan, what keeping it warm adds and what the price column does not buy."
+						}
+					]
+				},
+				{
+					"title": "Free vs Paid",
+					"pages": [
+						{
+							"title": "Free vs Paid",
+							"path": "docs/impact/economics/free-vs-paid/index.md",
+							"description": "What the free and paid Cloudflare plans allow a site, and which limit binds first."
+						},
+						{
+							"title": "The Off-Worker Arms",
+							"path": "docs/impact/economics/free-vs-paid/off-worker-arms.md",
+							"description": "The two arms that serve a view without running the Worker, and why they matter for the ceiling."
+						}
+					]
+				}
+			]
+		},
+		{
+			"title": "Audiences",
+			"pages": [
+				{
+					"title": "Audiences",
+					"path": "docs/audiences/index.md",
+					"menu": "Understand",
+					"description": "Pages for readers who start from a procurement or compliance question."
+				},
+				{
+					"title": "Federal Sites",
+					"path": "docs/audiences/government.md",
+					"description": "What OMB M-23-22 requires of a US federal public website, and what the project does and does not claim."
+				}
+			]
+		},
+		{
+			"title": "Reference",
+			"pages": [
+				{
+					"title": "Technical Report",
+					"path": "TECHNICAL_REPORT.md",
+					"menu": "Reference",
+					"description": "The engineering record: architecture, platform limits, costs and measurements."
+				},
+				{
+					"title": "API Reference",
+					"path": "api",
+					"menu": "Reference",
+					"description": "The TypeScript modules under src/, generated by TypeDoc."
+				},
+				{
+					"title": "PHP Reference",
+					"path": "php",
+					"menu": "Reference",
+					"description": "The PHP the interpreter runs, under src/site/php/, generated by phpDocumentor."
+				},
+				{
+					"title": "Releases",
+					"url": "https://github.com/drupflare/worker/releases",
+					"description": "Published versions of the worker, with their notes."
+				},
+				{
+					"title": "Issues",
+					"url": "https://github.com/drupflare/worker/issues",
+					"description": "Open and closed issues for the worker."
+				},
+				{
+					"title": "Security Policy",
+					"url": "https://github.com/drupflare/worker/blob/master/SECURITY.md",
+					"description": "The supported versions, and how to report a vulnerability privately."
+				},
+				{
+					"title": "Website",
+					"url": "https://drupflare.com",
+					"description": "The Drupflare project site."
+				}
+			]
+		},
+		{
+			"title": "On GitHub",
+			"pages": [
+				{
+					"title": "worker",
+					"url": "https://github.com/drupflare/worker",
+					"description": "This repository: the deployable worker, its build and these docs."
+				},
+				{
+					"title": "drupflare",
+					"url": "https://github.com/drupflare/drupflare",
+					"description": "The Cloudflare Workers compatibility layer plugin for the CMS."
+				},
+				{
+					"title": "rom",
+					"url": "https://github.com/drupflare/rom",
+					"description": "The database driver that stores a CMS in Durable Objects SQLite."
+				},
+				{
+					"title": "phasm",
+					"url": "https://github.com/drupflare/phasm",
+					"description": "The PHP WebAssembly interpreter for the workerd runtime."
+				},
+				{
+					"title": "anachron",
+					"url": "https://github.com/drupflare/anachron",
+					"description": "The backwards compatibility layer for older CMS versions."
+				},
+				{
+					"title": "stream-http",
+					"url": "https://github.com/drupflare/stream-http",
+					"description": "The HTTP stream wrapper for PHP."
+				},
+				{
+					"title": "spool",
+					"url": "https://github.com/drupflare/spool",
+					"description": "Client-side page rendering and execution framework."
+				},
+				{
+					"title": "drangler",
+					"url": "https://github.com/drupflare/drangler",
+					"description": "The command line tool for handling and maintaining Drupflare workers."
+				},
+				{
+					"title": "bastion",
+					"url": "https://github.com/drupflare/bastion",
+					"description": "Self-hostable Drupflare workers."
+				},
+				{
+					"title": "dashboard",
+					"url": "https://github.com/drupflare/dashboard",
+					"description": "The Drupflare control plane."
+				},
+				{
+					"title": "workforce",
+					"url": "https://github.com/drupflare/workforce",
+					"description": "Management and fleet library for Cloudflare Workers."
+				},
+				{
+					"title": "burrow",
+					"url": "https://github.com/drupflare/burrow",
+					"description": "Parallelism and arbitrary codegen on Cloudflare Workers."
+				},
+				{
+					"title": "cartridge",
+					"url": "https://github.com/drupflare/cartridge",
+					"description": "Universal runtime for language interpreters inside a Durable Object."
+				},
+				{
+					"title": "durabledb",
+					"url": "https://github.com/drupflare/durabledb",
+					"description": "SQLite for Durable Objects."
+				},
+				{
+					"title": "untarl",
+					"url": "https://github.com/drupflare/untarl",
+					"description": "Tar extraction library for Cloudflare Workers."
+				},
+				{
+					"title": "website",
+					"url": "https://github.com/drupflare/website",
+					"description": "Source of the static project site."
+				}
+			]
+		}
+	]
+}

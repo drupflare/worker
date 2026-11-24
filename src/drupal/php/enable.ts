@@ -1,4 +1,4 @@
-import { ENABLE_MODULE_PHP, ENABLE_VERIFY_PHP } from '../site/generated/assets';
+import { ENABLE_MODULE_PHP, ENABLE_VERIFY_PHP } from '../../site/generated/assets';
 
 /**
  * The PHP that enables a Drupal module through Drupal's own installer.

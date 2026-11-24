@@ -6,7 +6,7 @@
  * @module
  */
 
-import { bytesToBase64 } from '../db/file-store';
+import { bytesToBase64 } from '../../db/file-store';
 import {
 	ABANDON_TRANSACTION_PHP,
 	BOOT_KERNEL_PHP,
@@ -51,10 +51,10 @@ import {
 	TRANSLATE_ENGLISH_PHP,
 	VERIFY_MODULES_PHP,
 	WRITE_WORKLOAD_PHP
-} from '../site/generated/assets';
-import { FIBER_SHIM } from '../site/shims/fiber-shim';
-import { HOST_HELPERS } from '../site/shims/host-helpers';
-import { phpRender, phpScript, phpWhen } from '../util/php';
+} from '../../site/generated/assets';
+import { FIBER_SHIM } from '../../site/shims/fiber-shim';
+import { HOST_HELPERS } from '../../site/shims/host-helpers';
+import { phpDouble, phpRender, phpScript, phpWhen } from '../../util/php';
 
 /**
  * Asks the runtime questions a PDO stand-in cannot answer, one statement each.
@@ -188,7 +188,7 @@ export function opsRun(
 		budget?: unknown;
 	} = {}
 ): string {
-	const encoded = JSON.stringify(
+	const encoded = phpDouble(
 		JSON.stringify({
 			name: String(name),
 			args: args.map((a) => String(a)),
@@ -326,9 +326,9 @@ export function carriesUpload(contentType: string, bytes: Uint8Array): boolean {
 /** the PHP expression that yields a request body, byte for byte */
 export function phpBodyExpression(request: Pick<RenderRequest, 'body' | 'bodyBase64'>): string {
 	if (request.bodyBase64 !== undefined) {
-		return `base64_decode(json_decode(${JSON.stringify(JSON.stringify(request.bodyBase64))}))`;
+		return `base64_decode(json_decode(${phpDouble(JSON.stringify(request.bodyBase64))}))`;
 	}
-	return `json_decode(${JSON.stringify(JSON.stringify(String(request.body ?? '')))})`;
+	return `json_decode(${phpDouble(JSON.stringify(String(request.body ?? '')))})`;
 }
 
 /**
@@ -381,21 +381,21 @@ export function renderPage(
 		accept === '' &&
 		Object.keys(headers).length === 0
 			? ''
-			: `, json_decode(${JSON.stringify(JSON.stringify(method))})` +
+			: `, json_decode(${phpDouble(JSON.stringify(method))})` +
 				`, ${phpBodyExpression(request)}` +
-				`, json_decode(${JSON.stringify(JSON.stringify(String(request.contentType ?? '')))})` +
-				`, json_decode(${JSON.stringify(JSON.stringify(String(request.cookie ?? '')))})` +
-				`, json_decode(${JSON.stringify(JSON.stringify(origin))})` +
-				`, json_decode(${JSON.stringify(JSON.stringify(clientIp))})` +
-				`, json_decode(${JSON.stringify(JSON.stringify(accept))})` +
-				`, json_decode(${JSON.stringify(JSON.stringify(headers))}, true)`;
+				`, json_decode(${phpDouble(JSON.stringify(String(request.contentType ?? '')))})` +
+				`, json_decode(${phpDouble(JSON.stringify(String(request.cookie ?? '')))})` +
+				`, json_decode(${phpDouble(JSON.stringify(origin))})` +
+				`, json_decode(${phpDouble(JSON.stringify(clientIp))})` +
+				`, json_decode(${phpDouble(JSON.stringify(accept))})` +
+				`, json_decode(${phpDouble(JSON.stringify(headers))}, true)`;
 
 	return phpRender(RENDER_PAGE_PHP, {
 		FIBER_SHIM,
 		HOST_HELPERS,
 		PW_SERVE_INLINE,
 		PATH: JSON.stringify(safePath),
-		ORIGIN: JSON.stringify(JSON.stringify(origin)),
+		ORIGIN: phpDouble(JSON.stringify(origin)),
 		BINS: JSON.stringify(safeBins),
 		SERVE_ARGS: `${safeDestruct}${requestArgs}`
 	});
@@ -491,7 +491,7 @@ export function claimWarmRun(step = 'all', plugins: string[] = []): string {
 		FIBER_SHIM,
 		HOST_HELPERS,
 		CLAIM_BOOT,
-		WARM_PAYLOAD: JSON.stringify(JSON.stringify({ step, plugins }))
+		WARM_PAYLOAD: phpDouble(JSON.stringify({ step, plugins }))
 	});
 }
 
@@ -683,7 +683,7 @@ export function abandonTransaction(mode: 'scope' | 'global' = 'scope'): string {
 	return phpRender(ABANDON_TRANSACTION_PHP, {
 		FIBER_SHIM,
 		HOST_HELPERS,
-		MODE: JSON.stringify(JSON.stringify(safeMode))
+		MODE: phpDouble(JSON.stringify(safeMode))
 	});
 }
 
@@ -770,7 +770,7 @@ export interface WriteWorkloadOptions {
  * One entity write and nothing else, so the host's tally prices the operation.
  *
  * It uses the entity API, not a form (a form also writes `sessions`, the form cache and flood
- * control; `write-amplification.spec.ts` prices that wrapper separately). `SCHEMA_REPAIR` runs at
+ * control; `write/amplification.spec.ts` prices that wrapper separately). `SCHEMA_REPAIR` runs at
  * most once per interpreter so the first operation is not charged for DDL. The acting user is
  * switched to uid 1 and restored in `finally`; an unrestored switch would cache admin HTML as
  * anonymous.
@@ -820,8 +820,8 @@ export function harvestShell(path = '/', request: ShellRequest = {}): string {
 		HOST_HELPERS,
 		PW_SERVE_INLINE,
 		PATH: JSON.stringify(safePath),
-		COOKIE: JSON.stringify(JSON.stringify(cookie)),
-		ORIGIN: JSON.stringify(JSON.stringify(origin))
+		COOKIE: phpDouble(JSON.stringify(cookie)),
+		ORIGIN: phpDouble(JSON.stringify(origin))
 	});
 }
 
@@ -843,15 +843,15 @@ export function renderFragments(
 	const safePath = JSON.stringify(String(path));
 	const cookie = String(request.cookie ?? '');
 	const origin = String(request.origin ?? '');
-	const safeRecipes = JSON.stringify(JSON.stringify(recipes ?? {}));
+	const safeRecipes = phpDouble(JSON.stringify(recipes ?? {}));
 
 	return phpRender(RENDER_FRAGMENTS_PHP, {
 		FIBER_SHIM,
 		HOST_HELPERS,
 		PW_SERVE_INLINE,
 		PATH: JSON.stringify(safePath),
-		COOKIE: JSON.stringify(JSON.stringify(cookie)),
-		ORIGIN: JSON.stringify(JSON.stringify(origin)),
+		COOKIE: phpDouble(JSON.stringify(cookie)),
+		ORIGIN: phpDouble(JSON.stringify(origin)),
 		RECIPES: safeRecipes
 	});
 }

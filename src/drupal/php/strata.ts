@@ -1,7 +1,7 @@
-import type { StrataStoreRequest } from '../ops/strata-config';
-import { STRATA_CONFIG_PHP, STRATA_STORE_PHP } from '../site/generated/assets';
-import { phpRender } from '../util/php';
-import { FIBER_SHIM, kernelBoot } from './cron-php';
+import type { StrataStoreRequest } from '../../ops/strata-config';
+import { STRATA_CONFIG_PHP, STRATA_STORE_PHP } from '../../site/generated/assets';
+import { phpDouble, phpRender } from '../../util/php';
+import { FIBER_SHIM, kernelBoot } from './cron';
 
 /**
  * Sets `capture.statements` on `strata.settings` through `ConfigFactory`, so `cache_config` is
@@ -12,7 +12,7 @@ import { FIBER_SHIM, kernelBoot } from './cron-php';
 export function strataConfigPhp(captureStatements: boolean, origin = ''): string {
 	return phpRender(STRATA_CONFIG_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? '')))),
 		VALUE: captureStatements ? 'true' : 'false'
 	});
 }
@@ -27,7 +27,7 @@ export function strataConfigPhp(captureStatements: boolean, origin = ''): string
 export function strataStorePhp(want: StrataStoreRequest, origin = ''): string {
 	return phpRender(STRATA_STORE_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? '')))),
 		PAYLOAD: btoa(JSON.stringify(want))
 	});
 }

@@ -3,9 +3,9 @@ import {
 	EXTENSIONS_LIST_PHP,
 	THEME_DEFAULT_PHP,
 	UNINSTALL_MODULE_PHP
-} from '../site/generated/assets';
-import { phpRender } from '../util/php';
-import { FIBER_SHIM, kernelBoot } from './cron-php';
+} from '../../site/generated/assets';
+import { phpDouble, phpRender } from '../../util/php';
+import { FIBER_SHIM, kernelBoot } from './cron';
 
 /** a module machine name, which is also the only shape the uninstall script accepts */
 export const MODULE_NAME = /^[a-z][a-z0-9_]*$/;
@@ -21,7 +21,7 @@ export function uninstallModulePhp(name: string, dry: boolean, origin = ''): str
 	if (!MODULE_NAME.test(name)) throw new Error('not a module name');
 	return phpRender(UNINSTALL_MODULE_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? '')))),
 		MODULE: name,
 		DRY: dry ? 'true' : 'false'
 	});
@@ -36,7 +36,7 @@ export function uninstallModulePhp(name: string, dry: boolean, origin = ''): str
 export function extensionsListPhp(origin = ''): string {
 	return phpRender(EXTENSIONS_LIST_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? ''))))
 	});
 }
 
@@ -55,7 +55,7 @@ export type ThemeDefaultRequest = { project: string; target: ThemeTarget };
 export function themeDefaultPhp(want: ThemeDefaultRequest | undefined, origin = ''): string {
 	return phpRender(THEME_DEFAULT_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? '')))),
 		PAYLOAD: btoa(JSON.stringify(want ?? null))
 	});
 }
@@ -70,7 +70,7 @@ export function themeDefaultPhp(want: ThemeDefaultRequest | undefined, origin = 
 export function adminPasswordPhp(password: string, origin = ''): string {
 	return phpRender(ADMIN_PASSWORD_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? '')))),
 		PAYLOAD: btoa(password)
 	});
 }

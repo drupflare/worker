@@ -6,16 +6,16 @@ import {
 	RECONCILE_ROUTER_PHP,
 	RECONCILE_TOOLKIT_PHP,
 	RECONCILE_UNINSTALL_PHP
-} from '../site/generated/assets';
-import { phpRender } from '../util/php';
-import { FIBER_SHIM, kernelBoot } from './cron-php';
+} from '../../site/generated/assets';
+import { phpDouble, phpRender } from '../../util/php';
+import { FIBER_SHIM, kernelBoot } from './cron';
 
 /**
  * The reconciliation steps that have to go through Drupal's own writers.
  *
  * `ConfigFactory::save()` and `State::set()` clear every cached copy (`cache_config`,
  * `cache_bootstrap`) and invalidate `config:<name>`; a raw SQL edit leaves a cached copy that
- * shadows it. The boot preamble is `cron-php.ts`'s, so a fragment boots like the render path.
+ * shadows it. The boot preamble is `php/cron.ts`'s, so a fragment boots like the render path.
  *
  * @param origin a `scheme://host[:port]`, so URLs Drupal builds during the write are this site's
  */
@@ -23,7 +23,7 @@ export function reconcileConfigPhp(maxAge: number, origin = ''): string {
 	const age = Math.max(0, Math.floor(maxAge));
 	return phpRender(RECONCILE_CONFIG_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? '')))),
 		AGE: String(age)
 	});
 }
@@ -33,7 +33,7 @@ export function reconcileClockPhp(claimedAtSeconds: number, origin = ''): string
 	const at = Math.max(0, Math.floor(claimedAtSeconds));
 	return phpRender(RECONCILE_CLOCK_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? '')))),
 		AT: String(at)
 	});
 }
@@ -46,8 +46,8 @@ export function reconcileClockPhp(claimedAtSeconds: number, origin = ''): string
 export function reconcileOwnerPhp(renamed: Record<string, string>, origin = ''): string {
 	return phpRender(RECONCILE_OWNER_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
-		RENAMED: JSON.stringify(JSON.stringify(renamed))
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? '')))),
+		RENAMED: phpDouble(JSON.stringify(renamed))
 	});
 }
 
@@ -60,7 +60,7 @@ export function reconcileOwnerPhp(renamed: Record<string, string>, origin = ''):
 export function reconcileDiscoveryPhp(origin = ''): string {
 	return phpRender(RECONCILE_DISCOVERY_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? ''))))
 	});
 }
 
@@ -75,7 +75,7 @@ export function reconcileDiscoveryPhp(origin = ''): string {
 export function reconcileRouterPhp(origin = ''): string {
 	return phpRender(RECONCILE_ROUTER_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? ''))))
 	});
 }
 
@@ -88,7 +88,7 @@ export function reconcileRouterPhp(origin = ''): string {
 export function reconcileToolkitPhp(origin = ''): string {
 	return phpRender(RECONCILE_TOOLKIT_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? ''))))
 	});
 }
 
@@ -102,7 +102,7 @@ export function reconcileToolkitPhp(origin = ''): string {
 export function reconcileUninstallPhp(modules: readonly string[], origin = ''): string {
 	return phpRender(RECONCILE_UNINSTALL_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
-		MODULES: JSON.stringify(JSON.stringify(modules))
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? '')))),
+		MODULES: phpDouble(JSON.stringify(modules))
 	});
 }

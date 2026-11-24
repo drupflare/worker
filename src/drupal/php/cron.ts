@@ -16,15 +16,15 @@ import {
 	RUN_CRON_QUEUE_PHP,
 	RUN_FETCH_REOPEN_PHP,
 	RUN_HEALTH_SELF_TEST_PHP
-} from '../site/generated/assets';
-import { FIBER_SHIM } from '../site/shims/fiber-shim';
-import { phpRender, phpWhen } from '../util/php';
-import { renderTemplate } from '../util/template';
+} from '../../site/generated/assets';
+import { FIBER_SHIM } from '../../site/shims/fiber-shim';
+import { phpDouble, phpRender, phpWhen } from '../../util/php';
+import { renderTemplate } from '../../util/template';
 
 export { FIBER_SHIM };
 
 /**
- * The `$_SERVER` block and the memoized kernel boot, matching the preamble in `site-php.ts`.
+ * The `$_SERVER` block and the memoized kernel boot, matching the preamble in `php/site.ts`.
  *
  * The origin matters: cron sends mail, and `user_pass_reset_url()` builds an absolute link from
  * the request, so a `localhost` boot mails links to the recipient's own machine.
@@ -50,7 +50,7 @@ export function cronHookList(origin = ''): string {
 	return phpRender(CRON_HOOK_LIST_PHP, {
 		FIBER_SHIM,
 		LISTENER_SHAPE,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? '')))),
 		COLLECT_CRON_LISTENERS
 	});
 }
@@ -72,8 +72,8 @@ export function runCronHook(module: string, origin = ''): string {
 	}
 	return phpRender(RUN_CRON_HOOK_PHP, {
 		FIBER_SHIM,
-		MODULE: JSON.stringify(JSON.stringify(name)),
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? '')))),
+		MODULE: phpDouble(JSON.stringify(name)),
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? '')))),
 		COLLECT_CRON_LISTENERS
 	});
 }
@@ -100,9 +100,9 @@ export function runCronQueue(name: string, maxItems = 5, origin = ''): string {
 			: 5;
 	return phpRender(RUN_CRON_QUEUE_PHP, {
 		FIBER_SHIM,
-		NAME: JSON.stringify(JSON.stringify(queue)),
+		NAME: phpDouble(JSON.stringify(queue)),
 		MAX: String(max),
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? ''))))
 	});
 }
 
@@ -116,7 +116,7 @@ export function runCronQueue(name: string, maxItems = 5, origin = ''): string {
 export function runAdvisoryScan(origin = ''): string {
 	return phpRender(RUN_ADVISORY_SCAN_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? ''))))
 	});
 }
 
@@ -129,7 +129,7 @@ export function runAdvisoryScan(origin = ''): string {
 export function runFetchReopen(origin = ''): string {
 	return phpRender(RUN_FETCH_REOPEN_PHP, {
 		FIBER_SHIM,
-		KERNEL_BOOT: kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))
+		KERNEL_BOOT: kernelBoot(phpDouble(JSON.stringify(String(origin ?? ''))))
 	});
 }
 
@@ -144,6 +144,6 @@ export function runFetchReopen(origin = ''): string {
 export function runHealthSelfTest(observation: unknown): string {
 	return phpRender(RUN_HEALTH_SELF_TEST_PHP, {
 		FIBER_SHIM,
-		OBSERVATION: JSON.stringify(JSON.stringify(observation ?? {}))
+		OBSERVATION: phpDouble(JSON.stringify(observation ?? {}))
 	});
 }

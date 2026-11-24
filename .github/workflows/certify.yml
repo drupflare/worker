@@ -207,7 +207,7 @@ jobs:
       - name: Fold the Records
         run: bun scripts/e2e/certify.ts --aggregate --records=certified-records --history=history.json --status=status.json --window=${{ needs.plan-certify.outputs.window }}
       - name: Attest the Status
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: status.json
       - name: Publish to the CDN

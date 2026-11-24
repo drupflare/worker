@@ -3,7 +3,10 @@
  * bun scripts/backup-cdn.ts                 # drift between disk and cdn-manifest.json
  * bun scripts/backup-cdn.ts --write         # rewrite the manifest from disk
  * bun scripts/backup-cdn.ts --upload        # put what the bucket lacks or disagrees on
- * bun scripts/backup-cdn.ts --verify        # HEAD every key over HTTPS; no credentials
+ * bun scripts/backup-cdn.ts --verify        # HEAD every live key and mirror over HTTPS; no credentials
+ * bun scripts/backup-cdn.ts --verify --archived   # also HEAD every superseded snapshot
+ * bun scripts/backup-cdn.ts --prune         # list snapshots older than the newest five per lineage
+ * bun scripts/backup-cdn.ts --prune --delete   # remove them from the bucket and the manifest
  * ```
  */
 
@@ -56,6 +59,8 @@ export type CdnEntry = {
 	mirrors?: string;
 	/** the repository is the source of truth for this path; a restore verifies it and never overwrites it */
 	tracked?: boolean;
+	/** an archived object that `--prune` never lists, because it is the only copy or a named rollback point */
+	keep?: boolean;
 };
 
 /** an object that exists only in the bucket: a superseded lineage, or a mirror under another name */
@@ -113,6 +118,45 @@ export function digests(path: string): { sha256: string; md5: string } {
 		sha256: createHash('sha256').update(body).digest('hex'),
 		md5: createHash('md5').update(body).digest('hex')
 	};
+}
+
+/** snapshots kept per lineage when pruning */
+export const KEEP_NEWEST = 5;
+
+/** `snapshots/site.sqlite.064105ca7223` belongs to the lineage `snapshots/site.sqlite` */
+function lineageOf(key: string): string {
+	return key.replace(/\.[0-9a-f]{12}$/, '');
+}
+
+/**
+ * the snapshots a prune would delete: all but the newest `newest` of each lineage in manifest order,
+ * which is upload order. Anything outside `snapshots/`, a mirror and a `keep` entry is never listed.
+ */
+export function pruneCandidates(
+	archived: readonly ArchivedEntry[],
+	newest = KEEP_NEWEST
+): ArchivedEntry[] {
+	const lineages = new Map<string, ArchivedEntry[]>();
+	for (const entry of archived) {
+		if (!entry.key.startsWith('snapshots/') || entry.mirrors !== undefined) continue;
+		const list = lineages.get(lineageOf(entry.key)) ?? [];
+		list.push(entry);
+		lineages.set(lineageOf(entry.key), list);
+	}
+	const out: ArchivedEntry[] = [];
+	for (const list of lineages.values()) {
+		const older = list.slice(0, Math.max(0, list.length - newest));
+		out.push(...older.filter((e) => e.keep !== true));
+	}
+	return out;
+}
+
+/** deletes one object from the bucket; the only remote delete path in this file */
+function deleteRemote(root: string, key: string): void {
+	execFileSync('bunx', ['wrangler', 'r2', 'object', 'delete', `${BUCKET}/${key}`, '--remote'], {
+		cwd: root,
+		stdio: 'inherit'
+	});
 }
 
 /** moves a live mirrored entry's digests to the bytes its local file holds now; `snapshots/` never moves */
@@ -352,6 +396,31 @@ if (import.meta.main) {
 		process.exit(0);
 	}
 
+	if (has('prune')) {
+		if (!committed) {
+			console.error(`no ${MANIFEST_PATH}`);
+			process.exit(1);
+		}
+		const doomed = pruneCandidates(committed.archived);
+		const total = doomed.reduce((n, e) => n + e.bytes, 0);
+		for (const e of doomed)
+			console.log(`${has('delete') ? 'delete' : 'would delete'} ${e.key} ${e.bytes}`);
+		console.log(`${doomed.length} snapshot(s), ${total} bytes`);
+		if (!has('delete')) {
+			console.log('dry run; add --delete to remove them from the bucket and the manifest');
+			process.exit(0);
+		}
+		const gone = new Set<string>();
+		for (const e of doomed) {
+			deleteRemote(root, e.key);
+			gone.add(e.key);
+		}
+		const next = { ...committed, archived: committed.archived.filter((e) => !gone.has(e.key)) };
+		writeFileSync(join(root, MANIFEST_PATH), JSON.stringify(next, null, '\t') + '\n');
+		console.log(`removed ${gone.size} from ${MANIFEST_PATH}`);
+		process.exit(0);
+	}
+
 	if (has('verify') || has('upload')) {
 		const manifest = has('upload') ? current() : (committed ?? current());
 		if (!committed && has('verify')) {
@@ -368,7 +437,12 @@ if (import.meta.main) {
 		);
 		const checked = has('upload')
 			? [...manifest.keys, ...mirroredArchives]
-			: [...manifest.keys, ...(manifest.archived ?? ARCHIVED)];
+			: [
+					...manifest.keys,
+					...(manifest.archived ?? ARCHIVED).filter(
+						(e) => has('archived') || e.mirrors !== undefined
+					)
+				];
 
 		for (const entry of checked) {
 			// scored against the bytes about to go up, not the bytes the manifest last recorded.

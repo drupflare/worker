@@ -17,6 +17,7 @@ import {
 	ORIGIN,
 	ORIGIN_FALLBACK,
 	ORIGINS,
+	pruneCandidates,
 	refreshMirrors,
 	verdictFor,
 	withArchives,
@@ -355,6 +356,35 @@ describe('a tracked artifact may only be published from a commit', () => {
 		writeFileSync(join(repo, 'other.bin'), 'x');
 		git('-c', 'commit.gpgsign=false', 'commit', '-qam', 'commit the artifact');
 		expect(committedBytes(repo, 'artifact.bin')).toBe(true);
+	});
+
+	it('lists only snapshots older than the newest five of a lineage and never a kept one', () => {
+		const snap = (name: string, extra: object = {}) => ({
+			...entry(`snapshots/site.sqlite.${name.repeat(12).slice(0, 12)}`),
+			note: 'x',
+			...extra
+		});
+		const list = ['0', '1', '2', '3', '4', '5', '6', '7'].map((n) => snap(n));
+		list[0] = snap('0', { keep: true });
+		const doomed = pruneCandidates(list).map((e) => e.key);
+		expect(doomed).toEqual([list[1]!.key, list[2]!.key]);
+		expect(pruneCandidates(list.slice(0, 5))).toEqual([]);
+	});
+
+	it('never lists a mirror, a pinned lineage outside snapshots or a different lineage', () => {
+		const other = { ...entry('snapshots/php8.5-worker.mjs.abcdefabcdef'), note: 'x' };
+		const pinned = { ...entry('vendor/static-control85/php8.5-worker.mjs'), note: 'x' };
+		const mirrored = {
+			...entry('snapshots/site.sqlite.111111111111'),
+			note: 'x',
+			mirrors: 'assets/drupal/site.sqlite'
+		};
+		const six = Array.from({ length: 6 }, (_, i) => ({
+			...entry(`snapshots/site.sqlite.${String(i).repeat(12)}`),
+			note: 'x'
+		}));
+		const doomed = pruneCandidates([other, pinned, mirrored, ...six]).map((e) => e.key);
+		expect(doomed).toEqual([six[0]!.key]);
 	});
 
 	it('does not refuse where there is no git at all, since that is not evidence of an edit', () => {

@@ -211,7 +211,7 @@ honoured by a local `wrangler dev` only.
 
 **A SCHEDULED ALARM FIRES BY ITSELF IN THE WORKERS POOL, so an assertion taken after
 `runDurableObjectAlarm()` races whatever that firing re-armed.** Verified: a `+300 ms` alarm raises
-`alarmFirings` with no `runDurableObjectAlarm` call at all. `heap-image-producer.spec.ts` asserted a
+`alarmFirings` with no `runDurableObjectAlarm` call at all. `heap/image-producer.spec.ts` asserted a
 queue was still queued after the imaging firing, which re-arms at +1,000 ms; the second firing images
 nothing and therefore fills, and the spec passed alone and failed in a full run. Cancel the armed
 alarm (`ctx.storage.deleteAlarm()`) before reading, and take every reading in ONE `inObject` round
@@ -255,9 +255,9 @@ Before recording that a pool does not scale, price the rig.
 possible. No `sessions`, no `users_field_data.access`, no `flood`. Core throttles the access write by
 `session_write_interval` on `KernelEvents::TERMINATE`; here it never fires at all because this SAPI
 does not dispatch terminate. Nothing depends on that by design, so
-`tests/integration/replica-invariant.spec.ts` is its only guard.
+`tests/integration/replica/invariant.spec.ts` is its only guard.
 
-**AND A LOW-RATE INTERMITTENT IS A PROBABILITY BEFORE IT IS LOAD.** `replica-invariant.spec.ts`
+**AND A LOW-RATE INTERMITTENT IS A PROBABILITY BEFORE IT IS LOAD.** `replica/invariant.spec.ts`
 failed twice across sessions with `{ table: 'sessions', statements: 1, rows: 0 }`, passed alone, and
 was filed as suite contention. It is `session.gc_probability = 1 / gc_divisor = 100` from
 `core/core.services.yml`: PHP sweeps `sessions` on ~1% of `session_start()` calls, and a full gate
@@ -300,7 +300,7 @@ wrong on the same page:
   Drupal mints lazily and keys CSRF tokens on. Two replicas each minting their own issue tokens the
   others reject, so it must arrive by replication and may never be generated on a replica.
 
-`src/ops/replica.ts` is therefore two allow-lists and no deny-list, and it walks the capabilities
+`src/ops/replica/policy.ts` is therefore two allow-lists and no deny-list, and it walks the capabilities
 INSTALLED on the module rather than a list -- `cfwOidcClaims` and `cfwTcp` had both drifted out of
 `CROSSING_NAMES` and both mutate.
 
@@ -321,7 +321,7 @@ ends a batch; it does not undo the records ahead of it. Both now run on that bra
 
 **The local gate could not produce it and CI could.** An overflowed record is sealed when a change is
 too large to log statement by statement, so the shape depends on what a save touches, and the pack
-lane's from-source pack is a superset of the shipped one. `replica-catchup.spec.ts` constructs the
+lane's from-source pack is a superset of the shipped one. `replica/catchup.spec.ts` constructs the
 batch deterministically instead of waiting for one: seal a real save, then insert an `overflowed = 1`
 row at `generation + 1` straight into the primary's `cfw_repl_log`.
 

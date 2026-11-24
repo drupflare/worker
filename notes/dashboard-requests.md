@@ -82,7 +82,7 @@ Files: `src/do/routes/file.ts`, `registerOffloaded` in `src/db/file-store.ts`, `
 `src/ops/body-limit.ts`, route tables. Docs: `docs/configuration/operations/index.md`,
 `docs/configuration/serving/request-limits.md`. Spec: `tests/integration/offloaded-file-reads.spec.ts`
 (describe "PUT /file": stored at the site prefix with no chunks and read back, digest mismatch and
-size mismatch leave no row, refusals), `tests/integration/serve-edge.spec.ts` (the ceiling and its
+size mismatch leave no row, refusals), `tests/integration/serve/edge.spec.ts` (the ceiling and its
 control), the route-table and audit specs.
 
 Not verified: a real R2 bucket. The spec uses an in-memory bucket that checks the digest as R2 does;
@@ -126,7 +126,7 @@ New owner route paths for the dashboard's `OWNER_ROUTE_PATHS`: `/extensions` and
 ## Row 2: Managed Deploy Archive
 
 Withdrawn by the dashboard. It already consumes `drupflare-managed-bundle-<version>.tar.gz`, the
-managed bundle built by `scripts/build-managed-bundle.ts`, so a second release asset was not needed.
+managed bundle built by `scripts/build/managed-bundle.ts`, so a second release asset was not needed.
 The archive producer, its spec and its release step were removed; the managed bundle is unchanged.
 
 ## Row 4: Discovery Document
@@ -143,7 +143,7 @@ method and class the operations page states; routes with unstated methods (`/arm
 
 Files: `src/ops/discovery.ts`, `src/site/deployment.ts` (`discoveryRoute`, `settingsView`),
 `src/site/surfaces.ts`, `src/site/routes.ts`. Specs: `tests/unit/ops/discovery.spec.ts` (the contract's
-rules written out by hand; the dashboard ships no discovery vectors), `tests/integration/owner-gate.spec.ts`
+rules written out by hand; the dashboard ships no discovery vectors), `tests/integration/owner/gate.spec.ts`
 ("the discovery document": wrong token, tag equals `/settings` tag, stored override, no secret from
 the environment, 405, WordPress 404), the route-table specs.
 
@@ -162,7 +162,7 @@ build script defaults `accepts` to `version`, which is what is set). A spec pins
 
 Release workflow: the payload job writes `drupflare-release-manifest-<version>.json` (kind `worker`,
 every `SHA256SUMS` file with its release URL and digest) and it rides on the release. A new `announce`
-job, after `publish`, on `master` only, runs `scripts/release-event.ts post`: builds the
+job, after `publish`, on `master` only, runs `scripts/release/event.ts post`: builds the
 `release.published` event, confirms the manifest URL serves the same bytes (up to 20 tries, 15 s),
 then POSTs with `x-drupflare-signature: sha256=<hex>` (HMAC-SHA256 of the raw body); body over 64 KiB
 refused. Repository secret `DASHBOARD_RELEASE_SECRET` and repository variable `DASHBOARD_RELEASE_URL`
@@ -247,7 +247,7 @@ including the plan. A write with no `If-Match` is accepted as before. A written 
 tag in its `ETag` header.
 
 Files: `src/site/deployment.ts`. Docs: `docs/configuration/operations/overrides.md`. Spec:
-`tests/integration/owner-gate.spec.ts` (23 passed): two writers on one tag, the second gets 412 and
+`tests/integration/owner/gate.spec.ts` (23 passed): two writers on one tag, the second gets 412 and
 the stored value is the first writer's; the answered tag matches the next read; `*`, weak and no
 header; a document written straight to KV changes the tag. Control not run against the old route;
 without the check the second writer would read 200.
@@ -279,7 +279,7 @@ route. Checked against the live npm registry tarball for `dropzone` 5.9.3: one l
 folder, 20 entries. Not checked: asset-packagist's own `dist.url` shape (its metadata paths answered
 404 to the probes tried), so that `npm-asset/*` entries point at the npm registry is inferred.
 
-Files: `src/do/install-lock.ts`, `src/ops/package-install.ts` (`mountFor`). Spec:
+Files: `src/do/install-lock.ts`, `src/ops/composer/package-install.ts` (`mountFor`). Spec:
 `tests/integration/install-lock.spec.ts` ("installs a package that ships a tar into libraries", and
 a digest mismatch on a tar).
 
@@ -326,7 +326,7 @@ user 1 through the entity API, answers `{ok, uid, name, blocked, password, appli
 `admin_password_failed`, 501 `drupal_only` on WordPress. Audited by route name only. The password
 is never accepted from the caller. It does not unblock the account.
 
-Files: `src/site/php/admin/password.php`, `src/drupal/extension-php.ts`, `src/do/routes/lifecycle.ts`
+Files: `src/site/php/admin/password.php`, `src/drupal/php/extension.ts`, `src/do/routes/lifecycle.ts`
 (`adminpassword`). Docs: `docs/configuration/operations/index.md`. Spec:
 `tests/integration/extension-routes.spec.ts` "resetting the admin password": 405 leaves the stored
 hash unchanged, the stored hash changes on each reset and the two passwords differ. Not verified: that
@@ -340,9 +340,9 @@ Status: built; the route name is a question. Commit or snapshot: .
 `moduleTable()` rows carry `kind: 'module' | 'theme'`, from `kind: theme` in `config/modules.yml`
 (generated into `GENERATED_THEMES`). Two entries are themes: `drupal/gin` and `drupal/uswds_base`;
 `gin_toolbar` stays a module. The dashboard sync reads `moduleTable()` directly, so it can read
-`row.kind` where it now writes `unknown`. Files: `config/modules.yml`, `scripts/gen-config.ts`,
-`src/ops/generated/modules.ts` (generated), `src/ops/module-table.ts`. Spec:
-`tests/node/module-table.spec.ts` (17 passed). Docs: `docs/architecture/modules.md`.
+`row.kind` where it now writes `unknown`. Files: `config/modules.yml`, `scripts/gen/config.ts`,
+`src/ops/generated/modules.ts` (generated), `src/ops/module/table.ts`. Spec:
+`tests/node/module/table.spec.ts` (17 passed). Docs: `docs/architecture/modules.md`.
 
 Status: built. Commit or snapshot: .
 
@@ -355,7 +355,7 @@ still wins. A value that does not parse is refused on write (`invalid` in the re
 read. Days are `daily`, one day or a range that may wrap; the window does not cross midnight; the zone
 is an IANA name, UTC when absent, and follows daylight saving.
 
-Files: `src/ops/warm-window.ts`, `src/ops/cron.ts` (`warmForced`), `src/ops/plan.ts`,
+Files: `src/ops/warm/window.ts`, `src/ops/cron.ts` (`warmForced`), `src/ops/plan.ts`,
 `src/do/warming.ts`, `src/do/alarm/rearm.ts`. Docs: `docs/configuration/runtime.md`,
 `docs/configuration/index.md`. Specs: `tests/integration/lever-behaviour.spec.ts` (window edges in a
 zone, weekends, `SITE_WARM=0`, an unparseable value), `tests/integration/kv-levers.spec.ts` (every
@@ -413,17 +413,17 @@ it falls through, as a missing stylesheet already did.
 
 Limits: the 2,199,995-byte row cap applies to the stored form, which is 4/3 of a binary file.
 
-Files: `src/ops/module-bytes.ts` (new), `src/ops/module-rev.ts`, `src/ops/module-integrity.ts`,
+Files: `src/ops/module/bytes.ts` (new), `src/ops/module/rev.ts`, `src/ops/module/integrity.ts`,
 `src/do/packages.ts`, `src/do/routes/packages.ts`, `src/site/files.ts`,
 `scripts/qa/cms-boundary.ts`, `docs/architecture/modules.md`, `docs/configuration/migrated-settings.md`.
-`src/ops/module-rev.ts` held a raw NUL byte in `hashManifest` that made the editor refuse the file;
+`src/ops/module/rev.ts` held a raw NUL byte in `hashManifest` that made the editor refuse the file;
 it is now the escape `\0`, and the manifest hash for a fixed input is byte for byte the same
 (checked before and after).
 
-Specs: `tests/node/module-bytes.spec.ts` (new, 11 cases including the stored length against real
-SQLite), `tests/node/module-rev.spec.ts` (blob encodings), `tests/integration/modify-upload.spec.ts`
+Specs: `tests/node/module/bytes.spec.ts` (new, 11 cases including the stored length against real
+SQLite), `tests/node/module/rev.spec.ts` (blob encodings), `tests/integration/modify-upload.spec.ts`
 (exact bytes to PHP and the front-worker route on an enforcing site, forged base64 refused),
-`tests/integration/image-delivery.spec.ts` (types served). Control: with the mount reading
+`tests/integration/image/delivery.spec.ts` (types served). Control: with the mount reading
 `TextEncoder` instead of `sourceBytes`, the delivery case fails (PHP read an empty file).
 
 Status: built. Commit or snapshot: .
@@ -448,7 +448,7 @@ Reply adds `kept` (files carried over) and `removed` (paths dropped) when `keep`
 counting only the `remove` paths. The revision hash is the hash of the final manifest, so a
 keep-commit that produces an existing file set reuses that revision.
 
-Specs: `tests/node/module-rev.spec.ts` (`commitManifest`, `planDeclared` with keep),
+Specs: `tests/node/module/rev.spec.ts` (`commitManifest`, `planDeclared` with keep),
 `tests/integration/modify-upload.spec.ts` (keep, replace, remove, remove without keep, empty result,
 whole-package commit unchanged).
 
@@ -486,9 +486,9 @@ drops the interpreter and heap images and advances the page generation. The unin
 the legacy includes and every module before it runs, as an install does: without that, uninstalling
 `update` threw an undefined `update_storage_clear()`.
 
-Files: `src/site/php/uninstall/module.php`, `src/drupal/extension-php.ts`,
+Files: `src/site/php/uninstall/module.php`, `src/drupal/php/extension.ts`,
 `src/do/routes/lifecycle.ts`, plus the route tables (`src/site/routes.ts`,
-`src/do/routes/index.ts`, `src/ops/owner-audit.ts`, `scripts/qa/cms-boundary.ts`).
+`src/do/routes/index.ts`, `src/ops/owner/audit.ts`, `scripts/qa/cms-boundary.ts`).
 Docs: `docs/configuration/operations/index.md`, `owner-access.md`.
 Spec: `tests/integration/extension-routes.spec.ts` against a real kernel (405, 400, 404 with and
 without `dry`, dependents named and the module still enabled after the refusal, dependent removed
@@ -511,7 +511,7 @@ Follow-up: an empty `project` with target `admin` clears the admin theme to "sam
 (answers `{default, admin: "", applied: true}`). `default` takes no empty value (400). Pinned in
 `tests/integration/extension-routes.spec.ts`; documented in `docs/configuration/operations/index.md`.
 
-Files: `src/site/php/theme/default.php`, `src/drupal/extension-php.ts`,
+Files: `src/site/php/theme/default.php`, `src/drupal/php/extension.ts`,
 `src/do/routes/lifecycle.ts`, route tables as above. Spec: `tests/integration/extension-routes.spec.ts`
 (read, dry write leaves the stored row alone, admin then default set and read back from
 `system.theme`, repeat is applied with no change, 404, 400, 405).
@@ -528,7 +528,7 @@ presented token after the route answers and would drop the entry. Actor is the f
 the old token's hash.
 
 Files: `src/do/routes/auth.ts` (`rotatetoken`), route tables as above. Docs: `owner-access.md`
-(new section "Rotating the Token"). Spec: `tests/integration/owner-recovery.spec.ts` (rotation,
+(new section "Rotating the Token"). Spec: `tests/integration/owner/recovery.spec.ts` (rotation,
 old token dead, new token live, no plaintext in SQL-reachable rows, audit entry; 401, 405 and 409
 leave the stored hash unchanged and write no entry).
 
@@ -539,13 +539,13 @@ Status: built. Commit or snapshot: .
 Answer, not a code change: `/recover-token` has rotated the owner token since the token became a
 stored hash. The site keeps only the hash, so it cannot hand back the old token; it issues a new one
 and the old one stops working. The reply says so (`rotated: true`) and
-`tests/integration/owner-recovery.spec.ts` pins it. The one wrong thing was the doc line
+`tests/integration/owner/recovery.spec.ts` pins it. The one wrong thing was the doc line
 "The token is not rotated", in `docs/configuration/operations/owner-access.md`; it is corrected. The
 option "stop rotating" cannot be built without storing the token in the clear. What the dashboard
 needs: after a recovery, reseal the `ownerToken` in the reply. See the questions.
 
 Withdrawn by the dashboard session. The reply fields the dashboard relies on are pinned:
-`tests/integration/owner-recovery.spec.ts` asserts `rotated: true`, a string `ownerToken` and
+`tests/integration/owner/recovery.spec.ts` asserts `rotated: true`, a string `ownerToken` and
 `cache-control: no-store` on the object route and through the front worker.
 
 Status: withdrawn. Commit or snapshot: .
@@ -571,8 +571,8 @@ replaced by `[token]`.
 The header is not an audited parameter and the audit label copies only listed query keys, so it
 never reaches the audit log.
 
-Files: `src/do/git.ts`, `src/do/git-remotes.ts`, `src/do/host.ts`, `src/do/routes/packages.ts`,
-`src/ops/git-provider.ts` (`tokenless` on `Remote`), `src/site-do.ts` (`gitCallToken`). Spec:
+Files: `src/do/git/handler.ts`, `src/do/git/remotes.ts`, `src/do/host.ts`, `src/do/routes/packages.ts`,
+`src/ops/git/provider.ts` (`tokenless` on `Remote`), `src/site-do.ts` (`gitCallToken`). Spec:
 `tests/integration/git-remotes.spec.ts`, describe "a provider token sent with one call" (5 cases:
 nothing stored and the header reached the provider, query refusals, pull refusal and pull with no
 write-back, no poll, scrubbed error and cleared token through the route). Docs: `docs/operating/git-remotes.md`.
@@ -589,7 +589,7 @@ holds more than one part: a part is verified and stored whole in one row, and a 
 16 MiB of parts into replay chunks per call, deleting each part as it goes. Calls: `begin`
 (`{bytes, parts, sha256, label}`), `put` (`PUT`, one part, `x-part-sha256`), `status`, `commit`
 (repeat until `done: true`; takes `mark` like row 20) and `abort`. See
-`docs/operating/recovery.md`, "Restore in Parts". Spec: `tests/node/restore-parts.spec.ts` (36
+`docs/operating/recovery.md`, "Restore in Parts". Spec: `tests/node/dump/restore-parts.spec.ts` (36
 passed, run again 2026-11-21), including a dump refused as one body and restored in parts, and the
 dump ceiling lowered through `MAX_RESTORE_PAGED_BYTES`.
 
@@ -622,14 +622,14 @@ Second set of answers (all built; the section of each row has the detail):
    transaction is open or on a replica, and audits a reset".
 8. Row 36: a `WARM_WINDOW` that does not parse answers 400 `{code: "invalid_lever", name:
 "WARM_WINDOW", error}` on the settings write and the whole body is refused. Format
-   `<days> HH:MM-HH:MM [zone]`, UTC when the zone is unset. Spec: `tests/integration/owner-gate.spec.ts`.
+   `<days> HH:MM-HH:MM [zone]`, UTC when the zone is unset. Spec: `tests/integration/owner/gate.spec.ts`.
 9. Row 37: a package in `accept` that is not among the current conflicts answers 400
    `{code: "accept_not_in_conflicts", unlisted, conflicts}`. This applies when `force` is not set and
    the registry knows the package; `accept` with no conflict at all is also a 400. Spec:
    `tests/integration/install-lock.spec.ts`.
 10. Row 28: a `drupal-profile` mounts at `profiles/contrib/<name>` (the project template path) and
     never under `vendor/`; the `drupal-custom-*` types now mount under `custom/` as the template
-    does (they went to `contrib/` before). Spec: `tests/unit/ops/package-install.spec.ts`. The Thunder
+    does (they went to `contrib/` before). Spec: `tests/unit/ops/composer/package-install.spec.ts`. The Thunder
     lock drive is under "Live Drive".
 11. Row 39: the tar reader keeps `png`, `jpg`, `jpeg`, `gif`, `webp`, `avif`, `ico`, `svg`, `woff`,
     `woff2`, `ttf` and `otf`; a file that is not text is stored with the base64 encoding of row 33.

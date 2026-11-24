@@ -10,7 +10,7 @@ Both measured 2026-09-07 on the shipping binary, and the second is the useful ha
 ucontext branch needs `getcontext`/`makecontext`/`swapcontext` and emscripten implements none of them;
 `vendor/static-jspisjlj` has the identical stub list, so **JSPI does not supply one either**, and
 `-sSUPPORT_LONGJMP=wasm` cannot -- it is one-way and `swapcontext` needs two. This project already knew:
-`FIBER_SHIM` / `PhpWasmSyncFiber` in `src/drupal/site-php.ts` exists because of it, and
+`FIBER_SHIM` / `PhpWasmSyncFiber` in `src/drupal/php/site.ts` exists because of it, and
 `scripts/patch-drupal.mjs` rewrites core's five `new \Fiber(` sites to it. Do not re-propose fibers,
 and do not propose writing a wasm `zend_fiber_switch_context()` -- that is strictly more work than
 JSPI for the same capability.
@@ -79,10 +79,10 @@ and the frame surgery rather than the resume.** `phasm/src/ext/cfwpark/tests-dis
 falsified: disable the splice and 5 fail with the chain silently truncating, count trampolines unsafe
 again and 7 fail with every park refused. `-n` matters, because Xdebug installs its own execute
 handler. The RESUME is still a wasm question, since homebrew is the HYBRID VM and this build is
-`ZEND_VM_KIND_CALL`, and `park-oidc.spec.ts` is where that one is answered.
+`ZEND_VM_KIND_CALL`, and `park/oidc.spec.ts` is where that one is answered.
 
 So `blockingOutbound` is TRUE and `drupal/openid_connect` completes a login through its OWN client:
-`park-oidc.spec.ts` drives a real authorization code from the rig Keycloak, and the token POST and
+`park/oidc.spec.ts` drives a real authorization code from the rig Keycloak, and the token POST and
 the userinfo GET are both parked, after which `externalauth` writes `openid_connect.keycloak` into
 `authmap` against the id_token's `sub`. The control beside it is the same run on the previous
 interpreter, where the deferred transport answered `is not in the fetch cache` and no row was
@@ -92,7 +92,7 @@ the fallback existed. **A refused park must degrade, never fail.**
 
 **THE ARTIFACT IS THE THING TO CHECK, and `cdn-manifest.json` names the OLD binary.** A `bun install`
 downloads the published interpreter, which has no `park_flatten()`, so it silently replaces a build
-the capability depends on. `park-dispatch.spec.ts` pins the flag against the reading for that reason:
+the capability depends on. `park/dispatch.spec.ts` pins the flag against the reading for that reason:
 on a reverted interpreter it fails and names the frame instead of leaving `SHIPPED_BLOCKING_HTTP`
 claiming something the binary cannot do.
 
@@ -128,7 +128,7 @@ either:
   would not need a park at all. It answered true for something the product could not use. It is
   `socket.park.inline` now, named for what it measures, and `blockingSocket` is a LITERAL beside
   `SHIPPED_CRON` for the same reason that one is: the flag and the vector answer different questions.
-  `park-interpreter.spec.ts` is where the cross-invocation case is asserted, against a real server.
+  `park/interpreter.spec.ts` is where the cross-invocation case is asserted, against a real server.
 
 **`function_exists('cfw_park_run')` IS THE WRONG PROBE, and it is the decorative kind.** The first
 built revision exported every symbol and did not re-arm inside `cfw_park_resume`, so a chain parked
@@ -179,5 +179,5 @@ printed including the final JSON. The first run's side effects were already comm
 create-node POST through a refused park made two nodes (rows 2 to 4). The tail now parses with
 `parseJsonReply()`, `unwind()` returns what the chain printed, and a reply that does not parse is a
 render failure and never a second run. Count entries into the program with a counter bumped at its
-first statement; a status code cannot show a double run. `tests/integration/park-double-run.spec.ts`.
+first statement; a status code cannot show a double run. `tests/integration/park/double-run.spec.ts`.
 A deployed check is written down in lane 113's results and has not run.

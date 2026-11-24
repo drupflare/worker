@@ -18,7 +18,7 @@ difference attributed.
   from `3e4f2737 chore: rebuild the packed database at 11.4.6`, and 5,832,704 since 2026-09-30.
   **Count it, do not quote it** -- this line has been wrong three times.
 - "nothing in this repo produces it" -- `install-site-db.php` had existed for two weeks and
-  `bake-pack.ts` already said so. What had no producer was three DELTAS: the `page_content_type`
+  `bake/pack.ts` already said so. What had no producer was three DELTAS: the `page_content_type`
   recipe, enabling `drupflare`, and 16 cache index drops. All three are in the script now.
 - "the build input is 14.4 MB" named the **wrong file**. `drupal-src/sites/default/files/.sqlite` is
   5,222,400 bytes; the ~14.4 MB one is the gitignored intermediate `assets/drupal-std/site.sqlite`.
@@ -76,7 +76,7 @@ tree nobody had edited. The entry is now marked `tracked: true` and the restore 
 it alone; `tests/node/cdn-manifest-agrees.spec.ts` fails if the two disagree again.
 
 **So prefer a BUILD STEP to a hand edit whenever the artifact is tracked.** BUG 4's watchdog trim was
-first made by hand and is now `dropBakeHistory()` inside `pack-sql.ts`, which is reproducible and
+first made by hand and is now `dropBakeHistory()` inside `pack/sql.ts`, which is reproducible and
 survives a restore. A hand edit is correct only where nothing in the repository produces the file, and
 `site.sqlite`'s trim recipe is the one case of that.
 
@@ -101,7 +101,7 @@ agreeing including a JOIN whose two sides sit in different layers. The overlay r
 - **`execSql()` cannot await.** `module.cfwSqlExec = (json) => withMask(() => ... JSON.stringify(...))`
   in `@drupflare/durabledb/src/do-sqlite.ts` is synchronous by construction, so KV, R2, D1, another
   Durable Object and `env.ASSETS.fetch()` are all unreachable from inside a read. That last one
-  matters most: the pack chunks themselves arrive by `env.ASSETS.fetch()` in `src/db/migrate-sql.ts`,
+  matters most: the pack chunks themselves arrive by `env.ASSETS.fetch()` in `src/db/dump/migrate.ts`,
   so even a lazy fill cannot reach its own source from a statement.
 - **The interpreter carries no SQLite.** PHP 8.5.2 reports `pdo_sqlite=no`, `sqlite3=no` and an empty
   `PDO::getAvailableDrivers()`, verified on `.interp/php8.5.wasm` under node and through `/php` on

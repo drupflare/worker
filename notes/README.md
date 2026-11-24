@@ -5,8 +5,10 @@ Topic files moved out of the project CLAUDE.md. Each section is verbatim. This t
 | section                                                                                          | file                   |
 | ------------------------------------------------------------------------------------------------ | ---------------------- |
 | `ALARM_SHAPE` moves the alarm away from the retirement boundary, and one A/B measured it         | alarm-shape.md         |
+| The elastic interpreter, closed: the memory limit and the wall limit are one budget              | elastic-interpreter.md |
 | The interpreter has no fiber backend, and the executor is persistent                             | park.md                |
 | The Zend park ships, and every instrument that measured it was wrong once                        | park.md                |
+| THE KILL LINE IS 200 MiB AND ABOVE ON THE METER, and a growth cap sees linear memory only        | memory-and-isolates.md |
 | THE COST OF LOADING EXTENSIONS IS AN EXPORTED GLOBAL, NOT A GROWABLE TABLE                       | memory-and-isolates.md |
 | `subarray` THROWS ABOVE 128 MiB ON THE PLATFORM, AND A LOCAL WORKERD DOES NOT                    | memory-and-isolates.md |
 | A DROPPED INTERPRETER'S MEMORY IS REUSED, NOT COLLECTED                                          | memory-and-isolates.md |
@@ -71,3 +73,4 @@ Topic files moved out of the project CLAUDE.md. Each section is verbatim. This t
 | Three GraphQL traps that each read as an empty dataset                                           | platform-facts.md      |
 | `/big_pipe/no-js` answering 400 is core, and the transport is what to guard                      | platform-facts.md      |
 | The boundary sweep walks SERVICES now, not only class statics                                    | platform-facts.md      |
+| PHP's clock holds still inside one run, and two of core's time bounds depend on it               | platform-facts.md      |

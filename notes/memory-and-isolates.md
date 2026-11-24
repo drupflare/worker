@@ -2,6 +2,12 @@
 
 Linear memory, the isolate budget, boots, recycling, heap images and what the platform charges. Moved verbatim from the project CLAUDE.md.
 
+## THE KILL LINE IS 200 MiB AND ABOVE ON THE METER, and a growth cap sees linear memory only
+
+Correction beside the 128 MiB figures in the sections below, which are the documented per-isolate limit and which several recycle thresholds were priced against. On deployed objects the platform's own meter put the start of resets at 195 and 203 to 204 MiB, and a census of Thunder drives read 220 to 257 MiB with 17 of the 19 drives above 203 MiB still answering 200. Read the kill line as about 200 MiB and above of platform-metered isolate memory. It is a measured band, so no documented figure backs it. `RECYCLE_ABOVE_BYTES` and `ISOLATE_ABOVE_BYTES` keep their defaults, and the history below stands as written.
+
+The growth governor (`GROWTH_CAP_BYTES`, `GROWTH_GOVERNOR`) refuses a grow of the interpreter's linear memory past a cap. The glue's resize then fails, PHP prints `[error] Out of memory`, `_run()` throws `ExitStatus` 1, PHP's `catch` never runs, and the instance still works afterwards. The object drops it, counts the run, and the front worker repeats a GET or HEAD once. It does not see the JS side: the pack blob, resident files, the host graph, reply strings and bridge buffers. That charge, the platform meter minus linear memory, was at most 95.66 MiB on a stock Drupal throwaway (25 drives over five routes, median 79.18) and 76 to 171 MiB by route on Thunder, so a cap derived from the meter has no single value across builds. The governor is on by default, and its cap comes from the headroom ladder instead: the MiB an isolate can still take with the interpreter resident at 64 MiB of linear memory, 36 on a stock Drupal object after an admin page or a flush and 36 on a Thunder object after a flush, measured on a deployed paid worker on 2026-11-23. The cap is the boot size plus that headroom, adjusted by the JS-side bytes the ledger counts now against the 18.3 MiB it counted then, minus a 4 MiB margin. Owner routes, provisioning and alarm firings run without it, since they grow memory well past a serving cap. A governed run is one `transactionSync` slice, so a refused POST saves nothing: `pib_run` is synchronous in the shipped glue (its `ccall` ignores `async`, and the build has neither Asyncify nor JSPI), which is what lets the whole run sit inside the callback. The refusal is a throw out of that callback and the rows roll back. That turns the kill line into a refusal that undoes itself. Nothing here lowers the platform's line; it changes what a request that would cross it leaves behind. A module enable is stepped by the planner (`STEPPED_OPS` unset) when its modules are predicted to cost more than `STEP_BUDGET_MS`, one module per slice with its cursor in the same transaction. Its steps run in the owner phase without the serving cap: the first deployed read of a large module site (mantle2, one run, paid account, 2026-11-23) refused the first step under the cap, because the kernel boot and plan already held 95.8 MiB of the 96 MiB cap. Without the cap the same enable finished in two invocations of 16.1 s and 22.0 s of CPU (the unstepped enable ended at 31.5 s CPU and 35.7 s wall, `exceededWallTime`). The per-step memory peak has still not been read.
+
 ## THE COST OF LOADING EXTENSIONS IS AN EXPORTED GLOBAL, NOT A GROWABLE TABLE
 
 Measured 2026-09-17, n=9 interleaved rounds per arm over `abi-speed.ts`'s `CASES`, every arm carrying
@@ -124,7 +130,7 @@ reaches the caller's `stub.fetch()` as an error with `overloaded: true` and `dur
 no `retryable`. The same stub then fails at once; a new stub answers in ~54 ms. `resetRecovery()` in
 `src/site.ts` required `retryable` and refused anything `overloaded`, so every GET that met a memory reset
 got the Try Again page instead of its one retry. It keys on `durableObjectReset` now
-(`serve-edge.spec.ts` uses the measured shape).
+(`serve/edge.spec.ts` uses the measured shape).
 
 **A POST is repeated only when the object never started it**, and the reason the rest are not is measured:
 a write the object makes before it awaits I/O is committed when the reset lands, and a record written just
@@ -183,11 +189,27 @@ and about 400 rows read per cold page (local meters, one pass), which fits Free 
 rows written once, 0.26% of the storage). It does nothing until the cartridge the worker depends on
 reads `SQL_PACK_SOURCE`.
 
+**Measured 2026-11-23, local workerd, three objects per arm, no spread in any cell.** Staged against the
+cartridge 1.0.0 build in a clone, the Drupal pack's 12.41 MiB leaves `blobBytes` (0 at mount, at most
+`COLD_PACK_CACHE_CHUNKS` x 64 KiB afterwards: the figure is a snapshot taken when the mount returns). The
+pack cache fetched the pack index once and the pack never, so no copy stays reachable. The WordPress pack
+(7.07 MiB) was resident for the isolate's life because its boot never used the source; it is staged now,
+and since every WordPress request mounts afresh each PHP page reads 147 to 281 more rows (354 against 189
+on a search page), which puts the free read bound at about 14,100 renders a day against 26,500. The file
+budget (`LAZY_FS_BUDGET_BYTES`) costs almost no rows: at 4 MiB only a cache flush evicts, at 2 MiB it
+re-reads 74 files and 26 more rows on a repeat, and no route holds more than 6.34 MiB at 20. Re-inflation
+CPU is unmeasured locally. `tests/integration/pack-residency.spec.ts` reprints every cell.
+
 **`REFRESH_INSTANCE` keeps the heap it restarts.** A restart in place does not return what shutdown
 leaves in the wasm heap, so work after one peaks higher than in a new instance: an install then a boot
 read 231.5 MiB restarted and 98.1 MiB new. A dropped interpreter that grew since its boot is no longer
 parked, and a boot that restores the boot image never restarts in place. With both, five specs still
-fail with the flag on, so it is off by default.
+fail with the flag on, and the reset-rate benefit did not replicate (0 of 18 against 17 of 18, then 2 of
+24 against 3 of 24), so the flag and `REUSE_MOUNT`, which needed it, are deleted. `RELEASE_EVICTED`
+went with them: its only reading was no reduction in resets, and no run measured an evicted buffer.
+`RELEASE_HOST_GRAPH` stays and is on by default: a deployed probe collected the graph root and the
+largest file buffers of a dropped interpreter within one 12 to 28 MiB nudge (12 gated runs), where
+eight nudges of 16 to 64 MiB without it freed none of them.
 
 ## BACKGROUND PHP WAITS A MINUTE AFTER A BOOT, and `wrangler tail` blames the alarm for the visitor
 
@@ -572,7 +594,7 @@ speed.
 
 ## A restored heap carries a warm interpreter's pending writes, and a tag counter cannot see them
 
-`BOOT_IMAGE` restores a shared after-render heap (`src/do/boot-image.ts`, folio v1's technique;
+`BOOT_IMAGE` restores a shared after-render heap (`src/do/boot/image.ts`, folio v1's technique;
 `docs/configuration/runtime.md` has the keys). On by default, `0` disables. The 2026-11-23 worker gate found four behaviour failures on a restored
 claimed site, one an owner-role escalation (the report has the list). Measured
 deployed 2026-10-23 on a claimed site: a cold round cost 2,527 ms of object `cpuTime` plain and
@@ -606,7 +628,7 @@ removed: the per-request resetter and the collector reset already did their work
 fragment's `function_exists` guard keeps the function the heap already holds. Any edit under
 `src/site/php/` sends every site to the plain boot until `bun run assets:bootimage` runs again;
 the interpreter is the one input no context names, so `tests/node/boot-image-agrees.spec.ts`
-compares the index to the wasm on disk. The image is NOT in `build-local.ts` yet, which is the
+compares the index to the wasm on disk. The image is NOT in `build/local.ts` yet, which is the
 `ASSET_AGGREGATES` shape (a lever with no producer in the build); it degrades to a plain boot, and
 it is a step to add before the lever defaults on.
 

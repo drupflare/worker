@@ -93,7 +93,7 @@ assertion mean anything.
 `assets/.assetsignore` is a deny-by-default list: `/*` followed by the un-ignored set. So a new
 artifact under `assets/` uploads NOWHERE until a line names it, and nothing reports that.
 
-**`ASSET_AGGREGATES` was decorative for its whole life because of this.** `scripts/pack-aggregates.ts`
+**`ASSET_AGGREGATES` was decorative for its whole life because of this.** `scripts/pack/aggregates.ts`
 wrote 785 files into `assets/agg/`, `substituteAggregates()` rewrote a stored page's asset tags to
 `/agg/<hash>.css`, and the asset layer did not publish that prefix -- so the Worker answered the URL
 as a Drupal path and the page rendered with **no CSS at all**. Measured on `wrangler dev`, 2026-09-09:
@@ -106,7 +106,7 @@ runs `substituteAggregates()` over the prefilled pages and resolves every `/agg/
 the real `ASSETS` binding. Falsified by removing `!/agg/`, which turns it red naming the manifest.
 
 **THE PUBLISHING FIX WAS ONLY HALF OF IT, and the browser lane found the other half.**
-`scripts/pack-aggregates.ts` concatenated each library's CSS without rebasing `url()`. An aggregate is
+`scripts/pack/aggregates.ts` concatenated each library's CSS without rebasing `url()`. An aggregate is
 served from `/agg/`, so `url(../../fonts/metropolis/Metropolis-Regular.woff2)` written against
 `/core/themes/olivero/css/base/fonts.css` resolved to `/fonts/...`: **270 relative targets across 408
 CSS aggregates, every one broken.** Publishing the aggregates made the stylesheets load and every
@@ -134,7 +134,7 @@ them. Adding a module is one entry there and nothing else: `tests/node/config-ge
 asserts every declared module reaches `moduleTable()`, which README.md is compared against.
 
 A Worker has no filesystem, so the YAML cannot be read at runtime. `bun run gen:config` compiles it to
-`src/ops/generated/modules.ts` and `module-tiers.ts`, `module-table.ts` and `cron.ts` import from
+`src/ops/generated/modules.ts` and `module/tiers.ts`, `module/table.ts` and `cron.ts` import from
 there -- the same generated-TS pattern as `shipped-lock.ts` and `driver-digest.ts`. That makes a
 second copy, so `bun run gen:config:check` and the spec fail when the two disagree. `src/ops/generated/`
 is prettier-ignored, or the formatter and the generator rewrite each other forever.
@@ -167,7 +167,7 @@ Three closes, each falsified by a spec:
   cid does not carry the module set, so the fingerprint is what tells them apart. A site with any
   other module set still rebuilds (`reconcile-converge.spec.ts`).
 
-**AND THE BAKE HAD NEVER FOLLOWED A DRIVER CHANGE.** `bake-container.ts` skipped whenever the cid
+**AND THE BAKE HAD NEVER FOLLOWED A DRIVER CHANGE.** `bake/container.ts` skipped whenever the cid
 matched composer's `VERSIONS_HASH`, which a sibling change never moves, while provisioning stamped
 the SHIPPING digest as the container's. So a `#[Hook]` added after the last bake was invisible on
 every fresh site and nothing said so. The bake now records the digest it baked with in
@@ -359,7 +359,7 @@ specs failed the first time that lane got as far as running the gate, and only o
 
 - **A from-source pack SHIPPED A HASH SALT.** `install-site-db.php` writes
   `sites/build/settings.php`, the bootstrap globs every non-test file, and `SECRET_REWRITES` named
-  only `sites/default/settings.php`. The DETECTOR was already general -- `pack-secrets.spec.ts`
+  only `sites/default/settings.php`. The DETECTOR was already general -- `pack/secrets.spec.ts`
   scans every entry, which is how this surfaced -- and only the rewriter was keyed to one literal.
 - **`agg` was outside the numbered build sequence** while `wrangler.jsonc` ships
   `ASSET_AGGREGATES: "1"`, so every from-source tree ran the lever against nothing. It degrades
@@ -457,7 +457,7 @@ exists to replace.
 
 **IT RUNS BEFORE THE IMAGE PRODUCER, and three specs had to learn that.** Imaging first pays a full
 heap read the next step throws away, so reconciliation settles first and the image is taken once
-there is nothing left to reconcile. `heap-image-producer.spec.ts` and `snapshot-delta.spec.ts` both
+there is nothing left to reconcile. `heap/image-producer.spec.ts` and `snapshot-delta.spec.ts` both
 imaged by hand while the alarm chain was still reconciling: the first read no image at all, and the
 second read `cfw_heap_chunk` empty on its warm arm. Driving reconciliation first is right for the
 producer spec, which is about the alarm chain; `RECONCILE=0` is right for the delta spec, which
@@ -470,7 +470,7 @@ through reconciliation on the way.
 developer's disk. Neither kept history either: `gitRestore()` holds its snapshot in memory for ONE
 call, so a pull that succeeded left nothing to go back to.
 
-`src/ops/module-rev.ts` stores content-addressed blobs plus one manifest row per revision, so a
+`src/ops/module/rev.ts` stores content-addressed blobs plus one manifest row per revision, so a
 second upload costs the files that changed and a blob already present costs no rows -- which is the
 only way history is affordable against the meter that binds regeneration. Five revisions per package;
 dropping one frees only the blobs no surviving manifest names.

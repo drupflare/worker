@@ -67,7 +67,7 @@ count resets at isolate retirements:
   firing was 8.2 s in the `delay` arm against 3.1 s for `head`. `end-sync` read 11.0 s because the
   request stream kept the object busy; that figure reflects the traffic as well as the shape.
 - A first version of the floor moved the migration alarm to five seconds out on every retry of the
-  migrating page (every 2 s), so the migration never started; `serve-edge.spec.ts` caught it.
+  migrating page (every 2 s), so the migration never started; `serve/edge.spec.ts` caught it.
   `setAlarmAt()` now keeps a standing alarm that is already inside the floor, and the provisioning wake
   is exempt. Whether the exempt wakes can cause storage resets is not measured; each is a single owner
   event, and none of the A/B runs drove them.
@@ -103,3 +103,25 @@ The owner route `/serve-stats` reports three fields beside `alarmFirings`:
 - `alarmLastDistanceMs`: how far ahead of now the last of those moves was set, or `null` before one.
   Under `delay` it sits at or just under the floor. Under `end-sync` it is about 1, and under
   `head` it is whatever the last ask was, usually 1.
+
+## Fill Queue and Slow Renders
+
+Measured on 2026-11-23 on a local `wrangler dev` object with the WordPress pack and every render held
+to about 2.2 seconds (a throwaway spin after the PHP run, since removed), five variants of one write
+and the routes a write touches read in order until each showed the new content.
+
+- A purge that deletes rows (publish, edit, trash) leaves nothing for the queue to hide: each read
+  renders in the request path. Six routes took 15.4, 15.4, 15.2 and 15.4 seconds (n=4), which is six
+  renders and one background fill.
+- That one fill is the first alarm firing after a quiet period. `visitorHoldUntil()` lets a fill
+  through when the last one ran five seconds ago or more, and the last one had run before the write.
+  The fill that slides in holds the next read for one render. Later firings in the same confirm stood
+  aside. The rule is unchanged; the cost is one render per write.
+- A purge that marks rows (a floor purge, an option change) answered the old page and queued a refill
+  for every stored page, first in first out. The reads never moved a page forward, so four routes
+  were fresh after 47.0 and 47.8 seconds (n=2) with 22 rows queued. The deployed soak read 45.2
+  seconds for the same write against 23 stored rows. With `AGED_SERVE_MAX_MS=0` the same reads took
+  10.8 and 10.8 seconds (n=2), and WordPress now defaults to that.
+- `fillHold` never held a WordPress fill: every `alarm-fillphase` line read `hold: null`, because
+  the interpreter is dropped after each render and `backgroundHold()` returns nothing without one.
+  The alarm floor did not delay a read either; no read waited for the alarm to arrive.

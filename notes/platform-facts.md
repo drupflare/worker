@@ -34,7 +34,7 @@ practical attack -- **what was free was the COST of guessing.** An unauthenticat
 the object's request counter, which is the meter the whole free-plan model is scored against, at one
 DO request per HTTP request until the site degraded to read-only.
 
-The budget is in `src/ops/admin-session.ts` and is checked BEFORE the hop, keyed on
+The budget is in `src/ops/owner/admin-session.ts` and is checked BEFORE the hop, keyed on
 `cf-connecting-ip`, 12 failures per 60 s, cleared by a correct token. Three things it is deliberately
 not: durable (a row per attempt spends the meter it protects), a brute-force defence, or a stop to a
 distributed attacker. It removes the amplification. The map is size-bounded because the key is
@@ -48,8 +48,8 @@ must not lock its owner out of the routes they need to repair it.
 `CfwImageToolkit::save()` copies the source to the derivative path, and `deliveryUrl()`, the only
 emitter of a `/cfw-img/` URL, had no caller, so the front worker's tinyimg path was reached by no page.
 drupflare's `Hook\ImageDelivery` rewrites a public style URL to the delivery path now, and the
-rendering lanes (`RENDER_LANES`, `src/ops/render-lane.ts`) store every style on upload.
-`image-toolkit.spec.ts` asserts the URL, with the stock URL as the control when the container has not
+rendering lanes (`RENDER_LANES`, `src/ops/image/render-lane.ts`) store every style on upload.
+`image/toolkit.spec.ts` asserts the URL, with the stock URL as the control when the container has not
 rebuilt. A hook reaches an existing site only through a container rebuild, which reconciliation
 performs when the packed driver's digest changes.
 
@@ -201,14 +201,14 @@ enabled the module against a real site and asserted an observable it owns.
 
 `supported` used to exist and meant "the capability this module needs was measured WITHOUT the
 module". That is an inference about the runtime, and it read to everyone else as a promise about the
-module. Do not reintroduce it under another name: `tests/node/module-table.spec.ts` pins the state
+module. Do not reintroduce it under another name: `tests/node/module/table.spec.ts` pins the state
 set and fails on a rendered table containing the word at all.
 
 **Count it, do not quote it.** `moduleTable()` is the census; every prose figure in this repo has
 been stale in both directions, and the figure that used to sit here said 62/1/3 while the table held
-64/1/1. `bun -e "import {moduleTable} from './src/ops/module-table.js'; ..."` prints it, and
-`tests/node/module-table.spec.ts` now compares the whole table against README.md's three lists in
-both directions -- which `module-table.ts` had CLAIMED for as long as the claim had existed, while
+64/1/1. `bun -e "import {moduleTable} from './src/ops/module/table.js'; ..."` prints it, and
+`tests/node/module/table.spec.ts` now compares the whole table against README.md's three lists in
+both directions -- which `module/table.ts` had CLAIMED for as long as the claim had existed, while
 what the spec actually compared was the verified map against the spec files. So the published table
 had no guard at all, and three rows were edited by hand trusting the one described in the source.
 
@@ -217,7 +217,7 @@ sat untested behind a correct note about its Solarium transport being intercepta
 transport was never the blocker: it pulls `maennchen/zipstream-php`, which declares `php-64bit`, so
 composer's `platform_check.php` asserts `PHP_INT_SIZE === 8` and aborts every request before Drupal
 boots. All 56 other contrib cases failed with it. The blast radius of a dependency constraint is the
-whole application and only an install measures it; `bun scripts/contrib-fixture.ts` is the harness.
+whole application and only an install measures it; `bun scripts/contrib/fixture.ts` is the harness.
 
 **THE BUILD KEEPS COMPOSER'S PLATFORM CHECK ON. Decided 2026-08-24.** With `platform-check: false`
 that one module installs clean and 57/57 pass, so the temptation is real and the measurement is not in
@@ -238,7 +238,7 @@ should have failed, all green. Two holes, either one sufficient:
 
 - **`DrupalKernel::boot()` reads no module file.** The container comes out of `cache_container`, so a
   boot discovers nothing and includes nothing. `ModuleHandler::loadAll()` is what includes an enabled
-  module's `.module` and it runs during `preHandle()`. `VERIFY_MODULES` in `src/drupal/site-php.ts`
+  module's `.module` and it runs during `preHandle()`. `VERIFY_MODULES` in `src/drupal/php/site.ts`
   is the added step.
 - **A NULL result took the success path**, and a null is exactly what a broken module produces:
   `include` raises E_COMPILE_ERROR, no `try` catches it, and the run dies before printing a verdict.
@@ -332,3 +332,30 @@ and `cfw_page` stored it. `LocalTaskManager::$taskData` is keyed by route name, 
 the tabs built for `/node/1` rendered on `/node/2` and every node page carried `node:1`.
 `RequestResetter` clears both now, and each has a `static-sweep.spec.ts` case whose control reproduces
 the leak with the reset disabled. Both were found while chasing a cache-tag fan-out, not by the sweep.
+
+## PHP's clock holds still inside one run, and two of core's time bounds depend on it
+
+PHP reaches time through two glue imports, `emscripten_date_now` (`Date.now()`, behind `time()`,
+`microtime()` and `gettimeofday()`) and `emscripten_get_now` (`performance.now()`, behind `hrtime()`
+and the monotonic clock). The tuned glue defines both as one-line arrows and the binary imports
+nothing else for time; `_gmtime_js`, `_localtime_js` and `_mktime_js` convert a value they are given.
+
+A deployed worker holds both still across one synchronous `_run()`. That is recorded from the
+`uniqid()` spin (302,500 ms, 3.4 billion `Date.now()` reads) and was not re-measured here, because a
+local workerd advances both: a loop of 3 million additions and 3 million clock reads read 773 ms
+and 1,168 ms of PHP time in two runs. So a local reading can neither confirm nor refute the
+platform's freeze, and the specs in `tests/integration/php-clock.spec.ts` reproduce it with
+`VIRTUAL_CLOCK=frozen`.
+
+Two bounds in core never fire on a held clock. `Cron::processQueue()` loops while `time()` is
+before `start + lease`, so 2,400 queued items were all processed (n=3) where a clock that moves
+stopped at 275 to 284 (n=3, 14.48 to 14.96 s of PHP time). `_batch_process()` yields when
+`Timer::read()` passes 1,000 ms; the pack's `cfw_batch_yield()` already ends a request at 20
+operations, so a batch of heavy operations ran 20 where the moving clock ran 4. The worker's own
+decomposed cron is not exposed: `src/site/php/run/cron-queue.php` bounds by item count.
+
+The flag that moves the clock is `VIRTUAL_CLOCK`, on by default since 2026-11-23 and off with `0`.
+A deployed reading of the freeze and of the default is owed. Its calibration, 0.13 ms per counted host call,
+is a local median over nine warm renders and is owed a deployed reading. It counts calls, so work
+with no host calls does not advance it. Details are under `VIRTUAL_CLOCK` in
+`docs/configuration/runtime.md`.

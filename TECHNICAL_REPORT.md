@@ -4526,6 +4526,17 @@ once a local pass certifies it. The first status and history were published to
 `cdn.drupflare.com/certified/` from that local pass on 2026-11-24, and the job folds its own records into
 them from then on.
 
+Each fixture runs on the free account first. When that run fails on a limit the paid plan raises (a
+subrequest limit, a CPU limit, or the daily row quota that turns a site read-only), the run exits 4 after
+writing its record, marked with the limit it hit in `limited`, and the same job runs the fixture again on
+the paid account with the CPU ceiling at 300,000 ms. A free pass skips paid. A memory kill does not
+trigger the fallback, since the isolate has the same memory on both plans. A fixture listed under
+`paidFixtures` goes straight to paid. Both records reach the history, so the status reports Certified
+on paid when the free runs keep hitting a limit and the paid runs pass three in a row, and free before
+paid when free passes. A fixture that fails twice in a row is no longer retried first; it rotates with
+the rest, so one broken fixture cannot hold a daily slot. `--paid=false` (the `CERTIFY_PAID` variable or
+the dispatch input) turns the fallback off.
+
 What a record carries: the pinned commit of the fixture, the worker build as `HEAD` plus a digest of
 the working-tree diff at clone time (`5de5c5c00e+<12 hex>`), the plan, the CPU ceiling read back from
 the deployed script (300,000 ms on every paid run), the rows written by the site's own meter, and a

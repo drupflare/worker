@@ -10,9 +10,9 @@ on:
         type: number
         default: 7
       certify_paid:
-        description: Also certify the fixtures that need the paid plan, on the paid account
+        description: Run a fixture on the paid account when it hits a free plan limit, and run the paid-only fixtures there
         type: boolean
-        default: false
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}
@@ -59,9 +59,10 @@ jobs:
       - name: Pick Today's Fixtures
         id: pick
         env:
-          CERTIFY_PAID: ${{ vars.CERTIFY_PAID || inputs.certify_paid || 'false' }}
+          PAID_INPUT: ${{ inputs.certify_paid }}
+          PAID_VAR: ${{ vars.CERTIFY_PAID }}
           CERTIFY_WINDOW: ${{ inputs.window_days || vars.CERTIFY_WINDOW_DAYS || '7' }}
-        run: bun scripts/e2e/certify.ts --select --history=history.json --paid="$CERTIFY_PAID" --window="$CERTIFY_WINDOW"
+        run: bun scripts/e2e/certify.ts --select --history=history.json --paid="${PAID_INPUT:-${PAID_VAR:-true}}" --window="$CERTIFY_WINDOW"
 
   certify:
     name: Certify ${{ matrix.fixture }} on ${{ matrix.plan }}
@@ -144,25 +145,52 @@ jobs:
       - name: Install drangler
         working-directory: .siblings/drangler
         run: bun install --frozen-lockfile --ignore-scripts
-      - name: Certify the Fixture
+      - name: Certify the Fixture on Free
+        id: free
+        if: ${{ matrix.plan == 'free' }}
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ matrix.plan == 'paid' && secrets.CLOUDFLARE_ACCOUNT_ID || secrets.DRUPFLARE_CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ matrix.plan == 'paid' && secrets.CLOUDFLARE_API_TOKEN || secrets.DRUPFLARE_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.DRUPFLARE_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.DRUPFLARE_CLOUDFLARE_API_TOKEN }}
           ANACHRON_DIR: .siblings/anachron
           DRANGLER: ${{ github.workspace }}/.siblings/drangler/src/cli.ts
         run: |
           code=0
-          bun scripts/e2e/certify.ts --fixture=${{ matrix.fixture }} --out=certified-records --plan=${{ matrix.plan }} ${{ matrix.anachron && '--anachron' || '' }} || code=$?
+          bun scripts/e2e/certify.ts --fixture=${{ matrix.fixture }} --out=certified-records --plan=free ${{ matrix.anachron && '--anachron' || '' }} ${{ matrix.fallback && '--fallback' || '' }} || code=$?
+          if [ "$code" = 4 ]; then
+            echo "::warning::${{ matrix.fixture }} hit a free plan limit, so it runs again on paid"
+            echo "limited=true" >> "$GITHUB_OUTPUT"
+          elif [ "$code" = 3 ]; then
+            echo "::warning::the account had no budget left for ${{ matrix.fixture }}, so no record was written"
+          elif [ "$code" != 0 ]; then
+            exit "$code"
+          fi
+      - name: Tear Down the Free Throwaway
+        if: ${{ always() && matrix.plan == 'free' }}
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.DRUPFLARE_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.DRUPFLARE_CLOUDFLARE_API_TOKEN }}
+        run: bun scripts/e2e/certify.ts --teardown --fixture=${{ matrix.fixture }}
+      - name: Certify the Fixture on Paid
+        id: paid
+        if: ${{ matrix.plan == 'paid' || steps.free.outputs.limited == 'true' }}
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ANACHRON_DIR: .siblings/anachron
+          DRANGLER: ${{ github.workspace }}/.siblings/drangler/src/cli.ts
+        run: |
+          code=0
+          bun scripts/e2e/certify.ts --fixture=${{ matrix.fixture }} --out=certified-records/paid --plan=paid --cpu-ms=300000 ${{ matrix.anachron && '--anachron' || '' }} || code=$?
           if [ "$code" = 3 ]; then
             echo "::warning::the account had no budget left for ${{ matrix.fixture }}, so no record was written"
           elif [ "$code" != 0 ]; then
             exit "$code"
           fi
-      - name: Tear Down the Throwaway
-        if: ${{ always() }}
+      - name: Tear Down the Paid Throwaway
+        if: ${{ always() && (matrix.plan == 'paid' || steps.free.outputs.limited == 'true') }}
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ matrix.plan == 'paid' && secrets.CLOUDFLARE_ACCOUNT_ID || secrets.DRUPFLARE_CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ matrix.plan == 'paid' && secrets.CLOUDFLARE_API_TOKEN || secrets.DRUPFLARE_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: bun scripts/e2e/certify.ts --teardown --fixture=${{ matrix.fixture }}
       - name: Upload the Record
         if: ${{ !cancelled() }}

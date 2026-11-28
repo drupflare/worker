@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
@@ -6,6 +8,7 @@ import {
 	addDays,
 	appendRecords,
 	certificationState,
+	freeLimitCause,
 	HISTORY_PER_FIXTURE,
 	statusFile,
 	type CertRecord
@@ -28,6 +31,7 @@ import {
 	type RotationConfig
 } from '../../scripts/e2e/rotation';
 
+const ROOT = join(import.meta.dirname, '../..');
 const ROWS = ['install', 'file rw', 'queue cron'];
 const SHA = 'a'.repeat(40);
 
@@ -360,9 +364,18 @@ describe('choosing the day', () => {
 			fixture: 'big',
 			timeout: 150,
 			plan: 'paid',
+			fallback: false,
 			anachron: false
 		});
 		expect(off.include.every((e) => e.plan === 'free' && e.timeout === 90)).toBe(true);
+		expect(off.include.every((e) => !e.fallback)).toBe(true);
+	});
+
+	it('lets a free fixture fall back to paid when paid is on, and doubles its time for the second run', () => {
+		const on = selectDay(cfg, [], ROWS, true);
+		const free = on.include.filter((e) => e.plan === 'free');
+		expect(free.length).toBeGreaterThan(0);
+		expect(free.every((e) => e.fallback && e.timeout === 180)).toBe(true);
 	});
 
 	it('marks the fixtures that run with the anachron arm', () => {
@@ -421,6 +434,84 @@ describe('a fixture that keeps failing', () => {
 		const others = ['beta', 'gamma', 'delta'].map((f) => record('2026-11-20', { fixture: f }));
 		const day = selectDay(cfg, [...history, ...others], ROWS);
 		expect(day.include.map((e) => e.fixture)).not.toContain('alpha');
+	});
+});
+
+describe('the free plan limit a failing run hit', () => {
+	const noted = (note: string, over: Partial<CertRecord> = {}) =>
+		failing('2026-12-01', 'file rw', {
+			rows: {
+				install: { state: 'inline' },
+				'file rw': { state: 'unsupported', note },
+				'queue cron': { state: 'inline' }
+			},
+			...over
+		});
+
+	it('names a subrequest limit, so the fixture runs again on paid', () => {
+		expect(
+			freeLimitCause(noted('Too many subrequests by single Worker invocation.'), ROWS)
+		).toBe('subrequest-limit');
+	});
+
+	it('names a CPU limit and a site the daily row quota made read-only', () => {
+		expect(freeLimitCause(noted('Worker exceeded CPU time limit'), ROWS)).toBe('time-limit');
+		expect(
+			freeLimitCause(noted('this site is read-only until its daily quota resets'), ROWS)
+		).toBe('daily-quota');
+		expect(
+			freeLimitCause(
+				noted('the login answered 503', { meters: { rowsToday: 104_000 } }),
+				ROWS
+			)
+		).toBe('daily-quota');
+	});
+
+	it('does not call a memory kill a free limit, since paid has the same isolate memory', () => {
+		expect(
+			freeLimitCause(noted('the isolate exceeded its memory limit'), ROWS)
+		).toBeUndefined();
+		expect(freeLimitCause(noted('the object was reset'), ROWS)).toBeUndefined();
+	});
+
+	it('names nothing for a passing run, a paid run or a failure with no limit in it', () => {
+		expect(freeLimitCause(record('2026-12-01'), ROWS)).toBeUndefined();
+		expect(
+			freeLimitCause(noted('Too many subrequests', { plan: 'paid' }), ROWS)
+		).toBeUndefined();
+		expect(freeLimitCause(noted('the form answered 500'), ROWS)).toBeUndefined();
+	});
+});
+
+describe('the aggregate over a plan folder', () => {
+	it('reads a record in a subfolder and skips the enables file beside it', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'cert-agg-'));
+		mkdirSync(join(dir, 'recs', 'paid'), { recursive: true });
+		const corpus = parse(readFileSync(join(ROOT, 'config/corpus.yml'), 'utf8')) as {
+			repos: { id: string; sha: string }[];
+		};
+		const repo = corpus.repos[0]!;
+		const rec = { ...record('2026-12-01'), fixture: repo.id, sha: repo.sha };
+		writeFileSync(join(dir, 'recs', `${repo.id}.json`), JSON.stringify(rec));
+		writeFileSync(
+			join(dir, 'recs', 'paid', `${repo.id}.json`),
+			JSON.stringify({ ...rec, plan: 'paid' })
+		);
+		writeFileSync(join(dir, 'recs', `${repo.id}.enables.json`), JSON.stringify({ steps: [] }));
+		const run = spawnSync(
+			'bun',
+			[
+				join(ROOT, 'scripts/e2e/certify.ts'),
+				'--aggregate',
+				`--records=${join(dir, 'recs')}`,
+				`--history=${join(dir, 'h.json')}`,
+				`--status=${join(dir, 's.json')}`
+			],
+			{ encoding: 'utf8' }
+		);
+		expect(run.stdout).toContain('2 records added');
+		const history = JSON.parse(readFileSync(join(dir, 'h.json'), 'utf8')) as CertRecord[];
+		expect(history.map((r) => r.plan).sort()).toEqual(['free', 'paid']);
 	});
 });
 

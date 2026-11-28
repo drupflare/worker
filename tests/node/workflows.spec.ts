@@ -735,9 +735,9 @@ describe('the certification workflow', () => {
 		expect(crons()).toEqual([CERTIFY_CRON]);
 	});
 
-	it('takes a paid switch, off, and a window on manual dispatch', () => {
+	it('takes a paid switch, on, and a window on manual dispatch', () => {
 		const inputs = doc().on.workflow_dispatch?.inputs ?? {};
-		expect(inputs.certify_paid).toMatchObject({ type: 'boolean', default: false });
+		expect(inputs.certify_paid).toMatchObject({ type: 'boolean', default: true });
 		expect(inputs.window_days).toMatchObject({ type: 'number', default: 7 });
 		expect(inputs.certify).toBeUndefined();
 	});
@@ -763,14 +763,41 @@ describe('the certification workflow', () => {
 		);
 	});
 
-	it('leaves paid fixtures to a named variable or input that defaults off', () => {
+	it('allows the paid fallback unless a named variable or input turns it off', () => {
 		const pick = (doc().jobs['plan-certify'] as Job).steps.find(
 			(x) => x.name === "Pick Today's Fixtures"
 		);
 		const text = JSON.stringify(pick);
 		expect(text).toContain('vars.CERTIFY_PAID');
 		expect(text).toContain('inputs.certify_paid');
-		expect(text).toContain("'false'");
+		expect(text).toContain('PAID_INPUT:-${PAID_VAR:-true}');
+	});
+
+	it('runs a fixture on free first and on paid only after a free limit or for a paid-only fixture', () => {
+		const names = certify().steps.map((x) => x.name);
+		const step = (name: string) => certify().steps.find((x) => x.name === name);
+		expect(names.indexOf('Certify the Fixture on Free')).toBeLessThan(
+			names.indexOf('Certify the Fixture on Paid')
+		);
+		expect(JSON.stringify(step('Certify the Fixture on Free'))).toContain(
+			"matrix.plan == 'free'"
+		);
+		expect(JSON.stringify(step('Certify the Fixture on Free'))).toContain('--fallback');
+		const paid = JSON.stringify(step('Certify the Fixture on Paid'));
+		expect(paid).toContain("matrix.plan == 'paid'");
+		expect(paid).toContain("steps.free.outputs.limited == 'true'");
+		expect(paid).toContain('--out=certified-records/paid');
+		expect(JSON.stringify(step('Tear Down the Paid Throwaway'))).toContain('always()');
+		expect(JSON.stringify(step('Tear Down the Free Throwaway'))).toContain('always()');
+	});
+
+	it('keeps each plan on its own account', () => {
+		const text = (name: string) =>
+			JSON.stringify(certify().steps.find((x) => x.name === name)?.env);
+		expect(text('Certify the Fixture on Free')).toContain('DRUPFLARE_CLOUDFLARE_ACCOUNT_ID');
+		expect(text('Certify the Fixture on Free')).not.toMatch(/secrets\.CLOUDFLARE_/);
+		expect(text('Certify the Fixture on Paid')).toMatch(/secrets\.CLOUDFLARE_ACCOUNT_ID/);
+		expect(text('Certify the Fixture on Paid')).not.toContain('DRUPFLARE_CLOUDFLARE');
 	});
 
 	it('keeps running the other fixtures when one fails', () => {
@@ -779,13 +806,15 @@ describe('the certification workflow', () => {
 
 	it('checks out and installs drangler before the run that lands a native database with it', () => {
 		const names = certify().steps.map((x) => x.name);
-		const run = names.indexOf('Certify the Fixture');
+		const run = names.indexOf('Certify the Fixture on Free');
 		expect(names.indexOf('Check Out drangler')).toBeGreaterThan(-1);
 		expect(names.indexOf('Check Out drangler')).toBeLessThan(run);
 		expect(names.indexOf('Install drangler')).toBeLessThan(run);
-		const step = certify().steps[run];
-		expect(JSON.stringify(step)).toContain('.siblings/drangler/src/cli.ts');
-		expect(JSON.stringify(step)).toContain('"DRANGLER"');
+		for (const name of ['Certify the Fixture on Free', 'Certify the Fixture on Paid']) {
+			const step = certify().steps.find((x) => x.name === name);
+			expect(JSON.stringify(step), name).toContain('.siblings/drangler/src/cli.ts');
+			expect(JSON.stringify(step), name).toContain('"DRANGLER"');
+		}
 	});
 
 	it('takes each job timeout from its matrix entry', () => {
@@ -815,26 +844,31 @@ describe('the certification workflow', () => {
 		expect(certify().concurrency?.['cancel-in-progress']).toBe(false);
 	});
 
-	it('runs a free fixture on the DRUPFLARE account and uses the paid secrets only for a paid one', () => {
+	it('uses no secret outside the DRUPFLARE and paid account pairs', () => {
 		const text = JSON.stringify(certify());
 		expect(text).toContain('secrets.DRUPFLARE_CLOUDFLARE_ACCOUNT_ID');
 		expect(text).toContain('secrets.DRUPFLARE_CLOUDFLARE_API_TOKEN');
 		expect(text).not.toContain('secrets.FREE_');
 		expect(text).not.toContain('secrets.STUDENT_');
-		for (const ref of text.match(/\$\{\{[^}]*secrets\.CLOUDFLARE_[^}]*\}\}/g) ?? [])
-			expect(ref).toContain("matrix.plan == 'paid'");
-		expect(text).toContain('--plan=${{ matrix.plan }}');
+		expect(text).toContain('--plan=free');
+		expect(text).toContain('--plan=paid');
 	});
 
-	it('runs the teardown whatever the certify step did', () => {
-		const teardown = certify().steps.find((s) => s.name === 'Tear Down the Throwaway');
-		expect(teardown?.if).toContain('always()');
+	it('runs both teardowns whatever the certify step did', () => {
+		for (const name of ['Tear Down the Free Throwaway', 'Tear Down the Paid Throwaway']) {
+			const teardown = certify().steps.find((s) => s.name === name);
+			expect(teardown?.if, name).toContain('always()');
+		}
 	});
 
-	it('treats an exhausted budget as a warning rather than a failure', () => {
-		const run = certify().steps.find((s) => s.name === 'Certify the Fixture')?.run ?? '';
-		expect(run).toContain('= 3');
-		expect(run).toContain('::warning::');
+	it('treats an exhausted budget as a warning rather than a failure, and a free limit as the cue for paid', () => {
+		const find = (n: string) => certify().steps.find((s) => s.name === n)?.run ?? '';
+		for (const n of ['Certify the Fixture on Free', 'Certify the Fixture on Paid']) {
+			expect(find(n), n).toContain('= 3');
+			expect(find(n), n).toContain('::warning::');
+		}
+		expect(find('Certify the Fixture on Free')).toContain('= 4');
+		expect(find('Certify the Fixture on Free')).toContain('limited=true');
 	});
 
 	it('publishes only after the certify matrix, from its own job', () => {

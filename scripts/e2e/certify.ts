@@ -4,7 +4,8 @@
  * published history.
  *
  *   bun scripts/e2e/certify.ts --fixture=<id> --out=<dir> [--plan=free|paid] [--cpu-ms=<n>] [--anachron]
- *   bun scripts/e2e/certify.ts --select [--history=<file>]
+ *     [--fallback]
+ *   bun scripts/e2e/certify.ts --select [--history=<file>] [--paid=true|false]
  *   bun scripts/e2e/certify.ts --teardown --fixture=<id>
  *   bun scripts/e2e/certify.ts --aggregate --records=<dir> --history=<file> --status=<file>
  *     [--interval-days=<n>]
@@ -15,6 +16,11 @@
  * run is the evidence that demotes a fixture. An account with no budget left writes no record and
  * exits 3. Needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`, which the job maps from the
  * `DRUPFLARE_` secrets.
+ *
+ * A free run starts every fixture. With `--fallback`, one that fails on a limit the paid plan raises
+ * (subrequests, CPU, the daily row quota) exits 4 after writing its record, and the job runs the
+ * same fixture again with `--plan=paid` on the paid account. A free pass skips paid. A fixture in
+ * `paidFixtures` goes straight to paid.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -35,6 +41,7 @@ import { gitShortSha } from './anachron-deliver';
 import {
 	appendRecords,
 	failingRows,
+	freeLimitCause,
 	statusFile,
 	type CertRecord,
 	type CertRow
@@ -60,6 +67,9 @@ import {
 } from './rotation';
 
 const ROOT = join(import.meta.dirname, '..', '..');
+
+/** the exit of a free run, under `--fallback`, that failed on a limit the paid plan raises */
+export const FALLBACK_EXIT = 4;
 
 /** the throwaway's name; `teardownByName` refuses anything outside `cfw-e2e-` */
 export const certName = (fixture: string): string =>
@@ -344,6 +354,8 @@ async function certify(args: string[]): Promise<number> {
 				}
 			: {})
 	};
+	const limited = freeLimitCause(record, corpus.rows);
+	if (limited) record.limited = limited;
 	mkdirSync(out, { recursive: true });
 	writeFileSync(join(out, `${fixture}.json`), `${JSON.stringify(record, null, '\t')}\n`);
 	const enablesFile = `${statsFile}.enables.json`;
@@ -357,6 +369,7 @@ async function certify(args: string[]): Promise<number> {
 		console.error(residue);
 		return 1;
 	}
+	if (limited && args.includes('--fallback')) return FALLBACK_EXIT;
 	return reached ? 0 : 2;
 }
 
@@ -380,7 +393,13 @@ export function selectDay(
 	allowPaid = false,
 	windowDays = WINDOW_DAYS
 ): {
-	include: { fixture: string; timeout: number; plan: string; anachron: boolean }[];
+	include: {
+		fixture: string;
+		timeout: number;
+		plan: string;
+		fallback: boolean;
+		anachron: boolean;
+	}[];
 	periodDays: number;
 } {
 	const paid = new Set(cfg.paidFixtures ?? []);
@@ -410,12 +429,16 @@ export function selectDay(
 		console.error(
 			`::warning::the row budget lowered today's fixtures from ${day.cap} to ${day.ids.length}`
 		);
-	const include = day.ids.map((fixture) => ({
-		fixture,
-		timeout: cfg.profileFixtures.includes(fixture) ? 150 : 90,
-		plan: paid.has(fixture) ? 'paid' : 'free',
-		anachron: (cfg.anachronFixtures ?? []).includes(fixture)
-	}));
+	const include = day.ids.map((fixture) => {
+		const fallback = allowPaid && !paid.has(fixture);
+		return {
+			fixture,
+			timeout: (cfg.profileFixtures.includes(fixture) ? 150 : 90) * (fallback ? 2 : 1),
+			plan: paid.has(fixture) ? 'paid' : 'free',
+			fallback,
+			anachron: (cfg.anachronFixtures ?? []).includes(fixture)
+		};
+	});
 	return { include, periodDays };
 }
 
@@ -427,7 +450,13 @@ function select(args: string[]): void {
 			: [];
 	const cfg = certifyConfig();
 	const windowDays = Number(flag(args, 'window')) || WINDOW_DAYS;
-	const day = selectDay(cfg, history, corpusOf().rows, flag(args, 'paid') === 'true', windowDays);
+	const day = selectDay(
+		cfg,
+		history,
+		corpusOf().rows,
+		flag(args, 'paid') !== 'false',
+		windowDays
+	);
 	console.log(JSON.stringify(day));
 	if (process.env['GITHUB_OUTPUT'])
 		writeFileSync(
@@ -453,7 +482,8 @@ function aggregate(args: string[]): void {
 		Number(flag(args, 'interval-days')) || rotationPeriodDays(cfg.fixtures.length, windowDays);
 	if (!records || !historyPath || !statusPath)
 		throw new Error('--records, --history and --status are required');
-	const added = (existsSync(records) ? readdirSync(records) : [])
+	const added = (existsSync(records) ? readdirSync(records, { recursive: true }) : [])
+		.map(String)
 		.filter((f) => f.endsWith('.json') && !f.endsWith('.enables.json'))
 		.map((f) => JSON.parse(readFileSync(join(records, f), 'utf8')) as CertRecord)
 		.filter(isRecord);

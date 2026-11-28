@@ -1,3 +1,5 @@
+import { DAILY_ROWS_QUOTA } from '../../src/ops/meters/auth-budget';
+import { classifyLimit } from '../../src/ops/meters/platform-limits';
 import { staleDays } from './rotation';
 
 /** one capability row as a lane records it */
@@ -51,7 +53,31 @@ export type CertRecord = {
 	};
 	/** the anachron commit or version when one was loaded */
 	anachron?: string;
+	/** the free-plan limit a failing run hit, when it hit one the paid plan raises */
+	limited?: string;
 };
+
+/** the limit classes the paid plan raises; a memory kill is the same on both, so it is not one */
+const PAID_RAISES = new Set(['subrequest-limit', 'time-limit']);
+
+/**
+ * The free-plan limit a record failed on, or undefined when its failures are not a free limit.
+ * A subrequest or CPU limit named in a failing row's note counts, and so does a site the daily row
+ * quota put into read-only. A memory limit does not: paid has the same isolate memory, so a
+ * second run there would fail the same way and spend the account for nothing.
+ */
+export function freeLimitCause(record: CertRecord, rows: readonly string[]): string | undefined {
+	if (record.plan !== 'free') return undefined;
+	const failing = failingRows(record, rows);
+	if (failing.length === 0) return undefined;
+	for (const row of failing) {
+		const note = record.rows[row]?.note ?? '';
+		const kind = classifyLimit(note);
+		if (PAID_RAISES.has(kind)) return kind;
+		if (/read-only until its daily quota/i.test(note)) return 'daily-quota';
+	}
+	return (record.meters?.rowsToday ?? 0) >= DAILY_ROWS_QUOTA ? 'daily-quota' : undefined;
+}
 
 /** what the published status file says about one fixture */
 export type CertStatus = {

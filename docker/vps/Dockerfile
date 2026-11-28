@@ -2,7 +2,7 @@
 #
 # PHP 8.5 to match the interpreter drupflare ships, so the comparison isolates the
 # runtime rather than folding a version difference into it.
-FROM php:8.5-fpm-alpine
+FROM php:8.6-fpm-alpine
 
 # mbstring, pdo_sqlite, sqlite3 and opcache are already in the base image; installing one that is
 # built in emits no shared module and fails the whole layer with "cp: can't stat 'modules/*'"

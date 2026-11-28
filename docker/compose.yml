@@ -45,7 +45,7 @@ services:
       retries: 40
 
   redis:
-    image: redis:8.10.3-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+    image: redis:8.12.0-alpine@sha256:5af80107c1eeecb484a2269b80a26d12bfa6521787da4663bd9f19f60a163483
     command: ['redis-server', '--requirepass', 'testpass']
     ports:
       - '127.0.0.1:6379:6379'
@@ -56,7 +56,7 @@ services:
       retries: 30
 
   gitea:
-    image: gitea/gitea:28.3.0@sha256:8967bf9deaf3c5c4adae13519436dc1b20c646ac83fe37ae810c933a1045227d
+    image: gitea/gitea:28.4.0@sha256:aa90e8f00b755b0d665214ab9c14447ea44d3190dbe6b6d0cb46cd9c4f55d309
     environment:
       USER_UID: '1000'
       USER_GID: '1000'
@@ -134,7 +134,7 @@ services:
       start_period: 240s
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.8.1@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:7e66a96e4739239070aeaf72e4c5decf0f7f682cfc725b9f7ea2b336eaba38b3
     command: ['start-dev', '--import-realm', '--http-port=8081']
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
@@ -161,7 +161,7 @@ services:
       retries: 40
 
   syslog:
-    image: alpine:3.24.3@sha256:b3413572228e34bd1c9245f5565e6cd127005655e8a7899aef33d8e83255c9e6
+    image: alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
     command:
       - sh
       - -c

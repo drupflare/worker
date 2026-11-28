@@ -7,7 +7,7 @@
 #
 # Nothing here is part of the VPS comparison arm. It reuses that arm's Worker, its budget guard and
 # its instance sizing, and replaces the payload with a probe.
-FROM alpine:3.24.3@sha256:b3413572228e34bd1c9245f5565e6cd127005655e8a7899aef33d8e83255c9e6
+FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
 # alpine's own busybox is built WITHOUT the httpd applet, so `busybox httpd` exits 127 with
 # "applet not found" and the platform reports only that the container exited. `busybox-extras`

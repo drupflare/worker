@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">WpConfigValues</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#constants">constants</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Readonly</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#httpbudget">httpBudget</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#origin">origin</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#salts">salts</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Readonly</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-keyword">typeof</span> <a href="../variables/wordpress_config.SALT_NAMES.html" class="tsd-signature-type tsd-kind-variable">SALT_NAMES</a><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#tableprefix">tablePrefix</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/wordpress/config.ts#L20">src/wordpress/config.ts:20</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/wordpress/config.ts#L20">src/wordpress/config.ts:20</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -39,35 +39,35 @@
 <div class="tsd-comment tsd-typography"><p>extra constants an owner sets; a name only a network uses is refused</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/wordpress/config.ts#L30">src/wordpress/config.ts:30</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/wordpress/config.ts#L30">src/wordpress/config.ts:30</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="httpbudget"><code class="tsd-tag">Optional</code><span>http<wbr/>Budget</span><a href="#httpbudget" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">httpBudget</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>how many outbound requests one WordPress request may make; the host plugin counts them</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/wordpress/config.ts#L28">src/wordpress/config.ts:28</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/wordpress/config.ts#L28">src/wordpress/config.ts:28</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="origin"><span>origin</span><a href="#origin" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">origin</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the site origin, <code>scheme://host[:port]</code></p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/wordpress/config.ts#L22">src/wordpress/config.ts:22</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/wordpress/config.ts#L22">src/wordpress/config.ts:22</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="salts"><span>salts</span><a href="#salts" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">salts</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Readonly</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-keyword">typeof</span> <a href="../variables/wordpress_config.SALT_NAMES.html" class="tsd-signature-type tsd-kind-variable">SALT_NAMES</a><span class="tsd-signature-symbol">[</span><span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></div>
 <div class="tsd-comment tsd-typography"><p>one value per name in <a href="../variables/wordpress_config.SALT_NAMES.html" class="tsd-kind-variable">SALT_NAMES</a></p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/wordpress/config.ts#L24">src/wordpress/config.ts:24</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/wordpress/config.ts#L24">src/wordpress/config.ts:24</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="tableprefix"><code class="tsd-tag">Optional</code><span>table<wbr/>Prefix</span><a href="#tableprefix" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">tablePrefix</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the table prefix the baked database uses</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/wordpress/config.ts#L26">src/wordpress/config.ts:26</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/wordpress/config.ts#L26">src/wordpress/config.ts:26</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

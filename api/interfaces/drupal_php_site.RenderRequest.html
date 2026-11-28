@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">RenderRequest</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#accept">accept</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#body">body</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#bodybase64">bodyBase64</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#clientip">clientIp</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#contenttype">contentType</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#cookie">cookie</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#headers">headers</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#method">method</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#origin">origin</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/drupal/php/site.ts#L241">src/drupal/php/site.ts:241</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/drupal/php/site.ts#L241">src/drupal/php/site.ts:241</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -45,14 +45,14 @@
 and <code>Request::create()</code> defaults to exactly that, so an absent header breaks every AJAX call.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/drupal/php/site.ts#L281">src/drupal/php/site.ts:281</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/drupal/php/site.ts#L281">src/drupal/php/site.ts:281</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="body"><code class="tsd-tag">Optional</code><span>body</span><a href="#body" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">body</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the raw request body, forwarded verbatim</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/drupal/php/site.ts#L252">src/drupal/php/site.ts:252</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/drupal/php/site.ts#L252">src/drupal/php/site.ts:252</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="bodybase64"><code class="tsd-tag">Optional</code><span>body<wbr/>Base64</span><a href="#bodybase64" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">bodyBase64</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
@@ -60,7 +60,7 @@ and <code>Request::create()</code> defaults to exactly that, so an absent header
 <p>The body rides in the PHP source as a JSON string, which cannot carry arbitrary bytes.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/drupal/php/site.ts#L258">src/drupal/php/site.ts:258</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/drupal/php/site.ts#L258">src/drupal/php/site.ts:258</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="clientip"><code class="tsd-tag">Optional</code><span>client<wbr/>Ip</span><a href="#clientip" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">clientIp</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
@@ -70,14 +70,14 @@ and <code>Request::create()</code> defaults to exactly that, so an absent header
 edge; under <code>wrangler dev</code> it is whatever the client sent.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/drupal/php/site.ts#L274">src/drupal/php/site.ts:274</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/drupal/php/site.ts#L274">src/drupal/php/site.ts:274</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="contenttype"><code class="tsd-tag">Optional</code><span>content<wbr/>Type</span><a href="#contenttype" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">contentType</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the inbound content type, which decides whether the body is parsed as a form</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/drupal/php/site.ts#L260">src/drupal/php/site.ts:260</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/drupal/php/site.ts#L260">src/drupal/php/site.ts:260</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="cookie"><code class="tsd-tag">Optional</code><span>cookie</span><a href="#cookie" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">cookie</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
@@ -85,7 +85,7 @@ edge; under <code>wrangler dev</code> it is whatever the client sent.</p>
 <p>Without it every render is uid 0 and a create-entity route is refused at routing.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/drupal/php/site.ts#L266">src/drupal/php/site.ts:266</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/drupal/php/site.ts#L266">src/drupal/php/site.ts:266</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="headers"><code class="tsd-tag">Optional</code><span>headers</span><a href="#headers" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">headers</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span></div>
@@ -94,14 +94,14 @@ lowercase by name, from <code>forwardedHeaders()</code>.</p>
 <p>Without it a bearer-token route answers as anonymous.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/drupal/php/site.ts#L288">src/drupal/php/site.ts:288</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/drupal/php/site.ts#L288">src/drupal/php/site.ts:288</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="method"><code class="tsd-tag">Optional</code><span>method</span><a href="#method" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">method</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>HTTP method; anything other than GET makes this a submission</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/drupal/php/site.ts#L250">src/drupal/php/site.ts:250</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/drupal/php/site.ts#L250">src/drupal/php/site.ts:250</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="origin"><code class="tsd-tag">Optional</code><span>origin</span><a href="#origin" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">origin</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
@@ -110,7 +110,7 @@ lowercase by name, from <code>forwardedHeaders()</code>.</p>
 <code>Host</code> cannot move it.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/drupal/php/site.ts#L248">src/drupal/php/site.ts:248</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2c9c8df473e95babcfc62d9335021c176553c778/src/drupal/php/site.ts#L248">src/drupal/php/site.ts:248</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

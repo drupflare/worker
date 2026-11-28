@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">GrowthLogHost</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#env">env</a><span class="tsd-signature-symbol">?:</span> <a href="env.SiteEnv.html" class="tsd-signature-type tsd-kind-interface">SiteEnv</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#growthretry">growthRetry</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#growthroute">growthRoute</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#mountinfo">mountInfo</a><span class="tsd-signature-symbol">?:</span> <a href="../types/do_lazy-mount.SiteMountInfo.html" class="tsd-signature-type tsd-kind-type-alias">SiteMountInfo</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#sql">sql</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">SqlStorage</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#nowms-1">nowMs</a><span class="tsd-signature-symbol">()</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/do/growth/log.ts#L25">src/do/growth/log.ts:25</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/do/growth/log.ts#L25">src/do/growth/log.ts:25</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -41,31 +41,31 @@
 <h3 class="tsd-anchor-link" id="env"><code class="tsd-tag">Optional</code><span>env</span><a href="#env" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">env</span><span class="tsd-signature-symbol">?:</span> <a href="env.SiteEnv.html" class="tsd-signature-type tsd-kind-interface">SiteEnv</a></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/do/growth/log.ts#L27">src/do/growth/log.ts:27</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/do/growth/log.ts#L27">src/do/growth/log.ts:27</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="growthretry"><code class="tsd-tag">Optional</code><span>growth<wbr/>Retry</span><a href="#growthretry" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">growthRetry</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>whether the request in flight is the front worker's repeat of a refusal</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/do/growth/log.ts#L32">src/do/growth/log.ts:32</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/do/growth/log.ts#L32">src/do/growth/log.ts:32</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="growthroute"><code class="tsd-tag">Optional</code><span>growth<wbr/>Route</span><a href="#growthroute" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">growthRoute</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the route of the request in flight, set by <code>fetchRequest()</code>; unset for an alarm or an owner call</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/do/growth/log.ts#L30">src/do/growth/log.ts:30</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/do/growth/log.ts#L30">src/do/growth/log.ts:30</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="mountinfo"><code class="tsd-tag">Optional</code><span>mount<wbr/>Info</span><a href="#mountinfo" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">mountInfo</span><span class="tsd-signature-symbol">?:</span> <a href="../types/do_lazy-mount.SiteMountInfo.html" class="tsd-signature-type tsd-kind-type-alias">SiteMountInfo</a></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/do/growth/log.ts#L28">src/do/growth/log.ts:28</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/do/growth/log.ts#L28">src/do/growth/log.ts:28</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="sql"><span>sql</span><a href="#sql" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">sql</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">SqlStorage</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/do/growth/log.ts#L26">src/do/growth/log.ts:26</a></li></ul></aside></section></section></details>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/do/growth/log.ts#L26">src/do/growth/log.ts:26</a></li></ul></aside></section></section></details>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Methods"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="methods-1">Methods<a href="#methods-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
@@ -77,7 +77,7 @@
 <div class="tsd-description">
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">number</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/do/growth/log.ts#L33">src/do/growth/log.ts:33</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/do/growth/log.ts#L33">src/do/growth/log.ts:33</a></li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

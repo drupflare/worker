@@ -13,7 +13,7 @@
 <h1>Interface OpenOptions</h1></div>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">OpenOptions</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#flush">flush</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">()</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#leasems">leaseMs</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#maxattempts">maxAttempts</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#now">now</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">()</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#width">width</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/ops/outbox.ts#L53">src/ops/outbox.ts:53</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/ops/outbox.ts#L53">src/ops/outbox.ts:53</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -36,33 +36,33 @@
 <div class="tsd-comment tsd-typography"><p>resolves once earlier writes survive a reset: <code>() =&gt; ctx.storage.sync()</code> in the object</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/ops/outbox.ts#L55">src/ops/outbox.ts:55</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/ops/outbox.ts#L55">src/ops/outbox.ts:55</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="leasems"><code class="tsd-tag">Optional</code><span>lease<wbr/>Ms</span><a href="#leasems" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">leaseMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>the lease of a claim in ms; 15,000 by default, 5,000 at least</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/ops/outbox.ts#L59">src/ops/outbox.ts:59</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/ops/outbox.ts#L59">src/ops/outbox.ts:59</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="maxattempts"><code class="tsd-tag">Optional</code><span>max<wbr/>Attempts</span><a href="#maxattempts" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">maxAttempts</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>executions a row may start before it fails; 3 by default</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/ops/outbox.ts#L61">src/ops/outbox.ts:61</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/ops/outbox.ts#L61">src/ops/outbox.ts:61</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="now"><code class="tsd-tag">Optional</code><span>now</span><a href="#now" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">now</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">()</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/ops/outbox.ts#L62">src/ops/outbox.ts:62</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/ops/outbox.ts#L62">src/ops/outbox.ts:62</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="width"><code class="tsd-tag">Optional</code><span>width</span><a href="#width" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">width</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>rows run at once; one by default</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f94fe20c78b0cf2c5c93dd2302e653921a24c986/src/ops/outbox.ts#L57">src/ops/outbox.ts:57</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/2f961c01b27be6a70b9b7eb2b726d79e4fee5ec3/src/ops/outbox.ts#L57">src/ops/outbox.ts:57</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

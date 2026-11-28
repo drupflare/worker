@@ -65,6 +65,13 @@ describe('the daily rotation', () => {
 		expect(day.ids[0]).toBe('failed');
 	});
 
+	it('stops retrying a fixture that failed twice in a row, so it cannot hold a slot every day', () => {
+		const stuck = { ...c('stuck', '2026-12-09', 10, false), failedRuns: 2 };
+		const day = planDay([c('a', '2026-01-01'), stuck, c('b', '2026-02-01')], 1000);
+		expect(day.ids).toEqual(['a', 'b']);
+		expect(planDay([stuck, c('z', '2026-12-05')], 1000).ids).toEqual(['z', 'stuck']);
+	});
+
 	it('respects the day size however many are due', () => {
 		expect(planDay(pool(30), 1e9).ids).toHaveLength(runsPerDay(30));
 	});

@@ -136,11 +136,20 @@ jobs:
         with:
           repository: drupflare/anachron
           path: .siblings/anachron
+      - name: Check Out drangler
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/drangler
+          path: .siblings/drangler
+      - name: Install drangler
+        working-directory: .siblings/drangler
+        run: bun install --frozen-lockfile --ignore-scripts
       - name: Certify the Fixture
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ matrix.plan == 'paid' && secrets.CLOUDFLARE_ACCOUNT_ID || secrets.DRUPFLARE_CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ matrix.plan == 'paid' && secrets.CLOUDFLARE_API_TOKEN || secrets.DRUPFLARE_CLOUDFLARE_API_TOKEN }}
           ANACHRON_DIR: .siblings/anachron
+          DRANGLER: ${{ github.workspace }}/.siblings/drangler/src/cli.ts
         run: |
           code=0
           bun scripts/e2e/certify.ts --fixture=${{ matrix.fixture }} --out=certified-records --plan=${{ matrix.plan }} ${{ matrix.anachron && '--anachron' || '' }} || code=$?

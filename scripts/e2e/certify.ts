@@ -387,14 +387,20 @@ export function selectDay(
 	const candidates: Candidate[] = cfg.fixtures
 		.filter((id) => allowPaid || !paid.has(id))
 		.map((id) => {
-			const last = history
+			const runs = history
 				.filter((r) => r.fixture === id)
-				.sort((a, b) => Date.parse(b.date) - Date.parse(a.date))[0];
+				.sort((a, b) => Date.parse(b.at ?? b.date) - Date.parse(a.at ?? a.date));
+			const last = runs[0];
+			const firstPass = runs.findIndex((r) => failingRows(r, rows).length === 0);
 			return {
 				id,
 				cost: runCost(cfg, id),
 				...(last
-					? { lastRun: last.date, lastPassed: failingRows(last, rows).length === 0 }
+					? {
+							lastRun: last.date,
+							lastPassed: failingRows(last, rows).length === 0,
+							failedRuns: firstPass === -1 ? runs.length : firstPass
+						}
 					: {})
 			};
 		});
@@ -431,6 +437,12 @@ function select(args: string[]): void {
 		);
 }
 
+/** whether a parsed file is a run record, which drops the stray files an older job folded into the history */
+export const isRecord = (value: unknown): value is CertRecord => {
+	const r = value as Partial<CertRecord> | null;
+	return typeof r?.fixture === 'string' && typeof r.rows === 'object' && r.rows !== null;
+};
+
 function aggregate(args: string[]): void {
 	const records = flag(args, 'records');
 	const historyPath = flag(args, 'history');
@@ -442,10 +454,11 @@ function aggregate(args: string[]): void {
 	if (!records || !historyPath || !statusPath)
 		throw new Error('--records, --history and --status are required');
 	const added = (existsSync(records) ? readdirSync(records) : [])
-		.filter((f) => f.endsWith('.json'))
-		.map((f) => JSON.parse(readFileSync(join(records, f), 'utf8')) as CertRecord);
+		.filter((f) => f.endsWith('.json') && !f.endsWith('.enables.json'))
+		.map((f) => JSON.parse(readFileSync(join(records, f), 'utf8')) as CertRecord)
+		.filter(isRecord);
 	const history = existsSync(historyPath)
-		? (JSON.parse(readFileSync(historyPath, 'utf8')) as CertRecord[])
+		? (JSON.parse(readFileSync(historyPath, 'utf8')) as unknown[]).filter(isRecord)
 		: [];
 	const merged = appendRecords(history, added);
 	writeFileSync(historyPath, `${JSON.stringify(merged)}\n`);

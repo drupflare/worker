@@ -3,8 +3,10 @@ export type Candidate = {
 	id: string;
 	/** the date of its latest run, `YYYY-MM-DD`; absent when it has never run */
 	lastRun?: string;
-	/** whether that run passed every row; a failure is retried first */
+	/** whether that run passed every row; a first failure is retried first */
 	lastPassed?: boolean;
+	/** how many of its newest runs in a row failed; a repeated failure rotates like any other */
+	failedRuns?: number;
 	/** the rows one deployed run is expected to write */
 	cost: number;
 };
@@ -27,9 +29,11 @@ export const staleDays = (windowDays = WINDOW_DAYS): number => 2 * windowDays;
 export type DayPlan = { ids: string[]; cap: number; loweredByBudget: boolean };
 
 /**
- * The fixtures one day's run certifies: a failed one first so it is retried the next day, then one
- * never run, then the least recently run, up to `runsPerDay` of the pool. The row budget can lower
- * the count, and the plan then says so; the first pick is always taken so nothing starves.
+ * The fixtures one day's run certifies: one that failed once first so it is retried the next day,
+ * then one never run, then the least recently run, up to `runsPerDay` of the pool. A fixture that
+ * failed twice in a row is a defect and not a blip, so it goes back to rotating by its last run and
+ * cannot hold a slot every day. The row budget can lower the count, and the plan then says so; the
+ * first pick is always taken so nothing starves.
  */
 export function planDay(
 	candidates: readonly Candidate[],
@@ -37,7 +41,8 @@ export function planDay(
 	windowDays = WINDOW_DAYS
 ): DayPlan {
 	const cap = Math.min(runsPerDay(candidates.length, windowDays), candidates.length);
-	const rank = (c: Candidate) => (c.lastRun === undefined ? 1 : c.lastPassed === false ? 0 : 2);
+	const retry = (c: Candidate) => c.lastPassed === false && (c.failedRuns ?? 1) <= 1;
+	const rank = (c: Candidate) => (c.lastRun === undefined ? 1 : retry(c) ? 0 : 2);
 	const order = [...candidates].sort(
 		(a, b) =>
 			rank(a) - rank(b) ||

@@ -777,6 +777,17 @@ describe('the certification workflow', () => {
 		expect(certify().strategy?.['fail-fast']).toBe(false);
 	});
 
+	it('checks out and installs drangler before the run that lands a native database with it', () => {
+		const names = certify().steps.map((x) => x.name);
+		const run = names.indexOf('Certify the Fixture');
+		expect(names.indexOf('Check Out drangler')).toBeGreaterThan(-1);
+		expect(names.indexOf('Check Out drangler')).toBeLessThan(run);
+		expect(names.indexOf('Install drangler')).toBeLessThan(run);
+		const step = certify().steps[run];
+		expect(JSON.stringify(step)).toContain('.siblings/drangler/src/cli.ts');
+		expect(JSON.stringify(step)).toContain('"DRANGLER"');
+	});
+
 	it('takes each job timeout from its matrix entry', () => {
 		expect(certify()['timeout-minutes']).toBe('${{ matrix.timeout }}');
 	});

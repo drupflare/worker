@@ -13,6 +13,7 @@ import {
 import {
 	certName,
 	cpuLimitProblem,
+	isRecord,
 	meterReading,
 	nativeFixtureOf,
 	ownedBy,
@@ -378,6 +379,57 @@ describe('choosing the day', () => {
 		expect(selectDay({ ...cfg, rowsPerDay: 20_000 }, history, ROWS).include[0]?.fixture).toBe(
 			'cheap'
 		);
+	});
+});
+
+describe('a fixture that keeps failing', () => {
+	const cfg = {
+		rowsPerDay: 100_000,
+		reserve: 0.3,
+		margin: 1,
+		baseRows: 10_000,
+		defaultDelivery: 0,
+		delivery: {},
+		fixtures: ['alpha', 'beta', 'gamma', 'delta'],
+		profileFixtures: []
+	};
+
+	it('is retried the day after its first failure and rotates after its second', () => {
+		const once = [
+			record('2026-12-01', { fixture: 'alpha' }),
+			failing('2026-12-02', 'file rw', { fixture: 'beta', at: '2026-12-02T01:00:00Z' }),
+			record('2026-12-03', { fixture: 'gamma' }),
+			record('2026-12-04', { fixture: 'delta' })
+		];
+		expect(selectDay(cfg, once, ROWS).include[0]?.fixture).toBe('beta');
+		const twice = [
+			...once,
+			failing('2026-12-01', 'file rw', { fixture: 'beta', at: '2026-12-01T12:00:00Z' })
+		];
+		expect(selectDay(cfg, twice, ROWS).include.map((e) => e.fixture)).toEqual([
+			'alpha',
+			'beta'
+		]);
+	});
+
+	it('counts the failures since its last pass, newest first, whatever order the history is in', () => {
+		const history = [
+			failing('2026-12-03', 'file rw', { fixture: 'alpha', at: '2026-12-03T00:00:00Z' }),
+			record('2026-12-01', { fixture: 'alpha', at: '2026-12-01T00:00:00Z' }),
+			failing('2026-12-02', 'file rw', { fixture: 'alpha', at: '2026-12-02T00:00:00Z' })
+		];
+		const others = ['beta', 'gamma', 'delta'].map((f) => record('2026-11-20', { fixture: f }));
+		const day = selectDay(cfg, [...history, ...others], ROWS);
+		expect(day.include.map((e) => e.fixture)).not.toContain('alpha');
+	});
+});
+
+describe('the files folded into the history', () => {
+	it('accepts a run record and refuses the other files a run leaves beside it', () => {
+		expect(isRecord(record('2026-12-01'))).toBe(true);
+		expect(isRecord({ steps: [], replies: [] })).toBe(false);
+		expect(isRecord(null)).toBe(false);
+		expect(isRecord({ fixture: 'alpha' })).toBe(false);
 	});
 });
 

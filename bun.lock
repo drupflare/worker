@@ -6,7 +6,7 @@
       "name": "drupal-cfw-test",
       "dependencies": {
         "@drupflare/burrow": "^1.1.1",
-        "@drupflare/cartridge": "^0.3.1",
+        "@drupflare/cartridge": "^1.0.0",
         "@drupflare/durabledb": "^0.1.4",
         "@drupflare/spool": "^1.0.0",
         "@drupflare/untarl": "^0.1.0",
@@ -105,7 +105,7 @@
 
     "@drupflare/burrow": ["@drupflare/burrow@1.1.1", "", { "dependencies": { "commander": "^15.0.0" }, "bin": { "burrow": "dist/bin/burrow.js" } }, "sha512-/jTXLR0NqBcfKea/aK1E+6myl5nocHA4sMIkGhbXJJ6JGYAwt9ulNcLoiOKiTYiO2ORkYYIVL6Pc08y5TWMcQQ=="],
 
-    "@drupflare/cartridge": ["@drupflare/cartridge@0.3.1", "", { "dependencies": { "fflate": "^0.8.3", "fzstd": "^0.1.1" } }, "sha512-lU7Xh5xmUmTet8m3iK9os51k6WDfoWZ7O+J+8igwZ3sFw399hjRkK4txdCLRk6zOEVlKeRltKKlfIVQ2tlSmQw=="],
+    "@drupflare/cartridge": ["@drupflare/cartridge@1.0.0", "", { "dependencies": { "fflate": "^0.8.3", "fzstd": "^0.1.1" } }, "sha512-U+gr/797QkoG1rx9j1hJbH+xwvoPV0mx0Z89UMUB/9cDZ76iks+FUbFFK73exYqpcOMC69FNL7iXMfn5/WKcRA=="],
 
     "@drupflare/durabledb": ["@drupflare/durabledb@0.1.4", "", { "dependencies": { "@drupflare/cartridge": "^0.2.0 || ^0.3.0" } }, "sha512-jvElGvxOz3n6s1TEArsKoFpXxSwe0fP3vab45RYYYLgXoPI3f0ivNqUedIlUca81wy5FHpPjPL2ngG/e5tvq6w=="],
 
@@ -716,6 +716,8 @@
     "@cloudflare/vitest-pool-workers/wrangler": ["wrangler@4.124.0", "", { "dependencies": { "@cloudflare/kv-asset-handler": "0.5.0", "@cloudflare/unenv-preset": "2.16.1", "blake3-wasm": "2.1.5", "esbuild": "0.28.1", "miniflare": "5.20260815.0-alpha", "path-to-regexp": "6.3.0", "unenv": "2.0.0-rc.24", "workerd": "1.20260815.1" }, "optionalDependencies": { "fsevents": "2.3.3" }, "peerDependencies": { "@cloudflare/workers-types": "^5.20260815.1" }, "optionalPeers": ["@cloudflare/workers-types"], "bin": { "wrangler": "bin/wrangler.js", "wrangler2": "bin/wrangler.js", "cf-wrangler": "bin/cf-wrangler.js" } }, "sha512-75euoZKjVTJYFy+Xhctt/5JlZL4M6A4xmovZsUlep+6GHcCm14n9VtdGzNIybOW2t8wuNxRj5iMUwjT5E7Ctog=="],
 
     "@cspotcode/source-map-support/@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.9", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.0.3", "@jridgewell/sourcemap-codec": "^1.4.10" } }, "sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ=="],
+
+    "@drupflare/durabledb/@drupflare/cartridge": ["@drupflare/cartridge@0.3.1", "", { "dependencies": { "fflate": "^0.8.3", "fzstd": "^0.1.1" } }, "sha512-lU7Xh5xmUmTet8m3iK9os51k6WDfoWZ7O+J+8igwZ3sFw399hjRkK4txdCLRk6zOEVlKeRltKKlfIVQ2tlSmQw=="],
 
     "@gerrit0/mini-shiki/@shikijs/engine-oniguruma": ["@shikijs/engine-oniguruma@3.23.0", "", { "dependencies": { "@shikijs/types": "3.23.0", "@shikijs/vscode-textmate": "^10.0.2" } }, "sha512-1nWINwKXxKKLqPibT5f4pAFLej9oZzQTsby8942OTlsJzOBZ0MWKiwzMsd+jhzu8YPCHAswGnnN1YtQfirL35g=="],
 
